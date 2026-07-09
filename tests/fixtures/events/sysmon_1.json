@@ -1,0 +1,37 @@
+{
+  "Event": {
+    "System": {
+      "Provider": {"Name": "Microsoft-Windows-Sysmon"},
+      "EventID": "1",
+      "Version": "5",
+      "Level": "4",
+      "Task": "1",
+      "Opcode": "0",
+      "Keywords": "0x8000000000000000",
+      "TimeCreated": {"@SystemTime": "2024-01-15T10:00:01.0000000Z"},
+      "EventRecordID": "54321",
+      "Execution": {"ProcessID": "1234", "ThreadID": "5678"},
+      "Channel": "Microsoft-Windows-Sysmon/Operational",
+      "Computer": "DESKTOP-TEST"
+    },
+    "EventData": {
+      "RuleName": "-",
+      "UtcTime": "2024-01-15 10:00:01.000",
+      "ProcessGuid": "{AABBCCDD-1234-5678-9012-FFFFFFFFFFFF}",
+      "ProcessId": "0x1f4",
+      "Image": "C:\\Windows\\System32\\powershell.exe",
+      "CommandLine": "powershell.exe -Command Write-Host test",
+      "CurrentDirectory": "C:\\Users\\admin\\",
+      "User": "DESKTOP-TEST\\admin",
+      "LogonGuid": "{AABBCCDD-1234-5678-9012-000000000000}",
+      "LogonId": "0x12345",
+      "TerminalSessionId": "1",
+      "IntegrityLevel": "Medium",
+      "Hashes": "SHA1=ABC123",
+      "ParentProcessGuid": "{AABBCCDD-1234-5678-9012-111111111111}",
+      "ParentProcessId": "0xabc",
+      "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+      "ParentCommandLine": "cmd.exe /c start powershell.exe"
+    }
+  }
+}

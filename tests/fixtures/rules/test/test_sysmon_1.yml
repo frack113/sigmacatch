@@ -1,0 +1,21 @@
+title: Test Sysmon Process Creation
+id: 22222222-2222-2222-2222-222222222222
+status: test
+description: Test rule matching Sysmon EventID 1 (Process Creation)
+author: Test Author
+date: 2024-01-01
+references:
+  - https://attack.mitre.org/techniques/T1059/
+tags:
+  - attack.execution
+logsource:
+  product: windows
+  service: sysmon
+detection:
+  selection:
+    EventID: '1'
+    Channel: 'Microsoft-Windows-Sysmon/Operational'
+  condition: selection
+falsepositives:
+  - Unknown
+level: high

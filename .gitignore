@@ -1,0 +1,18 @@
+# Rust
+.cargo/
+/target/
+
+# application
+*.log
+config.yaml
+/sigma/
+regression_data/
+evtx_logs/
+logs/
+rdp.sh
+windows_output/
+
+# internal
+_bmad/
+bmad_output/
+AGENTS.md

@@ -1,0 +1,44 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    labels:
+      - dependencies
+      - automated
+    commit-message:
+      prefix: "🔧 chore"
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    labels:
+      - dependencies
+      - automated
+    commit-message:
+      prefix: chore
+      include: scope
+    reviewers:
+      - mostafa
+    groups:
+      rsigma:
+        patterns:
+          - "rsigma-*"
+      gix:
+        patterns:
+          - "gix*"
+      serde:
+        patterns:
+          - "serde*"
+      windows:
+        patterns:
+          - "windows-sys"
+          - "quick-xml"
