@@ -31,17 +31,6 @@ pub fn load_custom_mapping(path: &Path) -> HashMap<String, String> {
     }
 }
 
-/// Merge custom mapping on top of static mapping.
-/// Custom keys win over static keys, non-overlapping static keys are preserved.
-pub fn merge_maps(
-    static_map: &HashMap<String, String>,
-    custom_map: &HashMap<String, String>,
-) -> HashMap<String, String> {
-    let mut merged = static_map.clone();
-    merged.extend(custom_map.clone());
-    merged
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,42 +71,4 @@ mod tests {
         assert!(result.is_empty(), "malformed YAML should return empty HashMap");
     }
 
-    #[test]
-    fn test_merge_maps_custom_wins() {
-        let mut static_map = HashMap::new();
-        static_map.insert("Security".to_string(), "security".to_string());
-        static_map.insert("Sysmon".to_string(), "sysmon".to_string());
-
-        let mut custom_map = HashMap::new();
-        custom_map.insert("Security".to_string(), "custom_security".to_string());
-
-        let merged = merge_maps(&static_map, &custom_map);
-        assert_eq!(merged.get("Security"), Some(&"custom_security".to_string()));
-        assert_eq!(merged.get("Sysmon"), Some(&"sysmon".to_string()));
-        assert_eq!(merged.len(), 2);
-    }
-
-    #[test]
-    fn test_merge_maps_no_overlap() {
-        let mut static_map = HashMap::new();
-        static_map.insert("Security".to_string(), "security".to_string());
-
-        let mut custom_map = HashMap::new();
-        custom_map.insert("Custom/Channel".to_string(), "custom".to_string());
-
-        let merged = merge_maps(&static_map, &custom_map);
-        assert_eq!(merged.len(), 2);
-        assert!(merged.contains_key("Security"));
-        assert!(merged.contains_key("Custom/Channel"));
-    }
-
-    #[test]
-    fn test_merge_maps_empty_custom() {
-        let mut static_map = HashMap::new();
-        static_map.insert("Security".to_string(), "security".to_string());
-
-        let custom_map = HashMap::new();
-        let merged = merge_maps(&static_map, &custom_map);
-        assert_eq!(merged, static_map);
-    }
 }
