@@ -10,61 +10,6 @@ use tracing::{error, info, warn};
 const MAX_RULE_FILE_SIZE: u64 = 1_048_576;
 const MAX_VISIT_DEPTH: u32 = 64;
 
-#[allow(dead_code)]
-pub fn provider_to_service(provider: &str) -> Option<&'static str> {
-    Some(match provider {
-        "Microsoft-Windows-Kernel-Process" => "process",
-        "Microsoft-Windows-Kernel-Network" => "network",
-        "Microsoft-Windows-Kernel-File" => "file",
-        "Microsoft-Windows-Kernel-Registry" => "registry",
-        "Microsoft-Windows-Sysmon" => "sysmon",
-        "Microsoft-Windows-DNS-Client" => "dns",
-        _ => return None,
-    })
-}
-
-#[allow(dead_code)]
-pub fn provider_to_logsource(provider: &str, category: Option<&str>) -> LogSource {
-    LogSource {
-        product: Some("windows".into()),
-        service: provider_to_service(provider).map(|s| s.to_string()),
-        category: category.map(|c| c.to_string()),
-        ..LogSource::default()
-    }
-}
-
-#[allow(dead_code)]
-pub fn event_id_to_category(event_id: u32, provider: &str) -> Option<String> {
-    if provider == "Microsoft-Windows-Sysmon" {
-        Some(match event_id {
-            1 => "process_creation".to_string(),
-            3 => "network_connection".to_string(),
-            5 => "process_termination".to_string(),
-            10 => "process_access".to_string(),
-            11 => "file_create".to_string(),
-            13 => "registry_event".to_string(),
-            14 => "registry_event".to_string(),
-            17 => "file_delete".to_string(),
-            21 => "pipe_creation".to_string(),
-            22 => "pipe_closed".to_string(),
-            25 => "driver_loaded".to_string(),
-            _ => "sysmon".to_string(),
-        })
-    } else if provider == "Microsoft-Windows-Security-Auditing" {
-        Some(match event_id {
-            4688 => "process_creation".to_string(),
-            4672 => "privilege_use".to_string(),
-            4625 => "login_failure".to_string(),
-            4624 => "login".to_string(),
-            4634 => "logoff".to_string(),
-            4647 => "logoff".to_string(),
-            _ => "security".to_string(),
-        })
-    } else {
-        None
-    }
-}
-
 pub struct SigmaEngine {
     engine: Engine,
     rules_count: usize,

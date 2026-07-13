@@ -164,8 +164,7 @@ async fn stage_4_work_winevt(
             .get("EventID_num")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
-        let category = crate::sigma::engine::event_id_to_category(event_id_num, provider);
-        let logsource = crate::sigma::engine::provider_to_logsource(provider, category.as_deref());
+        let logsource = crate::sigma::mapping::resolve_logsource(&event.channel, provider, event_id_num);
         let matches = engine.evaluate_event_with_logsource(&event_json, &logsource);
 
         for match_result in &matches {
