@@ -10,6 +10,7 @@ use anyhow::Result;
 use config::Config;
 use sigma::engine::SigmaEngine;
 use sigma::loader::{find_rules_dirs, SigmaRepo};
+use sigma::mapping::custom::load_custom_mapping;
 use sigma::mapping::build_logsource_to_channels;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -113,6 +114,7 @@ async fn stage_4_work_winevt(
     retired: &mut HashSet<String>,
     aggregated: &mut HashMap<String, AggregatedRule>,
     stats: &mut Stats,
+    custom_map: &HashMap<String, String>,
 ) -> Result<()> {
     info!(
         "Starting winevt collection on channels: {:?}",
@@ -163,7 +165,7 @@ async fn stage_4_work_winevt(
             .get("EventID_num")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
-        let logsource = crate::sigma::mapping::resolve_logsource(&event.channel, provider, event_id_num);
+        let logsource = crate::sigma::mapping::resolve_logsource(&event.channel, provider, event_id_num, custom_map);
         let matches = engine.evaluate_event_with_logsource(&event_json, &logsource);
 
         for match_result in &matches {
@@ -279,8 +281,8 @@ async fn stage_4_work_winevt(
     Ok(())
 }
 
-fn resolve_channels_from_rules(engine: &SigmaEngine) -> Vec<String> {
-    let map = build_logsource_to_channels();
+fn resolve_channels_from_rules(engine: &SigmaEngine, custom_map: &HashMap<String, String>) -> Vec<String> {
+    let map = build_logsource_to_channels(custom_map);
     let active_services = engine.active_services();
     let all_services = engine.all_services();
     let active_categories = engine.active_categories();
@@ -337,7 +339,7 @@ fn resolve_channels_from_rules(engine: &SigmaEngine) -> Vec<String> {
     channels
 }
 
-async fn setup_pipeline(config: &Config, offline: bool) -> Result<(SigmaEngine, u64, Vec<String>)> {
+async fn setup_pipeline(config: &Config, offline: bool) -> Result<(SigmaEngine, u64, Vec<String>, HashMap<String, String>)> {
     stage_0_init(config).await?;
     stage_1_update_repo(config, offline).await?;
 
@@ -354,19 +356,21 @@ async fn setup_pipeline(config: &Config, offline: bool) -> Result<(SigmaEngine, 
         info!("done: {} rules loaded", rules_count);
     }
 
-    let channels = resolve_channels_from_rules(&engine);
+    let custom_map = load_custom_mapping(PathBuf::from("custom_channels.yaml").as_path());
+    let channels = resolve_channels_from_rules(&engine, &custom_map);
 
     if channels.is_empty() {
         warn!("0 channels resolved — nothing to collect");
     }
 
-    Ok((engine, rules_count, channels))
+    Ok((engine, rules_count, channels, custom_map))
 }
 
 async fn run_cycle(
     channels: Vec<String>,
     engine: &SigmaEngine,
     retired: &mut HashSet<String>,
+    custom_map: &HashMap<String, String>,
 ) -> Result<Stats> {
     let mut stats = Stats {
         rules_loaded: 0,
@@ -381,7 +385,7 @@ async fn run_cycle(
     }
 
     let mut aggregated: HashMap<String, AggregatedRule> = HashMap::new();
-    stage_4_work_winevt(channels, engine, retired, &mut aggregated, &mut stats).await?;
+    stage_4_work_winevt(channels, engine, retired, &mut aggregated, &mut stats, custom_map).await?;
 
     info!(
         "cycle complete: {} events processed, {} matches found, {} regressions generated",
@@ -439,7 +443,7 @@ async fn main() -> Result<()> {
 
     info!("Sigma Regression Generator v{}", env!("CARGO_PKG_VERSION"));
 
-    let (engine, rules_count, cycle_channels) = setup_pipeline(&config, config.offline).await?;
+    let (engine, rules_count, cycle_channels, custom_map) = setup_pipeline(&config, config.offline).await?;
 
     if cycle_channels.is_empty() {
         info!("No channels resolved — exiting cleanly");
@@ -470,7 +474,7 @@ async fn main() -> Result<()> {
         info!("=== cycle {}: collecting… ===", cycle);
 
         let channels = cycle_channels.clone();
-        let mut stats = run_cycle(channels, &engine, &mut retired).await?;
+        let mut stats = run_cycle(channels, &engine, &mut retired, &custom_map).await?;
         stats.rules_loaded = rules_count;
 
         if config.once {
