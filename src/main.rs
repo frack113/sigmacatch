@@ -10,6 +10,7 @@ use anyhow::Result;
 use config::Config;
 use sigma::engine::SigmaEngine;
 use sigma::loader::{find_rules_dirs, SigmaRepo};
+use sigma::mapping::build_logsource_to_channels;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -107,7 +108,7 @@ fn stage_3_load_rules(
 }
 
 async fn stage_4_work_winevt(
-    config: &Config,
+    channels: Vec<String>,
     engine: &SigmaEngine,
     retired: &mut HashSet<String>,
     aggregated: &mut HashMap<String, AggregatedRule>,
@@ -115,12 +116,10 @@ async fn stage_4_work_winevt(
 ) -> Result<()> {
     info!(
         "Starting winevt collection on channels: {:?}",
-        config.channels
+        channels
     );
 
     let (tx, mut rx) = mpsc::channel::<collector::winevt::WinevtEvent>(1024);
-
-    let channels: Vec<String> = config.channels.clone();
 
     // Spawn one task per channel
     let mut collector_tasks = Vec::new();
@@ -280,7 +279,65 @@ async fn stage_4_work_winevt(
     Ok(())
 }
 
-async fn setup_pipeline(config: &Config, offline: bool) -> Result<(SigmaEngine, u64)> {
+fn resolve_channels_from_rules(engine: &SigmaEngine) -> Vec<String> {
+    let map = build_logsource_to_channels();
+    let active_services = engine.active_services();
+    let all_services = engine.all_services();
+    let active_categories = engine.active_categories();
+    let all_categories = engine.all_categories();
+
+    let mut channels: Vec<String> = active_services
+        .iter()
+        .filter_map(|service| map.get(service.as_str()))
+        .flat_map(|targets| targets.iter().map(|t| t.channel.to_string()))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    for category in active_categories {
+        for service in active_services {
+            let composite = format!("{}:{}", service, category);
+            if let Some(targets) = map.get(composite.as_str()) {
+                for t in targets {
+                    channels.push(t.channel.to_string());
+                }
+            }
+        }
+    }
+
+    channels.sort();
+    channels.dedup();
+
+    let mut active: Vec<&str> = active_services.iter().map(|s| s.as_str()).collect();
+    active.sort();
+    info!("Active services: {:?}", active);
+
+    let mut active_cats: Vec<&str> = active_categories.iter().map(|s| s.as_str()).collect();
+    active_cats.sort();
+    info!("Active categories: {:?}", active_cats);
+
+    let skipped: Vec<&str> = all_services
+        .difference(active_services)
+        .map(|s| s.as_str())
+        .collect();
+    if !skipped.is_empty() {
+        info!("Skipped services: {:?} (all rules skipped)", skipped);
+    }
+
+    let skipped_cats: Vec<&str> = all_categories
+        .difference(active_categories)
+        .map(|s| s.as_str())
+        .collect();
+    if !skipped_cats.is_empty() {
+        info!("Skipped categories: {:?} (all rules skipped)", skipped_cats);
+    }
+
+    info!("Channels to collect: {:?}", channels);
+
+    channels
+}
+
+async fn setup_pipeline(config: &Config, offline: bool) -> Result<(SigmaEngine, u64, Vec<String>)> {
     stage_0_init(config).await?;
     stage_1_update_repo(config, offline).await?;
 
@@ -297,11 +354,17 @@ async fn setup_pipeline(config: &Config, offline: bool) -> Result<(SigmaEngine, 
         info!("done: {} rules loaded", rules_count);
     }
 
-    Ok((engine, rules_count))
+    let channels = resolve_channels_from_rules(&engine);
+
+    if channels.is_empty() {
+        warn!("0 channels resolved — nothing to collect");
+    }
+
+    Ok((engine, rules_count, channels))
 }
 
 async fn run_cycle(
-    config: &Config,
+    channels: Vec<String>,
     engine: &SigmaEngine,
     retired: &mut HashSet<String>,
 ) -> Result<Stats> {
@@ -313,8 +376,12 @@ async fn run_cycle(
         status: "Completed".to_string(),
     };
 
+    if channels.is_empty() {
+        return Ok(stats);
+    }
+
     let mut aggregated: HashMap<String, AggregatedRule> = HashMap::new();
-    stage_4_work_winevt(config, engine, retired, &mut aggregated, &mut stats).await?;
+    stage_4_work_winevt(channels, engine, retired, &mut aggregated, &mut stats).await?;
 
     info!(
         "cycle complete: {} events processed, {} matches found, {} regressions generated",
@@ -372,7 +439,12 @@ async fn main() -> Result<()> {
 
     info!("Sigma Regression Generator v{}", env!("CARGO_PKG_VERSION"));
 
-    let (engine, rules_count) = setup_pipeline(&config, config.offline).await?;
+    let (engine, rules_count, cycle_channels) = setup_pipeline(&config, config.offline).await?;
+
+    if cycle_channels.is_empty() {
+        info!("No channels resolved — exiting cleanly");
+        return Ok(());
+    }
 
     let mut retired: HashSet<String> = HashSet::new();
     let running = Arc::new(AtomicBool::new(true));
@@ -397,7 +469,8 @@ async fn main() -> Result<()> {
         cycle += 1;
         info!("=== cycle {}: collecting… ===", cycle);
 
-        let mut stats = run_cycle(&config, &engine, &mut retired).await?;
+        let channels = cycle_channels.clone();
+        let mut stats = run_cycle(channels, &engine, &mut retired).await?;
         stats.rules_loaded = rules_count;
 
         if config.once {

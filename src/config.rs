@@ -21,14 +21,6 @@ impl Default for LogConfig {
     }
 }
 
-fn default_channels() -> Vec<String> {
-    vec![
-        "Microsoft-Windows-Sysmon/Operational".to_string(),
-        "Security".to_string(),
-        "System".to_string(),
-    ]
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -36,8 +28,6 @@ pub struct Config {
     pub author: String,
     pub once: bool,
     pub offline: bool,
-    #[serde(default = "default_channels")]
-    pub channels: Vec<String>,
     pub log: LogConfig,
 }
 
@@ -47,7 +37,6 @@ impl Default for Config {
             author: default_author(),
             once: false,
             offline: false,
-            channels: default_channels(),
             log: LogConfig::default(),
         }
     }
