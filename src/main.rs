@@ -288,12 +288,10 @@ fn resolve_channels_from_rules(engine: &SigmaEngine, custom_map: &HashMap<String
     let active_categories = engine.active_categories();
     let all_categories = engine.all_categories();
 
-    let mut channels: Vec<String> = active_services
+    let mut channels_set: HashSet<String> = active_services
         .iter()
         .filter_map(|service| map.get(service.as_str()))
         .flat_map(|targets| targets.iter().map(|t| t.channel.to_string()))
-        .collect::<HashSet<_>>()
-        .into_iter()
         .collect();
 
     for category in active_categories {
@@ -301,14 +299,14 @@ fn resolve_channels_from_rules(engine: &SigmaEngine, custom_map: &HashMap<String
             let composite = format!("{}:{}", service, category);
             if let Some(targets) = map.get(composite.as_str()) {
                 for t in targets {
-                    channels.push(t.channel.to_string());
+                    channels_set.insert(t.channel.to_string());
                 }
             }
         }
     }
 
+    let mut channels: Vec<String> = channels_set.into_iter().collect();
     channels.sort();
-    channels.dedup();
 
     let mut active: Vec<&str> = active_services.iter().map(|s| s.as_str()).collect();
     active.sort();
