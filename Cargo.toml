@@ -36,7 +36,7 @@ anyhow = "1.0"
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 roxmltree = "0.21"
-whoami = "1.5"
+whoami = "2.1"
 
 [profile.release]
 strip = true

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 fn default_author() -> String {
-    whoami::username()
+    whoami::username().unwrap_or_default()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
