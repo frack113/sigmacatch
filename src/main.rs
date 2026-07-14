@@ -55,9 +55,22 @@ async fn stage_0_init(_config: &Config) -> Result<()> {
     Ok(())
 }
 
-async fn stage_1_update_repo(_config: &Config, offline: bool) -> Result<()> {
-    let sigma_repo = SigmaRepo::new(std::path::Path::new("sigma")).with_offline(offline);
+async fn stage_1_update_repo(_config: &Config, offline: bool, fork_config: Option<&contrib::fork::ForkConfig>) -> Result<()> {
+    let mut sigma_repo = SigmaRepo::new(std::path::Path::new("sigma")).with_offline(offline);
+
+    if let Some(fc) = fork_config {
+        if fc.is_fork {
+            let clone_url = fc.fork_url.clone() + ".git";
+            sigma_repo = sigma_repo.with_remote_url(clone_url);
+        }
+    }
+
     sigma_repo.init().await?;
+
+    if let Some(fc) = fork_config {
+        contrib::branch::create_branch(&sigma_repo.path, &fc.branch_name)?;
+    }
+
     info!("Sigma repository ready");
     Ok(())
 }
@@ -382,9 +395,10 @@ fn resolve_channels_from_rules(
 async fn setup_pipeline(
     config: &Config,
     offline: bool,
+    fork_config: Option<&contrib::fork::ForkConfig>,
 ) -> Result<(SigmaEngine, Vec<String>, HashMap<String, String>)> {
     stage_0_init(config).await?;
-    stage_1_update_repo(config, offline).await?;
+    stage_1_update_repo(config, offline, fork_config).await?;
 
     let existing_rules = stage_2_existing_rules(config);
 
@@ -506,20 +520,25 @@ async fn main() -> Result<()> {
         config.offline = true;
     }
 
+    let mut fork_config: Option<contrib::fork::ForkConfig> = None;
+    let mut branch_name = String::new();
     if config.contrib {
         if config.author.is_empty() {
             anyhow::bail!("config.yaml 'author' field required for contrib workflow.");
         }
         info!("Contrib workflow enabled for user: {}", config.author);
-
-        let fork_config = contrib::fork::detect_fork(&config.author).await?;
-        if !fork_config.is_fork {
-            warn!(
-                "Fork not detected for '{}'. Using SigmaHQ/sigma as remote. \
-                 Push will fail without a fork. Please create a fork at: \
-                 https://github.com/SigmaHQ/sigma/fork",
-                config.author
-            );
+        branch_name = contrib::branch::create_branch_name(&config.author);
+        info!("Branch name: {}", branch_name);
+        fork_config = Some(contrib::fork::detect_fork(&config.author, &branch_name).await?);
+        if let Some(ref fc) = fork_config {
+            if !fc.is_fork {
+                warn!(
+                    "Fork not detected for '{}'. Using SigmaHQ/sigma as remote. \
+                     Push will fail without a fork. Please create a fork at: \
+                     https://github.com/SigmaHQ/sigma/fork",
+                    config.author
+                );
+            }
         }
     }
 
@@ -534,7 +553,7 @@ async fn main() -> Result<()> {
         env!("BUILD_TIME")
     );
 
-    let (engine, cycle_channels, custom_map) = setup_pipeline(&config, config.offline).await?;
+    let (engine, cycle_channels, custom_map) = setup_pipeline(&config, config.offline, fork_config.as_ref()).await?;
 
     if cycle_channels.is_empty() {
         info!("No channels resolved — exiting cleanly");
