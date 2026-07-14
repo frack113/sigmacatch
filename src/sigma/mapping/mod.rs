@@ -4,7 +4,17 @@ pub mod taxonomy;
 use std::collections::HashMap;
 use rsigma_parser::LogSource;
 use taxonomy::{CHANNEL_EVENT_TO_CATEGORY, CHANNEL_TO_SERVICE, PROVIDER_TO_SERVICE};
+use tracing::debug;
 
+/// Resolve LogSource from channel, provider, and event_id.
+///
+/// // INVARIANT: channel > provider > default
+/// Priority order MUST NOT be changed:
+///   1. Channel → service (CHANNEL_TO_SERVICE + custom_map override)
+///   2. Provider → service (PROVIDER_TO_SERVICE) fallback
+///   3. Default: product=windows, service=None, category=None
+///
+/// This invariant is documented in AGENTS.md and architecture-reference.md.
 pub fn resolve_logsource(channel: &str, provider: &str, event_id: u32, custom_map: &HashMap<String, String>) -> LogSource {
     let lookup_service = |ch: &str| -> Option<String> {
         if let Some(service) = custom_map.get(ch) {
@@ -16,6 +26,7 @@ pub fn resolve_logsource(channel: &str, provider: &str, event_id: u32, custom_ma
     if let Some(service) = lookup_service(channel) {
         let composite_key = format!("{}:{}", channel, event_id);
         let category = CHANNEL_EVENT_TO_CATEGORY.get(&composite_key).copied();
+        debug!("LogSource resolved via channel: service={}, category={:?}", service, category);
         return LogSource {
             product: Some("windows".into()),
             service: Some(service),
@@ -25,6 +36,7 @@ pub fn resolve_logsource(channel: &str, provider: &str, event_id: u32, custom_ma
     }
 
     if let Some(service) = PROVIDER_TO_SERVICE.get(provider) {
+        debug!("LogSource resolved via provider fallback: service={}", service);
         return LogSource {
             product: Some("windows".into()),
             service: Some(service.to_string()),
@@ -33,6 +45,7 @@ pub fn resolve_logsource(channel: &str, provider: &str, event_id: u32, custom_ma
         };
     }
 
+    debug!("LogSource resolved via default: product=windows");
     LogSource {
         product: Some("windows".into()),
         service: None,
