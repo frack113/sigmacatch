@@ -238,7 +238,15 @@ async fn stage_4_work_winevt(
         }
 
         for (event_json, raw_xml) in &agg.events {
-            reg.add_event(event_json.clone(), raw_xml.clone());
+            let channel = event_json
+                .get("Channel")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let record_id = event_json
+                .get("EventRecordID_num")
+                .and_then(|v| v.as_u64());
+            reg.add_event(event_json.clone(), raw_xml.clone(), channel, record_id);
         }
         let rule_id = agg
             .header

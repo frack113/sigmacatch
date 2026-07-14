@@ -72,6 +72,22 @@ impl XmlParser {
                 map.insert("Channel".into(), Value::String(channel.to_string()));
             }
 
+            // Extract EventRecordID
+            let event_record_id = system
+                .descendants()
+                .find(|n| n.tag_name().name() == "EventRecordID");
+            if let Some(event_record_id) = event_record_id {
+                if let Some(text) = event_record_id.text() {
+                    map.insert(
+                        "EventRecordID".to_string(),
+                        Value::String(text.to_string()),
+                    );
+                    if let Ok(id) = text.trim().parse::<u64>() {
+                        map.insert("EventRecordID_num".to_string(), Value::Number(id.into()));
+                    }
+                }
+            }
+
             // Extract Version, Level, Task, Keywords
             for field in &["Version", "Level", "Task", "Opcode", "Keywords"] {
                 if let Some(node) = system.descendants().find(|n| n.tag_name().name() == *field) {

@@ -9,6 +9,8 @@ use crate::regression::info_yml::InfoYml;
 pub struct MatchEvent {
     pub event: Value,
     pub raw_xml: String,
+    pub channel: String,
+    pub record_id: Option<u64>,
 }
 
 pub struct RegressionData {
@@ -38,8 +40,8 @@ impl RegressionData {
         }
     }
 
-    pub fn add_event(&mut self, event: Value, raw_xml: String) {
-        self.events.push(MatchEvent { event, raw_xml });
+    pub fn add_event(&mut self, event: Value, raw_xml: String, channel: String, record_id: Option<u64>) {
+        self.events.push(MatchEvent { event, raw_xml, channel, record_id });
     }
 
     pub fn rule_dir(&self) -> Result<PathBuf> {
@@ -90,8 +92,13 @@ impl RegressionData {
             info!("Wrote JSON for rule {:?}", rule_id);
 
             let evtx_path = rule_dir.join(format!("{}.evtx", rule_id));
-            crate::evtx::writer::write_evtx(&event.raw_xml, &evtx_path)
-                .with_context(|| format!("Failed to write EVTX for rule {:?}", rule_id))?;
+            crate::evtx::writer::write_evtx(
+                &event.raw_xml,
+                &event.channel,
+                event.record_id,
+                &evtx_path,
+            )
+            .with_context(|| format!("Failed to write EVTX for rule {:?}", rule_id))?;
             info!("Wrote EVTX for rule {:?}", rule_id);
         }
 
