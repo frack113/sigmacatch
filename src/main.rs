@@ -133,6 +133,8 @@ async fn stage_4_work_winevt(
     stats: &mut Stats,
     custom_map: &HashMap<String, String>,
     author: &str,
+    contrib_enabled: bool,
+    sigma_repo_path: &std::path::Path,
 ) -> Result<()> {
     info!("Starting winevt collection on channels: {:?}", channels);
 
@@ -330,6 +332,14 @@ async fn stage_4_work_winevt(
         }
     }
 
+    // Commit regression data if contrib is enabled
+    if contrib_enabled && !to_generate.is_empty() {
+        let committed_rules: Vec<String> = to_generate.iter().map(|(_, _, rid)| rid.clone()).collect();
+        if let Err(e) = contrib::commit::commit_all_rules(sigma_repo_path, &committed_rules) {
+            warn!("Failed to commit regression data: {}", e);
+        }
+    }
+
     Ok(())
 }
 
@@ -446,6 +456,7 @@ async fn run_cycle(
     retired: &mut HashSet<String>,
     custom_map: &HashMap<String, String>,
     author: &str,
+    contrib_enabled: bool,
 ) -> Result<Stats> {
     let mut stats = Stats {
         events_processed: 0,
@@ -468,6 +479,8 @@ async fn run_cycle(
             &mut stats,
             custom_map,
             author,
+            contrib_enabled,
+            std::path::Path::new("sigma"),
         )
         .await?;
     }
@@ -586,7 +599,7 @@ async fn main() -> Result<()> {
             info!("collecting…");
 
             let channels = cycle_channels.clone();
-            run_cycle(channels, &engine, &mut retired, &custom_map, &config.author).await?;
+            run_cycle(channels, &engine, &mut retired, &custom_map, &config.author, config.contrib).await?;
         }
 
         info!("waiting 30s before next cycle…");

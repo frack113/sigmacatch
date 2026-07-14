@@ -2,4 +2,5 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 pub mod branch;
+pub mod commit;
 pub mod fork;
