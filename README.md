@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2026 sigmacatch contributors -->
+
 # Sigmacatch
 
 Capture real Windows events via the **Windows Event Log API** (`winevt`), match them against [SigmaHQ](https://github.com/SigmaHQ/sigma) rules, and output structured regression data ready for SigmaHQ PRs.
@@ -50,9 +53,10 @@ log:
 ## Cross-compilation (Linux → Windows)
 
 ```bash
-rustup target add x86_64-pc-windows-gnu
-cargo build --release --target x86_64-pc-windows-gnu
+cargo xwin build --release --target x86_64-pc-windows-msvc
 ```
+
+> Nécessite `cargo install cargo-xwin`. Télécharge automatiquement le Windows SDK.
 
 On Linux/macOS the collector is a stub (returns empty vec) — the pipeline still runs end-to-end for testing.
 

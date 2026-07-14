@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;

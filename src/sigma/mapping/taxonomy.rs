@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
 use phf::phf_map;
 
 // ─── Channel → Service (table principale, ~50 entrées) ─────────────────

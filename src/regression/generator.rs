@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
 use anyhow::{Context, Result};
 use rsigma_eval::result::RuleHeader;
 use serde_json::Value;

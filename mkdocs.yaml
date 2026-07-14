@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+site_name: Sigmacatch
+site_description: Headless tool that captures real Windows events via Winevt API and matches them against SigmaHQ rules
+repo_url: https://github.com/frack113/sigmacatch
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  language: en
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: indigo
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: indigo
+      toggle:
+        icon: material/toggle-switch-off
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - content.code.copy
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+
+nav:
+  - Home: index.md
+  - English:
+    - Overview: en/architecture.md
+    - Architecture Reference: en/architecture-reference.md
+    - Build: en/build.md
+    - Output Format: en/output-format.md
+    - Regression Data Format: en/regression-data-format.md
+  - Francais:
+    - Accueil: fr/architecture.md
+    - Référence Architecture: fr/architecture-reference.md
+    - Build: fr/build.md
+    - Format de Sortie: fr/output-format.md
+    - Format des Données de Régression: fr/regression-data-format.md
+
+plugins:
+  - search
+  - i18n:
+      docs_structure: folder
+      languages:
+        - locale: en
+          name: English
+          default: true
+          build: true
+        - locale: fr
+          name: Francais
+          default: false
+          build: true
+          nav_translations:
+            Accueil: Home
+            Overview: Aperçu
+            Architecture Reference: Référence Architecture
+            Build: Build
+            Output Format: Format de Sortie
+            Regression Data Format: Format des Données de Régression
+
+markdown_extensions:
+  - admonition
+  - codehilite
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences

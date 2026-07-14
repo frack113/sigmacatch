@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
 // Custom channel mappings — loads custom_channels.yaml to extend/override static taxonomy.
 
 use serde::Deserialize;
