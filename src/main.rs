@@ -590,6 +590,28 @@ async fn main() -> Result<()> {
     loop {
         if !running.load(Ordering::Relaxed) {
             info!("Interrupted, shutting down");
+            if let Some(ref fc) = fork_config {
+                if fc.is_fork {
+                    if let Err(e) = contrib::branch::push_branch(
+                        std::path::Path::new("sigma"),
+                        &fc.branch_name,
+                        "origin",
+                    ) {
+                        warn!("Failed to push branch: {}", e);
+                    } else {
+                        info!(
+                            "Branch '{}' pushed to origin. Next step: create PR at https://github.com/SigmaHQ/sigma/pulls",
+                            fc.branch_name
+                        );
+                    }
+                } else {
+                    warn!(
+                        "No fork detected for '{}'. Cannot push. \
+                         Please create a fork at https://github.com/SigmaHQ/sigma/fork",
+                        config.author
+                    );
+                }
+            }
             break;
         }
 
