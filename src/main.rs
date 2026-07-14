@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, info_span, warn};
 
 struct Stats {
     events_processed: u64,
@@ -160,6 +160,7 @@ async fn stage_4_work_winevt(
         };
 
         // Evaluate against all rules
+        let _eval_span = info_span!("evaluate", event_id = event.event_id, channel = event.channel).entered();
         let provider = event_json
             .get("ProviderName")
             .and_then(|v| v.as_str())
@@ -274,6 +275,7 @@ async fn stage_4_work_winevt(
             to_generate.len()
         );
         for (reg, rule_path_opt, rule_id) in &to_generate {
+            let _gen_span = info_span!("generate", rule_id = %rule_id).entered();
             match reg.generate() {
                 Ok(_) => {
                     stats.regression_data_generated += 1;
@@ -398,6 +400,23 @@ async fn setup_pipeline(
     Ok((engine, channels, custom_map))
 }
 
+/// Configure Windows console for UTF-8 output and ANSI escape sequences.
+/// Required for proper emoji/unicode rendering in Windows Terminal.
+#[cfg(windows)]
+fn setup_console() {
+    use windows::Win32::System::Console::*;
+    unsafe {
+        let _ = SetConsoleOutputCP(65001);
+        if let Ok(handle) = GetStdHandle(STD_OUTPUT_HANDLE) {
+            let mut mode = CONSOLE_MODE::default();
+            if GetConsoleMode(handle, &mut mode).is_ok() {
+                mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+                let _ = SetConsoleMode(handle, mode);
+            }
+        }
+    }
+}
+
 async fn run_cycle(
     channels: Vec<String>,
     engine: &SigmaEngine,
@@ -416,20 +435,25 @@ async fn run_cycle(
     }
 
     let mut aggregated: HashMap<String, AggregatedRule> = HashMap::new();
-    stage_4_work_winevt(
-        channels,
-        engine,
-        retired,
-        &mut aggregated,
-        &mut stats,
-        custom_map,
-        author,
-    )
-    .await?;
+    {
+        let _span = info_span!("collect").entered();
+        stage_4_work_winevt(
+            channels,
+            engine,
+            retired,
+            &mut aggregated,
+            &mut stats,
+            custom_map,
+            author,
+        )
+        .await?;
+    }
 
     info!(
-        "cycle complete: {} events processed, {} matches found, {} regressions generated",
-        stats.events_processed, stats.matches_found, stats.regression_data_generated
+        events_processed = stats.events_processed,
+        matches_found = stats.matches_found,
+        regression_data_generated = stats.regression_data_generated,
+        "cycle complete"
     );
 
     Ok(stats)
@@ -473,6 +497,9 @@ async fn main() -> Result<()> {
         config.offline = true;
     }
 
+    #[cfg(windows)]
+    setup_console();
+
     let _guard = logger::init(&config)?;
 
     info!(
@@ -509,10 +536,13 @@ async fn main() -> Result<()> {
         }
 
         cycle += 1;
-        info!("=== cycle {}: collecting… ===", cycle);
+        {
+            let _span = info_span!("cycle", cycle_id = cycle).entered();
+            info!("collecting…");
 
-        let channels = cycle_channels.clone();
-        run_cycle(channels, &engine, &mut retired, &custom_map, &config.author).await?;
+            let channels = cycle_channels.clone();
+            run_cycle(channels, &engine, &mut retired, &custom_map, &config.author).await?;
+        }
 
         info!("waiting 30s before next cycle…");
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
