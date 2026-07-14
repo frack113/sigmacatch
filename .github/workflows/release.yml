@@ -49,13 +49,4 @@ jobs:
           body_path: CHANGELOG.md
           files: artifacts/sigmacatch.exe
 
-  crates-io:
-    name: Publish to crates.io
-    runs-on: windows-latest
-    env:
-      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo publish --all-features
+
