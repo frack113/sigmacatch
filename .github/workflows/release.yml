@@ -1,0 +1,39 @@
+name: Create new release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  github:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: taiki-e/install-action@typos
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+      - run: git-cliff --latest -o CHANGELOG.md
+      - uses: softprops/action-gh-release@v3
+        with:
+          body_path: CHANGELOG.md
+
+  crates-io:
+    name: Publish to crates.io
+    runs-on: windows-latest
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo publish --all-features
