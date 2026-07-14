@@ -160,7 +160,12 @@ async fn stage_4_work_winevt(
         };
 
         // Evaluate against all rules
-        let _eval_span = info_span!("evaluate", event_id = event.event_id, channel = event.channel).entered();
+        let _eval_span = info_span!(
+            "evaluate",
+            event_id = event.event_id,
+            channel = event.channel
+        )
+        .entered();
         let provider = event_json
             .get("ProviderName")
             .and_then(|v| v.as_str())
