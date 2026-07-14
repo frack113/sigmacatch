@@ -30,24 +30,6 @@ pub fn init(config: &Config) -> Result<WorkerGuard> {
     fs::create_dir_all(&log_dir)
         .with_context(|| format!("Failed to create log directory: {}", log_dir.display()))?;
 
-    if config.log.clear_on_start {
-        let canonical_log_dir = log_dir
-            .canonicalize()
-            .with_context(|| format!("Failed to resolve log directory: {}", log_dir.display()))?;
-        if let Ok(entries) = fs::read_dir(&log_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().is_some_and(|e| e == "log") {
-                    if let Ok(canonical_entry) = path.canonicalize() {
-                        if canonical_entry.starts_with(&canonical_log_dir) {
-                            let _ = fs::remove_file(&path);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     let stderr_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 

@@ -21,11 +21,9 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 struct Stats {
-    rules_loaded: u64,
     events_processed: u64,
     matches_found: u64,
     regression_data_generated: u64,
-    status: String,
 }
 
 struct AggregatedRule {
@@ -373,7 +371,7 @@ fn resolve_channels_from_rules(
 async fn setup_pipeline(
     config: &Config,
     offline: bool,
-) -> Result<(SigmaEngine, u64, Vec<String>, HashMap<String, String>)> {
+) -> Result<(SigmaEngine, Vec<String>, HashMap<String, String>)> {
     stage_0_init(config).await?;
     stage_1_update_repo(config, offline).await?;
 
@@ -397,7 +395,7 @@ async fn setup_pipeline(
         warn!("0 channels resolved — nothing to collect");
     }
 
-    Ok((engine, rules_count, channels, custom_map))
+    Ok((engine, channels, custom_map))
 }
 
 async fn run_cycle(
@@ -408,11 +406,9 @@ async fn run_cycle(
     author: &str,
 ) -> Result<Stats> {
     let mut stats = Stats {
-        rules_loaded: 0,
         events_processed: 0,
         matches_found: 0,
         regression_data_generated: 0,
-        status: "Completed".to_string(),
     };
 
     if channels.is_empty() {
@@ -461,9 +457,6 @@ async fn main() -> Result<()> {
         if let Some(author) = flag_value("--author") {
             config.author = author;
         }
-        if flag("--once") {
-            config.once = true;
-        }
         if flag("--offline") {
             config.offline = true;
         }
@@ -476,19 +469,19 @@ async fn main() -> Result<()> {
     if let Some(author) = flag_value("--author") {
         config.author = author;
     }
-    if flag("--once") {
-        config.once = true;
-    }
     if flag("--offline") {
         config.offline = true;
     }
 
     let _guard = logger::init(&config)?;
 
-    info!("Sigma Regression Generator v{} — build {}", env!("CARGO_PKG_VERSION"), env!("BUILD_TIME"));
+    info!(
+        "Sigma Regression Generator v{} — build {}",
+        env!("CARGO_PKG_VERSION"),
+        env!("BUILD_TIME")
+    );
 
-    let (engine, rules_count, cycle_channels, custom_map) =
-        setup_pipeline(&config, config.offline).await?;
+    let (engine, cycle_channels, custom_map) = setup_pipeline(&config, config.offline).await?;
 
     if cycle_channels.is_empty() {
         info!("No channels resolved — exiting cleanly");
@@ -519,21 +512,7 @@ async fn main() -> Result<()> {
         info!("=== cycle {}: collecting… ===", cycle);
 
         let channels = cycle_channels.clone();
-        let mut stats =
-            run_cycle(channels, &engine, &mut retired, &custom_map, &config.author).await?;
-        stats.rules_loaded = rules_count;
-
-        if config.once {
-            let output = serde_json::json!({
-                "rules_loaded": stats.rules_loaded,
-                "events_processed": stats.events_processed,
-                "matches_found": stats.matches_found,
-                "regression_data_generated": stats.regression_data_generated,
-                "status": stats.status,
-            });
-            println!("{}", serde_json::to_string_pretty(&output)?);
-            break;
-        }
+        run_cycle(channels, &engine, &mut retired, &custom_map, &config.author).await?;
 
         info!("waiting 30s before next cycle…");
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;

@@ -9,14 +9,12 @@ fn default_author() -> String {
 #[serde(default)]
 pub struct LogConfig {
     pub level_file: String,
-    pub clear_on_start: bool,
 }
 
 impl Default for LogConfig {
     fn default() -> Self {
         Self {
             level_file: "debug".into(),
-            clear_on_start: true,
         }
     }
 }
@@ -26,7 +24,6 @@ impl Default for LogConfig {
 pub struct Config {
     #[serde(default = "default_author")]
     pub author: String,
-    pub once: bool,
     pub offline: bool,
     pub log: LogConfig,
 }
@@ -35,7 +32,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             author: default_author(),
-            once: false,
             offline: false,
             log: LogConfig::default(),
         }

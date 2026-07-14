@@ -15,7 +15,7 @@ Headless tool that captures real Windows events via **Windows Event Log API** (w
 4. Evaluate events against all loaded rules
 5. Generate regression output (JSON + EVTX template + info.yml)
 
-**Loop:** every 30s by default, or single-run (`--once`).
+**Loop:** every 30s continuously.
 
 **Platform:** Windows (winevt + Sysmon required). Linux/macOS: no-op stub.
 
@@ -52,14 +52,12 @@ src/
 
 ```yaml
 author: "username"          # whoami::username() by default
-once: false                 # true = single cycle then exit
 offline: false              # true = use existing sigma/ without git
 log:
   level_file: "debug"       # tracing file level
-  clear_on_start: true      # delete old logs
 ```
 
-**CLI flags:** `--create-config`, `--author <name>`, `--once`, `--offline`
+**CLI flags:** `--create-config`, `--author <name>`, `--offline`
 
 ---
 
@@ -176,12 +174,11 @@ regression_data/<rule_rel_path>/
 ### Post-cycle
 
 ```
-If config.once → print Stats JSON → exit
-Else → sleep 30s → loop
+Sleep 30s → loop
 Ctrl+C → running.store(false) → break
 ```
 
-**Stats:** `{ rules_loaded, events_processed, matches_found, regression_data_generated, status }`
+**Stats:** `{ events_processed, matches_found, regression_data_generated }`
 
 ---
 
@@ -318,7 +315,6 @@ cargo build --release --target x86_64-pc-windows-gnu   # cross-compile Windows
 sigmacatch
     [--create-config]      # create config.yaml with defaults
     [--author <name>]      # override username
-    [--once]               # single cycle then exit
     [--offline]            # use existing sigma/ without git
 ```
 
@@ -329,7 +325,7 @@ sigmacatch
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  config.yaml                                                            │
-│    author, once, offline, log.level_file, clear_on_start               │
+│    author, offline, log.level_file                                       │
 └──────────────────────┬──────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -399,9 +395,7 @@ sigmacatch
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  POST-CYCLE                                                             │
-│  Stats JSON → stdout                                                    │
-│    ├── config.once → exit                                                │
-│    └── sleep 30s → loop                                                  │
+│    sleep 30s → loop                                                     │
 │  Ctrl+C → running.store(false) → break                                  │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
