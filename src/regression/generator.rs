@@ -81,7 +81,7 @@ impl RegressionData {
             Some(format!(
                 "{}/{}",
                 self.output_path.file_name()?.to_string_lossy(),
-                rel_path.display()
+                rel_path.display().to_string().replace('\\', "/")
             ))
         })
     }
@@ -120,9 +120,8 @@ impl RegressionData {
             let evtx_name = format!("{}.evtx", rule_id);
             rule_dir
                 .join(&evtx_name)
-                .strip_prefix(&self.output_path)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| evtx_name)
+                .to_string_lossy()
+                .replace('\\', "/")
         } else {
             String::new()
         };
