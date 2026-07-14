@@ -28,11 +28,9 @@ On first run, a `config.yaml` is created with defaults:
 
 ```yaml
 author: "your-username"
-once: false
 offline: false
 log:
   level_file: "debug"
-  clear_on_start: true
 ```
 
 ### CLI flags
@@ -40,7 +38,6 @@ log:
 | Flag | Description |
 |------|-------------|
 | `--author <name>` | Override detected username |
-| `--once` | Single cycle then exit |
 | `--offline` | Use existing SigmaHQ repo (no git fetch) |
 | `--create-config` | Create `config.yaml` with defaults |
 

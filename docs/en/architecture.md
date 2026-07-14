@@ -14,7 +14,7 @@ src/
 │   ├── mod.rs           # pub mod winevt
 │   └── winevt.rs        # WinevtCollector (EvtQueryW, EvtNext, EvtRender)
 ├── evtx/
-│   └── writer.rs        # write_evtx() via EvtWriteFile API (Winevt XML → valid EVTX)
+│   └── writer.rs        # write_evtx() via EvtExportLog API (→ valid EVTX or .xml fallback)
 ├── parser/
 │   └── mod.rs           # XmlParser (Winevt XML → flat JSON)
 └── regression/
@@ -32,6 +32,7 @@ src/
 5. Build skip set by scanning `regression_data/rules/` + `sigma/regression_data/` for existing `info.yml` → `HashSet<String>` of rule IDs
 6. Load Sigma rules from all `rules*` dirs, **excluding skipped rule IDs**; post-parse filter via `rule.logsource.product` filters non-Windows rules (sole allowed optimization)
 7. Collect events via `WinevtCollector` (channels from config) → `Vec<WinevtEvent>`:
+   - Each event carries `event_json: Option<Value>` (pre-parsed by collector, XmlParser fallback if None)
    - Each event's `LogSource` is derived from the **channel** via `resolve_logsource` (channel → service > provider → service > default)
    - Evaluate against **all loaded rules** via `evaluate_event_with_logsource(event, logsource)` — **no event lost**
    - Aggregate matches by `rule_id` in `HashMap<String, AggregatedRule>`
@@ -49,6 +50,7 @@ src/
 - **LogSource derived from channel ETW** (`resolve_logsource`), with provider as fallback.
   - Priority: channel → service > provider → service > default
   - See `# INVARIANT:` comment in `src/sigma/mapping/mod.rs`
-- **Valid EVTX via `EvtWriteFile`**: raw Winevt XML (`WinevtEvent.raw_xml`) is written directly to a `.evtx` binary file via the Winevt API.
+- **EVTX via `EvtExportLog`**: re-queries the event by RecordID from the live log. On success → binary `.evtx`. On failure (event rotated out of retention) or non-Windows → `.xml` fallback (raw XML, not invalid binary).
+  - **Known limitation**: race condition with log retention — if the event has been purged between collection and export, `EvtExportLog` fails silently (`ERROR_EVT_QUERY_RESULT_STALE`).
 
 > Skip set details, key design decisions, and skip set construction logic are in [`architecture-reference.md`](architecture-reference.md) (Stages 2, 5, 6, 7).

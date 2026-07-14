@@ -18,26 +18,26 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, info_span, warn};
 
 struct Stats {
-    rules_loaded: u64,
     events_processed: u64,
     matches_found: u64,
     regression_data_generated: u64,
-    status: String,
 }
 
 struct AggregatedRule {
     header: rsigma_eval::result::RuleHeader,
-    events: Vec<(serde_json::Value, String)>,
+    events: Vec<(serde_json::Value, String, String)>,
     rule_path: Option<PathBuf>,
+    description: Option<String>,
 }
 
 async fn stage_0_init(_config: &Config) -> Result<()> {
     info!("ensuring directory structure…");
     std::fs::create_dir_all("sigma")?;
     std::fs::create_dir_all("regression_data")?;
+    std::fs::create_dir_all("regression_data/rules")?;
     std::fs::create_dir_all("logs")?;
 
     let config_path = PathBuf::from("config.yaml");
@@ -115,6 +115,7 @@ async fn stage_4_work_winevt(
     aggregated: &mut HashMap<String, AggregatedRule>,
     stats: &mut Stats,
     custom_map: &HashMap<String, String>,
+    author: &str,
 ) -> Result<()> {
     info!("Starting winevt collection on channels: {:?}", channels);
 
@@ -140,20 +141,31 @@ async fn stage_4_work_winevt(
     while let Some(event) = rx.recv().await {
         stats.events_processed += 1;
 
-        // Parse XML → JSON
-        let json_parser = parser::XmlParser {};
-        let event_json = match json_parser.parse(&event.raw_xml) {
-            Ok(json) => json,
-            Err(e) => {
-                warn!(
-                    "Failed to parse event XML (EventID={}, channel={}): {} — skipping",
-                    event.event_id, event.channel, e.xml_truncated
-                );
-                continue;
+        // Use pre-parsed JSON from collector, fall back to parsing XML
+        let event_json = match event.event_json {
+            Some(json) => json,
+            None => {
+                let json_parser = parser::XmlParser {};
+                match json_parser.parse(&event.raw_xml) {
+                    Ok(json) => json,
+                    Err(e) => {
+                        warn!(
+                            "Failed to parse event XML (EventID={}, channel={}): {} — skipping",
+                            event.event_id, event.channel, e.xml_truncated
+                        );
+                        continue;
+                    }
+                }
             }
         };
 
         // Evaluate against all rules
+        let _eval_span = info_span!(
+            "evaluate",
+            event_id = event.event_id,
+            channel = event.channel
+        )
+        .entered();
         let provider = event_json
             .get("ProviderName")
             .and_then(|v| v.as_str())
@@ -191,10 +203,13 @@ async fn stage_4_work_winevt(
                     header: match_result.header.clone(),
                     events: Vec::new(),
                     rule_path: engine.rule_path(&rule_id).cloned(),
+                    description: engine.rule_description(&rule_id).map(|s| s.to_string()),
                 });
-            entry
-                .events
-                .push((event_json.clone(), event.raw_xml.clone()));
+            entry.events.push((
+                event_json.clone(),
+                event.raw_xml.clone(),
+                provider.to_string(),
+            ));
         }
     }
 
@@ -227,14 +242,27 @@ async fn stage_4_work_winevt(
             agg.header.clone(),
             std::path::Path::new("regression_data"),
             rule_rel_path.as_deref(),
-            None,
+            Some(author),
+            agg.description.as_deref(),
         );
         if reg.exists() {
             continue;
         }
 
-        for (event_json, raw_xml) in &agg.events {
-            reg.add_event(event_json.clone(), raw_xml.clone());
+        for (event_json, raw_xml, provider) in &agg.events {
+            let channel = event_json
+                .get("Channel")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let record_id = event_json.get("EventRecordID_num").and_then(|v| v.as_u64());
+            reg.add_event(
+                event_json.clone(),
+                raw_xml.clone(),
+                channel,
+                record_id,
+                provider.clone(),
+            );
         }
         let rule_id = agg
             .header
@@ -252,6 +280,7 @@ async fn stage_4_work_winevt(
             to_generate.len()
         );
         for (reg, rule_path_opt, rule_id) in &to_generate {
+            let _gen_span = info_span!("generate", rule_id = %rule_id).entered();
             match reg.generate() {
                 Ok(_) => {
                     stats.regression_data_generated += 1;
@@ -260,15 +289,19 @@ async fn stage_4_work_winevt(
                     let rel_dir = reg
                         .sigma_rel_dir()
                         .unwrap_or_else(|| format!("regression_data/rules/{}", rule_id));
-                    let tests_path = format!("{}/info.yml", rel_dir);
-                    let append =
-                        format!("\nregression_tests_path: {}", tests_path.replace('\\', "/"));
+                    let tests_path = format!("{}/info.yml", rel_dir.replace('\\', "/"));
                     if let Some(rule_yaml_path) = rule_path_opt {
-                        if let Ok(mut file) = std::fs::OpenOptions::new()
-                            .append(true)
-                            .open(rule_yaml_path)
-                        {
-                            let _ = std::io::Write::write_all(&mut file, append.as_bytes());
+                        if let Ok(content) = std::fs::read(rule_yaml_path) {
+                            let needs_newline =
+                                !content.is_empty() && *content.last().unwrap() != b'\n';
+                            let prefix = if needs_newline { "\n" } else { "" };
+                            let line = format!("{}regression_tests_path: {}\n", prefix, tests_path);
+                            let _ = std::fs::OpenOptions::new()
+                                .append(true)
+                                .open(rule_yaml_path)
+                                .and_then(|mut file| {
+                                    std::io::Write::write_all(&mut file, line.as_bytes())
+                                });
                         }
                     }
                 }
@@ -345,7 +378,7 @@ fn resolve_channels_from_rules(
 async fn setup_pipeline(
     config: &Config,
     offline: bool,
-) -> Result<(SigmaEngine, u64, Vec<String>, HashMap<String, String>)> {
+) -> Result<(SigmaEngine, Vec<String>, HashMap<String, String>)> {
     stage_0_init(config).await?;
     stage_1_update_repo(config, offline).await?;
 
@@ -369,7 +402,24 @@ async fn setup_pipeline(
         warn!("0 channels resolved — nothing to collect");
     }
 
-    Ok((engine, rules_count, channels, custom_map))
+    Ok((engine, channels, custom_map))
+}
+
+/// Configure Windows console for UTF-8 output and ANSI escape sequences.
+/// Required for proper emoji/unicode rendering in Windows Terminal.
+#[cfg(windows)]
+fn setup_console() {
+    use windows::Win32::System::Console::*;
+    unsafe {
+        let _ = SetConsoleOutputCP(65001);
+        if let Ok(handle) = GetStdHandle(STD_OUTPUT_HANDLE) {
+            let mut mode = CONSOLE_MODE::default();
+            if GetConsoleMode(handle, &mut mode).is_ok() {
+                mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+                let _ = SetConsoleMode(handle, mode);
+            }
+        }
+    }
 }
 
 async fn run_cycle(
@@ -377,13 +427,12 @@ async fn run_cycle(
     engine: &SigmaEngine,
     retired: &mut HashSet<String>,
     custom_map: &HashMap<String, String>,
+    author: &str,
 ) -> Result<Stats> {
     let mut stats = Stats {
-        rules_loaded: 0,
         events_processed: 0,
         matches_found: 0,
         regression_data_generated: 0,
-        status: "Completed".to_string(),
     };
 
     if channels.is_empty() {
@@ -391,19 +440,25 @@ async fn run_cycle(
     }
 
     let mut aggregated: HashMap<String, AggregatedRule> = HashMap::new();
-    stage_4_work_winevt(
-        channels,
-        engine,
-        retired,
-        &mut aggregated,
-        &mut stats,
-        custom_map,
-    )
-    .await?;
+    {
+        let _span = info_span!("collect").entered();
+        stage_4_work_winevt(
+            channels,
+            engine,
+            retired,
+            &mut aggregated,
+            &mut stats,
+            custom_map,
+            author,
+        )
+        .await?;
+    }
 
     info!(
-        "cycle complete: {} events processed, {} matches found, {} regressions generated",
-        stats.events_processed, stats.matches_found, stats.regression_data_generated
+        events_processed = stats.events_processed,
+        matches_found = stats.matches_found,
+        regression_data_generated = stats.regression_data_generated,
+        "cycle complete"
     );
 
     Ok(stats)
@@ -431,9 +486,6 @@ async fn main() -> Result<()> {
         if let Some(author) = flag_value("--author") {
             config.author = author;
         }
-        if flag("--once") {
-            config.once = true;
-        }
         if flag("--offline") {
             config.offline = true;
         }
@@ -446,19 +498,22 @@ async fn main() -> Result<()> {
     if let Some(author) = flag_value("--author") {
         config.author = author;
     }
-    if flag("--once") {
-        config.once = true;
-    }
     if flag("--offline") {
         config.offline = true;
     }
 
+    #[cfg(windows)]
+    setup_console();
+
     let _guard = logger::init(&config)?;
 
-    info!("Sigma Regression Generator v{}", env!("CARGO_PKG_VERSION"));
+    info!(
+        "Sigma Regression Generator v{} — build {}",
+        env!("CARGO_PKG_VERSION"),
+        env!("BUILD_TIME")
+    );
 
-    let (engine, rules_count, cycle_channels, custom_map) =
-        setup_pipeline(&config, config.offline).await?;
+    let (engine, cycle_channels, custom_map) = setup_pipeline(&config, config.offline).await?;
 
     if cycle_channels.is_empty() {
         info!("No channels resolved — exiting cleanly");
@@ -486,22 +541,12 @@ async fn main() -> Result<()> {
         }
 
         cycle += 1;
-        info!("=== cycle {}: collecting… ===", cycle);
+        {
+            let _span = info_span!("cycle", cycle_id = cycle).entered();
+            info!("collecting…");
 
-        let channels = cycle_channels.clone();
-        let mut stats = run_cycle(channels, &engine, &mut retired, &custom_map).await?;
-        stats.rules_loaded = rules_count;
-
-        if config.once {
-            let output = serde_json::json!({
-                "rules_loaded": stats.rules_loaded,
-                "events_processed": stats.events_processed,
-                "matches_found": stats.matches_found,
-                "regression_data_generated": stats.regression_data_generated,
-                "status": stats.status,
-            });
-            println!("{}", serde_json::to_string_pretty(&output)?);
-            break;
+            let channels = cycle_channels.clone();
+            run_cycle(channels, &engine, &mut retired, &custom_map, &config.author).await?;
         }
 
         info!("waiting 30s before next cycle…");

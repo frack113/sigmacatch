@@ -9,6 +9,9 @@ use crate::regression::info_yml::InfoYml;
 pub struct MatchEvent {
     pub event: Value,
     pub raw_xml: String,
+    pub channel: String,
+    pub record_id: Option<u64>,
+    pub provider: String,
 }
 
 pub struct RegressionData {
@@ -17,6 +20,7 @@ pub struct RegressionData {
     pub output_path: PathBuf,
     pub rule_rel_path: Option<PathBuf>,
     pub author: Option<String>,
+    pub description: Option<String>,
 }
 
 impl RegressionData {
@@ -25,6 +29,7 @@ impl RegressionData {
         output_path: &Path,
         rule_rel_path: Option<&Path>,
         author: Option<&str>,
+        description: Option<&str>,
     ) -> Self {
         Self {
             header,
@@ -32,11 +37,25 @@ impl RegressionData {
             output_path: output_path.to_path_buf(),
             rule_rel_path: rule_rel_path.map(|p| p.to_path_buf()),
             author: author.map(|s| s.to_string()),
+            description: description.map(|s| s.to_string()),
         }
     }
 
-    pub fn add_event(&mut self, event: Value, raw_xml: String) {
-        self.events.push(MatchEvent { event, raw_xml });
+    pub fn add_event(
+        &mut self,
+        event: Value,
+        raw_xml: String,
+        channel: String,
+        record_id: Option<u64>,
+        provider: String,
+    ) {
+        self.events.push(MatchEvent {
+            event,
+            raw_xml,
+            channel,
+            record_id,
+            provider,
+        });
     }
 
     pub fn rule_dir(&self) -> Result<PathBuf> {
@@ -62,7 +81,7 @@ impl RegressionData {
             Some(format!(
                 "{}/{}",
                 self.output_path.file_name()?.to_string_lossy(),
-                rel_path.display()
+                rel_path.display().to_string().replace('\\', "/")
             ))
         })
     }
@@ -87,8 +106,13 @@ impl RegressionData {
             info!("Wrote JSON for rule {:?}", rule_id);
 
             let evtx_path = rule_dir.join(format!("{}.evtx", rule_id));
-            crate::evtx::writer::write_evtx(&event.raw_xml, &evtx_path)
-                .with_context(|| format!("Failed to write EVTX for rule {:?}", rule_id))?;
+            crate::evtx::writer::write_evtx(
+                &event.raw_xml,
+                &event.channel,
+                event.record_id,
+                &evtx_path,
+            )
+            .with_context(|| format!("Failed to write EVTX for rule {:?}", rule_id))?;
             info!("Wrote EVTX for rule {:?}", rule_id);
         }
 
@@ -96,9 +120,8 @@ impl RegressionData {
             let evtx_name = format!("{}.evtx", rule_id);
             rule_dir
                 .join(&evtx_name)
-                .strip_prefix(&self.output_path)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| evtx_name)
+                .to_string_lossy()
+                .replace('\\', "/")
         } else {
             String::new()
         };
@@ -108,12 +131,20 @@ impl RegressionData {
             .as_deref()
             .unwrap_or("Sigma Regression Generator");
 
+        let description = self.description.as_deref().unwrap_or("");
+
+        let provider = first
+            .map(|e| e.provider.as_str())
+            .unwrap_or("Microsoft-Windows-Sysmon");
+
         let info = InfoYml::new(
             rule_id,
             &self.header.rule_title,
             match_count,
             &sigma_evtx_path,
             author,
+            description,
+            provider,
         );
         let info_path = rule_dir.join("info.yml");
         info.save(&info_path)?;

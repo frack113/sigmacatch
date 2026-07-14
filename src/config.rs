@@ -5,18 +5,36 @@ fn default_author() -> String {
     whoami::username().unwrap_or_default()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl LogLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LogLevel::Debug => "debug",
+            LogLevel::Info => "info",
+            LogLevel::Warn => "warn",
+            LogLevel::Error => "error",
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LogConfig {
-    pub level_file: String,
-    pub clear_on_start: bool,
+    pub level_file: LogLevel,
 }
 
 impl Default for LogConfig {
     fn default() -> Self {
         Self {
-            level_file: "debug".into(),
-            clear_on_start: true,
+            level_file: LogLevel::Debug,
         }
     }
 }
@@ -26,7 +44,6 @@ impl Default for LogConfig {
 pub struct Config {
     #[serde(default = "default_author")]
     pub author: String,
-    pub once: bool,
     pub offline: bool,
     pub log: LogConfig,
 }
@@ -35,7 +52,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             author: default_author(),
-            once: false,
             offline: false,
             log: LogConfig::default(),
         }

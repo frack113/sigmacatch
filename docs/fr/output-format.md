@@ -57,7 +57,7 @@ rule_metadata:
 regression_tests_info:
     - name: Positive Detection Test
       type: evtx
-      provider: Microsoft-Windows-Sysmon
+      provider: Microsoft-Windows-Sysmon                # extrait dynamiquement du ProviderName de l'event
       match_count: 1                           # un event par entrée de test
       path: "regression_data/<rule_rel_path>/<rule_id>.evtx"  # chemin relatif vers le fichier EVTX
 ```
@@ -74,6 +74,6 @@ regression_tests_path: regression_data/rules/<rule_rel_path>/info.yml
 
 - **Un event par règle** : chaque répertoire de régression contient exactement un event JSON.
   Seul le premier event correspondant est capturé.
-- **EVTX binaire valide** : `<rule_id>.evtx` est écrit via `EvtWriteFile` API (Windows) ou XML brut (non-Windows).
-  Le XML Winevt brut (`WinevtEvent.raw_xml`) est écrit directement dans le fichier EVTX.
-  Sur Windows, le format est identique à celui généré par Winevt (valide pour hayabusa/chainsaw).
+- **EVTX binaire valide** : `<rule_id>.evtx` est écrit via `EvtExportLog` API (Windows) qui re-queries l'event par RecordID depuis le live log.
+  Si `EvtExportLog` échoue (event purgé) ou sur non-Windows → fallback `.xml` (raw XML, pas de binaire invalide).
+  Le `.json` compagnon porte les données réelles pour le matching Sigma.

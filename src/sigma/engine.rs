@@ -14,6 +14,7 @@ pub struct SigmaEngine {
     engine: Engine,
     rules_count: usize,
     rule_paths: HashMap<String, PathBuf>,
+    rule_descriptions: HashMap<String, String>,
     all_services: HashSet<String>,
     active_services: HashSet<String>,
     all_categories: HashSet<String>,
@@ -36,6 +37,7 @@ impl Default for SigmaEngine {
             engine,
             rules_count: 0,
             rule_paths: HashMap::new(),
+            rule_descriptions: HashMap::new(),
             all_services: HashSet::new(),
             active_services: HashSet::new(),
             all_categories: HashSet::new(),
@@ -282,6 +284,9 @@ impl SigmaEngine {
         for rule in &collection.rules {
             if let Some(ref id) = rule.id {
                 self.rule_paths.insert(id.clone(), path.to_path_buf());
+                if let Some(ref desc) = rule.description {
+                    self.rule_descriptions.insert(id.clone(), desc.clone());
+                }
             }
         }
 
@@ -299,6 +304,10 @@ impl SigmaEngine {
 
     pub fn rule_path(&self, rule_id: &str) -> Option<&PathBuf> {
         self.rule_paths.get(rule_id)
+    }
+
+    pub fn rule_description(&self, rule_id: &str) -> Option<&str> {
+        self.rule_descriptions.get(rule_id).map(|s| s.as_str())
     }
 
     pub fn active_services(&self) -> &HashSet<String> {
