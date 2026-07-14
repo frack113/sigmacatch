@@ -485,7 +485,7 @@ async fn main() -> Result<()> {
 
     let _guard = logger::init(&config)?;
 
-    info!("Sigma Regression Generator v{}", env!("CARGO_PKG_VERSION"));
+    info!("Sigma Regression Generator v{} — build {}", env!("CARGO_PKG_VERSION"), env!("BUILD_TIME"));
 
     let (engine, rules_count, cycle_channels, custom_map) =
         setup_pipeline(&config, config.offline).await?;
