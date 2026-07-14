@@ -17,6 +17,7 @@ pub struct RegressionData {
     pub output_path: PathBuf,
     pub rule_rel_path: Option<PathBuf>,
     pub author: Option<String>,
+    pub description: Option<String>,
 }
 
 impl RegressionData {
@@ -25,6 +26,7 @@ impl RegressionData {
         output_path: &Path,
         rule_rel_path: Option<&Path>,
         author: Option<&str>,
+        description: Option<&str>,
     ) -> Self {
         Self {
             header,
@@ -32,6 +34,7 @@ impl RegressionData {
             output_path: output_path.to_path_buf(),
             rule_rel_path: rule_rel_path.map(|p| p.to_path_buf()),
             author: author.map(|s| s.to_string()),
+            description: description.map(|s| s.to_string()),
         }
     }
 
@@ -108,12 +111,15 @@ impl RegressionData {
             .as_deref()
             .unwrap_or("Sigma Regression Generator");
 
+        let description = self.description.as_deref().unwrap_or("");
+
         let info = InfoYml::new(
             rule_id,
             &self.header.rule_title,
             match_count,
             &sigma_evtx_path,
             author,
+            description,
         );
         let info_path = rule_dir.join("info.yml");
         info.save(&info_path)?;

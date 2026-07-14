@@ -34,10 +34,11 @@ impl InfoYml {
         event_count: usize,
         sigma_evtx_path: &str,
         author: &str,
+        description: &str,
     ) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            description: "N/A".to_string(),
+            description: description.to_string(),
             date: chrono::Utc::now().format("%Y-%m-%d").to_string(),
             author: author.to_string(),
             rule_metadata: vec![RuleMetadata {

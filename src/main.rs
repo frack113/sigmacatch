@@ -32,6 +32,7 @@ struct AggregatedRule {
     header: rsigma_eval::result::RuleHeader,
     events: Vec<(serde_json::Value, String)>,
     rule_path: Option<PathBuf>,
+    description: Option<String>,
 }
 
 async fn stage_0_init(_config: &Config) -> Result<()> {
@@ -115,6 +116,7 @@ async fn stage_4_work_winevt(
     aggregated: &mut HashMap<String, AggregatedRule>,
     stats: &mut Stats,
     custom_map: &HashMap<String, String>,
+    author: &str,
 ) -> Result<()> {
     info!("Starting winevt collection on channels: {:?}", channels);
 
@@ -191,6 +193,7 @@ async fn stage_4_work_winevt(
                     header: match_result.header.clone(),
                     events: Vec::new(),
                     rule_path: engine.rule_path(&rule_id).cloned(),
+                    description: engine.rule_description(&rule_id).map(|s| s.to_string()),
                 });
             entry
                 .events
@@ -227,7 +230,8 @@ async fn stage_4_work_winevt(
             agg.header.clone(),
             std::path::Path::new("regression_data"),
             rule_rel_path.as_deref(),
-            None,
+            Some(author),
+            agg.description.as_deref(),
         );
         if reg.exists() {
             continue;
@@ -377,6 +381,7 @@ async fn run_cycle(
     engine: &SigmaEngine,
     retired: &mut HashSet<String>,
     custom_map: &HashMap<String, String>,
+    author: &str,
 ) -> Result<Stats> {
     let mut stats = Stats {
         rules_loaded: 0,
@@ -398,6 +403,7 @@ async fn run_cycle(
         &mut aggregated,
         &mut stats,
         custom_map,
+        author,
     )
     .await?;
 
@@ -489,7 +495,7 @@ async fn main() -> Result<()> {
         info!("=== cycle {}: collecting… ===", cycle);
 
         let channels = cycle_channels.clone();
-        let mut stats = run_cycle(channels, &engine, &mut retired, &custom_map).await?;
+        let mut stats = run_cycle(channels, &engine, &mut retired, &custom_map, &config.author).await?;
         stats.rules_loaded = rules_count;
 
         if config.once {
