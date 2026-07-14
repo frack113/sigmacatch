@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2026 sigmacatch contributors -->
+
 # Sigmacatch
 
 Capture real Windows events via the **Windows Event Log API** (`winevt`), match them against [SigmaHQ](https://github.com/SigmaHQ/sigma) rules, and output structured regression data ready for SigmaHQ PRs.

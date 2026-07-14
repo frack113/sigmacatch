@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 

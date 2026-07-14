@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() {

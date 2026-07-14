@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
 pub mod format;
 pub mod generator;
 pub mod info_yml;

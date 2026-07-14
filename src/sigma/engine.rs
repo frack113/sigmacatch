@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
 use anyhow::Result;
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::Engine;

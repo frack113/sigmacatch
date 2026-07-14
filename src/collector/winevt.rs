@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
 #[cfg(windows)]
 use tracing::{debug, error, info};
 #[allow(dead_code)]
