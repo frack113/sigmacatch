@@ -9,12 +9,13 @@ use tracing::{info, warn};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
-const SIGMA_REPO_URL: &str = "https://github.com/SigmaHQ/sigma.git";
+pub(crate) const SIGMA_REPO_URL: &str = "https://github.com/SigmaHQ/sigma.git";
 
 #[derive(Debug, Clone)]
 pub struct SigmaRepo {
     pub path: PathBuf,
     offline: bool,
+    remote_url: Option<String>,
 }
 
 impl SigmaRepo {
@@ -22,11 +23,17 @@ impl SigmaRepo {
         Self {
             path: path.to_path_buf(),
             offline: false,
+            remote_url: None,
         }
     }
 
     pub fn with_offline(mut self, offline: bool) -> Self {
         self.offline = offline;
+        self
+    }
+
+    pub fn with_remote_url(mut self, url: String) -> Self {
+        self.remote_url = Some(url);
         self
     }
 
@@ -77,8 +84,8 @@ impl SigmaRepo {
     }
 
     async fn clone_repo(&self) -> Result<()> {
-        info!("Cloning Sigma repository from {}...", SIGMA_REPO_URL);
-        let url = SIGMA_REPO_URL.to_string();
+        let url = self.remote_url.clone().unwrap_or_else(|| SIGMA_REPO_URL.to_string());
+        info!("Cloning Sigma repository from {}...", url);
         let path = self.path.clone();
 
         tokio::task::spawn_blocking(move || -> Result<()> {

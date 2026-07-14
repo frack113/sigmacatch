@@ -16,5 +16,5 @@ windows_output/
 
 # internal
 _bmad/
-bmad_output/
+_bmad-output/
 AGENTS.md

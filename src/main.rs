@@ -3,6 +3,7 @@
 
 mod collector;
 mod config;
+mod contrib;
 mod evtx;
 mod logger;
 mod parser;
@@ -510,6 +511,16 @@ async fn main() -> Result<()> {
             anyhow::bail!("config.yaml 'author' field required for contrib workflow.");
         }
         info!("Contrib workflow enabled for user: {}", config.author);
+
+        let fork_config = contrib::fork::detect_fork(&config.author).await?;
+        if !fork_config.is_fork {
+            warn!(
+                "Fork not detected for '{}'. Using SigmaHQ/sigma as remote. \
+                 Push will fail without a fork. Please create a fork at: \
+                 https://github.com/SigmaHQ/sigma/fork",
+                config.author
+            );
+        }
     }
 
     #[cfg(windows)]
