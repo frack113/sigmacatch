@@ -1,6 +1,6 @@
 [package]
 name = "sigmacatch"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Capture real Windows events and match them against Sigma rules to produce regression data"
 license = "MIT"
