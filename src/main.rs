@@ -30,7 +30,7 @@ struct Stats {
 
 struct AggregatedRule {
     header: rsigma_eval::result::RuleHeader,
-    events: Vec<(serde_json::Value, String)>,
+    events: Vec<(serde_json::Value, String, String)>,
     rule_path: Option<PathBuf>,
     description: Option<String>,
 }
@@ -39,6 +39,7 @@ async fn stage_0_init(_config: &Config) -> Result<()> {
     info!("ensuring directory structure…");
     std::fs::create_dir_all("sigma")?;
     std::fs::create_dir_all("regression_data")?;
+    std::fs::create_dir_all("regression_data/rules")?;
     std::fs::create_dir_all("logs")?;
 
     let config_path = PathBuf::from("config.yaml");
@@ -142,16 +143,21 @@ async fn stage_4_work_winevt(
     while let Some(event) = rx.recv().await {
         stats.events_processed += 1;
 
-        // Parse XML → JSON
-        let json_parser = parser::XmlParser {};
-        let event_json = match json_parser.parse(&event.raw_xml) {
-            Ok(json) => json,
-            Err(e) => {
-                warn!(
-                    "Failed to parse event XML (EventID={}, channel={}): {} — skipping",
-                    event.event_id, event.channel, e.xml_truncated
-                );
-                continue;
+        // Use pre-parsed JSON from collector, fall back to parsing XML
+        let event_json = match event.event_json {
+            Some(json) => json,
+            None => {
+                let json_parser = parser::XmlParser {};
+                match json_parser.parse(&event.raw_xml) {
+                    Ok(json) => json,
+                    Err(e) => {
+                        warn!(
+                            "Failed to parse event XML (EventID={}, channel={}): {} — skipping",
+                            event.event_id, event.channel, e.xml_truncated
+                        );
+                        continue;
+                    }
+                }
             }
         };
 
@@ -195,9 +201,11 @@ async fn stage_4_work_winevt(
                     rule_path: engine.rule_path(&rule_id).cloned(),
                     description: engine.rule_description(&rule_id).map(|s| s.to_string()),
                 });
-            entry
-                .events
-                .push((event_json.clone(), event.raw_xml.clone()));
+            entry.events.push((
+                event_json.clone(),
+                event.raw_xml.clone(),
+                provider.to_string(),
+            ));
         }
     }
 
@@ -237,16 +245,20 @@ async fn stage_4_work_winevt(
             continue;
         }
 
-        for (event_json, raw_xml) in &agg.events {
+        for (event_json, raw_xml, provider) in &agg.events {
             let channel = event_json
                 .get("Channel")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let record_id = event_json
-                .get("EventRecordID_num")
-                .and_then(|v| v.as_u64());
-            reg.add_event(event_json.clone(), raw_xml.clone(), channel, record_id);
+            let record_id = event_json.get("EventRecordID_num").and_then(|v| v.as_u64());
+            reg.add_event(
+                event_json.clone(),
+                raw_xml.clone(),
+                channel,
+                record_id,
+                provider.clone(),
+            );
         }
         let rule_id = agg
             .header
@@ -272,15 +284,19 @@ async fn stage_4_work_winevt(
                     let rel_dir = reg
                         .sigma_rel_dir()
                         .unwrap_or_else(|| format!("regression_data/rules/{}", rule_id));
-                    let tests_path = format!("{}/info.yml", rel_dir);
-                    let append =
-                        format!("\nregression_tests_path: {}", tests_path.replace('\\', "/"));
+                    let tests_path = format!("{}/info.yml", rel_dir.replace('\\', "/"));
                     if let Some(rule_yaml_path) = rule_path_opt {
-                        if let Ok(mut file) = std::fs::OpenOptions::new()
-                            .append(true)
-                            .open(rule_yaml_path)
-                        {
-                            let _ = std::io::Write::write_all(&mut file, append.as_bytes());
+                        if let Ok(content) = std::fs::read(rule_yaml_path) {
+                            let needs_newline =
+                                !content.is_empty() && *content.last().unwrap() != b'\n';
+                            let prefix = if needs_newline { "\n" } else { "" };
+                            let line = format!("{}regression_tests_path: {}\n", prefix, tests_path);
+                            let _ = std::fs::OpenOptions::new()
+                                .append(true)
+                                .open(rule_yaml_path)
+                                .and_then(|mut file| {
+                                    std::io::Write::write_all(&mut file, line.as_bytes())
+                                });
                         }
                     }
                 }
@@ -503,7 +519,8 @@ async fn main() -> Result<()> {
         info!("=== cycle {}: collecting… ===", cycle);
 
         let channels = cycle_channels.clone();
-        let mut stats = run_cycle(channels, &engine, &mut retired, &custom_map, &config.author).await?;
+        let mut stats =
+            run_cycle(channels, &engine, &mut retired, &custom_map, &config.author).await?;
         stats.rules_loaded = rules_count;
 
         if config.once {

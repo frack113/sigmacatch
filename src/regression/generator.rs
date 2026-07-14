@@ -11,6 +11,7 @@ pub struct MatchEvent {
     pub raw_xml: String,
     pub channel: String,
     pub record_id: Option<u64>,
+    pub provider: String,
 }
 
 pub struct RegressionData {
@@ -40,8 +41,21 @@ impl RegressionData {
         }
     }
 
-    pub fn add_event(&mut self, event: Value, raw_xml: String, channel: String, record_id: Option<u64>) {
-        self.events.push(MatchEvent { event, raw_xml, channel, record_id });
+    pub fn add_event(
+        &mut self,
+        event: Value,
+        raw_xml: String,
+        channel: String,
+        record_id: Option<u64>,
+        provider: String,
+    ) {
+        self.events.push(MatchEvent {
+            event,
+            raw_xml,
+            channel,
+            record_id,
+            provider,
+        });
     }
 
     pub fn rule_dir(&self) -> Result<PathBuf> {
@@ -120,6 +134,10 @@ impl RegressionData {
 
         let description = self.description.as_deref().unwrap_or("");
 
+        let provider = first
+            .map(|e| e.provider.as_str())
+            .unwrap_or("Microsoft-Windows-Sysmon");
+
         let info = InfoYml::new(
             rule_id,
             &self.header.rule_title,
@@ -127,6 +145,7 @@ impl RegressionData {
             &sigma_evtx_path,
             author,
             description,
+            provider,
         );
         let info_path = rule_dir.join("info.yml");
         info.save(&info_path)?;

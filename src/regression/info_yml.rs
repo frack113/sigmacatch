@@ -35,6 +35,7 @@ impl InfoYml {
         sigma_evtx_path: &str,
         author: &str,
         description: &str,
+        provider: &str,
     ) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
@@ -48,7 +49,7 @@ impl InfoYml {
             regression_tests_info: vec![RegressionTestInfo {
                 name: "Positive Detection Test".to_string(),
                 test_type: "evtx".to_string(),
-                provider: "Microsoft-Windows-Sysmon".to_string(),
+                provider: provider.to_string(),
                 match_count: event_count,
                 path: sigma_evtx_path.to_string(),
             }],

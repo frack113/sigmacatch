@@ -1,6 +1,4 @@
 #[cfg(windows)]
-use std::sync::mpsc;
-#[cfg(windows)]
 use tracing::{debug, error, info};
 #[allow(dead_code)]
 #[cfg(windows)]
@@ -42,118 +40,69 @@ impl WinevtCollector {
 
 /// WinevtCollector — Windows (Event Log API)
 #[cfg(windows)]
-#[allow(dead_code)]
 pub struct WinevtCollector {
-    input: String,
-    is_guid: bool,
+    channel: String,
 }
 
 #[cfg(windows)]
 impl WinevtCollector {
-    #[allow(dead_code)]
-    pub fn new(input: impl Into<String>) -> Self {
-        let input = input.into();
-        let is_guid = input
-            .chars()
-            .all(|c| matches!(c, '0'..='9' | 'a'..='f' | 'A'..='F') && input.len() == 32);
-        Self { input, is_guid }
-    }
-
-    #[allow(dead_code)]
-    pub fn input(&self) -> &str {
-        &self.input
+    pub fn new(channel: impl Into<String>) -> Self {
+        Self {
+            channel: channel.into(),
+        }
     }
 
     pub async fn stream(self, tx: tokio_mpsc::Sender<WinevtEvent>) -> Result<()> {
-        if self.is_guid {
-            let xpath_query = format!("*[System[Provider[@Guid='{{{}}}']]]", self.input);
-            info!("Starting winevt collection on GUID: {{{}}}", self.input);
-            let (sync_tx, _sync_rx) = mpsc::channel::<WinevtEvent>();
-            let result = tokio::task::spawn_blocking({
-                let query = xpath_query.clone();
-                let tx = sync_tx.clone();
-                move || collect_events(&query, false, tx)
-            })
-            .await;
-            let events = match result {
-                Ok(Ok(events)) => events,
-                Ok(Err(e)) => {
-                    error!(
-                        "Error collecting events from GUID {{{}}}: {}",
-                        self.input, e
-                    );
-                    Vec::new()
-                }
-                Err(_) => {
-                    error!("Collector task panicked for GUID {{{}}}", self.input);
-                    Vec::new()
-                }
-            };
-            info!("GUID {{{}}} collected {} events", self.input, events.len());
-            for event in events {
-                if tx.send(event).await.is_err() {
-                    break;
-                }
+        info!("Starting winevt collection on channel: {}", self.channel);
+        let result = tokio::task::spawn_blocking({
+            let channel = self.channel.clone();
+            move || collect_events(&channel)
+        })
+        .await;
+        let events = match result {
+            Ok(Ok(events)) => events,
+            Ok(Err(e)) => {
+                error!(
+                    "Error collecting events from channel '{}': {}",
+                    self.channel, e
+                );
+                Vec::new()
             }
-            info!("WinevtCollector GUID {{{}}} completed", self.input);
-        } else {
-            info!("Starting winevt collection on channel: {}", self.input);
-            let (sync_tx, _sync_rx) = mpsc::channel::<WinevtEvent>();
-            let result = tokio::task::spawn_blocking({
-                let channel = self.input.clone();
-                let tx = sync_tx.clone();
-                move || collect_events(&channel, true, tx)
-            })
-            .await;
-            let events = match result {
-                Ok(Ok(events)) => events,
-                Ok(Err(e)) => {
-                    error!(
-                        "Error collecting events from channel '{}': {}",
-                        self.input, e
-                    );
-                    Vec::new()
-                }
-                Err(_) => {
-                    error!("Collector task panicked for channel '{}'", self.input);
-                    Vec::new()
-                }
-            };
-            info!("Channel '{}' collected {} events", self.input, events.len());
-            for event in events {
-                if tx.send(event).await.is_err() {
-                    break;
-                }
+            Err(_) => {
+                error!("Collector task panicked for channel '{}'", self.channel);
+                Vec::new()
             }
-            info!("WinevtCollector '{}' completed", self.input);
+        };
+        info!(
+            "Channel '{}' collected {} events",
+            self.channel,
+            events.len()
+        );
+        for event in events {
+            if tx.send(event).await.is_err() {
+                break;
+            }
         }
+        info!("WinevtCollector '{}' completed", self.channel);
         Ok(())
     }
 }
 
 #[cfg(windows)]
-fn collect_events(
-    query: &str,
-    is_channel: bool,
-    tx: mpsc::Sender<WinevtEvent>,
-) -> Result<Vec<WinevtEvent>> {
+fn collect_events(channel: &str) -> Result<Vec<WinevtEvent>> {
     let co_init_result = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
     let com_initialized = co_init_result == S_OK || co_init_result == RPC_E_CHANGED_MODE;
 
     let mut events = Vec::new();
 
     let query_handle = unsafe {
-        let query_hstring = HSTRING::from(query);
-        if is_channel {
-            EvtQuery(
-                None,
-                PCWSTR(query_hstring.as_ptr()),
-                PCWSTR(HSTRING::from("*").as_ptr()),
-                0x00000001,
-            )
-        } else {
-            EvtQuery(None, None, PCWSTR(query_hstring.as_ptr()), 0x00000000)
-        }
+        let query_hstring = HSTRING::from(channel);
+        EvtQuery(
+            None,
+            PCWSTR(query_hstring.as_ptr()),
+            PCWSTR(HSTRING::from("*").as_ptr()),
+            0x00000001,
+        )
     };
 
     let query = match query_handle {
@@ -161,8 +110,8 @@ fn collect_events(
         Err(_) => {
             let last_error = unsafe { GetLastError().0 };
             error!(
-                "EvtQuery failed for '{}': HRESULT=0x{:08X} — channel may not exist, inaccessible, or no events match",
-                query, last_error
+                "EvtQuery failed for channel '{}': HRESULT=0x{:08X} — channel may not exist, inaccessible, or no events match",
+                channel, last_error
             );
             if com_initialized {
                 unsafe {
@@ -200,9 +149,6 @@ fn collect_events(
             match render_event_to_xml(EVT_HANDLE(event_handle)) {
                 Ok(Some(event)) => {
                     event_count += 1;
-                    if tx.send(event.clone()).is_err() {
-                        info!("Query '{}' receiver dropped", query);
-                    }
                     events.push(event);
                 }
                 Ok(None) => {}
@@ -232,7 +178,7 @@ fn collect_events(
         }
     }
 
-    info!("Query '{}' collected {} events", query, event_count);
+    info!("Channel '{}' collected {} events", channel, event_count);
 
     Ok(events)
 }
@@ -297,6 +243,7 @@ fn render_event_to_xml(event_handle: EVT_HANDLE) -> Result<Option<WinevtEvent>> 
             channel: String::new(),
             event_id: 0,
             raw_xml: xml_str,
+            event_json: None,
         }))
     }
 }
@@ -313,6 +260,7 @@ pub struct WinevtEvent {
     pub channel: String,
     pub event_id: u32,
     pub raw_xml: String,
+    pub event_json: Option<serde_json::Value>,
 }
 
 #[allow(dead_code)]
@@ -331,6 +279,7 @@ impl WinevtEvent {
             event_id,
             channel,
             raw_xml,
+            event_json: Some(json),
         }
     }
 }

@@ -67,9 +67,14 @@ impl XmlParser {
                 }
             }
 
-            // Extract Channel
-            if let Some(channel) = root.attribute("Channel") {
-                map.insert("Channel".into(), Value::String(channel.to_string()));
+            // Extract Channel — try System direct child first, then root attribute
+            let channel = system
+                .children()
+                .find(|n| n.tag_name().name() == "Channel")
+                .and_then(|n| n.text().map(|t| t.to_string()))
+                .or_else(|| root.attribute("Channel").map(|s| s.to_string()));
+            if let Some(channel) = channel {
+                map.insert("Channel".into(), Value::String(channel));
             }
 
             // Extract EventRecordID
@@ -78,10 +83,7 @@ impl XmlParser {
                 .find(|n| n.tag_name().name() == "EventRecordID");
             if let Some(event_record_id) = event_record_id {
                 if let Some(text) = event_record_id.text() {
-                    map.insert(
-                        "EventRecordID".to_string(),
-                        Value::String(text.to_string()),
-                    );
+                    map.insert("EventRecordID".to_string(), Value::String(text.to_string()));
                     if let Ok(id) = text.trim().parse::<u64>() {
                         map.insert("EventRecordID_num".to_string(), Value::Number(id.into()));
                     }
@@ -180,7 +182,8 @@ impl XmlParser {
         if xml.len() <= max_len {
             xml.to_string()
         } else {
-            format!("{}... ({} chars total)", &xml[..max_len], xml.len())
+            let safe_end = xml.floor_char_boundary(max_len);
+            format!("{}... ({} chars total)", &xml[..safe_end], xml.len())
         }
     }
 }
