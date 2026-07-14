@@ -304,7 +304,7 @@ MatchEvent {
 ```bash
 cargo build --release
 cargo clippy -- -W warnings
-cargo build --release --target x86_64-pc-windows-gnu   # cross-compile Windows
+cargo xwin build --release --target x86_64-pc-windows-msvc   # cross-compile Windows
 ```
 
 ---

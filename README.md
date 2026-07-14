@@ -50,9 +50,10 @@ log:
 ## Cross-compilation (Linux → Windows)
 
 ```bash
-rustup target add x86_64-pc-windows-gnu
-cargo build --release --target x86_64-pc-windows-gnu
+cargo xwin build --release --target x86_64-pc-windows-msvc
 ```
+
+> Nécessite `cargo install cargo-xwin`. Télécharge automatiquement le Windows SDK.
 
 On Linux/macOS the collector is a stub (returns empty vec) — the pipeline still runs end-to-end for testing.
 

@@ -3,7 +3,7 @@
 ## Prérequis
 
 - Rust 2021 edition (1.70+)
-- Pour la compilation croisée Windows : `rustup target add x86_64-pc-windows-gnu` + mingw-w64
+- Pour la compilation croisée Windows : `cargo install cargo-xwin` (télécharge automatiquement le Windows SDK)
 
 ## Linux / macOS (collecteur stub)
 
@@ -30,11 +30,10 @@ Nécessite les droits admin pour les channels `Security` et `System`.
 ## Compilation croisée Windows (depuis Linux)
 
 ```bash
-rustup target add x86_64-pc-windows-gnu
-cargo build --release --target x86_64-pc-windows-gnu
+cargo xwin build --release --target x86_64-pc-windows-msvc
 ```
 
-Le binaire résultant est à `target/x86_64-pc-windows-gnu/release/sigmacatch.exe`.
+Le binaire résultant est à `target/x86_64-pc-windows-msvc/release/sigmacatch.exe`.
 
 ## Taille du binaire
 
