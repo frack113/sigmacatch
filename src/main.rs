@@ -505,6 +505,13 @@ async fn main() -> Result<()> {
         config.offline = true;
     }
 
+    if config.contrib {
+        if config.author.is_empty() {
+            anyhow::bail!("config.yaml 'author' field required for contrib workflow.");
+        }
+        info!("Contrib workflow enabled for user: {}", config.author);
+    }
+
     #[cfg(windows)]
     setup_console();
 

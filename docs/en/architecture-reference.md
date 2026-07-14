@@ -51,8 +51,9 @@ src/
 `config.yaml` (auto-created on first run):
 
 ```yaml
-author: "username"          # whoami::username() by default
+author: "username"          # GitHub username for contrib workflow
 offline: false              # true = use existing sigma/ without git
+contrib: false              # true = enable SigmaHQ contribution workflow
 log:
   level_file: "debug"       # tracing file level
 ```

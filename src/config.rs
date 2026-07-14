@@ -4,8 +4,13 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+#[allow(dead_code)]
 fn default_author() -> String {
-    whoami::username().unwrap_or_default()
+    String::new()
+}
+
+fn default_contrib() -> bool {
+    false
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +53,8 @@ pub struct Config {
     #[serde(default = "default_author")]
     pub author: String,
     pub offline: bool,
+    #[serde(default = "default_contrib")]
+    pub contrib: bool,
     pub log: LogConfig,
 }
 
@@ -56,6 +63,7 @@ impl Default for Config {
         Self {
             author: default_author(),
             offline: false,
+            contrib: false,
             log: LogConfig::default(),
         }
     }
@@ -80,5 +88,65 @@ impl Config {
         let yaml = serde_yaml::to_string(config)?;
         std::fs::write(path, yaml)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config_has_empty_author() {
+        let config = Config::default();
+        assert!(config.author.is_empty());
+    }
+
+    #[test]
+    fn test_default_config_has_contrib_false() {
+        let config = Config::default();
+        assert!(!config.contrib);
+    }
+
+    #[test]
+    fn test_load_config_with_contrib() {
+        let yaml = r#"
+author: testuser
+offline: false
+contrib: true
+log:
+  level_file: debug
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.author, "testuser");
+        assert!(config.contrib);
+        assert!(!config.offline);
+    }
+
+    #[test]
+    fn test_load_config_without_contrib_defaults_to_false() {
+        let yaml = r#"
+author: testuser
+offline: false
+log:
+  level_file: info
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.author, "testuser");
+        assert!(!config.contrib);
+    }
+
+    #[test]
+    fn test_save_and_load_config() {
+        let config = Config {
+            author: "devuser".to_string(),
+            offline: true,
+            contrib: true,
+            log: LogConfig::default(),
+        };
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let loaded: Config = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(loaded.author, "devuser");
+        assert!(loaded.offline);
+        assert!(loaded.contrib);
     }
 }
