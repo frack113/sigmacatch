@@ -54,9 +54,11 @@ plugins:
       docs_structure: folder
       languages:
         - locale: en
+          name: English
           default: true
           build: true
         - locale: fr
+          name: Francais
           default: false
           build: true
           nav_translations:
