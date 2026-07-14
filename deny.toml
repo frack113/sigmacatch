@@ -9,7 +9,6 @@ yanked = "warn"
 ignore = []
 
 [licenses]
-unlicensed = "deny"
 allow = [
     "MIT",
     "Apache-2.0",
@@ -23,8 +22,7 @@ allow = [
     "0BSD",
     "CC0-1.0",
 ]
-deny = []
-exceptions = []
+private = { ignore = true }
 
 [[licenses.clarify]]
 name = "ring"
