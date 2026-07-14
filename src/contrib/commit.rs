@@ -88,10 +88,30 @@ pub fn commit_all_rules(repo_path: &Path, rule_ids: &[String]) -> Result<()> {
                 stdout.trim(),
                 stderr.trim()
             );
+            // Reset staging area before individual fallback
+            std::process::Command::new("git")
+                .args(["reset", "HEAD"])
+                .current_dir(repo_path)
+                .output()
+                .ok();
             // Fall back to individual commits
             for rule_id in rule_ids {
-                if let Err(e) = commit_rule(repo_path, rule_id) {
-                    warn!("Individual commit failed for '{}': {}", rule_id, e);
+                let reg_dir = format!("regression_data/rules/{}", rule_id);
+                let status = std::process::Command::new("git")
+                    .args(["add", "-A", &reg_dir])
+                    .current_dir(repo_path)
+                    .status()
+                    .ok();
+                if status.is_some_and(|s| s.success()) {
+                    let msg = format!("feat(sigma): add regression data for {}", rule_id);
+                    let out = std::process::Command::new("git")
+                        .args(["commit", "-m", &msg])
+                        .current_dir(repo_path)
+                        .output()
+                        .ok();
+                    if out.is_some_and(|o| o.status.success()) {
+                        info!("Committed {} (fallback)", rule_id);
+                    }
                 }
             }
         }

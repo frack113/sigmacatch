@@ -22,7 +22,12 @@ pub fn create_branch_name(author: &str) -> String {
         let ellipsis_bytes = "…".len();
         let available = 255 - prefix.len() - 1 - ellipsis_bytes; // -1 for '/', -ellipsis_bytes for '…'
         let truncated = if available < sanitized.len() {
-            format!("{}…", &sanitized[..available])
+            let safe_end = sanitized
+                .char_indices()
+                .take_while(|(i, _)| *i < available)
+                .last()
+                .map_or(0, |(i, _)| i);
+            format!("{}…", &sanitized[..safe_end])
         } else {
             sanitized
         };
@@ -83,15 +88,25 @@ fn find_tracking_branch(repo: &gix::Repository) -> Result<String> {
 }
 
 /// Push the current branch to the given remote using git CLI.
-/// Uses --force-with-lease to avoid overwriting others' work.
+/// Uses --force-with-lease for existing branches, --force for new ones.
 pub fn push_branch(repo_path: &Path, branch_name: &str, remote: &str) -> Result<()> {
+    let tracking_branch = format!("origin/{}", branch_name);
+    let has_tracking = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", &tracking_branch])
+        .current_dir(repo_path)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);
+    let push_args = if has_tracking {
+        vec!["push", remote, &refspec, "--force-with-lease"]
+    } else {
+        vec!["push", remote, &refspec, "--force"]
+    };
+
     let output = std::process::Command::new("git")
-        .args([
-            "push",
-            remote,
-            &format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name),
-            "--force-with-lease",
-        ])
+        .args(push_args)
         .current_dir(repo_path)
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to execute git push: {}", e))?;
