@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 # Rust
-.cargo/
 /target/
 
 # application
