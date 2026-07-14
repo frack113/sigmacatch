@@ -30,7 +30,7 @@ src/
 ├── logger.rs            # Two-layer tracing (stderr info + rolling file debug)
 ├── sigma/
 │   ├── loader.rs        # SigmaRepo (gix) + find_rules_dirs()
-│   └── engine.rs        # SigmaEngine + provider_to_logsource
+│   └── engine.rs        # SigmaEngine + évaluation des règles (resolve_logsource depuis mapping)
 ├── collector/
 │   ├── mod.rs           # pub mod winevt
 │   └── winevt.rs        # WinevtCollector (EvtQueryW, EvtNext, EvtRender)
@@ -138,8 +138,8 @@ Vec<WinevtEvent> { channel, event_id, timestamp, raw_xml }
 
 ```
 Pour chaque SensorEvent :
-    ├── provider → LogSource { product: "windows", service, category }
-    │     (provider_to_logsource + EventFields::category())
+    ├── channel → LogSource { product: "windows", service, category }
+    │     (mapping::resolve_logsource + priorité channel/service)
     ├── event.to_json_value() → serde_json::Value plat (clés Sigma : Image, CommandLine, ...)
     ├── engine.evaluate_event_with_logsource(event_value, logsource)
     │     → Vec<EvaluationResult> (rsigma-eval)
@@ -269,7 +269,7 @@ MatchEvent {
 | Tout en RAM | agrégation mémoire avant écriture, pas de DB |
 | Un run = cycle complet | pas de mode "juste collect" ou "juste generate" |
 | Collecte via Winevt | EvtQueryW → EvtNext → EvtRender, pas ETW, pas ferrisetw |
-| LogSource depuis provider | provider Event Log (provider_to_logsource) |
+| LogSource depuis channel | channel Event Log via resolve_logsource (channel > provider > default) |
 | Skip-at-load unique optimisation | règles avec `info.yml` exclu du moteur |
 | Un event par test | `match_count: 1`, premier event seulement |
 | Output miroir source | `regression_tests_path` ajouté au YAML source |

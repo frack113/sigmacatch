@@ -9,7 +9,7 @@ src/
 ├── logger.rs            # Abonnement tracing à deux couches (stderr info + fichier debug)
 ├── sigma/
 │   ├── loader.rs        # gix clone/pull + offline + find_rules_dirs()
-│   └── engine.rs        # SigmaEngine: load rules (post-parse filter), evaluate events, provider_to_logsource
+│   └── engine.rs        # SigmaEngine: load rules (post-parse filter), evaluate events, evaluation des règles
 ├── collector/
 │   ├── mod.rs           # pub mod winevt
 │   └── winevt.rs        # WinevtCollector (EvtQueryW, EvtNext, EvtRender)
@@ -32,7 +32,7 @@ src/
 5. Build skip set by scanning `regression_data/rules/` + `sigma/regression_data/` for existing `info.yml` → `HashSet<String>` of rule IDs
 6. Load Sigma rules from all `rules*` dirs, **excluding skipped rule IDs**; post-parse filter via `rule.logsource.product` filters non-Windows rules (seule optimisation autorisée)
 7. Collect events via `WinevtCollector` (channels from config) → `Vec<WinevtEvent>`:
-   - Each event's `LogSource` is derived from the ETW **provider** + `EventFields::category()` (`provider_to_logsource`)
+   - Each event's `LogSource` est dérivé du **channel** via `resolve_logsource` (channel → service > provider → service > default)
    - Evaluate against **all loaded rules** via `evaluate_event_with_logsource(event, logsource)` — **aucun event perdu**
    - Aggregate matches by `rule_id` in `HashMap<String, AggregatedRule>`
 8. Generate regression for rules without existing `info.yml` (skip at generate time too)
@@ -46,7 +46,9 @@ src/
 - Collecte Windows via **Winevt API** (`windows` crate, `EvtQueryW`/`EvtNext`/`EvtRender`) — pas d'ETW, pas de ferrisetw
 - Output = `regression_data/<rule_rel_path>/` (triplet: `<rule_id>.json` + `<rule_id>.evtx` + `info.yml` format SigmaHQ)
 - **Moteur temps réel** : `rsigma-eval` chargé une fois avec toutes les règles non skipées ; chaque event est évalué contre toutes les règles chargées. Aucun event perdu. Le skip-at-load est l'unique optimisation.
-- **LogSource dérivée du provider ETW** (`provider_to_logsource`), non du nom de channel.
+- **LogSource dérivée du channel ETW** (`resolve_logsource`), avec provider comme fallback.
+  - Priority: channel → service > provider → service > default
+  - Voir `# INVARIANT:` comment in `src/sigma/mapping/mod.rs`
 - **EVTX valide via `EvtWriteFile`** : le XML Winevt brut (`WinevtEvent.raw_xml`) est écrit directement dans un fichier `.evtx` binaire via l'API Winevt.
 
 > Skip set details, key design decisions, and skip set construction logic are in [`architecture-reference.md`](architecture-reference.md) (Stages 2, 5, 6, 7).

@@ -10,65 +10,14 @@ use tracing::{error, info, warn};
 const MAX_RULE_FILE_SIZE: u64 = 1_048_576;
 const MAX_VISIT_DEPTH: u32 = 64;
 
-#[allow(dead_code)]
-pub fn provider_to_service(provider: &str) -> Option<&'static str> {
-    Some(match provider {
-        "Microsoft-Windows-Kernel-Process" => "process",
-        "Microsoft-Windows-Kernel-Network" => "network",
-        "Microsoft-Windows-Kernel-File" => "file",
-        "Microsoft-Windows-Kernel-Registry" => "registry",
-        "Microsoft-Windows-Sysmon" => "sysmon",
-        "Microsoft-Windows-DNS-Client" => "dns",
-        _ => return None,
-    })
-}
-
-#[allow(dead_code)]
-pub fn provider_to_logsource(provider: &str, category: Option<&str>) -> LogSource {
-    LogSource {
-        product: Some("windows".into()),
-        service: provider_to_service(provider).map(|s| s.to_string()),
-        category: category.map(|c| c.to_string()),
-        ..LogSource::default()
-    }
-}
-
-#[allow(dead_code)]
-pub fn event_id_to_category(event_id: u32, provider: &str) -> Option<String> {
-    if provider == "Microsoft-Windows-Sysmon" {
-        Some(match event_id {
-            1 => "process_creation".to_string(),
-            3 => "network_connection".to_string(),
-            5 => "process_termination".to_string(),
-            10 => "process_access".to_string(),
-            11 => "file_create".to_string(),
-            13 => "registry_event".to_string(),
-            14 => "registry_event".to_string(),
-            17 => "file_delete".to_string(),
-            21 => "pipe_creation".to_string(),
-            22 => "pipe_closed".to_string(),
-            25 => "driver_loaded".to_string(),
-            _ => "sysmon".to_string(),
-        })
-    } else if provider == "Microsoft-Windows-Security-Auditing" {
-        Some(match event_id {
-            4688 => "process_creation".to_string(),
-            4672 => "privilege_use".to_string(),
-            4625 => "login_failure".to_string(),
-            4624 => "login".to_string(),
-            4634 => "logoff".to_string(),
-            4647 => "logoff".to_string(),
-            _ => "security".to_string(),
-        })
-    } else {
-        None
-    }
-}
-
 pub struct SigmaEngine {
     engine: Engine,
     rules_count: usize,
     rule_paths: HashMap<String, PathBuf>,
+    all_services: HashSet<String>,
+    active_services: HashSet<String>,
+    all_categories: HashSet<String>,
+    active_categories: HashSet<String>,
 }
 
 impl std::fmt::Debug for SigmaEngine {
@@ -87,6 +36,10 @@ impl Default for SigmaEngine {
             engine,
             rules_count: 0,
             rule_paths: HashMap::new(),
+            all_services: HashSet::new(),
+            active_services: HashSet::new(),
+            all_categories: HashSet::new(),
+            active_categories: HashSet::new(),
         }
     }
 }
@@ -276,6 +229,15 @@ impl SigmaEngine {
         });
         reasons.non_windows += before_non_windows - collection.rules.len();
 
+        for rule in &collection.rules {
+            if let Some(ref service) = rule.logsource.service {
+                self.all_services.insert(service.clone());
+            }
+            if let Some(ref category) = rule.logsource.category {
+                self.all_categories.insert(category.clone());
+            }
+        }
+
         let before_skip = collection.rules.len();
         collection
             .rules
@@ -285,6 +247,12 @@ impl SigmaEngine {
         for rule in &collection.rules {
             if rule.id.is_none() {
                 warn!("Rule without ID loaded from {:?}: {}", path, rule.title);
+            }
+            if let Some(ref service) = rule.logsource.service {
+                self.active_services.insert(service.clone());
+            }
+            if let Some(ref category) = rule.logsource.category {
+                self.active_categories.insert(category.clone());
             }
         }
 
@@ -331,6 +299,22 @@ impl SigmaEngine {
 
     pub fn rule_path(&self, rule_id: &str) -> Option<&PathBuf> {
         self.rule_paths.get(rule_id)
+    }
+
+    pub fn active_services(&self) -> &HashSet<String> {
+        &self.active_services
+    }
+
+    pub fn all_services(&self) -> &HashSet<String> {
+        &self.all_services
+    }
+
+    pub fn active_categories(&self) -> &HashSet<String> {
+        &self.active_categories
+    }
+
+    pub fn all_categories(&self) -> &HashSet<String> {
+        &self.all_categories
     }
 }
 
@@ -484,6 +468,160 @@ detection:
             .unwrap();
 
         assert_eq!(count, 0, "macos rule should be filtered out");
+    }
+
+    fn rule_with_service(id: &str, service: &str) -> String {
+        format!(
+            r#"title: Test Rule
+id: {}
+logsource:
+    product: windows
+    service: {}
+detection:
+    selection:
+        CommandLine|contains: 'test'
+    condition: selection
+"#,
+            id, service
+        )
+    }
+
+    fn rule_with_category(id: &str, service: &str, category: &str) -> String {
+        format!(
+            r#"title: Test Rule
+id: {}
+logsource:
+    product: windows
+    service: {}
+    category: {}
+detection:
+    selection:
+        CommandLine|contains: 'test'
+    condition: selection
+"#,
+            id, service, category
+        )
+    }
+
+    #[test]
+    fn test_active_services_tracked() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.yml");
+        std::fs::write(&path, &rule_with_service("test-svc-1", "sysmon")).unwrap();
+
+        let mut engine = SigmaEngine::new();
+        let count = engine
+            .load_rules_from_dirs(&[dir.path()], &HashSet::new())
+            .unwrap();
+
+        assert_eq!(count, 1);
+        assert!(engine.active_services().contains("sysmon"));
+        assert!(engine.all_services().contains("sysmon"));
+        assert!(engine.active_categories().is_empty());
+        assert!(engine.all_categories().is_empty());
+    }
+
+    #[test]
+    fn test_skipped_rule_service_in_all_not_active() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.yml");
+        std::fs::write(&path, &rule_with_service("test-svc-2", "powershell")).unwrap();
+
+        let mut skip = HashSet::new();
+        skip.insert("test-svc-2".to_string());
+
+        let mut engine = SigmaEngine::new();
+        let count = engine.load_rules_from_dirs(&[dir.path()], &skip).unwrap();
+
+        assert_eq!(count, 0);
+        assert!(engine.all_services().contains("powershell"));
+        assert!(!engine.active_services().contains("powershell"));
+        assert!(engine.all_categories().is_empty());
+        assert!(engine.active_categories().is_empty());
+    }
+
+    #[test]
+    fn test_rule_without_service_no_tracking() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.yml");
+        std::fs::write(&path, &no_product_rule("test-svc-3")).unwrap();
+
+        let mut engine = SigmaEngine::new();
+        let count = engine
+            .load_rules_from_dirs(&[dir.path()], &HashSet::new())
+            .unwrap();
+
+        assert_eq!(count, 1);
+        assert!(engine.active_services().is_empty());
+        assert!(engine.all_services().is_empty());
+        assert!(engine.active_categories().is_empty());
+        assert!(engine.all_categories().is_empty());
+    }
+
+    #[test]
+    fn test_category_tracking_active() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.yml");
+        std::fs::write(
+            &path,
+            &rule_with_category("test-cat-1", "sysmon", "process_creation"),
+        )
+        .unwrap();
+
+        let mut engine = SigmaEngine::new();
+        let count = engine
+            .load_rules_from_dirs(&[dir.path()], &HashSet::new())
+            .unwrap();
+
+        assert_eq!(count, 1);
+        assert!(engine.active_services().contains("sysmon"));
+        assert!(engine.all_services().contains("sysmon"));
+        assert!(engine.active_categories().contains("process_creation"));
+        assert!(engine.all_categories().contains("process_creation"));
+    }
+
+    #[test]
+    fn test_category_tracking_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.yml");
+        let _ = std::fs::write(
+            &path,
+            &rule_with_category("test-cat-2", "sysmon", "registry"),
+        );
+
+        let mut skip = HashSet::new();
+        skip.insert("test-cat-2".to_string());
+
+        let mut engine = SigmaEngine::new();
+        let count = engine.load_rules_from_dirs(&[dir.path()], &skip).unwrap();
+
+        assert_eq!(count, 0);
+        assert!(engine.all_services().contains("sysmon"));
+        assert!(!engine.active_services().contains("sysmon"));
+        assert!(engine.all_categories().contains("registry"));
+        assert!(!engine.active_categories().contains("registry"));
+    }
+
+    #[test]
+    fn test_linux_rule_not_in_all_services() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.yml");
+        std::fs::write(&path, &windows_rule("test-linux-1", "linux")).unwrap();
+
+        let mut engine = SigmaEngine::new();
+        let count = engine
+            .load_rules_from_dirs(&[dir.path()], &HashSet::new())
+            .unwrap();
+
+        assert_eq!(count, 0);
+        assert!(
+            engine.all_services().is_empty(),
+            "linux rules should not contribute to all_services"
+        );
+        assert!(
+            engine.all_categories().is_empty(),
+            "linux rules should not contribute to all_categories"
+        );
     }
 
     #[test]
