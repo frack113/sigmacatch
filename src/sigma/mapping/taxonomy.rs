@@ -126,6 +126,17 @@ pub static CHANNEL_EVENT_TO_CATEGORY: phf::Map<&'static str, &'static str> = phf
     "PowerShellCore/Operational:4104" => "ps_script",
 };
 
+// ─── Sub-category overrides (plus spécifique, prioritaire sur category) ─
+// phf_map ne supporte pas les clés dupliquées, donc les sous-catégories
+// sont stockées dans une map séparée. Pour eid 12 (registry_add + registry_delete),
+// on utilise registry_add comme convention — la désambiguïsation réelle
+// nécessite l'analyse des données de l'event (TargetObject, EventType).
+pub static CHANNEL_EVENT_TO_SUBCATEGORY: phf::Map<&'static str, &'static str> = phf_map! {
+    "Microsoft-Windows-Sysmon/Operational:12" => "registry_add",
+    "Microsoft-Windows-Sysmon/Operational:13" => "registry_set",
+    "Microsoft-Windows-Sysmon/Operational:14" => "registry_rename",
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

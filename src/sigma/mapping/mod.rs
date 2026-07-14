@@ -3,7 +3,7 @@ pub mod taxonomy;
 
 use std::collections::HashMap;
 use rsigma_parser::LogSource;
-use taxonomy::{CHANNEL_EVENT_TO_CATEGORY, CHANNEL_TO_SERVICE, PROVIDER_TO_SERVICE};
+use taxonomy::{CHANNEL_EVENT_TO_CATEGORY, CHANNEL_EVENT_TO_SUBCATEGORY, CHANNEL_TO_SERVICE, PROVIDER_TO_SERVICE};
 use tracing::debug;
 
 /// Resolve LogSource from channel, provider, and event_id.
@@ -25,7 +25,8 @@ pub fn resolve_logsource(channel: &str, provider: &str, event_id: u32, custom_ma
 
     if let Some(service) = lookup_service(channel) {
         let composite_key = format!("{}:{}", channel, event_id);
-        let category = CHANNEL_EVENT_TO_CATEGORY.get(&composite_key).copied();
+        let category = CHANNEL_EVENT_TO_SUBCATEGORY.get(&composite_key).copied()
+            .or_else(|| CHANNEL_EVENT_TO_CATEGORY.get(&composite_key).copied());
         debug!("LogSource resolved via channel: service={}, category={:?}", service, category);
         return LogSource {
             product: Some("windows".into()),
@@ -68,7 +69,9 @@ pub fn build_logsource_to_channels(custom_map: &HashMap<String, String>) -> Hash
     chan_to_service.sort_by_key(|(a, _)| *a);
 
     let mut cat_entries: Vec<(&'static str, &'static str)> =
-        CHANNEL_EVENT_TO_CATEGORY.entries().map(|(k, v)| (*k, *v)).collect();
+        CHANNEL_EVENT_TO_CATEGORY.entries().map(|(k, v)| (*k, *v))
+            .chain(CHANNEL_EVENT_TO_SUBCATEGORY.entries().map(|(k, v)| (*k, *v)))
+            .collect();
     cat_entries.sort_by_key(|(a, _)| *a);
 
     let mut map: HashMap<String, HashMap<String, Option<Vec<u32>>>> = HashMap::new();
@@ -286,9 +289,9 @@ mod tests {
     sysmon_category_test!(test_sysmon_9_raw_access_thread, 9, "raw_access_thread");
     sysmon_category_test!(test_sysmon_10_process_access, 10, "process_access");
     sysmon_category_test!(test_sysmon_11_file_event, 11, "file_event");
-    sysmon_category_test!(test_sysmon_12_registry_event, 12, "registry_event");
-    sysmon_category_test!(test_sysmon_13_registry_event, 13, "registry_event");
-    sysmon_category_test!(test_sysmon_14_registry_event, 14, "registry_event");
+    sysmon_category_test!(test_sysmon_12_registry_add, 12, "registry_add");
+    sysmon_category_test!(test_sysmon_13_registry_set, 13, "registry_set");
+    sysmon_category_test!(test_sysmon_14_registry_rename, 14, "registry_rename");
     sysmon_category_test!(test_sysmon_15_create_stream_hash, 15, "create_stream_hash");
     sysmon_category_test!(test_sysmon_16_sysmon_status, 16, "sysmon_status");
     sysmon_category_test!(test_sysmon_17_pipe_created, 17, "pipe_created");
