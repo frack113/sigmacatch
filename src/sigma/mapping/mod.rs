@@ -8,7 +8,7 @@ use tracing::debug;
 
 /// Resolve LogSource from channel, provider, and event_id.
 ///
-/// // INVARIANT: channel > provider > default
+/// INVARIANT: channel > provider > default
 /// Priority order MUST NOT be changed:
 ///   1. Channel → service (CHANNEL_TO_SERVICE + custom_map override)
 ///   2. Provider → service (PROVIDER_TO_SERVICE) fallback
@@ -356,6 +356,6 @@ mod tests {
         let ls = resolve_logsource("", "Microsoft-Windows-Kernel-File", 0, &HashMap::new());
         assert_eq!(ls.product.as_deref(), Some("windows"));
         assert_eq!(ls.service.as_deref(), Some("file"));
-        assert_eq!(ls.category, None);  // provider-based category requires event_id distinction
+        assert_eq!(ls.category, None);  // provider fallback only resolves service, not category
     }
 }
