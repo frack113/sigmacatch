@@ -121,6 +121,9 @@ pub static CHANNEL_EVENT_TO_CATEGORY: phf::Map<&'static str, &'static str> = phf
     // PowerShell modern (Operational channel)
     "Microsoft-Windows-PowerShell/Operational:4103" => "ps_module",
     "Microsoft-Windows-PowerShell/Operational:4104" => "ps_script",
+    // PowerShellCore
+    "PowerShellCore/Operational:4103" => "ps_module",
+    "PowerShellCore/Operational:4104" => "ps_script",
 };
 
 #[cfg(test)]

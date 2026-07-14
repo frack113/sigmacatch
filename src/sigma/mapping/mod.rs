@@ -262,4 +262,100 @@ mod tests {
         assert_eq!(ls.service.as_deref(), Some("sysmon"));
         assert_eq!(ls.category, None);
     }
+
+    // ─── Sysmon category resolution tests (per spec v2.1.0) ────────────
+    macro_rules! sysmon_category_test {
+        ($name:ident, $eid:expr, $expected:expr) => {
+            #[test]
+            fn $name() {
+                let ls = resolve_logsource("Microsoft-Windows-Sysmon/Operational", "", $eid, &HashMap::new());
+                assert_eq!(ls.product.as_deref(), Some("windows"));
+                assert_eq!(ls.service.as_deref(), Some("sysmon"));
+                assert_eq!(ls.category.as_deref(), Some($expected));
+            }
+        };
+    }
+
+    sysmon_category_test!(test_sysmon_2_file_change, 2, "file_change");
+    sysmon_category_test!(test_sysmon_3_network_connection, 3, "network_connection");
+    sysmon_category_test!(test_sysmon_4_sysmon_status, 4, "sysmon_status");
+    sysmon_category_test!(test_sysmon_5_process_termination, 5, "process_termination");
+    sysmon_category_test!(test_sysmon_6_driver_load, 6, "driver_load");
+    sysmon_category_test!(test_sysmon_7_image_load, 7, "image_load");
+    sysmon_category_test!(test_sysmon_8_create_remote_thread, 8, "create_remote_thread");
+    sysmon_category_test!(test_sysmon_9_raw_access_thread, 9, "raw_access_thread");
+    sysmon_category_test!(test_sysmon_10_process_access, 10, "process_access");
+    sysmon_category_test!(test_sysmon_11_file_event, 11, "file_event");
+    sysmon_category_test!(test_sysmon_12_registry_event, 12, "registry_event");
+    sysmon_category_test!(test_sysmon_13_registry_event, 13, "registry_event");
+    sysmon_category_test!(test_sysmon_14_registry_event, 14, "registry_event");
+    sysmon_category_test!(test_sysmon_15_create_stream_hash, 15, "create_stream_hash");
+    sysmon_category_test!(test_sysmon_16_sysmon_status, 16, "sysmon_status");
+    sysmon_category_test!(test_sysmon_17_pipe_created, 17, "pipe_created");
+    sysmon_category_test!(test_sysmon_18_pipe_created, 18, "pipe_created");
+    sysmon_category_test!(test_sysmon_19_wmi_event, 19, "wmi_event");
+    sysmon_category_test!(test_sysmon_20_wmi_event, 20, "wmi_event");
+    sysmon_category_test!(test_sysmon_21_wmi_event, 21, "wmi_event");
+    sysmon_category_test!(test_sysmon_22_dns_query, 22, "dns_query");
+    sysmon_category_test!(test_sysmon_23_file_delete, 23, "file_delete");
+    sysmon_category_test!(test_sysmon_24_clipboard_capture, 24, "clipboard_capture");
+    sysmon_category_test!(test_sysmon_25_process_tampering, 25, "process_tampering");
+    sysmon_category_test!(test_sysmon_26_file_delete_detected, 26, "file_delete_detected");
+    sysmon_category_test!(test_sysmon_27_file_block_executable, 27, "file_block_executable");
+    sysmon_category_test!(test_sysmon_28_file_block_shredding, 28, "file_block_shredding");
+    sysmon_category_test!(test_sysmon_29_file_executable_detected, 29, "file_executable_detected");
+    sysmon_category_test!(test_sysmon_255_sysmon_error, 255, "sysmon_error");
+
+    // ─── PowerShellCore category tests ─────────────────────────────────
+    #[test]
+    fn test_powershellcore_4103_ps_module() {
+        let ls = resolve_logsource("PowerShellCore/Operational", "", 4103, &HashMap::new());
+        assert_eq!(ls.service.as_deref(), Some("powershell"));
+        assert_eq!(ls.category.as_deref(), Some("ps_module"));
+    }
+
+    #[test]
+    fn test_powershellcore_4104_ps_script() {
+        let ls = resolve_logsource("PowerShellCore/Operational", "", 4104, &HashMap::new());
+        assert_eq!(ls.service.as_deref(), Some("powershell"));
+        assert_eq!(ls.category.as_deref(), Some("ps_script"));
+    }
+
+    // ─── Security category tests ───────────────────────────────────────
+    #[test]
+    fn test_security_4672_privilege_use() {
+        let ls = resolve_logsource("Security", "", 4672, &HashMap::new());
+        assert_eq!(ls.service.as_deref(), Some("security"));
+        assert_eq!(ls.category.as_deref(), Some("privilege_use"));
+    }
+
+    #[test]
+    fn test_security_4625_login_failure() {
+        let ls = resolve_logsource("Security", "", 4625, &HashMap::new());
+        assert_eq!(ls.service.as_deref(), Some("security"));
+        assert_eq!(ls.category.as_deref(), Some("login_failure"));
+    }
+
+    #[test]
+    fn test_security_4634_logoff() {
+        let ls = resolve_logsource("Security", "", 4634, &HashMap::new());
+        assert_eq!(ls.service.as_deref(), Some("security"));
+        assert_eq!(ls.category.as_deref(), Some("logoff"));
+    }
+
+    #[test]
+    fn test_security_4647_logoff() {
+        let ls = resolve_logsource("Security", "", 4647, &HashMap::new());
+        assert_eq!(ls.service.as_deref(), Some("security"));
+        assert_eq!(ls.category.as_deref(), Some("logoff"));
+    }
+
+    // ─── Kernel-File provider (file_access / file_rename) ──────────────
+    #[test]
+    fn test_kernel_file_provider_fallback() {
+        let ls = resolve_logsource("", "Microsoft-Windows-Kernel-File", 0, &HashMap::new());
+        assert_eq!(ls.product.as_deref(), Some("windows"));
+        assert_eq!(ls.service.as_deref(), Some("file"));
+        assert_eq!(ls.category, None);  // provider-based category requires event_id distinction
+    }
 }
