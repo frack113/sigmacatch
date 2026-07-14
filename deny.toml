@@ -22,7 +22,6 @@ allow = [
     "Zlib",
     "0BSD",
     "CC0-1.0",
-    "UTF-8",
 ]
 deny = []
 exceptions = []
