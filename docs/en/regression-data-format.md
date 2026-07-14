@@ -56,7 +56,7 @@ Each rule with regression contains a directory (slug) with exactly three files:
 <slug>/
 ├── info.yml                    # Metadata + test results
 ├── <rule_id>.json              # Raw event (flat JSON)
-└── <rule_id>.evtx              # Valid EVTX via EvtWriteFile (Winevt XML)
+└── <rule_id>.evtx              # Valid EVTX via EvtExportLog (or .xml fallback)
 ```
 
 The `<rule_id>` is always the **UUID** contained in `rule_metadata[0].id` of the `info.yml` file. It is never the directory name.
@@ -100,7 +100,7 @@ rule_metadata:
 regression_tests_info:
   - name: Positive Detection Test
     type: evtx                  # or "raw" for some formats
-    provider: <ETW-provider>    # e.g., Microsoft-Windows-Sysmon
+    provider: <ProviderName>    # dynamically extracted from event's XML ProviderName (e.g., Microsoft-Windows-Sysmon)
     match_count: <int>          # Number of matches found
     path: regression_data/.../<rule_id>.evtx  # Relative path to the template
 ```
@@ -138,7 +138,7 @@ regression_tests_info:
 |------|--------|------|---------|
 | `info.yml` | YAML | Always `info.yml` | Metadata + results |
 | `<rule_id>.json` | JSON | UUID v4 | Raw event (flat JSON, Sigma keys) |
-| `<rule_id>.evtx` | Binary | UUID v4 | Valid EVTX via EvtWriteFile (Winevt XML) |
+| `<rule_id>.evtx` | Binary | UUID v4 | Valid EVTX via EvtExportLog (or .xml fallback on failure) |
 
 The `<rule_id>` in file names is always the UUID from `rule_metadata[0].id`.
 

@@ -35,7 +35,7 @@ src/
 │   ├── mod.rs           # pub mod winevt
 │   └── winevt.rs        # WinevtCollector (EvtQueryW, EvtNext, EvtRender)
 ├── evtx/
-│   └── writer.rs        # write_evtx() via EvtWriteFile API
+│   └── writer.rs        # write_evtx() via EvtExportLog API + .xml fallback
 ├── parser/
 │   └── mod.rs           # XmlParser (Winevt XML → flat JSON)
 └── regression/
@@ -127,11 +127,11 @@ SigmaEngine in-memory (loaded rules + rule_paths)
 WinevtCollector (channels: Security, System, Sysmon)
     ├── [Windows] EvtQueryW(channel="*") → EvtNext() → EvtRender() → XML
     │     ├── One task per channel (tokio::spawn)
-    │     ├── XML → parse_event_xml() → WinevtEvent
+    │     ├── XML → parse_event_xml() → WinevtEvent (carries pre-parsed event_json)
     │     └── mpsc::channel → main loop
     └── [non-Windows] Stub → Ok(vec![])
     ↓
-Vec<WinevtEvent> { channel, event_id, timestamp, raw_xml }
+Vec<WinevtEvent> { channel, event_id, raw_xml, event_json }
 ```
 
 ### Cycle — Evaluation
@@ -140,14 +140,14 @@ Vec<WinevtEvent> { channel, event_id, timestamp, raw_xml }
 For each SensorEvent:
     ├── channel → LogSource { product: "windows", service, category }
     │     (mapping::resolve_logsource + channel/service priority)
-    ├── event.to_json_value() → flat serde_json::Value (Sigma keys: Image, CommandLine, ...)
+    ├── event.event_json → flat serde_json::Value (pre-parsed by collector, XmlParser fallback if None)
     ├── engine.evaluate_event_with_logsource(event_value, logsource)
     │     → Vec<EvaluationResult> (rsigma-eval)
     └── For each match:
          ├── rule_id = match.header.rule_id
          ├── skip if rule_id in retired (already generated this cycle)
          ├── stats.matches_found++
-         └── aggregated[rule_id].events.push(event_value)
+         └── aggregated[rule_id].events.push((event_value, raw_xml, provider))
 ```
 
 ### Cycle — Generation
@@ -159,7 +159,7 @@ For each AggregatedRule in aggregated:
     ├── For each event: reg.add_event(event_json, raw_xml)
     ├── reg.generate()
     │     ├── Write <rule_id>.json (first event, pretty-printed JSON)
-    │     ├── Write <rule_id>.evtx (EvtWriteFile API, valid Winevt XML)
+    │     ├── Write <rule_id>.evtx (EvtExportLog API, or .xml fallback)
     │     └── Write info.yml (InfoYml::new + save)
     ├── Append "regression_tests_path: ..." to source rule YAML
     └── retired.insert(rule_id)
@@ -194,6 +194,7 @@ WinevtEvent {
     channel: String,            // Event Log channel name
     event_id: u32,              // EventID
     raw_xml: String,            // Full event XML (Winevt format)
+    event_json: Option<serde_json::Value>,  // pre-parsed JSON from collector (XmlParser)
 }
 ```
 
@@ -221,15 +222,19 @@ regression_tests_info:
 ```rust
 RegressionData {
     header: RuleHeader,       // rule_id, title, etc.
-    events: Vec<MatchEvent>,  // (event_json, raw_xml)
+    events: Vec<MatchEvent>,  // (event_json, raw_xml, channel, record_id, provider)
     output_path: PathBuf,
     rule_rel_path: Option<PathBuf>,
     author: Option<String>,
+    description: Option<String>,
 }
 
 MatchEvent {
     event: Value,             // flat JSON of the event
     raw_xml: String,          // full Winevt XML (for EVTX)
+    channel: String,          // Event Log channel name
+    record_id: Option<u64>,   // EventRecordID
+    provider: String,         // ProviderName extracted from event (e.g., Microsoft-Windows-Sysmon)
 }
 ```
 
@@ -242,15 +247,17 @@ MatchEvent {
 - Loads rules from `rules*` dirs
 - Post-parse filter: `rule.logsource.product` filters non-Windows rules after `parse_sigma_yaml`
 - Skip-at-load = sole optimization (rules with existing `info.yml`)
-- `LogSource` derived from Event Log channel + `EventFields::category()`
+- `LogSource` derived from Event Log channel + provider (resolve_logsource)
 - `evaluate_event_with_logsource()` → `Vec<EvaluationResult>` via rsigma-eval
 
 ### EVTX Writer (`evtx/writer.rs`)
 
-- **Windows**: `EvtWriteFile` API (winevt) — writes Winevt XML to valid EVTX
-  - `CoInitializeEx` → `EvtWriteFile(PCWSTR path, 0, PCWSTR xml)` → `EvtClose`
+- **Windows**: `EvtExportLog` API (winevt) — re-queries the event by RecordID and exports to valid binary `.evtx`
+  - `EvtExportLog(None, channel, query, path, EvtExportLogChannelPath | EvtExportLogOverwrite)`
   - Produces valid binary EVTX readable by hayabusa/chainsaw
-- **Non-Windows**: fallback raw XML write (no EVTX format without Winevt API)
+  - **Known limitation**: race condition with log retention — if the event has been purged between collection and export, the call fails silently (`ERROR_EVT_QUERY_RESULT_STALE`)
+- **Fallback**: writes raw XML as `.xml` (not `.evtx` — avoids producing invalid binary that would break downstream tools)
+- **Non-Windows**: fallback raw XML write as `.xml`
 - The companion `.json` file carries the actual data for Sigma matching
 
 ### Logger (`logger.rs`)
@@ -273,7 +280,7 @@ MatchEvent {
 | Skip-at-load sole optimization | rules with `info.yml` excluded from engine |
 | One event per test | `match_count: 1`, first event only |
 | Output mirrors source | `regression_tests_path` added to source YAML |
-| EVTX via EvtWriteFile | Winevt XML → valid binary EVTX (Winevt API) |
+| EVTX via EvtExportLog | Re-queries event by RecordID → valid binary EVTX. .xml fallback on failure. |
 
 ---
 
@@ -370,12 +377,12 @@ sigmacatch
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  CYCLE — EVALUATION                                                     │
 │  For each WinevtEvent:                                                  │
-│    ├── parse raw_xml → flat JSON (XmlParser)                           │
+│    ├── event.event_json → flat JSON (pre-parsed, XmlParser fallback if None)
 │    ├── provider → LogSource { product: "windows" }                    │
 │    └── engine.evaluate_event_with_logsource()                         │
 │         → Vec<EvaluationResult>                                        │
 │  For each match:                                                        │
-│    └── aggregated[rule_id].events.push((json, raw_xml))               │
+│    └── aggregated[rule_id].events.push((json, raw_xml, provider))     │
 └──────────────────────┬──────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -385,7 +392,7 @@ sigmacatch
 │    ├── RegressionData::new()                                           │
 │    ├── reg.generate() → triplet:                                     │
 │    │     ├── <rule_id>.json (first event, flat JSON)                  │
-│    │     ├── <rule_id>.evtx (EvtWriteFile, Winevt XML)                │
+│    │     ├── <rule_id>.evtx (EvtExportLog, or .xml fallback)          │
 │    │     └── info.yml (UUID v4, SigmaHQ metadata)                     │
 │    └── append "regression_tests_path" to source YAML                  │
 └──────────────────────┬──────────────────────────────────────────────────┘
@@ -403,6 +410,6 @@ sigmacatch
 ```
 regression_data/<rule_rel_path>/
 ├── <rule_id>.json      # first matching event (flat JSON, Sigma keys)
-├── <rule_id>.evtx      # valid EVTX via EvtWriteFile (Winevt XML)
+├── <rule_id>.evtx      # valid EVTX via EvtExportLog (or .xml fallback)
 └── info.yml            # type: evtx, rule_metadata, regression_tests_info
 ```
