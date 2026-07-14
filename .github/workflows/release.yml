@@ -8,9 +8,26 @@ permissions:
   contents: read
 
 jobs:
+  build-windows:
+    name: Build Windows executable
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --target x86_64-pc-windows-msvc
+      - uses: actions/upload-artifact@v5
+        with:
+          name: sigmacatch-x86_64-pc-windows-msvc
+          path: target/x86_64-pc-windows-msvc/release/sigmacatch.exe
+
   github:
     name: Create GitHub release
     runs-on: ubuntu-latest
+    needs: build-windows
     permissions:
       contents: write
     steps:
@@ -23,9 +40,14 @@ jobs:
         with:
           tool: git-cliff
       - run: git-cliff --latest -o CHANGELOG.md
+      - uses: actions/download-artifact@v5
+        with:
+          name: sigmacatch-x86_64-pc-windows-msvc
+          path: artifacts
       - uses: softprops/action-gh-release@v3
         with:
           body_path: CHANGELOG.md
+          files: artifacts/sigmacatch.exe
 
   crates-io:
     name: Publish to crates.io
