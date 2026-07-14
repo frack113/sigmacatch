@@ -531,9 +531,7 @@ detection:
         skip.insert("test-svc-2".to_string());
 
         let mut engine = SigmaEngine::new();
-        let count = engine
-            .load_rules_from_dirs(&[dir.path()], &skip)
-            .unwrap();
+        let count = engine.load_rules_from_dirs(&[dir.path()], &skip).unwrap();
 
         assert_eq!(count, 0);
         assert!(engine.all_services().contains("powershell"));
@@ -564,7 +562,11 @@ detection:
     fn test_category_tracking_active() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.yml");
-        std::fs::write(&path, &rule_with_category("test-cat-1", "sysmon", "process_creation")).unwrap();
+        std::fs::write(
+            &path,
+            &rule_with_category("test-cat-1", "sysmon", "process_creation"),
+        )
+        .unwrap();
 
         let mut engine = SigmaEngine::new();
         let count = engine
@@ -582,15 +584,16 @@ detection:
     fn test_category_tracking_skipped() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.yml");
-        let _ = std::fs::write(&path, &rule_with_category("test-cat-2", "sysmon", "registry"));
+        let _ = std::fs::write(
+            &path,
+            &rule_with_category("test-cat-2", "sysmon", "registry"),
+        );
 
         let mut skip = HashSet::new();
         skip.insert("test-cat-2".to_string());
 
         let mut engine = SigmaEngine::new();
-        let count = engine
-            .load_rules_from_dirs(&[dir.path()], &skip)
-            .unwrap();
+        let count = engine.load_rules_from_dirs(&[dir.path()], &skip).unwrap();
 
         assert_eq!(count, 0);
         assert!(engine.all_services().contains("sysmon"));
@@ -611,8 +614,14 @@ detection:
             .unwrap();
 
         assert_eq!(count, 0);
-        assert!(engine.all_services().is_empty(), "linux rules should not contribute to all_services");
-        assert!(engine.all_categories().is_empty(), "linux rules should not contribute to all_categories");
+        assert!(
+            engine.all_services().is_empty(),
+            "linux rules should not contribute to all_services"
+        );
+        assert!(
+            engine.all_categories().is_empty(),
+            "linux rules should not contribute to all_categories"
+        );
     }
 
     #[test]

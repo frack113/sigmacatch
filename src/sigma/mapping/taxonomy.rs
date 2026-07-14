@@ -216,5 +216,4 @@ mod tests {
     fn test_channel_event_to_category_unknown() {
         assert!(CHANNEL_EVENT_TO_CATEGORY.get("Security:0").is_none());
     }
-
 }

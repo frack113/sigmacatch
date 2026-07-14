@@ -40,7 +40,10 @@ mod tests {
     fn test_load_custom_mapping_missing_file() {
         let path = Path::new("/nonexistent/custom_channels_nonexistent.yaml");
         let result = load_custom_mapping(path);
-        assert!(result.is_empty(), "missing file should return empty HashMap");
+        assert!(
+            result.is_empty(),
+            "missing file should return empty HashMap"
+        );
     }
 
     #[test]
@@ -55,8 +58,14 @@ mod tests {
         }
         let result = load_custom_mapping(&path);
         assert_eq!(result.len(), 2);
-        assert_eq!(result.get("Custom-Channel/Operational"), Some(&"custom_service".to_string()));
-        assert_eq!(result.get("Another-Channel"), Some(&"another_service".to_string()));
+        assert_eq!(
+            result.get("Custom-Channel/Operational"),
+            Some(&"custom_service".to_string())
+        );
+        assert_eq!(
+            result.get("Another-Channel"),
+            Some(&"another_service".to_string())
+        );
     }
 
     #[test]
@@ -68,7 +77,9 @@ mod tests {
             writeln!(file, "channels: {{invalid yaml content<<<").unwrap();
         }
         let result = load_custom_mapping(&path);
-        assert!(result.is_empty(), "malformed YAML should return empty HashMap");
+        assert!(
+            result.is_empty(),
+            "malformed YAML should return empty HashMap"
+        );
     }
-
 }

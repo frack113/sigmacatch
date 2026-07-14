@@ -10,8 +10,8 @@ use anyhow::Result;
 use config::Config;
 use sigma::engine::SigmaEngine;
 use sigma::loader::{find_rules_dirs, SigmaRepo};
-use sigma::mapping::custom::load_custom_mapping;
 use sigma::mapping::build_logsource_to_channels;
+use sigma::mapping::custom::load_custom_mapping;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -116,10 +116,7 @@ async fn stage_4_work_winevt(
     stats: &mut Stats,
     custom_map: &HashMap<String, String>,
 ) -> Result<()> {
-    info!(
-        "Starting winevt collection on channels: {:?}",
-        channels
-    );
+    info!("Starting winevt collection on channels: {:?}", channels);
 
     let (tx, mut rx) = mpsc::channel::<collector::winevt::WinevtEvent>(1024);
 
@@ -165,7 +162,12 @@ async fn stage_4_work_winevt(
             .get("EventID_num")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
-        let logsource = crate::sigma::mapping::resolve_logsource(&event.channel, provider, event_id_num, custom_map);
+        let logsource = crate::sigma::mapping::resolve_logsource(
+            &event.channel,
+            provider,
+            event_id_num,
+            custom_map,
+        );
         let matches = engine.evaluate_event_with_logsource(&event_json, &logsource);
 
         for match_result in &matches {
@@ -281,7 +283,10 @@ async fn stage_4_work_winevt(
     Ok(())
 }
 
-fn resolve_channels_from_rules(engine: &SigmaEngine, custom_map: &HashMap<String, String>) -> Vec<String> {
+fn resolve_channels_from_rules(
+    engine: &SigmaEngine,
+    custom_map: &HashMap<String, String>,
+) -> Vec<String> {
     let map = build_logsource_to_channels(custom_map);
     let active_services = engine.active_services();
     let all_services = engine.all_services();
@@ -337,7 +342,10 @@ fn resolve_channels_from_rules(engine: &SigmaEngine, custom_map: &HashMap<String
     channels
 }
 
-async fn setup_pipeline(config: &Config, offline: bool) -> Result<(SigmaEngine, u64, Vec<String>, HashMap<String, String>)> {
+async fn setup_pipeline(
+    config: &Config,
+    offline: bool,
+) -> Result<(SigmaEngine, u64, Vec<String>, HashMap<String, String>)> {
     stage_0_init(config).await?;
     stage_1_update_repo(config, offline).await?;
 
@@ -383,7 +391,15 @@ async fn run_cycle(
     }
 
     let mut aggregated: HashMap<String, AggregatedRule> = HashMap::new();
-    stage_4_work_winevt(channels, engine, retired, &mut aggregated, &mut stats, custom_map).await?;
+    stage_4_work_winevt(
+        channels,
+        engine,
+        retired,
+        &mut aggregated,
+        &mut stats,
+        custom_map,
+    )
+    .await?;
 
     info!(
         "cycle complete: {} events processed, {} matches found, {} regressions generated",
@@ -441,7 +457,8 @@ async fn main() -> Result<()> {
 
     info!("Sigma Regression Generator v{}", env!("CARGO_PKG_VERSION"));
 
-    let (engine, rules_count, cycle_channels, custom_map) = setup_pipeline(&config, config.offline).await?;
+    let (engine, rules_count, cycle_channels, custom_map) =
+        setup_pipeline(&config, config.offline).await?;
 
     if cycle_channels.is_empty() {
         info!("No channels resolved — exiting cleanly");
