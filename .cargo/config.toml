@@ -1,3 +1,3 @@
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld"
-rustflags = ["-C", "link-args=/SUBSYSTEM:WINDOWS"]
+rustflags = ["-C", "link-args=/SUBSYSTEM:CONSOLE"]
