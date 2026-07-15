@@ -135,6 +135,7 @@ async fn stage_4_work_winevt(
     stats: &mut Stats,
     custom_map: &HashMap<String, String>,
     author: &str,
+    email: &str,
     contrib_enabled: bool,
     sigma_repo_path: &std::path::Path,
 ) -> Result<()> {
@@ -343,7 +344,7 @@ async fn stage_4_work_winevt(
     // Commit regression data if contrib is enabled
     if contrib_enabled && !to_generate.is_empty() {
         let committed_rules: Vec<String> = to_generate.iter().map(|(_, _, rid)| rid.clone()).collect();
-        if let Err(e) = contrib::commit::commit_all_rules(sigma_repo_path, &committed_rules) {
+        if let Err(e) = contrib::commit::commit_all_rules(sigma_repo_path, &committed_rules, author, email) {
             warn!("Failed to commit regression data: {}", e);
         }
     }
@@ -464,6 +465,7 @@ async fn run_cycle(
     retired: &mut HashSet<String>,
     custom_map: &HashMap<String, String>,
     author: &str,
+    email: &str,
     contrib_enabled: bool,
 ) -> Result<Stats> {
     let mut stats = Stats {
@@ -487,6 +489,7 @@ async fn run_cycle(
             &mut stats,
             custom_map,
             author,
+            email,
             contrib_enabled,
             std::path::Path::new("sigma"),
         )
@@ -544,10 +547,10 @@ async fn main() -> Result<()> {
     let mut fork_config: Option<contrib::fork::ForkConfig> = None;
     let branch_name;
     if config.contrib {
-        if config.author.is_empty() {
-            anyhow::bail!("config.yaml 'author' field required for contrib workflow.");
+        if config.author.is_empty() || config.email.is_empty() {
+            anyhow::bail!("config.yaml 'author' and 'email' fields required for contrib workflow.");
         }
-        info!("Contrib workflow enabled for user: {}", config.author);
+        info!("Contrib workflow enabled for {} <{}>", config.author, config.email);
         branch_name = contrib::branch::create_branch_name(&config.author);
         info!("Branch name: {}", branch_name);
         fork_config = Some(contrib::fork::detect_fork(&config.author, &branch_name).await?);
@@ -629,7 +632,7 @@ async fn main() -> Result<()> {
             info!("collecting…");
 
             let channels = cycle_channels.clone();
-            run_cycle(channels, &engine, &mut retired, &custom_map, &config.author, config.contrib).await?;
+            run_cycle(channels, &engine, &mut retired, &custom_map, &config.author, &config.email, config.contrib).await?;
         }
 
         info!("waiting 30s before next cycle…");

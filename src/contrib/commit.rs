@@ -7,16 +7,18 @@ use tracing::{info, warn};
 
 use crate::regression::format::validate_rule_id;
 
-fn git_env() -> [(&'static str, &'static str); 2] {
+fn git_env(author: &str, email: &str) -> [(&'static str, String); 2] {
+    let name = if author.is_empty() { "sigmacatch".to_string() } else { author.to_string() };
+    let mail = if email.is_empty() { "sigmacatch@localhost".to_string() } else { email.to_string() };
     [
-        ("GIT_AUTHOR_NAME", "sigmacatch"),
-        ("GIT_AUTHOR_EMAIL", "sigmacatch@localhost"),
+        ("GIT_AUTHOR_NAME", name),
+        ("GIT_AUTHOR_EMAIL", mail),
     ]
 }
 
 /// Commit all rules in a single batch.
 /// Falls back to individual commits if batch commit fails.
-pub fn commit_all_rules(repo_path: &Path, rule_ids: &[String]) -> Result<()> {
+pub fn commit_all_rules(repo_path: &Path, rule_ids: &[String], author: &str, email: &str) -> Result<()> {
     for rid in rule_ids {
         if !validate_rule_id(rid) {
             warn!("Skipping commit for invalid rule_id: {}", rid);
@@ -32,7 +34,7 @@ pub fn commit_all_rules(repo_path: &Path, rule_ids: &[String]) -> Result<()> {
     let status = std::process::Command::new("git")
         .args(["add", "-A"])
         .current_dir(repo_path)
-        .envs(git_env())
+        .envs(git_env(author, email))
         .status()
         .map_err(|e| anyhow::anyhow!("Failed to git add in {:?}: {}", repo_path, e))?;
 
@@ -43,7 +45,7 @@ pub fn commit_all_rules(repo_path: &Path, rule_ids: &[String]) -> Result<()> {
     let output = std::process::Command::new("git")
         .args(["commit", "-m", &message])
         .current_dir(repo_path)
-        .envs(git_env())
+        .envs(git_env(author, email))
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to git commit: {}", e))?;
 
@@ -64,7 +66,7 @@ pub fn commit_all_rules(repo_path: &Path, rule_ids: &[String]) -> Result<()> {
             let _ = std::process::Command::new("git")
                 .args(["reset", "HEAD"])
                 .current_dir(repo_path)
-                .envs(git_env())
+                .envs(git_env(author, email))
                 .output();
             // Fall back to individual commits
             for rule_id in rule_ids {
@@ -72,7 +74,7 @@ pub fn commit_all_rules(repo_path: &Path, rule_ids: &[String]) -> Result<()> {
                 let status = std::process::Command::new("git")
                     .args(["add", "-A", &reg_dir])
                     .current_dir(repo_path)
-                    .envs(git_env())
+                    .envs(git_env(author, email))
                     .status()
                     .map_err(|e| anyhow::anyhow!("Failed to git add '{}': {}", reg_dir, e))?;
                 if !status.success() {
@@ -83,7 +85,7 @@ pub fn commit_all_rules(repo_path: &Path, rule_ids: &[String]) -> Result<()> {
                 let out = std::process::Command::new("git")
                     .args(["commit", "-m", &msg])
                     .current_dir(repo_path)
-                    .envs(git_env())
+                    .envs(git_env(author, email))
                     .output()
                     .map_err(|e| anyhow::anyhow!("Failed to git commit: {}", e))?;
                 if out.status.success() {

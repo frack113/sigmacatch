@@ -13,6 +13,10 @@ fn default_contrib() -> bool {
     false
 }
 
+fn default_email() -> String {
+    String::new()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
@@ -55,6 +59,8 @@ pub struct Config {
     pub offline: bool,
     #[serde(default = "default_contrib")]
     pub contrib: bool,
+    #[serde(default = "default_email")]
+    pub email: String,
     pub log: LogConfig,
 }
 
@@ -64,6 +70,7 @@ impl Default for Config {
             author: default_author(),
             offline: false,
             contrib: false,
+            email: default_email(),
             log: LogConfig::default(),
         }
     }
@@ -102,6 +109,12 @@ mod tests {
     }
 
     #[test]
+    fn test_default_config_has_default_email() {
+        let config = Config::default();
+        assert!(config.email.is_empty());
+    }
+
+    #[test]
     fn test_default_config_has_contrib_false() {
         let config = Config::default();
         assert!(!config.contrib);
@@ -113,6 +126,7 @@ mod tests {
 author: testuser
 offline: false
 contrib: true
+email: user@example.com
 log:
   level_file: debug
 "#;
@@ -120,6 +134,7 @@ log:
         assert_eq!(config.author, "testuser");
         assert!(config.contrib);
         assert!(!config.offline);
+        assert_eq!(config.email, "user@example.com");
     }
 
     #[test]
@@ -141,6 +156,7 @@ log:
             author: "devuser".to_string(),
             offline: true,
             contrib: true,
+            email: "dev@example.com".to_string(),
             log: LogConfig::default(),
         };
         let yaml = serde_yaml::to_string(&config).unwrap();
@@ -148,5 +164,6 @@ log:
         assert_eq!(loaded.author, "devuser");
         assert!(loaded.offline);
         assert!(loaded.contrib);
+        assert_eq!(loaded.email, "dev@example.com");
     }
 }
