@@ -48,9 +48,7 @@ pub async fn check_fork_exists(username: &str) -> Result<bool> {
             if e.status() == Some(StatusCode::TOO_MANY_REQUESTS)
                 || e.status() == Some(StatusCode::FORBIDDEN)
             {
-                warn!(
-                    "GitHub rate-limited while checking fork. Assuming fork exists."
-                );
+                warn!("GitHub rate-limited while checking fork. Assuming fork exists.");
                 return Ok(true);
             }
             warn!("Failed to check fork existence: {}", e);
@@ -97,14 +95,8 @@ mod tests {
             "sigmacatch-contrib/20260714_testuser".to_string(),
         );
         assert!(config.is_fork);
-        assert_eq!(
-            config.fork_url,
-            "https://github.com/testuser/sigma"
-        );
-        assert_eq!(
-            config.branch_name,
-            "sigmacatch-contrib/20260714_testuser"
-        );
+        assert_eq!(config.fork_url, "https://github.com/testuser/sigma");
+        assert_eq!(config.branch_name, "sigmacatch-contrib/20260714_testuser");
     }
 
     #[test]
@@ -116,10 +108,7 @@ mod tests {
         );
         assert!(!config.is_fork);
         assert_eq!(config.fork_url, crate::sigma::loader::SIGMA_REPO_URL);
-        assert_eq!(
-            config.branch_name,
-            "sigmacatch-contrib/20260714_testuser"
-        );
+        assert_eq!(config.branch_name, "sigmacatch-contrib/20260714_testuser");
     }
 
     #[test]

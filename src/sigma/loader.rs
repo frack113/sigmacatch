@@ -84,7 +84,10 @@ impl SigmaRepo {
     }
 
     async fn clone_repo(&self) -> Result<()> {
-        let url = self.remote_url.clone().unwrap_or_else(|| SIGMA_REPO_URL.to_string());
+        let url = self
+            .remote_url
+            .clone()
+            .unwrap_or_else(|| SIGMA_REPO_URL.to_string());
         info!("Cloning Sigma repository from {}...", url);
         let path = self.path.clone();
 
@@ -136,7 +139,9 @@ impl SigmaRepo {
                 let remote = repo
                     .find_remote("origin")
                     .map_err(|e| anyhow::anyhow!("Failed to find remote 'origin': {}", e))?;
-                let current_url = remote.url(gix::remote::Direction::Fetch).map(|u| u.to_bstring().to_string());
+                let current_url = remote
+                    .url(gix::remote::Direction::Fetch)
+                    .map(|u| u.to_bstring().to_string());
                 if current_url.as_deref() != Some(url.as_str()) {
                     // gix doesn't expose remote set-url, use git CLI
                     let set_url_output = std::process::Command::new("git")

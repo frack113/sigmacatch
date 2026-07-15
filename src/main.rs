@@ -42,7 +42,11 @@ async fn stage_0_init(_config: &Config) -> Result<()> {
     Ok(())
 }
 
-async fn stage_1_update_repo(_config: &Config, offline: bool, fork_config: Option<&contrib::fork::ForkConfig>) -> Result<()> {
+async fn stage_1_update_repo(
+    _config: &Config,
+    offline: bool,
+    fork_config: Option<&contrib::fork::ForkConfig>,
+) -> Result<()> {
     let mut sigma_repo = SigmaRepo::new(std::path::Path::new("sigma")).with_offline(offline);
 
     if let Some(fc) = fork_config {
@@ -330,8 +334,11 @@ async fn stage_4_work_winevt(
 
     // Commit regression data if contrib is enabled
     if contrib_enabled && !to_generate.is_empty() {
-        let committed_rules: Vec<String> = to_generate.iter().map(|(_, _, rid)| rid.clone()).collect();
-        if let Err(e) = contrib::commit::commit_all_rules(sigma_repo_path, &committed_rules, author, email) {
+        let committed_rules: Vec<String> =
+            to_generate.iter().map(|(_, _, rid)| rid.clone()).collect();
+        if let Err(e) =
+            contrib::commit::commit_all_rules(sigma_repo_path, &committed_rules, author, email)
+        {
             warn!("Failed to commit regression data: {}", e);
         }
     }
@@ -546,7 +553,10 @@ async fn main() -> Result<()> {
         if config.email.is_empty() {
             anyhow::bail!("config.yaml 'email' field required for contrib workflow.");
         }
-        info!("Contrib workflow enabled for {} <{}>", config.author, config.email);
+        info!(
+            "Contrib workflow enabled for {} <{}>",
+            config.author, config.email
+        );
         branch_name = contrib::branch::create_branch_name(&config.author);
         info!("Branch name: {}", branch_name);
         fork_config = Some(contrib::fork::detect_fork(&config.author, &branch_name).await?);
@@ -573,7 +583,8 @@ async fn main() -> Result<()> {
         env!("BUILD_TIME")
     );
 
-    let (engine, cycle_channels, custom_map) = setup_pipeline(&config, config.offline, fork_config.as_ref()).await?;
+    let (engine, cycle_channels, custom_map) =
+        setup_pipeline(&config, config.offline, fork_config.as_ref()).await?;
 
     if cycle_channels.is_empty() {
         info!("No channels resolved — exiting cleanly");
@@ -628,7 +639,16 @@ async fn main() -> Result<()> {
             info!("collecting…");
 
             let channels = cycle_channels.clone();
-            run_cycle(channels, &engine, &mut retired, &custom_map, &config.author, &config.email, config.contrib).await?;
+            run_cycle(
+                channels,
+                &engine,
+                &mut retired,
+                &custom_map,
+                &config.author,
+                &config.email,
+                config.contrib,
+            )
+            .await?;
         }
 
         info!("waiting 30s before next cycle…");

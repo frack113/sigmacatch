@@ -40,12 +40,16 @@ pub fn create_branch_name(author: &str) -> String {
 /// Create a new branch from origin/master (or origin/main fallback).
 /// If the branch already exists locally, switches to it without error.
 pub fn create_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
-    let repo = gix::open(repo_path).map_err(|e| anyhow::anyhow!("Failed to open repo at {:?}: {}", repo_path, e))?;
+    let repo = gix::open(repo_path)
+        .map_err(|e| anyhow::anyhow!("Failed to open repo at {:?}: {}", repo_path, e))?;
 
     // Check if branch already exists locally
     let full_ref_name = format!("refs/heads/{}", branch_name);
     if repo.find_reference(full_ref_name.as_str()).is_ok() {
-        info!("Branch '{}' already exists locally, switching to it", branch_name);
+        info!(
+            "Branch '{}' already exists locally, switching to it",
+            branch_name
+        );
         return Ok(());
     }
 
@@ -60,7 +64,12 @@ pub fn create_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
 
     let target_id = tracking_ref
         .try_id()
-        .ok_or_else(|| anyhow::anyhow!("Tracking ref '{}' is symbolic, cannot create branch", tracking_full))?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Tracking ref '{}' is symbolic, cannot create branch",
+                tracking_full
+            )
+        })?
         .detach();
 
     // Create the branch pointing to the tracking branch's tip
@@ -84,7 +93,10 @@ pub fn create_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
         );
     }
 
-    info!("Created and switched to branch '{}' from 'origin/{}'", branch_name, tracking);
+    info!(
+        "Created and switched to branch '{}' from 'origin/{}'",
+        branch_name, tracking
+    );
     Ok(())
 }
 
@@ -189,7 +201,11 @@ mod tests {
     fn test_create_branch_name_truncation() {
         let long_name = "a".repeat(300);
         let name = create_branch_name(&long_name);
-        assert!(name.len() <= 255, "branch name byte length {} should be <= 255", name.len());
+        assert!(
+            name.len() <= 255,
+            "branch name byte length {} should be <= 255",
+            name.len()
+        );
         assert!(name.contains("…"));
     }
 }

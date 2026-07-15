@@ -8,17 +8,27 @@ use tracing::{info, warn};
 use crate::regression::format::validate_rule_id;
 
 fn git_env(author: &str, email: &str) -> [(&'static str, String); 2] {
-    let name = if author.is_empty() { "sigmacatch".to_string() } else { author.to_string() };
-    let mail = if email.is_empty() { "sigmacatch@localhost".to_string() } else { email.to_string() };
-    [
-        ("GIT_AUTHOR_NAME", name),
-        ("GIT_AUTHOR_EMAIL", mail),
-    ]
+    let name = if author.is_empty() {
+        "sigmacatch".to_string()
+    } else {
+        author.to_string()
+    };
+    let mail = if email.is_empty() {
+        "sigmacatch@localhost".to_string()
+    } else {
+        email.to_string()
+    };
+    [("GIT_AUTHOR_NAME", name), ("GIT_AUTHOR_EMAIL", mail)]
 }
 
 /// Commit all rules in a single batch.
 /// Falls back to individual commits if batch commit fails.
-pub fn commit_all_rules(repo_path: &Path, rule_ids: &[String], author: &str, email: &str) -> Result<()> {
+pub fn commit_all_rules(
+    repo_path: &Path,
+    rule_ids: &[String],
+    author: &str,
+    email: &str,
+) -> Result<()> {
     for rid in rule_ids {
         if !validate_rule_id(rid) {
             warn!("Skipping commit for invalid rule_id: {}", rid);
@@ -100,5 +110,3 @@ pub fn commit_all_rules(repo_path: &Path, rule_ids: &[String], author: &str, ema
 
     Ok(())
 }
-
-

@@ -55,11 +55,11 @@ impl Default for LogConfig {
 pub struct Config {
     #[serde(default = "default_author")]
     pub author: String,
-    pub offline: bool,
-    #[serde(default = "default_contrib")]
-    pub contrib: bool,
     #[serde(default = "default_email")]
     pub email: String,
+    #[serde(default = "default_contrib")]
+    pub contrib: bool,
+    pub offline: bool,
     pub log: LogConfig,
 }
 
@@ -67,9 +67,9 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             author: default_author(),
-            offline: false,
-            contrib: false,
             email: default_email(),
+            contrib: false,
+            offline: false,
             log: LogConfig::default(),
         }
     }
@@ -188,9 +188,9 @@ log:
     fn test_validate_invalid_author_chars() {
         let config = Config {
             author: "user space".to_string(),
-            offline: false,
-            contrib: false,
             email: String::new(),
+            contrib: false,
+            offline: false,
             log: LogConfig::default(),
         };
         assert!(config.validate().is_err());
@@ -200,9 +200,9 @@ log:
     fn test_validate_contrib_requires_email() {
         let config = Config {
             author: "validuser".to_string(),
-            offline: false,
-            contrib: true,
             email: String::new(),
+            contrib: true,
+            offline: false,
             log: LogConfig::default(),
         };
         assert!(config.validate().is_err());
@@ -212,9 +212,9 @@ log:
     fn test_validate_invalid_email() {
         let config = Config {
             author: "validuser".to_string(),
-            offline: false,
-            contrib: false,
             email: "notanemail".to_string(),
+            contrib: false,
+            offline: false,
             log: LogConfig::default(),
         };
         assert!(config.validate().is_err());
@@ -224,9 +224,9 @@ log:
     fn test_validate_valid_config() {
         let config = Config {
             author: "valid-user".to_string(),
-            offline: true,
-            contrib: true,
             email: "user@example.com".to_string(),
+            contrib: true,
+            offline: true,
             log: LogConfig::default(),
         };
         assert!(config.validate().is_ok());
@@ -236,9 +236,9 @@ log:
     fn test_save_and_load_config() {
         let config = Config {
             author: "devuser".to_string(),
-            offline: true,
-            contrib: true,
             email: "dev@example.com".to_string(),
+            contrib: true,
+            offline: true,
             log: LogConfig::default(),
         };
         let yaml = serde_yaml::to_string(&config).unwrap();
