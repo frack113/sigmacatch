@@ -56,7 +56,7 @@ src/
 `config.yaml` (auto-créé au premier run) :
 
 ```yaml
-author: "username"          # nom GitHub pour contrib workflow
+author: "sigmacatch"        # nom GitHub pour contrib workflow (doit être changé)
 offline: false              # true = utilise sigma/ existant sans git
 contrib: false              # true = active le workflow de contribution à SigmaHQ
 log:
@@ -329,10 +329,11 @@ cargo xwin build --release --target x86_64-pc-windows-msvc   # cross-compile Win
 
 ```
 sigmacatch
-    [--create-config]      # créer config.yaml avec defaults
     [--author <name>]      # override username (requis pour contrib)
     [--offline]            # utiliser sigma/ existant sans git
 ```
+
+La config est auto-créée au premier run avec les valeurs par défaut. Éditez `config.yaml` avant de lancer.
 
 ---
 

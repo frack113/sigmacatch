@@ -4,9 +4,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[allow(dead_code)]
 fn default_author() -> String {
-    String::new()
+    "sigmacatch".to_string()
 }
 
 fn default_contrib() -> bool {
@@ -91,11 +90,6 @@ impl Config {
         }
     }
 
-    pub fn save(path: &PathBuf, config: &Config) -> anyhow::Result<()> {
-        let yaml = serde_yaml::to_string(config)?;
-        std::fs::write(path, yaml)?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -103,9 +97,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_config_has_empty_author() {
+    fn test_default_config_has_default_author() {
         let config = Config::default();
-        assert!(config.author.is_empty());
+        assert_eq!(config.author, "sigmacatch");
     }
 
     #[test]

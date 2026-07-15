@@ -38,20 +38,7 @@ struct AggregatedRule {
 }
 
 async fn stage_0_init(_config: &Config) -> Result<()> {
-    info!("ensuring directory structure…");
-    std::fs::create_dir_all("sigma")?;
-    std::fs::create_dir_all("regression_data")?;
-    std::fs::create_dir_all("regression_data/rules")?;
-    std::fs::create_dir_all("logs")?;
-
-    let config_path = PathBuf::from("config.yaml");
-    if !config_path.exists() {
-        let config = Config::default();
-        let yaml = serde_yaml::to_string(&config)?;
-        std::fs::write(&config_path, yaml)?;
-        tracing::info!("Created default config file at {:?}", config_path);
-    }
-
+    info!("directory structure ready");
     Ok(())
 }
 
@@ -521,20 +508,21 @@ async fn main() -> Result<()> {
         None
     };
 
+    std::fs::create_dir_all("sigma")?;
+    std::fs::create_dir_all("regression_data")?;
+    std::fs::create_dir_all("regression_data/rules")?;
+    std::fs::create_dir_all("logs")?;
+
     let config_path = PathBuf::from("config.yaml");
+    let just_created = !config_path.exists();
     let mut config = Config::load(&config_path)?;
 
-    if flag("--create-config") {
-        if let Some(author) = flag_value("--author") {
-            config.author = author;
-        }
-        if flag("--offline") {
-            config.offline = true;
-        }
-        Config::save(&config_path, &config)?;
-        println!("Config file created at {:?}", config_path);
-        println!("{:?}", config);
-        return Ok(());
+    if just_created {
+        eprintln!("── config.yaml created ──────────────────────");
+        eprintln!("  Edit config.yaml with your settings,");
+        eprintln!("  then run sigmacatch again.");
+        eprintln!("──────────────────────────────────────────────");
+        std::process::exit(1);
     }
 
     if let Some(author) = flag_value("--author") {
@@ -544,11 +532,19 @@ async fn main() -> Result<()> {
         config.offline = true;
     }
 
+    if config.author == "sigmacatch" {
+        eprintln!("── config.yaml not configured ──────────────");
+        eprintln!("  Update the 'author' field in config.yaml");
+        eprintln!("  before running.");
+        eprintln!("──────────────────────────────────────────────");
+        std::process::exit(1);
+    }
+
     let mut fork_config: Option<contrib::fork::ForkConfig> = None;
     let branch_name;
     if config.contrib {
-        if config.author.is_empty() || config.email.is_empty() {
-            anyhow::bail!("config.yaml 'author' and 'email' fields required for contrib workflow.");
+        if config.email.is_empty() {
+            anyhow::bail!("config.yaml 'email' field required for contrib workflow.");
         }
         info!("Contrib workflow enabled for {} <{}>", config.author, config.email);
         branch_name = contrib::branch::create_branch_name(&config.author);
