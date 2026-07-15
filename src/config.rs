@@ -37,7 +37,7 @@ impl LogLevel {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct LogConfig {
     pub level_file: LogLevel,
 }
@@ -51,7 +51,7 @@ impl Default for LogConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
     #[serde(default = "default_author")]
     pub author: String,
@@ -80,6 +80,7 @@ impl Config {
         if path.exists() {
             let content = std::fs::read_to_string(path)?;
             let config: Config = serde_yaml::from_str(&content)?;
+            config.validate()?;
             Ok(config)
         } else {
             let config = Self::default();
@@ -90,6 +91,33 @@ impl Config {
         }
     }
 
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if !self.author.is_empty()
+            && self.author != "sigmacatch"
+            && !self
+                .author
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            anyhow::bail!(
+                "config: 'author' must be a valid GitHub username (alphanumeric + hyphens), got {:?}",
+                self.author
+            );
+        }
+        if self.contrib && self.author.is_empty() {
+            anyhow::bail!("config: 'author' is required when contrib is true");
+        }
+        if self.contrib && self.email.is_empty() {
+            anyhow::bail!("config: 'email' is required when contrib is true");
+        }
+        if !self.email.is_empty() && !self.email.contains('@') {
+            anyhow::bail!(
+                "config: 'email' must contain '@' when set, got {:?}",
+                self.email
+            );
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -142,6 +170,66 @@ log:
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.author, "testuser");
         assert!(!config.contrib);
+    }
+
+    #[test]
+    fn test_deny_unknown_fields() {
+        let yaml = r#"
+author: testuser
+unknown_field: oops
+log:
+  level_file: debug
+"#;
+        let result: Result<Config, _> = serde_yaml::from_str(yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_invalid_author_chars() {
+        let config = Config {
+            author: "user space".to_string(),
+            offline: false,
+            contrib: false,
+            email: String::new(),
+            log: LogConfig::default(),
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_contrib_requires_email() {
+        let config = Config {
+            author: "validuser".to_string(),
+            offline: false,
+            contrib: true,
+            email: String::new(),
+            log: LogConfig::default(),
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_invalid_email() {
+        let config = Config {
+            author: "validuser".to_string(),
+            offline: false,
+            contrib: false,
+            email: "notanemail".to_string(),
+            log: LogConfig::default(),
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_valid_config() {
+        let config = Config {
+            author: "valid-user".to_string(),
+            offline: true,
+            contrib: true,
+            email: "user@example.com".to_string(),
+            log: LogConfig::default(),
+        };
+        assert!(config.validate().is_ok());
     }
 
     #[test]
