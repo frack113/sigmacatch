@@ -68,7 +68,23 @@ pub fn create_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
         .reference(branch_name, target_id, PreviousValue::Any, "")
         .map_err(|e| anyhow::anyhow!("Failed to create branch '{}': {}", branch_name, e))?;
 
-    info!("Created branch '{}' from 'origin/{}'", branch_name, tracking);
+    // Switch HEAD to the new branch (gix doesn't expose this directly, use git CLI)
+    let switch_output = std::process::Command::new("git")
+        .args(["switch", branch_name])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run git switch: {}", e))?;
+
+    if !switch_output.status.success() {
+        let stderr = String::from_utf8_lossy(&switch_output.stderr);
+        anyhow::bail!(
+            "Failed to switch to branch '{}': {}",
+            branch_name,
+            stderr.trim()
+        );
+    }
+
+    info!("Created and switched to branch '{}' from 'origin/{}'", branch_name, tracking);
     Ok(())
 }
 
@@ -173,7 +189,7 @@ mod tests {
     fn test_create_branch_name_truncation() {
         let long_name = "a".repeat(300);
         let name = create_branch_name(&long_name);
-        assert!(name.len() <= 256, "branch name byte length {} should be <= 256", name.len());
+        assert!(name.len() <= 255, "branch name byte length {} should be <= 255", name.len());
         assert!(name.contains("…"));
     }
 }

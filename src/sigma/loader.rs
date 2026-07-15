@@ -125,10 +125,32 @@ impl SigmaRepo {
     async fn pull(&self) -> Result<()> {
         info!("Fetching Sigma repository from origin...");
         let path = self.path.clone();
+        let new_url = self.remote_url.clone();
 
         tokio::task::spawn_blocking(move || -> Result<()> {
             let repo = gix::open(&path)
                 .map_err(|e| anyhow::anyhow!("Failed to open Sigma repository: {}", e))?;
+
+            // Update remote URL if a custom one is configured (e.g. fork URL)
+            if let Some(ref url) = new_url {
+                let remote = repo
+                    .find_remote("origin")
+                    .map_err(|e| anyhow::anyhow!("Failed to find remote 'origin': {}", e))?;
+                let current_url = remote.url(gix::remote::Direction::Fetch).map(|u| u.to_bstring().to_string());
+                if current_url.as_deref() != Some(url.as_str()) {
+                    // gix doesn't expose remote set-url, use git CLI
+                    let set_url_output = std::process::Command::new("git")
+                        .args(["remote", "set-url", "origin", url])
+                        .current_dir(&path)
+                        .output()
+                        .map_err(|e| anyhow::anyhow!("Failed to set remote URL: {}", e))?;
+                    if !set_url_output.status.success() {
+                        let stderr = String::from_utf8_lossy(&set_url_output.stderr);
+                        anyhow::bail!("Failed to set remote URL: {}", stderr.trim());
+                    }
+                    info!("Updated remote 'origin' URL to {}", url);
+                }
+            }
 
             let remote = repo
                 .find_remote("origin")

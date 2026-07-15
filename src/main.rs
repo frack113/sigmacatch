@@ -60,7 +60,8 @@ async fn stage_1_update_repo(_config: &Config, offline: bool, fork_config: Optio
 
     if let Some(fc) = fork_config {
         if fc.is_fork {
-            let clone_url = fc.fork_url.clone() + ".git";
+            let base_url = fc.fork_url.strip_suffix(".git").unwrap_or(&fc.fork_url);
+            let clone_url = format!("{}.git", base_url);
             sigma_repo = sigma_repo.with_remote_url(clone_url);
         }
     }
@@ -125,6 +126,7 @@ fn stage_3_load_rules(
     Ok((engine, rules_count as u64))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn stage_4_work_winevt(
     channels: Vec<String>,
     engine: &SigmaEngine,
@@ -136,6 +138,12 @@ async fn stage_4_work_winevt(
     contrib_enabled: bool,
     sigma_repo_path: &std::path::Path,
 ) -> Result<()> {
+    let output_base = if contrib_enabled {
+        sigma_repo_path.join("regression_data")
+    } else {
+        std::path::PathBuf::from("regression_data")
+    };
+
     info!("Starting winevt collection on channels: {:?}", channels);
 
     let (tx, mut rx) = mpsc::channel::<collector::winevt::WinevtEvent>(1024);
@@ -259,7 +267,7 @@ async fn stage_4_work_winevt(
 
         let mut reg = regression::generator::RegressionData::new(
             agg.header.clone(),
-            std::path::Path::new("regression_data"),
+            &output_base,
             rule_rel_path.as_deref(),
             Some(author),
             agg.description.as_deref(),
@@ -534,7 +542,7 @@ async fn main() -> Result<()> {
     }
 
     let mut fork_config: Option<contrib::fork::ForkConfig> = None;
-    let mut branch_name = String::new();
+    let branch_name;
     if config.contrib {
         if config.author.is_empty() {
             anyhow::bail!("config.yaml 'author' field required for contrib workflow.");
