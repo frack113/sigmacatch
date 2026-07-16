@@ -99,10 +99,7 @@ impl Config {
             anyhow::bail!("config: 'email' is required");
         }
         if !self.email.contains('@') {
-            anyhow::bail!(
-                "config: 'email' must contain '@', got {:?}",
-                self.email
-            );
+            anyhow::bail!("config: 'email' must contain '@', got {:?}", self.email);
         }
         Ok(())
     }

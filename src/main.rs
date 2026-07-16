@@ -329,12 +329,9 @@ async fn stage_4_work_winevt(
 
         // Commit regression data
         if !committed_rules.is_empty() {
-            if let Err(e) = contrib::commit::commit_all_rules(
-                sigma_repo_path,
-                &committed_rules,
-                author,
-                email,
-            ) {
+            if let Err(e) =
+                contrib::commit::commit_all_rules(sigma_repo_path, &committed_rules, author, email)
+            {
                 warn!("Failed to commit regression data: {}", e);
             }
         }
@@ -567,8 +564,7 @@ async fn main() -> Result<()> {
         );
     }
 
-    let (engine, cycle_channels, custom_map) =
-        setup_pipeline(&config, Some(&fork_config)).await?;
+    let (engine, cycle_channels, custom_map) = setup_pipeline(&config, Some(&fork_config)).await?;
 
     if cycle_channels.is_empty() {
         info!("No channels resolved — exiting cleanly");

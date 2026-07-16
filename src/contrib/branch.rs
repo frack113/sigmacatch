@@ -144,14 +144,11 @@ pub fn push_branch(repo_path: &Path, branch_name: &str, remote: &str) -> Result<
     if !fetch_output.status.success() {
         let stderr = String::from_utf8_lossy(&fetch_output.stderr);
         // Branch doesn't exist remotely — first push, just push normally
-        if stderr.contains("not found") || stderr.contains("does not appear to be a git repository") {
+        if stderr.contains("not found") || stderr.contains("does not appear to be a git repository")
+        {
             return push_normal(repo_path, branch_name, remote);
         }
-        anyhow::bail!(
-            "git fetch failed for '{}': {}",
-            branch_name,
-            stderr.trim()
-        );
+        anyhow::bail!("git fetch failed for '{}': {}", branch_name, stderr.trim());
     }
 
     // Check if remote branch exists after fetch
@@ -181,8 +178,12 @@ pub fn push_branch(repo_path: &Path, branch_name: &str, remote: &str) -> Result<
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to get remote tip: {}", e))?;
 
-    let local_sha = String::from_utf8_lossy(&local_head.stdout).trim().to_string();
-    let remote_sha = String::from_utf8_lossy(&remote_tip.stdout).trim().to_string();
+    let local_sha = String::from_utf8_lossy(&local_head.stdout)
+        .trim()
+        .to_string();
+    let remote_sha = String::from_utf8_lossy(&remote_tip.stdout)
+        .trim()
+        .to_string();
 
     if local_sha == remote_sha {
         info!("Branch '{}' is already up to date with remote", branch_name);
