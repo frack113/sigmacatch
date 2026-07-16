@@ -4,7 +4,7 @@
 use anyhow::Result;
 use gix_ref::transaction::PreviousValue;
 use std::path::Path;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Branch naming convention: sigmacatch-contrib/YYYYMMDD_<author>
 pub fn create_branch_name(author: &str) -> String {
@@ -50,6 +50,19 @@ pub fn create_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
             "Branch '{}' already exists locally, switching to it",
             branch_name
         );
+        let switch_output = std::process::Command::new("git")
+            .args(["switch", branch_name])
+            .current_dir(repo_path)
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to run git switch: {}", e))?;
+        if !switch_output.status.success() {
+            let stderr = String::from_utf8_lossy(&switch_output.stderr);
+            anyhow::bail!(
+                "Failed to switch to existing branch '{}': {}",
+                branch_name,
+                stderr.trim()
+            );
+        }
         return Ok(());
     }
 
@@ -116,25 +129,94 @@ fn find_tracking_branch(repo: &gix::Repository) -> Result<String> {
 }
 
 /// Push the current branch to the given remote using git CLI.
-/// Uses --force-with-lease for existing branches, --force for new ones.
+/// Fetches remote state first, then pushes only if safe:
+/// - New branch (remote doesn't exist) → normal push
+/// - Local ahead of remote → normal push (fast-forward)
+/// - Remote ahead or diverged → skip with warning (no force)
 pub fn push_branch(repo_path: &Path, branch_name: &str, remote: &str) -> Result<()> {
-    let tracking_branch = format!("origin/{}", branch_name);
-    let has_tracking = std::process::Command::new("git")
-        .args(["rev-parse", "--verify", &tracking_branch])
+    // Fetch remote branch state
+    let fetch_output = std::process::Command::new("git")
+        .args(["fetch", remote, branch_name])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run git fetch: {}", e))?;
+
+    if !fetch_output.status.success() {
+        let stderr = String::from_utf8_lossy(&fetch_output.stderr);
+        // Branch doesn't exist remotely — first push, just push normally
+        if stderr.contains("not found") || stderr.contains("does not appear to be a git repository") {
+            return push_normal(repo_path, branch_name, remote);
+        }
+        anyhow::bail!(
+            "git fetch failed for '{}': {}",
+            branch_name,
+            stderr.trim()
+        );
+    }
+
+    // Check if remote branch exists after fetch
+    let remote_ref = format!("{}/{}", remote, branch_name);
+    let remote_exists = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", &remote_ref])
         .current_dir(repo_path)
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
 
-    let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);
-    let push_args = if has_tracking {
-        vec!["push", remote, &refspec, "--force-with-lease"]
-    } else {
-        vec!["push", remote, &refspec, "--force"]
-    };
+    if !remote_exists {
+        // Branch doesn't exist remotely — first push
+        return push_normal(repo_path, branch_name, remote);
+    }
 
+    // Compare local vs remote
+    let local_head = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to get HEAD: {}", e))?;
+
+    let remote_tip = std::process::Command::new("git")
+        .args(["rev-parse", &remote_ref])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to get remote tip: {}", e))?;
+
+    let local_sha = String::from_utf8_lossy(&local_head.stdout).trim().to_string();
+    let remote_sha = String::from_utf8_lossy(&remote_tip.stdout).trim().to_string();
+
+    if local_sha == remote_sha {
+        info!("Branch '{}' is already up to date with remote", branch_name);
+        return Ok(());
+    }
+
+    // Check if local is ahead of remote (fast-forward possible)
+    let is_ancestor = std::process::Command::new("git")
+        .args(["merge-base", "--is-ancestor", &remote_sha, &local_sha])
+        .current_dir(repo_path)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if is_ancestor {
+        // Local is ahead → safe fast-forward push
+        return push_normal(repo_path, branch_name, remote);
+    }
+
+    // Remote is ahead or diverged → skip, no force
+    warn!(
+        "Branch '{}' has diverged from remote (local: {}, remote: {}). \
+         Skipping push — merge or rebase manually before next run.",
+        branch_name,
+        &local_sha[..12.min(local_sha.len())],
+        &remote_sha[..12.min(remote_sha.len())]
+    );
+    Ok(())
+}
+
+fn push_normal(repo_path: &Path, branch_name: &str, remote: &str) -> Result<()> {
+    let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);
     let output = std::process::Command::new("git")
-        .args(push_args)
+        .args(["push", remote, &refspec])
         .current_dir(repo_path)
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to execute git push: {}", e))?;

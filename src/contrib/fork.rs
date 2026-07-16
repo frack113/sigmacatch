@@ -29,7 +29,7 @@ impl ForkConfig {
 pub async fn check_fork_exists(username: &str) -> Result<bool> {
     let url = format!("https://github.com/{}/sigma", username);
     let client = Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
+        .redirect(reqwest::redirect::Policy::limited(5))
         .timeout(std::time::Duration::from_secs(10))
         .build()?;
 

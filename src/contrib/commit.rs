@@ -23,22 +23,35 @@ fn git_env(author: &str, email: &str) -> [(&'static str, String); 2] {
 
 /// Commit all rules in a single batch.
 /// Falls back to individual commits if batch commit fails.
+///
+/// `rules` is a list of `(rule_id, reg_rel_path)` pairs where `reg_rel_path`
+/// is the path relative to the repo root (e.g. `regression_data/windows/process_creation/lsass`).
 pub fn commit_all_rules(
     repo_path: &Path,
-    rule_ids: &[String],
+    rules: &[(String, String)],
     author: &str,
     email: &str,
 ) -> Result<()> {
-    for rid in rule_ids {
-        if !validate_rule_id(rid) {
-            warn!("Skipping commit for invalid rule_id: {}", rid);
-            return Ok(());
-        }
+    let valid_rules: Vec<(&str, &str)> = rules
+        .iter()
+        .filter_map(|(rid, path)| {
+            if validate_rule_id(rid) {
+                Some((rid.as_str(), path.as_str()))
+            } else {
+                warn!("Skipping commit for invalid rule_id: {}", rid);
+                None
+            }
+        })
+        .collect();
+
+    if valid_rules.is_empty() {
+        info!("No valid rules to commit");
+        return Ok(());
     }
 
     let message = format!(
         "feat(sigma): add regression data for {} rule(s)",
-        rule_ids.len()
+        valid_rules.len()
     );
 
     let status = std::process::Command::new("git")
@@ -60,7 +73,7 @@ pub fn commit_all_rules(
         .map_err(|e| anyhow::anyhow!("Failed to git commit: {}", e))?;
 
     if output.status.success() {
-        info!("Committed {} rules in batch", rule_ids.len());
+        info!("Committed {} rules in batch", valid_rules.len());
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -79,10 +92,9 @@ pub fn commit_all_rules(
                 .envs(git_env(author, email))
                 .output();
             // Fall back to individual commits
-            for rule_id in rule_ids {
-                let reg_dir = format!("regression_data/rules/{}", rule_id);
+            for (rule_id, reg_dir) in &valid_rules {
                 let status = std::process::Command::new("git")
-                    .args(["add", "-A", &reg_dir])
+                    .args(["add", "-A", reg_dir])
                     .current_dir(repo_path)
                     .envs(git_env(author, email))
                     .status()

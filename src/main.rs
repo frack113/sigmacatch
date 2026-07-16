@@ -292,6 +292,7 @@ async fn stage_4_work_winevt(
             "Generating regression data for {} rules…",
             to_generate.len()
         );
+        let mut committed_rules: Vec<(String, String)> = Vec::new();
         for (reg, rule_path_opt, rule_id) in &to_generate {
             let _gen_span = info_span!("generate", rule_id = %rule_id).entered();
             match reg.generate() {
@@ -302,6 +303,7 @@ async fn stage_4_work_winevt(
                     let rel_dir = reg
                         .sigma_rel_dir()
                         .unwrap_or_else(|| format!("regression_data/rules/{}", rule_id));
+                    committed_rules.push((rule_id.clone(), rel_dir.clone()));
                     let tests_path = format!("{}/info.yml", rel_dir.replace('\\', "/"));
                     if let Some(rule_yaml_path) = rule_path_opt {
                         if let Ok(content) = std::fs::read(rule_yaml_path) {
@@ -324,16 +326,17 @@ async fn stage_4_work_winevt(
                 }
             }
         }
-    }
 
-    // Commit regression data
-    if !to_generate.is_empty() {
-        let committed_rules: Vec<String> =
-            to_generate.iter().map(|(_, _, rid)| rid.clone()).collect();
-        if let Err(e) =
-            contrib::commit::commit_all_rules(sigma_repo_path, &committed_rules, author, email)
-        {
-            warn!("Failed to commit regression data: {}", e);
+        // Commit regression data
+        if !committed_rules.is_empty() {
+            if let Err(e) = contrib::commit::commit_all_rules(
+                sigma_repo_path,
+                &committed_rules,
+                author,
+                email,
+            ) {
+                warn!("Failed to commit regression data: {}", e);
+            }
         }
     }
 
