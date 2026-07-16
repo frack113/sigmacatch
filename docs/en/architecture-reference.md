@@ -29,7 +29,7 @@ src/
 ├── config.rs            # YAML config (serde, Default) + LogConfig
 ├── contrib/             # SigmaHQ contribution workflow
 │   ├── mod.rs           # pub mod branch, commit, fork
-│   ├── branch.rs        # create_branch_name, create_branch, push_branch
+│   ├── branch.rs        # create_branch_name, create_branch, push_branch (fetch + safe push)
 │   ├── commit.rs        # commit_all_rules with author env + fallback
 │   └── fork.rs          # ForkConfig, check_fork_exists, detect_fork
 ├── logger.rs            # Two-layer tracing (stderr info + rolling file debug)
@@ -62,7 +62,7 @@ log:
   level_file: "debug"       # tracing file level
 ```
 
-**CLI flags:** `--create-config`, `--author <name>`, `--offline`
+**CLI flags:** `--author <name>`
 
 ---
 
@@ -83,15 +83,15 @@ logger::init() → tracing subscriber (stderr info + file debug)
 ```
 SigmaRepo::new("sigma/")
     ↓
-with_remote_url(fork URL) [if contrib + fork exists]
+with_remote_url(fork URL)
     ↓
 init() [async]
     ├── NO .git → gix clone <remote_url> (fork or SigmaHQ)
     └── .git EXISTS → set remote origin URL (if fork) → gix fetch
          └── failure → WARN, continue with existing rules
     ↓
-create_branch("sigmacatch-contrib/YYYYMMDD_<author>") [if contrib]
-    └── gix create ref + git switch to branch
+create_branch("sigmacatch-contrib/YYYYMMDD_<author>")
+    └── gix create ref + git switch to branch (or switch if exists)
 ```
 
 ### Stage 2 — Skip Set (existing rules)
@@ -186,10 +186,10 @@ For each AggregatedRule in aggregated:
 ### Post-cycle
 
 ```
-[if contrib] commit_all_rules() → batch git commit to sigma repo
+commit_all_rules() → batch git commit to sigma repo
 Sleep 30s → loop
 Ctrl+C → running.store(false) → break
-[if contrib + fork] push_branch() → force push contrib branch to fork
+push_branch() → fetch + compare + normal push to fork (skip if diverged)
 ```
 
 **Stats:** `{ events_processed, matches_found, regression_data_generated }`
@@ -328,8 +328,7 @@ cargo xwin build --release --target x86_64-pc-windows-msvc   # cross-compile Win
 
 ```
 sigmacatch
-    [--author <name>]      # override username (required for contrib)
-    [--offline]            # use existing sigma/ without git
+    [--author <name>]      # override username
 ```
 
 Config is auto-created on first run with defaults. Edit `config.yaml` before running.
@@ -341,7 +340,7 @@ Config is auto-created on first run with defaults. Edit `config.yaml` before run
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  config.yaml                                                            │
-│    author, offline, contrib, log.level_file                              │
+│    author, email, log.level_file                                         │
 └──────────────────────┬──────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -413,14 +412,14 @@ Config is auto-created on first run with defaults. Edit `config.yaml` before run
 │    │     └── info.yml (UUID v4, SigmaHQ metadata)                     │
 │    └── append "regression_tests_path" to source YAML                  │
 │  ↓                                                                     │
-│  [contrib] commit_all_rules() → batch git commit to sigma repo        │
+│  commit_all_rules() → batch git commit to sigma repo                  │
 └──────────────────────┬──────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  POST-CYCLE                                                             │
 │    sleep 30s → loop                                                     │
 │  Ctrl+C → running.store(false) → break                                  │
-│    [contrib + fork] push_branch() → force push to fork                 │
+│    push_branch() → fetch + compare + normal push to fork                │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 

@@ -29,7 +29,7 @@ src/
 ├── config.rs            # Config YAML (serde, Default) + LogConfig
 ├── contrib/             # Workflow de contribution SigmaHQ
 │   ├── mod.rs           # pub mod branch, commit, fork
-│   ├── branch.rs        # create_branch_name, create_branch, push_branch
+│   ├── branch.rs        # create_branch_name, create_branch, push_branch (fetch + push normal)
 │   ├── commit.rs        # commit_all_rules avec author env + fallback
 │   └── fork.rs          # ForkConfig, check_fork_exists, detect_fork
 ├── logger.rs            # Two-layer tracing (stderr info + rolling file debug)
@@ -62,7 +62,7 @@ log:
   level_file: "debug"       # niveau fichier tracing
 ```
 
-**CLI flags :** `--create-config`, `--author <name>`, `--offline`
+**CLI flags :** `--author <name>`
 
 ---
 
@@ -83,15 +83,15 @@ logger::init() → tracing subscriber (stderr info + file debug)
 ```
 SigmaRepo::new("sigma/")
     ↓
-with_remote_url(URL du fork) [si contrib + fork existe]
+with_remote_url(URL du fork)
     ↓
 init() [async]
     ├── NO .git → gix clone <remote_url> (fork ou SigmaHQ)
     └── .git EXISTS → mise à jour remote origin (si fork) → gix fetch
          └── échec → WARN, continue avec règles existantes
     ↓
-create_branch("sigmacatch-contrib/YYYYMMDD_<author>") [si contrib]
-    └── gix create ref + git switch vers la branche
+create_branch("sigmacatch-contrib/YYYYMMDD_<author>")
+    └── gix create ref + git switch vers la branche (ou switch si existe déjà)
 ```
 
 ### Stage 2 — Skip Set (règles existantes)
@@ -186,10 +186,10 @@ Pour chaque AggregatedRule dans aggregated :
 ### Post-cycle
 
 ```
-[si contrib] commit_all_rules() → git commit batch dans le repo sigma
+commit_all_rules() → git commit batch dans le repo sigma
 sleep 30s → loop
 Ctrl+C → running.store(false) → break
-[si contrib + fork] push_branch() → force push de la branche contrib vers le fork
+push_branch() → fetch + comparaison + push normal vers le fork (skip si divergé)
 ```
 
 **Stats :** `{ events_processed, matches_found, regression_data_generated }`
@@ -328,8 +328,7 @@ cargo xwin build --release --target x86_64-pc-windows-msvc   # cross-compile Win
 
 ```
 sigmacatch
-    [--author <name>]      # override username (requis pour contrib)
-    [--offline]            # utiliser sigma/ existant sans git
+    [--author <name>]      # override username
 ```
 
 La config est auto-créée au premier run avec les valeurs par défaut. Éditez `config.yaml` avant de lancer.
@@ -341,7 +340,7 @@ La config est auto-créée au premier run avec les valeurs par défaut. Éditez 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  config.yaml                                                            │
-│    author, offline, contrib, log.level_file                              │
+│    author, email, log.level_file                                         │
 └──────────────────────┬──────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -413,14 +412,14 @@ La config est auto-créée au premier run avec les valeurs par défaut. Éditez 
 │    │     └── info.yml (UUID v4, metadata SigmaHQ)                     │
 │    └── append "regression_tests_path" au YAML source                  │
 │  ↓                                                                     │
-│  [contrib] commit_all_rules() → git commit batch dans sigma           │
+│  commit_all_rules() → git commit batch dans sigma                       │
 └──────────────────────┬──────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  POST-CYCLE                                                             │
 │    sleep 30s → loop                                                     │
 │  Ctrl+C → running.store(false) → break                                  │
-│    [contrib + fork] push_branch() → force push vers le fork            │
+│    push_branch() → fetch + comparaison + push normal vers le fork       │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
