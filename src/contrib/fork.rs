@@ -24,7 +24,8 @@ impl ForkConfig {
 
 /// Check if a GitHub fork exists via HTTP HEAD request.
 /// Returns true if the fork URL responds with 2xx.
-/// Detects rate-limiting (403/429) and warns accordingly.
+/// Detects rate-limiting (403/429) and assumes fork exists.
+/// Returns an error on network failure (cannot reach GitHub).
 pub async fn check_fork_exists(username: &str) -> Result<bool> {
     let url = format!("https://github.com/{}/sigma", username);
     let client = Client::builder()
@@ -51,8 +52,12 @@ pub async fn check_fork_exists(username: &str) -> Result<bool> {
                 warn!("GitHub rate-limited while checking fork. Assuming fork exists.");
                 return Ok(true);
             }
-            warn!("Failed to check fork existence: {}", e);
-            Ok(false)
+            anyhow::bail!(
+                "Cannot reach GitHub to check fork at {}: {}. \
+                 Verify network connectivity and try again.",
+                url,
+                e
+            );
         }
     }
 }

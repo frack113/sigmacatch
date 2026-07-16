@@ -44,10 +44,9 @@ async fn stage_0_init(_config: &Config) -> Result<()> {
 
 async fn stage_1_update_repo(
     _config: &Config,
-    offline: bool,
     fork_config: Option<&contrib::fork::ForkConfig>,
 ) -> Result<()> {
-    let mut sigma_repo = SigmaRepo::new(std::path::Path::new("sigma")).with_offline(offline);
+    let mut sigma_repo = SigmaRepo::new(std::path::Path::new("sigma"));
 
     if let Some(fc) = fork_config {
         if fc.is_fork {
@@ -127,14 +126,9 @@ async fn stage_4_work_winevt(
     custom_map: &HashMap<String, String>,
     author: &str,
     email: &str,
-    contrib_enabled: bool,
     sigma_repo_path: &std::path::Path,
 ) -> Result<()> {
-    let output_base = if contrib_enabled {
-        sigma_repo_path.join("regression_data")
-    } else {
-        std::path::PathBuf::from("regression_data")
-    };
+    let output_base = sigma_repo_path.join("regression_data");
 
     info!("Starting winevt collection on channels: {:?}", channels);
 
@@ -332,8 +326,8 @@ async fn stage_4_work_winevt(
         }
     }
 
-    // Commit regression data if contrib is enabled
-    if contrib_enabled && !to_generate.is_empty() {
+    // Commit regression data
+    if !to_generate.is_empty() {
         let committed_rules: Vec<String> =
             to_generate.iter().map(|(_, _, rid)| rid.clone()).collect();
         if let Err(e) =
@@ -407,11 +401,10 @@ fn resolve_channels_from_rules(
 
 async fn setup_pipeline(
     config: &Config,
-    offline: bool,
     fork_config: Option<&contrib::fork::ForkConfig>,
 ) -> Result<(SigmaEngine, Vec<String>, HashMap<String, String>)> {
     stage_0_init(config).await?;
-    stage_1_update_repo(config, offline, fork_config).await?;
+    stage_1_update_repo(config, fork_config).await?;
 
     let existing_rules = stage_2_existing_rules(config);
 
@@ -460,7 +453,6 @@ async fn run_cycle(
     custom_map: &HashMap<String, String>,
     author: &str,
     email: &str,
-    contrib_enabled: bool,
 ) -> Result<Stats> {
     let mut stats = Stats {
         events_processed: 0,
@@ -484,7 +476,6 @@ async fn run_cycle(
             custom_map,
             author,
             email,
-            contrib_enabled,
             std::path::Path::new("sigma"),
         )
         .await?;
@@ -504,7 +495,6 @@ async fn run_cycle(
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let flags: Vec<&str> = args.iter().skip(1).map(|s| s.as_str()).collect();
-    let flag = |name: &str| flags.contains(&name);
     let flag_value = |name: &str| -> Option<String> {
         let mut iter = flags.iter();
         while let Some(f) = iter.next() {
@@ -535,9 +525,6 @@ async fn main() -> Result<()> {
     if let Some(author) = flag_value("--author") {
         config.author = author;
     }
-    if flag("--offline") {
-        config.offline = true;
-    }
 
     if config.author == "sigmacatch" {
         eprintln!("── config.yaml not configured ──────────────");
@@ -545,31 +532,6 @@ async fn main() -> Result<()> {
         eprintln!("  before running.");
         eprintln!("──────────────────────────────────────────────");
         std::process::exit(1);
-    }
-
-    let mut fork_config: Option<contrib::fork::ForkConfig> = None;
-    let branch_name;
-    if config.contrib {
-        if config.email.is_empty() {
-            anyhow::bail!("config.yaml 'email' field required for contrib workflow.");
-        }
-        info!(
-            "Contrib workflow enabled for {} <{}>",
-            config.author, config.email
-        );
-        branch_name = contrib::branch::create_branch_name(&config.author);
-        info!("Branch name: {}", branch_name);
-        fork_config = Some(contrib::fork::detect_fork(&config.author, &branch_name).await?);
-        if let Some(ref fc) = fork_config {
-            if !fc.is_fork {
-                warn!(
-                    "Fork not detected for '{}'. Using SigmaHQ/sigma as remote. \
-                     Push will fail without a fork. Please create a fork at: \
-                     https://github.com/SigmaHQ/sigma/fork",
-                    config.author
-                );
-            }
-        }
     }
 
     #[cfg(windows)]
@@ -583,8 +545,27 @@ async fn main() -> Result<()> {
         env!("BUILD_TIME")
     );
 
+    if config.email.is_empty() {
+        anyhow::bail!("config.yaml 'email' field required for contrib workflow.");
+    }
+    info!(
+        "Sigmacatch started for {} <{}>",
+        config.author, config.email
+    );
+    let branch_name = contrib::branch::create_branch_name(&config.author);
+    info!("Branch name: {}", branch_name);
+    let fork_config = contrib::fork::detect_fork(&config.author, &branch_name).await?;
+    if !fork_config.is_fork {
+        warn!(
+            "Fork not detected for '{}'. Using SigmaHQ/sigma as remote. \
+             Push will fail without a fork. Please create a fork at: \
+             https://github.com/SigmaHQ/sigma/fork",
+            config.author
+        );
+    }
+
     let (engine, cycle_channels, custom_map) =
-        setup_pipeline(&config, config.offline, fork_config.as_ref()).await?;
+        setup_pipeline(&config, Some(&fork_config)).await?;
 
     if cycle_channels.is_empty() {
         info!("No channels resolved — exiting cleanly");
@@ -608,27 +589,25 @@ async fn main() -> Result<()> {
     loop {
         if !running.load(Ordering::Relaxed) {
             info!("Interrupted, shutting down");
-            if let Some(ref fc) = fork_config {
-                if fc.is_fork {
-                    if let Err(e) = contrib::branch::push_branch(
-                        std::path::Path::new("sigma"),
-                        &fc.branch_name,
-                        "origin",
-                    ) {
-                        warn!("Failed to push branch: {}", e);
-                    } else {
-                        info!(
-                            "Branch '{}' pushed to origin. Next step: create PR at https://github.com/SigmaHQ/sigma/pulls",
-                            fc.branch_name
-                        );
-                    }
+            if fork_config.is_fork {
+                if let Err(e) = contrib::branch::push_branch(
+                    std::path::Path::new("sigma"),
+                    &fork_config.branch_name,
+                    "origin",
+                ) {
+                    warn!("Failed to push branch: {}", e);
                 } else {
-                    warn!(
-                        "No fork detected for '{}'. Cannot push. \
-                         Please create a fork at https://github.com/SigmaHQ/sigma/fork",
-                        config.author
+                    info!(
+                        "Branch '{}' pushed to origin. Next step: create PR at https://github.com/SigmaHQ/sigma/pulls",
+                        fork_config.branch_name
                     );
                 }
+            } else {
+                warn!(
+                    "No fork detected for '{}'. Cannot push. \
+                     Please create a fork at https://github.com/SigmaHQ/sigma/fork",
+                    config.author
+                );
             }
             break;
         }
@@ -646,7 +625,6 @@ async fn main() -> Result<()> {
                 &custom_map,
                 &config.author,
                 &config.email,
-                config.contrib,
             )
             .await?;
         }

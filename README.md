@@ -31,7 +31,7 @@ On first run, a `config.yaml` is created with defaults:
 
 ```yaml
 author: "your-username"
-offline: false
+email: "you@example.com"
 log:
   level_file: "debug"
 ```
@@ -41,8 +41,6 @@ log:
 | Flag | Description |
 |------|-------------|
 | `--author <name>` | Override detected username |
-| `--offline` | Use existing SigmaHQ repo (no git fetch) |
-| `--create-config` | Create `config.yaml` with defaults |
 
 ## Requirements
 
@@ -69,6 +67,7 @@ On Linux/macOS the collector is a stub (returns empty vec) — the pipeline stil
 | Build | [EN](docs/en/build.md) | [FR](docs/fr/build.md) |
 | Output format | [EN](docs/en/output-format.md) | [FR](docs/fr/output-format.md) |
 | Regression data format | [EN](docs/en/regression-data-format.md) | [FR](docs/fr/regression-data-format.md) |
+| Nice-to-have | [EN](docs/en/nice-to-have.md) | [FR](docs/fr/nice-to-have.md) |
 
 ## License
 

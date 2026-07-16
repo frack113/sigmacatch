@@ -57,8 +57,7 @@ src/
 
 ```yaml
 author: "sigmacatch"        # nom GitHub pour contrib workflow (doit être changé)
-offline: false              # true = utilise sigma/ existant sans git
-contrib: false              # true = active le workflow de contribution à SigmaHQ
+email: "you@example.com"    # requis pour les commits git
 log:
   level_file: "debug"       # niveau fichier tracing
 ```

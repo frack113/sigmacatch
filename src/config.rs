@@ -8,10 +8,6 @@ fn default_author() -> String {
     "sigmacatch".to_string()
 }
 
-fn default_contrib() -> bool {
-    false
-}
-
 fn default_email() -> String {
     String::new()
 }
@@ -57,9 +53,6 @@ pub struct Config {
     pub author: String,
     #[serde(default = "default_email")]
     pub email: String,
-    #[serde(default = "default_contrib")]
-    pub contrib: bool,
-    pub offline: bool,
     pub log: LogConfig,
 }
 
@@ -68,8 +61,6 @@ impl Default for Config {
         Self {
             author: default_author(),
             email: default_email(),
-            contrib: false,
-            offline: false,
             log: LogConfig::default(),
         }
     }
@@ -104,15 +95,12 @@ impl Config {
                 self.author
             );
         }
-        if self.contrib && self.author.is_empty() {
-            anyhow::bail!("config: 'author' is required when contrib is true");
+        if self.email.is_empty() {
+            anyhow::bail!("config: 'email' is required");
         }
-        if self.contrib && self.email.is_empty() {
-            anyhow::bail!("config: 'email' is required when contrib is true");
-        }
-        if !self.email.is_empty() && !self.email.contains('@') {
+        if !self.email.contains('@') {
             anyhow::bail!(
-                "config: 'email' must contain '@' when set, got {:?}",
+                "config: 'email' must contain '@', got {:?}",
                 self.email
             );
         }
@@ -137,45 +125,23 @@ mod tests {
     }
 
     #[test]
-    fn test_default_config_has_contrib_false() {
-        let config = Config::default();
-        assert!(!config.contrib);
-    }
-
-    #[test]
-    fn test_load_config_with_contrib() {
+    fn test_load_config_minimal() {
         let yaml = r#"
 author: testuser
-offline: false
-contrib: true
 email: user@example.com
 log:
   level_file: debug
 "#;
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.author, "testuser");
-        assert!(config.contrib);
-        assert!(!config.offline);
         assert_eq!(config.email, "user@example.com");
-    }
-
-    #[test]
-    fn test_load_config_without_contrib_defaults_to_false() {
-        let yaml = r#"
-author: testuser
-offline: false
-log:
-  level_file: info
-"#;
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.author, "testuser");
-        assert!(!config.contrib);
     }
 
     #[test]
     fn test_deny_unknown_fields() {
         let yaml = r#"
 author: testuser
+email: user@example.com
 unknown_field: oops
 log:
   level_file: debug
@@ -188,21 +154,17 @@ log:
     fn test_validate_invalid_author_chars() {
         let config = Config {
             author: "user space".to_string(),
-            email: String::new(),
-            contrib: false,
-            offline: false,
+            email: "user@example.com".to_string(),
             log: LogConfig::default(),
         };
         assert!(config.validate().is_err());
     }
 
     #[test]
-    fn test_validate_contrib_requires_email() {
+    fn test_validate_email_required() {
         let config = Config {
             author: "validuser".to_string(),
             email: String::new(),
-            contrib: true,
-            offline: false,
             log: LogConfig::default(),
         };
         assert!(config.validate().is_err());
@@ -213,8 +175,6 @@ log:
         let config = Config {
             author: "validuser".to_string(),
             email: "notanemail".to_string(),
-            contrib: false,
-            offline: false,
             log: LogConfig::default(),
         };
         assert!(config.validate().is_err());
@@ -225,8 +185,6 @@ log:
         let config = Config {
             author: "valid-user".to_string(),
             email: "user@example.com".to_string(),
-            contrib: true,
-            offline: true,
             log: LogConfig::default(),
         };
         assert!(config.validate().is_ok());
@@ -237,15 +195,11 @@ log:
         let config = Config {
             author: "devuser".to_string(),
             email: "dev@example.com".to_string(),
-            contrib: true,
-            offline: true,
             log: LogConfig::default(),
         };
         let yaml = serde_yaml::to_string(&config).unwrap();
         let loaded: Config = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(loaded.author, "devuser");
-        assert!(loaded.offline);
-        assert!(loaded.contrib);
         assert_eq!(loaded.email, "dev@example.com");
     }
 }

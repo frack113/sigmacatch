@@ -14,7 +14,6 @@ pub(crate) const SIGMA_REPO_URL: &str = "https://github.com/SigmaHQ/sigma.git";
 #[derive(Debug, Clone)]
 pub struct SigmaRepo {
     pub path: PathBuf,
-    offline: bool,
     remote_url: Option<String>,
 }
 
@@ -22,14 +21,8 @@ impl SigmaRepo {
     pub fn new(path: &Path) -> Self {
         Self {
             path: path.to_path_buf(),
-            offline: false,
             remote_url: None,
         }
-    }
-
-    pub fn with_offline(mut self, offline: bool) -> Self {
-        self.offline = offline;
-        self
     }
 
     pub fn with_remote_url(mut self, url: String) -> Self {
@@ -48,10 +41,6 @@ impl SigmaRepo {
         };
 
         if repo_exists {
-            if self.offline {
-                info!("Offline mode: using existing Sigma repository");
-                return Ok(());
-            }
             info!("Sigma repository exists, fetching latest...");
             if let Err(e) = self.pull().await {
                 warn!(
@@ -70,14 +59,6 @@ impl SigmaRepo {
                     e
                 );
             }
-        }
-
-        if self.offline {
-            anyhow::bail!(
-                "Offline mode enabled but no Sigma repository found at {:?}. \
-                 Run without --offline first to clone the repository.",
-                self.path
-            );
         }
 
         self.clone_repo().await
