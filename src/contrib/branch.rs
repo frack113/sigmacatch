@@ -29,7 +29,15 @@ pub fn create_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
 pub fn push_branch(repo_path: &Path, branch_name: &str, remote: &str) -> Result<()> {
     let git_dir = repo_path.join(".git");
 
-    let token = std::env::var("GITHUB_TOKEN").ok();
+    let token = match std::env::var("GITHUB_TOKEN") {
+        Ok(t) if !t.is_empty() => Some(t),
+        _ => {
+            anyhow::bail!(
+                "GITHUB_TOKEN not set or empty. Push requires a GitHub token with push access to the fork. \
+                 Create one at https://github.com/settings/tokens and set it as the GITHUB_TOKEN environment variable."
+            );
+        }
+    };
     let http_client = git::AuthHttpClient::new(token);
     let repo = grit_lib::repo::Repository::open(&git_dir, None)?;
 
