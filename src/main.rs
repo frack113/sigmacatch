@@ -5,6 +5,7 @@ mod collector;
 mod config;
 mod contrib;
 mod evtx;
+mod git;
 mod logger;
 mod parser;
 mod regression;
