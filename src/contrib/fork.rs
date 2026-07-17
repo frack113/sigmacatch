@@ -8,15 +8,13 @@ use tracing::{info, warn};
 #[derive(Debug, Clone)]
 pub struct ForkConfig {
     pub fork_url: String,
-    pub is_fork: bool,
     pub branch_name: String,
 }
 
 impl ForkConfig {
-    pub fn new(fork_url: String, is_fork: bool, branch_name: String) -> Self {
+    pub fn new(fork_url: String, branch_name: String) -> Self {
         Self {
             fork_url,
-            is_fork,
             branch_name,
         }
     }
@@ -63,7 +61,7 @@ pub async fn check_fork_exists(username: &str) -> Result<bool> {
 }
 
 /// Detect fork for a given username.
-/// Returns ForkConfig with fork_url set if fork exists, or fallback to SigmaHQ.
+/// Returns ForkConfig with fork_url if fork exists, errors otherwise.
 pub async fn detect_fork(username: &str, branch_name: &str) -> Result<ForkConfig> {
     if username.is_empty() {
         anyhow::bail!("Cannot detect fork: username is empty");
@@ -74,17 +72,12 @@ pub async fn detect_fork(username: &str, branch_name: &str) -> Result<ForkConfig
 
     if exists {
         info!("Fork detected: {}", fork_url);
-        Ok(ForkConfig::new(fork_url, true, branch_name.to_string()))
+        Ok(ForkConfig::new(fork_url, branch_name.to_string()))
     } else {
-        warn!(
-            "Fork {} not found. Falling back to SigmaHQ/sigma.",
+        anyhow::bail!(
+            "Fork {} not found. Create a fork at: https://github.com/SigmaHQ/sigma/fork",
             fork_url
         );
-        Ok(ForkConfig::new(
-            crate::sigma::loader::SIGMA_REPO_URL.to_string(),
-            false,
-            branch_name.to_string(),
-        ))
     }
 }
 
@@ -93,26 +86,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_fork_config_new_with_fork() {
+    fn test_fork_config_new() {
         let config = ForkConfig::new(
             "https://github.com/testuser/sigma".to_string(),
-            true,
             "sigmacatch-contrib/20260714_testuser".to_string(),
         );
-        assert!(config.is_fork);
         assert_eq!(config.fork_url, "https://github.com/testuser/sigma");
-        assert_eq!(config.branch_name, "sigmacatch-contrib/20260714_testuser");
-    }
-
-    #[test]
-    fn test_fork_config_new_without_fork() {
-        let config = ForkConfig::new(
-            crate::sigma::loader::SIGMA_REPO_URL.to_string(),
-            false,
-            "sigmacatch-contrib/20260714_testuser".to_string(),
-        );
-        assert!(!config.is_fork);
-        assert_eq!(config.fork_url, crate::sigma::loader::SIGMA_REPO_URL);
         assert_eq!(config.branch_name, "sigmacatch-contrib/20260714_testuser");
     }
 

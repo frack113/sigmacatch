@@ -33,11 +33,6 @@ impl AuthHttpClient {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn set_token(&self, token: String) {
-        *self.token.lock().expect("token lock") = Some(token);
-    }
-
     fn add_auth(&self, url: &str) -> String {
         let token = self.token.lock().expect("token lock");
         if let Some(ref t) = *token {
