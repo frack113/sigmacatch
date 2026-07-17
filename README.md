@@ -69,6 +69,10 @@ On Linux/macOS the collector is a stub (returns empty vec) — the pipeline stil
 | Regression data format | [EN](docs/en/regression-data-format.md) | [FR](docs/fr/regression-data-format.md) |
 | Nice-to-have | [EN](docs/en/nice-to-have.md) | [FR](docs/fr/nice-to-have.md) |
 
+## Built with
+
+- [grit-lib](https://github.com/anoma/grit-lib) — pure Rust git library for clone, fetch, push, branch, commit, checkout. No `git` CLI needed.
+
 ## License
 
 MIT

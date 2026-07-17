@@ -9,7 +9,7 @@
 Outil headless qui capture des événements Windows réels via **Windows Event Log API** (winevt), les matche contre les règles SigmaHQ, et sort des données de régression structurées.
 
 **Cycle complet (séquentiel) :**
-1. Acquérir règles SigmaHQ (gix clone/pull)
+1. Acquérir règles SigmaHQ (grit-lib clone/pull)
 2. Charger moteur Sigma (rsigma-eval) avec filtre logsource
 3. Collecter événements Event Log (winevt, channels configurés)
 4. Évaluer events contre toutes les règles chargées
@@ -25,6 +25,7 @@ Outil headless qui capture des événements Windows réels via **Windows Event L
 
 ```
 src/
+├── git.rs               # wrapper grit-lib : clone/fetch/push/branch/commit/checkout (Rust pur, pas de git CLI)
 ├── main.rs              # Pipeline + Stats + AggregatedRule
 ├── config.rs            # Config YAML (serde, Default) + LogConfig
 ├── contrib/             # Workflow de contribution SigmaHQ
@@ -34,7 +35,7 @@ src/
 │   └── fork.rs          # ForkConfig, check_fork_exists, detect_fork
 ├── logger.rs            # Two-layer tracing (stderr info + rolling file debug)
 ├── sigma/
-│   ├── loader.rs        # SigmaRepo (gix) + remote URL update + find_rules_dirs()
+│   ├── loader.rs        # SigmaRepo (grit-lib) + remote URL update + find_rules_dirs()
 │   └── engine.rs        # SigmaEngine + évaluation des règles (resolve_logsource depuis mapping)
 ├── collector/
 │   ├── mod.rs           # pub mod winevt
@@ -86,12 +87,12 @@ SigmaRepo::new("sigma/")
 with_remote_url(URL du fork)
     ↓
 init() [async]
-    ├── NO .git → gix clone <remote_url> (fork ou SigmaHQ)
-    └── .git EXISTS → mise à jour remote origin (si fork) → gix fetch
+    ├── NO .git → grit-lib clone <remote_url> (fork ou SigmaHQ)
+    └── .git EXISTS → mise à jour remote origin (si fork) → grit-lib fetch
          └── échec → WARN, continue avec règles existantes
     ↓
 create_branch("sigmacatch-contrib/YYYYMMDD_<author>")
-    └── gix create ref + git switch vers la branche (ou switch si existe déjà)
+    └── create_branch() → grit-lib create ref + switch HEAD vers la branche (ou switch si existe déjà)
 ```
 
 ### Stage 2 — Skip Set (règles existantes)
@@ -186,7 +187,7 @@ Pour chaque AggregatedRule dans aggregated :
 ### Post-cycle
 
 ```
-commit_all_rules() → git commit batch dans le repo sigma
+commit_all_rules() → batch grit-lib commit dans le repo sigma
 sleep 30s → loop
 Ctrl+C → running.store(false) → break
 push_branch() → fetch + comparaison + push normal vers le fork (skip si divergé)
@@ -299,8 +300,8 @@ MatchEvent {
 
 | Dépendance | Usage |
 |---|---|---|
-| `gix` | git operations (clone/pull SigmaHQ) |
-| `reqwest` | client HTTP pour détection de fork (API GitHub) |
+| `grit-lib` | toutes les ops git (clone, fetch, push, branch, commit, checkout) via HTTP, Rust pur |
+| `reqwest` (blocking) | client HTTP pour transport git + détection de fork (API GitHub) |
 | `rsigma-eval` + `rsigma-parser` | Sigma rule loading/evaluation |
 | `tokio` | async runtime |
 | `tracing` + `tracing-subscriber` | logging |
@@ -354,10 +355,10 @@ La config est auto-créée au premier run avec les valeurs par défaut. Éditez 
 │  STAGE 1 — ACQUISITION SIGMAHQ                                         │
 │  SigmaRepo::new("sigma/")                                               │
 │    ├── [contrib] définir l'URL du remote fork                          │
-│    ├── NO .git → gix clone (fork ou SigmaHQ)                           │
-│    └── .git EXISTS → mise à jour remote origin → gix fetch            │
+│    ├── NO .git → grit-lib clone (fork ou SigmaHQ)                           │
+│    └── .git EXISTS → mise à jour remote origin → grit-lib fetch            │
 │    ↓                                                                   │
-│    [contrib] create_branch("sigmacatch-contrib/...") + git switch      │
+│    [contrib] create_branch("sigmacatch-contrib/...") + switch HEAD      │
 └──────────────────────┬──────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -412,7 +413,7 @@ La config est auto-créée au premier run avec les valeurs par défaut. Éditez 
 │    │     └── info.yml (UUID v4, metadata SigmaHQ)                     │
 │    └── append "regression_tests_path" au YAML source                  │
 │  ↓                                                                     │
-│  commit_all_rules() → git commit batch dans sigma                       │
+│  commit_all_rules() → batch grit-lib commit dans sigma                       │
 └──────────────────────┬──────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
