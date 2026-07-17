@@ -425,6 +425,16 @@ async fn setup_pipeline(
 
     if channels.is_empty() {
         warn!("0 channels resolved — nothing to collect");
+        warn!(
+            "Loaded {} rules, {} active services, {} active categories",
+            engine.rules_count(),
+            engine.active_services().len(),
+            engine.active_categories().len()
+        );
+        if !engine.all_services().is_empty() {
+            let all: Vec<&str> = engine.all_services().iter().map(|s| s.as_str()).collect();
+            info!("All known services in rules: {:?}", all);
+        }
     }
 
     Ok((engine, channels, custom_map))
@@ -563,6 +573,12 @@ async fn main() -> Result<()> {
              https://github.com/SigmaHQ/sigma/fork",
             config.author
         );
+    } else if config.github_token.is_empty() && std::env::var("GITHUB_TOKEN").is_err() {
+        warn!(
+            "Fork detected but no GitHub token configured. \
+             Push will fail. Set github_token in config.yaml or GITHUB_TOKEN env var. \
+             Create a token at https://github.com/settings/tokens"
+        );
     }
 
     let (engine, cycle_channels, custom_map) = setup_pipeline(&config, Some(&fork_config)).await?;
@@ -594,6 +610,7 @@ async fn main() -> Result<()> {
                     std::path::Path::new("sigma"),
                     &fork_config.branch_name,
                     "origin",
+                    &config.github_token,
                 ) {
                     warn!("Failed to push branch: {}", e);
                 } else {
@@ -634,6 +651,7 @@ async fn main() -> Result<()> {
                 std::path::Path::new("sigma"),
                 &fork_config.branch_name,
                 "origin",
+                &config.github_token,
             ) {
                 warn!("Failed to push branch: {}", e);
             } else {

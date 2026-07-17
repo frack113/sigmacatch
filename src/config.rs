@@ -53,6 +53,8 @@ pub struct Config {
     pub author: String,
     #[serde(default = "default_email")]
     pub email: String,
+    #[serde(default)]
+    pub github_token: String,
     pub log: LogConfig,
 }
 
@@ -61,6 +63,7 @@ impl Default for Config {
         Self {
             author: default_author(),
             email: default_email(),
+            github_token: String::new(),
             log: LogConfig::default(),
         }
     }
@@ -152,6 +155,7 @@ log:
         let config = Config {
             author: "user space".to_string(),
             email: "user@example.com".to_string(),
+            github_token: String::new(),
             log: LogConfig::default(),
         };
         assert!(config.validate().is_err());
@@ -162,6 +166,7 @@ log:
         let config = Config {
             author: "validuser".to_string(),
             email: String::new(),
+            github_token: String::new(),
             log: LogConfig::default(),
         };
         assert!(config.validate().is_err());
@@ -172,6 +177,7 @@ log:
         let config = Config {
             author: "validuser".to_string(),
             email: "notanemail".to_string(),
+            github_token: String::new(),
             log: LogConfig::default(),
         };
         assert!(config.validate().is_err());
@@ -182,6 +188,7 @@ log:
         let config = Config {
             author: "valid-user".to_string(),
             email: "user@example.com".to_string(),
+            github_token: String::new(),
             log: LogConfig::default(),
         };
         assert!(config.validate().is_ok());
@@ -192,11 +199,13 @@ log:
         let config = Config {
             author: "devuser".to_string(),
             email: "dev@example.com".to_string(),
+            github_token: String::new(),
             log: LogConfig::default(),
         };
         let yaml = serde_yaml::to_string(&config).unwrap();
         let loaded: Config = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(loaded.author, "devuser");
         assert_eq!(loaded.email, "dev@example.com");
+        assert_eq!(loaded.github_token, "");
     }
 }

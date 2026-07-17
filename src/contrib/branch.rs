@@ -8,7 +8,7 @@ use tracing::{info, warn};
 
 use crate::git;
 
-/// Branch naming convention: sigmacatch-contrib/YYYYMMDD_<author>
+/// Branch naming convention: sigmacatch-contrib/YYYYMMDD
 pub fn create_branch_name(_author: &str) -> String {
     let date = chrono::Local::now().format("%Y%m%d");
     format!("sigmacatch-contrib/{}", date)
@@ -26,10 +26,10 @@ pub fn create_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
 /// - New branch (remote doesn't exist) → normal push
 /// - Local ahead of remote → normal push (fast-forward)
 /// - Remote ahead or diverged → skip with warning (no force)
-pub fn push_branch(repo_path: &Path, branch_name: &str, remote: &str) -> Result<()> {
+pub fn push_branch(repo_path: &Path, branch_name: &str, remote: &str, config_token: &str) -> Result<()> {
     let git_dir = repo_path.join(".git");
 
-    let token = resolve_push_token()?;
+    let token = resolve_push_token(Some(config_token))?;
     let http_client = git::AuthHttpClient::new(token);
     let repo = grit_lib::repo::Repository::open(&git_dir, None)?;
 
@@ -140,25 +140,19 @@ fn read_remote_url(git_dir: &Path, remote: &str) -> Result<String> {
     anyhow::bail!("No URL found for remote '{}' in config", remote)
 }
 
-fn resolve_push_token() -> Result<Option<String>> {
+fn resolve_push_token(config_token: Option<&str>) -> Result<Option<String>> {
+    if let Some(t) = config_token {
+        if !t.is_empty() {
+            return Ok(Some(t.to_string()));
+        }
+    }
     if let Ok(t) = std::env::var("GITHUB_TOKEN") {
         if !t.is_empty() {
             return Ok(Some(t));
         }
     }
-    if let Ok(output) = std::process::Command::new("gh")
-        .args(["auth", "token"])
-        .output()
-    {
-        if output.status.success() {
-            let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !token.is_empty() {
-                return Ok(Some(token));
-            }
-        }
-    }
     anyhow::bail!(
-        "No GitHub token found. Set GITHUB_TOKEN env var or run `gh auth login` first. \
+        "No GitHub token. Set github_token in config.yaml or GITHUB_TOKEN env var. \
          Create a token at https://github.com/settings/tokens"
     );
 }
