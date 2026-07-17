@@ -29,15 +29,7 @@ pub fn create_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
 pub fn push_branch(repo_path: &Path, branch_name: &str, remote: &str) -> Result<()> {
     let git_dir = repo_path.join(".git");
 
-    let token = match std::env::var("GITHUB_TOKEN") {
-        Ok(t) if !t.is_empty() => Some(t),
-        _ => {
-            anyhow::bail!(
-                "GITHUB_TOKEN not set or empty. Push requires a GitHub token with push access to the fork. \
-                 Create one at https://github.com/settings/tokens and set it as the GITHUB_TOKEN environment variable."
-            );
-        }
-    };
+    let token = resolve_push_token()?;
     let http_client = git::AuthHttpClient::new(token);
     let repo = grit_lib::repo::Repository::open(&git_dir, None)?;
 
@@ -146,6 +138,29 @@ fn read_remote_url(git_dir: &Path, remote: &str) -> Result<String> {
         }
     }
     anyhow::bail!("No URL found for remote '{}' in config", remote)
+}
+
+fn resolve_push_token() -> Result<Option<String>> {
+    if let Ok(t) = std::env::var("GITHUB_TOKEN") {
+        if !t.is_empty() {
+            return Ok(Some(t));
+        }
+    }
+    if let Ok(output) = std::process::Command::new("gh")
+        .args(["auth", "token"])
+        .output()
+    {
+        if output.status.success() {
+            let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !token.is_empty() {
+                return Ok(Some(token));
+            }
+        }
+    }
+    anyhow::bail!(
+        "No GitHub token found. Set GITHUB_TOKEN env var or run `gh auth login` first. \
+         Create a token at https://github.com/settings/tokens"
+    );
 }
 
 #[cfg(test)]
