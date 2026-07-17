@@ -629,6 +629,18 @@ async fn main() -> Result<()> {
             .await?;
         }
 
+        if fork_config.is_fork {
+            if let Err(e) = contrib::branch::push_branch(
+                std::path::Path::new("sigma"),
+                &fork_config.branch_name,
+                "origin",
+            ) {
+                warn!("Failed to push branch: {}", e);
+            } else {
+                info!("Branch '{}' pushed to origin", fork_config.branch_name);
+            }
+        }
+
         info!("waiting 30s before next cycle…");
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
     }
