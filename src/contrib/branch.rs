@@ -9,34 +9,9 @@ use tracing::{info, warn};
 use crate::git;
 
 /// Branch naming convention: sigmacatch-contrib/YYYYMMDD_<author>
-pub fn create_branch_name(author: &str) -> String {
+pub fn create_branch_name(_author: &str) -> String {
     let date = chrono::Local::now().format("%Y%m%d");
-    let sanitized = author
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '-' })
-        .collect::<String>();
-    let prefix = format!("sigmacatch-contrib/{}", date);
-    let branch = format!("{}/{}", prefix, sanitized);
-
-    // Git max branch name length is 255 bytes
-    if branch.len() > 255 {
-        let ellipsis_bytes = "…".len();
-        let available = 255 - prefix.len() - 1 - ellipsis_bytes;
-        let truncated = if available < sanitized.len() {
-            let safe_end = sanitized
-                .char_indices()
-                .take_while(|(i, _)| *i < available)
-                .last()
-                .map_or(0, |(i, _)| i);
-            format!("{}…", &sanitized[..safe_end])
-        } else {
-            sanitized
-        };
-        format!("{}/{}", prefix, truncated)
-    } else {
-        branch
-    }
+    format!("sigmacatch-contrib/{}", date)
 }
 
 /// Create a new branch from origin/master (or origin/main fallback).
@@ -170,52 +145,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_create_branch_name_normal() {
-        let name = create_branch_name("testuser");
+    fn test_create_branch_name_format() {
+        let name = create_branch_name("anyone");
         assert!(name.starts_with("sigmacatch-contrib/"));
-        assert!(name.contains("testuser"));
-        assert!(name.len() <= 255);
+        assert_eq!(name.len(), "sigmacatch-contrib/".len() + 8);
+        let date_part = &name["sigmacatch-contrib/".len()..];
+        assert_eq!(date_part.len(), 8);
+        assert!(date_part.chars().all(|c| c.is_ascii_digit()));
     }
 
     #[test]
-    fn test_create_branch_name_with_spaces() {
-        let name = create_branch_name("John Doe");
-        assert!(name.contains("john-doe"));
-        assert!(name.len() <= 255);
-    }
-
-    #[test]
-    fn test_create_branch_name_with_special_chars() {
-        let name = create_branch_name("User@Domain!test");
-        assert!(name.contains("user-domain-test"));
-        assert!(!name.contains('@'));
-        assert!(!name.contains('!'));
-        assert!(name.len() <= 255);
-    }
-
-    #[test]
-    fn test_create_branch_name_empty_author() {
-        let name = create_branch_name("");
-        assert!(name.starts_with("sigmacatch-contrib/"));
-        assert!(name.len() <= 255);
-    }
-
-    #[test]
-    fn test_create_branch_name_already_includes_date() {
-        let name1 = create_branch_name("testuser");
-        let name2 = create_branch_name("testuser");
+    fn test_create_branch_name_ignores_author() {
+        let name1 = create_branch_name("alice");
+        let name2 = create_branch_name("bob");
         assert_eq!(name1, name2);
-    }
-
-    #[test]
-    fn test_create_branch_name_truncation() {
-        let long_name = "a".repeat(300);
-        let name = create_branch_name(&long_name);
-        assert!(
-            name.len() <= 255,
-            "branch name byte length {} should be <= 255",
-            name.len()
-        );
-        assert!(name.contains("…"));
     }
 }

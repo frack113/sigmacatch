@@ -392,15 +392,18 @@ pub fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
     }
 
     let tracking = find_tracking_branch(git_dir)?;
-    let tracking_ref_path = git_dir
-        .join("refs")
-        .join("remotes")
-        .join("origin")
-        .join(&tracking);
-    let target_oid = std::fs::read_to_string(&tracking_ref_path)?
-        .trim()
-        .to_string();
+    let remote_ref_name = format!("refs/remotes/origin/{}", tracking);
+    let target_oid = read_loose_or_packed_ref(git_dir, &remote_ref_name)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Remote tracking ref '{}' not found after fetch (not in loose refs or packed-refs)",
+                remote_ref_name
+            )
+        })?;
 
+    if let Some(parent) = ref_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     std::fs::write(&ref_path, format!("{}\n", target_oid))?;
     switch_head(git_dir, branch_name)?;
 
