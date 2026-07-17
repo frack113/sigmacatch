@@ -104,6 +104,22 @@ impl Config {
         if !self.email.contains('@') {
             anyhow::bail!("config: 'email' must contain '@', got {:?}", self.email);
         }
+        let has_config_token = !self.github_token.trim().is_empty();
+        let has_env_token = std::env::var("GITHUB_TOKEN")
+            .map(|t| !t.trim().is_empty())
+            .unwrap_or(false);
+        if !has_config_token && !has_env_token {
+            anyhow::bail!(
+                "config: 'github_token' is required. Set github_token in config.yaml or GITHUB_TOKEN env var. \
+                 Create a token at https://github.com/settings/tokens"
+            );
+        }
+        if has_config_token {
+            let trimmed = self.github_token.trim();
+            if trimmed.contains(char::is_whitespace) {
+                anyhow::bail!("config: 'github_token' contains whitespace — trim it");
+            }
+        }
         Ok(())
     }
 }
@@ -188,7 +204,7 @@ log:
         let config = Config {
             author: "valid-user".to_string(),
             email: "user@example.com".to_string(),
-            github_token: String::new(),
+            github_token: "ghp_validtoken123".to_string(),
             log: LogConfig::default(),
         };
         assert!(config.validate().is_ok());

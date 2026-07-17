@@ -50,11 +50,9 @@ async fn stage_1_update_repo(
     let mut sigma_repo = SigmaRepo::new(std::path::Path::new("sigma"));
 
     if let Some(fc) = fork_config {
-        if fc.is_fork {
-            let base_url = fc.fork_url.strip_suffix(".git").unwrap_or(&fc.fork_url);
-            let clone_url = format!("{}.git", base_url);
-            sigma_repo = sigma_repo.with_remote_url(clone_url);
-        }
+        let base_url = fc.fork_url.strip_suffix(".git").unwrap_or(&fc.fork_url);
+        let clone_url = format!("{}.git", base_url);
+        sigma_repo = sigma_repo.with_remote_url(clone_url);
     }
 
     sigma_repo.init().await?;
@@ -556,9 +554,6 @@ async fn main() -> Result<()> {
         env!("BUILD_TIME")
     );
 
-    if config.email.is_empty() {
-        anyhow::bail!("config.yaml 'email' field required for contrib workflow.");
-    }
     info!(
         "Sigmacatch started for {} <{}>",
         config.author, config.email
@@ -566,20 +561,6 @@ async fn main() -> Result<()> {
     let branch_name = contrib::branch::create_branch_name(&config.author);
     info!("Branch name: {}", branch_name);
     let fork_config = contrib::fork::detect_fork(&config.author, &branch_name).await?;
-    if !fork_config.is_fork {
-        warn!(
-            "Fork not detected for '{}'. Using SigmaHQ/sigma as remote. \
-             Push will fail without a fork. Please create a fork at: \
-             https://github.com/SigmaHQ/sigma/fork",
-            config.author
-        );
-    } else if config.github_token.is_empty() && std::env::var("GITHUB_TOKEN").is_err() {
-        warn!(
-            "Fork detected but no GitHub token configured. \
-             Push will fail. Set github_token in config.yaml or GITHUB_TOKEN env var. \
-             Create a token at https://github.com/settings/tokens"
-        );
-    }
 
     let (engine, cycle_channels, custom_map) = setup_pipeline(&config, Some(&fork_config)).await?;
 
@@ -605,25 +586,17 @@ async fn main() -> Result<()> {
     loop {
         if !running.load(Ordering::Relaxed) {
             info!("Interrupted, shutting down");
-            if fork_config.is_fork {
-                if let Err(e) = contrib::branch::push_branch(
-                    std::path::Path::new("sigma"),
-                    &fork_config.branch_name,
-                    "origin",
-                    &config.github_token,
-                ) {
-                    warn!("Failed to push branch: {}", e);
-                } else {
-                    info!(
-                        "Branch '{}' pushed to origin. Next step: create PR at https://github.com/SigmaHQ/sigma/pulls",
-                        fork_config.branch_name
-                    );
-                }
+            if let Err(e) = contrib::branch::push_branch(
+                std::path::Path::new("sigma"),
+                &fork_config.branch_name,
+                "origin",
+                &config.github_token,
+            ) {
+                warn!("Failed to push branch: {}", e);
             } else {
-                warn!(
-                    "No fork detected for '{}'. Cannot push. \
-                     Please create a fork at https://github.com/SigmaHQ/sigma/fork",
-                    config.author
+                info!(
+                    "Branch '{}' pushed to origin. Next step: create PR at https://github.com/SigmaHQ/sigma/pulls",
+                    fork_config.branch_name
                 );
             }
             break;
@@ -646,17 +619,15 @@ async fn main() -> Result<()> {
             .await?;
         }
 
-        if fork_config.is_fork {
-            if let Err(e) = contrib::branch::push_branch(
-                std::path::Path::new("sigma"),
-                &fork_config.branch_name,
-                "origin",
-                &config.github_token,
-            ) {
-                warn!("Failed to push branch: {}", e);
-            } else {
-                info!("Branch '{}' pushed to origin", fork_config.branch_name);
-            }
+        if let Err(e) = contrib::branch::push_branch(
+            std::path::Path::new("sigma"),
+            &fork_config.branch_name,
+            "origin",
+            &config.github_token,
+        ) {
+            warn!("Failed to push branch: {}", e);
+        } else {
+            info!("Branch '{}' pushed to origin", fork_config.branch_name);
         }
 
         info!("waiting 30s before next cycle…");

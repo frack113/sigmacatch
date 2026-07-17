@@ -142,13 +142,15 @@ fn read_remote_url(git_dir: &Path, remote: &str) -> Result<String> {
 
 fn resolve_push_token(config_token: Option<&str>) -> Result<Option<String>> {
     if let Some(t) = config_token {
-        if !t.is_empty() {
-            return Ok(Some(t.to_string()));
+        let trimmed = t.trim();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed.to_string()));
         }
     }
     if let Ok(t) = std::env::var("GITHUB_TOKEN") {
-        if !t.is_empty() {
-            return Ok(Some(t));
+        let trimmed = t.trim();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed.to_string()));
         }
     }
     anyhow::bail!(
