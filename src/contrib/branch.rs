@@ -36,7 +36,6 @@ pub fn push_branch(
 
     let token = resolve_push_token(Some(config_token))?;
     let http_client = git::AuthHttpClient::new(token)?;
-    let repo = grit_lib::repo::Repository::open(&git_dir, None)?;
 
     let remote_url = read_remote_url(&git_dir, remote)?;
 
@@ -57,6 +56,8 @@ pub fn push_branch(
             "+refs/heads/{}:refs/remotes/{}/{}",
             branch_name, remote, branch_name
         )],
+        tags: grit_lib::transfer::TagMode::None,
+        depth: Some(1),
         ..Default::default()
     };
     let _fetch_outcome = grit_lib::transport::http::http_fetch(
@@ -100,7 +101,7 @@ pub fn push_branch(
     }
 
     // Check if remote is ancestor of local (fast-forward possible)
-    let is_ancestor = match grit_lib::merge_base::is_ancestor(&repo, remote_oid, local_oid) {
+    let is_ancestor = match git::is_ancestor(&git_dir, remote_oid, local_oid) {
         Ok(v) => v,
         Err(e) => {
             warn!("Failed to check merge base: {}. Skipping push.", e);
