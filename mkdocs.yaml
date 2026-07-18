@@ -42,7 +42,7 @@ nav:
     - Output Format: en/output-format.md
     - Regression Data Format: en/regression-data-format.md
   - Francais:
-    - Accueil: fr/architecture.md
+    - Accueil: fr/index.md
     - Référence Architecture: fr/architecture-reference.md
     - Build: fr/build.md
     - Format de Sortie: fr/output-format.md
