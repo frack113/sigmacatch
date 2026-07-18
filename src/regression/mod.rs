@@ -43,14 +43,9 @@ impl SkipSet {
         ids
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty() && self.incomplete.is_empty()
-    }
-
-    #[allow(dead_code)]
-    pub fn incomplete_rule_ids(&self) -> impl Iterator<Item = &String> {
-        self.incomplete.iter().map(|(id, _, _)| id)
     }
 }
 
