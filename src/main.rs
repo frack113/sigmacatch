@@ -54,13 +54,25 @@ async fn dry_run_git(config: &Config) -> Result<()> {
     let has_env = env_token.is_some();
 
     println!("\n1. Token resolution");
-    println!("   config.yaml github_token: {}", if has_config { "SET" } else { "missing" });
-    println!("   GITHUB_TOKEN env var:     {}", if has_env { "SET" } else { "missing" });
+    println!(
+        "   config.yaml github_token: {}",
+        if has_config { "SET" } else { "missing" }
+    );
+    println!(
+        "   GITHUB_TOKEN env var:     {}",
+        if has_env { "SET" } else { "missing" }
+    );
     let effective_token = config_token.map(|t| t.to_string()).or(env_token.clone());
     match &effective_token {
-        Some(t) => println!("   effective token:          {} chars, prefix={}", t.len(), &t[..t.len().min(4)]),
+        Some(t) => println!(
+            "   effective token:          {} chars, prefix={}",
+            t.len(),
+            &t[..t.len().min(4)]
+        ),
         None => {
-            println!("   effective token:          NONE — all git operations will be unauthenticated");
+            println!(
+                "   effective token:          NONE — all git operations will be unauthenticated"
+            );
             println!("\n   ⚠  No token configured. Set github_token in config.yaml or GITHUB_TOKEN env var.");
             println!("      Create a token at https://github.com/settings/tokens");
         }
@@ -78,12 +90,20 @@ async fn dry_run_git(config: &Config) -> Result<()> {
     match client.head(&fork_url).send().await {
         Ok(resp) => {
             let status = resp.status();
-            println!("   HTTP {} {}", status.as_u16(), status.canonical_reason().unwrap_or("?"));
+            println!(
+                "   HTTP {} {}",
+                status.as_u16(),
+                status.canonical_reason().unwrap_or("?")
+            );
             if status.is_success() {
                 println!("   → Fork exists");
             } else if status == reqwest::StatusCode::NOT_FOUND {
-                println!("   → Fork NOT found. Create one at: https://github.com/SigmaHQ/sigma/fork");
-            } else if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                println!(
+                    "   → Fork NOT found. Create one at: https://github.com/SigmaHQ/sigma/fork"
+                );
+            } else if status == reqwest::StatusCode::FORBIDDEN
+                || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+            {
                 println!("   → Rate-limited or forbidden — cannot determine fork status");
             } else {
                 println!("   → Unexpected status");
@@ -103,7 +123,11 @@ async fn dry_run_git(config: &Config) -> Result<()> {
     match api_req.send().await {
         Ok(resp) => {
             let status = resp.status();
-            println!("   HTTP {} {}", status.as_u16(), status.canonical_reason().unwrap_or("?"));
+            println!(
+                "   HTTP {} {}",
+                status.as_u16(),
+                status.canonical_reason().unwrap_or("?")
+            );
             if status.is_success() {
                 let text = resp.text().await.unwrap_or_default();
                 if let Ok(body) = serde_json::from_str::<serde_json::Value>(&text) {
@@ -136,12 +160,17 @@ async fn dry_run_git(config: &Config) -> Result<()> {
     } else {
         info_refs_url.clone()
     };
-    let git_req = client.get(&auth_info_refs_url)
+    let git_req = client
+        .get(&auth_info_refs_url)
         .header("User-Agent", "sigmacatch/0.2.0");
     match git_req.send().await {
         Ok(resp) => {
             let status = resp.status();
-            println!("   HTTP {} {}", status.as_u16(), status.canonical_reason().unwrap_or("?"));
+            println!(
+                "   HTTP {} {}",
+                status.as_u16(),
+                status.canonical_reason().unwrap_or("?")
+            );
             if status.is_success() {
                 let bytes = resp.bytes().await.unwrap_or_default();
                 let text = String::from_utf8_lossy(&bytes);
@@ -152,11 +181,15 @@ async fn dry_run_git(config: &Config) -> Result<()> {
                 }
                 if refs.is_empty() {
                     println!("   → No refs found via line parsing.");
-                    let raw_refs: Vec<&str> = text.split('\0').filter(|s| s.contains("refs/")).collect();
+                    let raw_refs: Vec<&str> =
+                        text.split('\0').filter(|s| s.contains("refs/")).collect();
                     if !raw_refs.is_empty() {
                         println!("   → Found {} refs via null-byte parsing:", raw_refs.len());
                         for r in raw_refs.iter().take(10) {
-                            println!("     {}", r.trim_start_matches(|c: char| !c.is_alphanumeric()));
+                            println!(
+                                "     {}",
+                                r.trim_start_matches(|c: char| !c.is_alphanumeric())
+                            );
                         }
                     } else {
                         println!("   → Raw response (first 500 bytes):");
@@ -169,14 +202,21 @@ async fn dry_run_git(config: &Config) -> Result<()> {
                         }
                     }
                 }
-            } else if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-                println!("   → Access denied. Token needed for private fork, or fork doesn't exist.");
+            } else if status == reqwest::StatusCode::UNAUTHORIZED
+                || status == reqwest::StatusCode::FORBIDDEN
+            {
+                println!(
+                    "   → Access denied. Token needed for private fork, or fork doesn't exist."
+                );
                 println!("     For a private fork, ensure token has 'repo' scope.");
             } else if status == reqwest::StatusCode::NOT_FOUND {
                 println!("   → Repository not found at this URL");
             } else {
                 let body = resp.text().await.unwrap_or_default();
-                println!("   → Unexpected: {}", body.chars().take(200).collect::<String>());
+                println!(
+                    "   → Unexpected: {}",
+                    body.chars().take(200).collect::<String>()
+                );
             }
         }
         Err(e) => {
@@ -189,14 +229,31 @@ async fn dry_run_git(config: &Config) -> Result<()> {
     let git_dir = sigma_dir.join(".git");
     if git_dir.exists() {
         let packed_refs = git_dir.join("packed-refs").exists();
-        let has_pack = git_dir.join("objects").join("pack")
-            .read_dir().map(|mut d| d.next().is_some()).unwrap_or(false);
-        let has_refs = git_dir.join("refs").join("heads")
-            .read_dir().map(|mut d| d.next().is_some()).unwrap_or(false);
+        let has_pack = git_dir
+            .join("objects")
+            .join("pack")
+            .read_dir()
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false);
+        let has_refs = git_dir
+            .join("refs")
+            .join("heads")
+            .read_dir()
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false);
         println!("   sigma/.git exists:         yes");
-        println!("   packed-refs:               {}", if packed_refs { "yes" } else { "no" });
-        println!("   objects/pack:              {}", if has_pack { "yes" } else { "no" });
-        println!("   refs/heads:                {}", if has_refs { "yes" } else { "no" });
+        println!(
+            "   packed-refs:               {}",
+            if packed_refs { "yes" } else { "no" }
+        );
+        println!(
+            "   objects/pack:              {}",
+            if has_pack { "yes" } else { "no" }
+        );
+        println!(
+            "   refs/heads:                {}",
+            if has_refs { "yes" } else { "no" }
+        );
         if !packed_refs && !has_pack && !has_refs {
             println!("   → INCOMPLETE repo — delete sigma/.git and re-run");
         }
@@ -496,8 +553,12 @@ async fn stage_4_work_winevt(
                                 .open(rule_yaml_path)
                                 .and_then(|mut file| {
                                     std::io::Write::write_all(&mut file, line.as_bytes())
-                                }) {
-                                warn!("Failed to append regression_tests_path to {:?}: {}", rule_yaml_path, e);
+                                })
+                            {
+                                warn!(
+                                    "Failed to append regression_tests_path to {:?}: {}",
+                                    rule_yaml_path, e
+                                );
                             }
                         }
                     }
@@ -711,8 +772,15 @@ async fn main() -> Result<()> {
 
     if let Some(author) = flag_value("--author") {
         config.author = author;
-        if !config.author.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-            anyhow::bail!("--author must be a valid GitHub username (alphanumeric + hyphens), got {:?}", config.author);
+        if !config
+            .author
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            anyhow::bail!(
+                "--author must be a valid GitHub username (alphanumeric + hyphens), got {:?}",
+                config.author
+            );
         }
     }
 

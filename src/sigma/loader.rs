@@ -39,7 +39,10 @@ impl SigmaRepo {
         let git_dir = self.path.join(".git");
 
         if git_dir.exists() && !is_repo_complete(&git_dir) {
-            warn!("Incomplete repository at {:?}, removing and re-cloning", self.path);
+            warn!(
+                "Incomplete repository at {:?}, removing and re-cloning",
+                self.path
+            );
             std::fs::remove_dir_all(&git_dir)?;
         }
 
@@ -114,7 +117,10 @@ fn is_repo_complete(git_dir: &Path) -> bool {
         .read_dir()
         .map(|mut dir| dir.next().is_some())
         .unwrap_or(false);
-    let has_refs = git_dir.join("refs").join("heads").read_dir()
+    let has_refs = git_dir
+        .join("refs")
+        .join("heads")
+        .read_dir()
         .map(|mut dir| dir.next().is_some())
         .unwrap_or(false);
     has_packed_refs || has_objects || has_refs

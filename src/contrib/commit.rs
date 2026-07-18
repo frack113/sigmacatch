@@ -52,7 +52,14 @@ pub fn commit_all_rules(
         email
     };
 
-    match crate::git::stage_and_commit_dir(&git_dir, repo_path, "regression_data", &message, git_author, git_email) {
+    match crate::git::stage_and_commit_dir(
+        &git_dir,
+        repo_path,
+        "regression_data",
+        &message,
+        git_author,
+        git_email,
+    ) {
         Ok(_) => {
             info!("Committed {} rules in batch", valid_rules.len());
             Ok(())

@@ -68,7 +68,11 @@ impl AuthHttpClient {
 impl HttpClient for AuthHttpClient {
     fn get(&self, url: &str, git_protocol: Option<&str>) -> grit_lib::error::Result<Vec<u8>> {
         let auth_url = self.add_auth(url);
-        debug!("[HTTP GET] {} (protocol={:?})", sanitize_url(&auth_url), git_protocol);
+        debug!(
+            "[HTTP GET] {} (protocol={:?})",
+            sanitize_url(&auth_url),
+            git_protocol
+        );
         let mut req = self.client.get(&auth_url);
         if let Some(proto) = git_protocol {
             req = req.header("Git-Protocol", proto);
@@ -98,8 +102,14 @@ impl HttpClient for AuthHttpClient {
         git_protocol: Option<&str>,
     ) -> grit_lib::error::Result<Vec<u8>> {
         let auth_url = self.add_auth(url);
-        debug!("[HTTP POST] {} body={}B content_type={} accept={} protocol={:?}",
-            sanitize_url(&auth_url), body.len(), content_type, accept, git_protocol);
+        debug!(
+            "[HTTP POST] {} body={}B content_type={} accept={} protocol={:?}",
+            sanitize_url(&auth_url),
+            body.len(),
+            content_type,
+            accept,
+            git_protocol
+        );
         let mut req = self
             .client
             .post(&auth_url)
@@ -279,12 +289,18 @@ pub fn clone_repo(http_client: &dyn HttpClient, url: &str, dest: &Path) -> Resul
             let remote_ref = "refs/remotes/origin/main";
             if let Some(oid_str) = read_loose_or_packed_ref(&git_dir, remote_ref) {
                 std::fs::write(&head_file, format!("{}\n", oid_str))?;
-                info!("HEAD set to detached {} (fallback)", &oid_str[..12.min(oid_str.len())]);
+                info!(
+                    "HEAD set to detached {} (fallback)",
+                    &oid_str[..12.min(oid_str.len())]
+                );
             } else {
                 let remote_ref = "refs/remotes/origin/master";
                 if let Some(oid_str) = read_loose_or_packed_ref(&git_dir, remote_ref) {
                     std::fs::write(&head_file, format!("{}\n", oid_str))?;
-                    info!("HEAD set to detached {} (fallback master)", &oid_str[..12.min(oid_str.len())]);
+                    info!(
+                        "HEAD set to detached {} (fallback master)",
+                        &oid_str[..12.min(oid_str.len())]
+                    );
                 } else {
                     warn!("No default branch found — HEAD not set");
                 }
@@ -318,7 +334,11 @@ pub(crate) fn read_loose_or_packed_ref(git_dir: &Path, ref_name: &str) -> Option
     match std::fs::read_to_string(&loose_path) {
         Ok(content) => {
             let trimmed = content.trim().to_string();
-            if trimmed.is_empty() { None } else { Some(trimmed) }
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
         }
         Err(_) => read_packed_ref(git_dir, ref_name),
     }
@@ -448,7 +468,12 @@ fn validate_branch_name(name: &str) -> Result<()> {
     if name.is_empty() {
         anyhow::bail!("branch name must not be empty");
     }
-    if name.contains('/') || name.contains('\\') || name.contains('\0') || name.contains('\n') || name.contains('\r') {
+    if name.contains('/')
+        || name.contains('\\')
+        || name.contains('\0')
+        || name.contains('\n')
+        || name.contains('\r')
+    {
         anyhow::bail!("branch name contains invalid characters: {:?}", name);
     }
     if name == "." || name == ".." {
@@ -483,13 +508,12 @@ pub fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
 
     let tracking = find_tracking_branch(git_dir)?;
     let remote_ref_name = format!("refs/remotes/origin/{}", tracking);
-    let target_oid = read_loose_or_packed_ref(git_dir, &remote_ref_name)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Remote tracking ref '{}' not found after fetch (not in loose refs or packed-refs)",
-                remote_ref_name
-            )
-        })?;
+    let target_oid = read_loose_or_packed_ref(git_dir, &remote_ref_name).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Remote tracking ref '{}' not found after fetch (not in loose refs or packed-refs)",
+            remote_ref_name
+        )
+    })?;
 
     if let Some(parent) = ref_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -510,13 +534,11 @@ pub fn switch_head(git_dir: &Path, branch_name: &str) -> Result<()> {
     if read_loose_or_packed_ref(git_dir, &local_ref).is_none() {
         anyhow::bail!(
             "Cannot switch to branch '{}' — ref '{}' not found locally",
-            branch_name, local_ref
+            branch_name,
+            local_ref
         );
     }
-    std::fs::write(
-        git_dir.join("HEAD"),
-        format!("ref: {}\n", local_ref),
-    )?;
+    std::fs::write(git_dir.join("HEAD"), format!("ref: {}\n", local_ref))?;
     info!("Switched HEAD to branch '{}'", branch_name);
     Ok(())
 }

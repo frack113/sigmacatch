@@ -26,7 +26,12 @@ pub fn create_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
 /// - New branch (remote doesn't exist) → normal push
 /// - Local ahead of remote → normal push (fast-forward)
 /// - Remote ahead or diverged → skip with warning (no force)
-pub fn push_branch(repo_path: &Path, branch_name: &str, remote: &str, config_token: &str) -> Result<()> {
+pub fn push_branch(
+    repo_path: &Path,
+    branch_name: &str,
+    remote: &str,
+    config_token: &str,
+) -> Result<()> {
     let git_dir = repo_path.join(".git");
 
     let token = resolve_push_token(Some(config_token))?;
@@ -79,8 +84,8 @@ pub fn push_branch(repo_path: &Path, branch_name: &str, remote: &str, config_tok
         .map_err(|e| anyhow::anyhow!("Invalid OID for branch '{}': {}", branch_name, e))?;
 
     // Read remote tracking OID
-    let remote_oid_str = git::read_loose_or_packed_ref(&git_dir, &remote_ref_name)
-        .ok_or_else(|| {
+    let remote_oid_str =
+        git::read_loose_or_packed_ref(&git_dir, &remote_ref_name).ok_or_else(|| {
             anyhow::anyhow!(
                 "Remote tracking ref '{}' not found after fetch",
                 remote_ref_name
