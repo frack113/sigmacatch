@@ -26,7 +26,6 @@ theme:
     repo: fontawesome/brands/github
   features:
     - content.code.copy
-    - navigation.instant
     - navigation.tracking
     - navigation.sections
     - navigation.top
@@ -36,17 +35,11 @@ theme:
 nav:
   - Home: index.md
   - English:
-    - Overview: en/architecture.md
-    - Architecture Reference: en/architecture-reference.md
-    - Build: en/build.md
-    - Output Format: en/output-format.md
-    - Regression Data Format: en/regression-data-format.md
-  - Francais:
-    - Accueil: fr/index.md
-    - Référence Architecture: fr/architecture-reference.md
-    - Build: fr/build.md
-    - Format de Sortie: fr/output-format.md
-    - Format des Données de Régression: fr/regression-data-format.md
+    - Overview: architecture.md
+    - Architecture Reference: architecture-reference.md
+    - Build: build.md
+    - Output Format: output-format.md
+    - Regression Data Format: regression-data-format.md
 
 plugins:
   - search

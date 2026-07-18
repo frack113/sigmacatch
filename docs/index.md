@@ -15,12 +15,12 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 
 | | English | Francais |
 |---|---|---|
-| Architecture | [EN](en/architecture.md) | [FR](fr/architecture.md) |
-| Architecture reference | [EN](en/architecture-reference.md) | [FR](fr/architecture-reference.md) |
-| Build | [EN](en/build.md) | [FR](fr/build.md) |
-| Output format | [EN](en/output-format.md) | [FR](fr/output-format.md) |
-| Regression data format | [EN](en/regression-data-format.md) | [FR](fr/regression-data-format.md) |
-| Nice-to-have | [EN](en/nice-to-have.md) | [FR](fr/nice-to-have.md) |
+| Architecture | [EN](architecture/) | [FR](fr/architecture/) |
+| Architecture reference | [EN](architecture-reference/) | [FR](fr/architecture-reference/) |
+| Build | [EN](build/) | [FR](fr/build/) |
+| Output format | [EN](output-format/) | [FR](fr/output-format/) |
+| Regression data format | [EN](regression-data-format/) | [FR](fr/regression-data-format/) |
+| Nice-to-have | [EN](nice-to-have/) | [FR](fr/nice-to-have/) |
 
 ## License
 
