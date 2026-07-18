@@ -745,13 +745,20 @@ fn add_directory_to_index(
             let contents = std::fs::read(&path)?;
             let blob_oid = odb
                 .write(grit_lib::objects::ObjectKind::Blob, &contents)
-                .map_err(|e| anyhow::anyhow!("Failed to write blob {}: {}", rel.display(), e))?;
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to write blob {}: {}",
+                        rel.to_string_lossy().replace('\\', "/"),
+                        e
+                    )
+                })?;
 
             let metadata = path.metadata()?;
             let is_exec = is_exec_file(&metadata);
             let mode = if is_exec { 0o100755 } else { 0o100644 };
 
-            let path_bytes = rel.to_string_lossy().as_bytes().to_vec();
+            let path_str = rel.to_string_lossy().replace('\\', "/");
+            let path_bytes = path_str.as_bytes().to_vec();
             #[cfg(unix)]
             let entry = grit_lib::index::IndexEntry {
                 ctime_sec: 0,
