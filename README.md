@@ -80,7 +80,13 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 
 ## Built with
 
+- [rsigma-eval](https://crates.io/crates/rsigma-eval) + [rsigma-parser](https://crates.io/crates/rsigma-parser) — Sigma rule loading and evaluation (rule engine, `parse_sigma_yaml`, `add_collection`)
 - [grit-lib](https://github.com/anoma/grit-lib) — pure Rust git library for clone, fetch, push, branch, commit, checkout. No `git` CLI needed.
+- [tokio](https://crates.io/crates/tokio) — async runtime for git ops and orchestration
+- [windows](https://crates.io/crates/windows) — Windows Event Log API (`EvtQueryW`/`EvtNext`/`EvtRender`/`EvtExportLog`), cfg-gated
+- [rayon](https://crates.io/crates/rayon) — parallel rule parsing
+- [serde](https://crates.io/crates/serde) / [serde_json](https://crates.io/crates/serde_json) / [serde_yaml](https://crates.io/crates/yaml_serde) — config and event/regression serialization
+- [tracing](https://crates.io/crates/tracing) + [tracing-subscriber](https://crates.io/crates/tracing-subscriber) — logging
 
 ## License
 
