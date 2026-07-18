@@ -2,104 +2,90 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 use anyhow::Result;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
-use tracing::{info, warn};
-
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
+use tracing::{info, warn};
 
-const SIGMA_REPO_URL: &str = "https://github.com/SigmaHQ/sigma.git";
+pub(crate) const SIGMA_REPO_URL: &str = "https://github.com/SigmaHQ/sigma.git";
 
 #[derive(Debug, Clone)]
 pub struct SigmaRepo {
     pub path: PathBuf,
-    offline: bool,
+    remote_url: Option<String>,
+    token: Option<String>,
 }
 
 impl SigmaRepo {
     pub fn new(path: &Path) -> Self {
         Self {
             path: path.to_path_buf(),
-            offline: false,
+            remote_url: None,
+            token: None,
         }
     }
 
-    pub fn with_offline(mut self, offline: bool) -> Self {
-        self.offline = offline;
+    pub fn with_remote_url(mut self, url: String) -> Self {
+        self.remote_url = Some(url);
+        self
+    }
+
+    pub fn with_token(mut self, token: String) -> Self {
+        self.token = Some(token);
         self
     }
 
     pub async fn init(&self) -> Result<()> {
-        // Clone is fatal (no rules = no pipeline). Pull is best-effort (stale rules > no rules).
-        // This asymmetry is intentional: a fresh clone guarantees up-to-date rules,
-        // while a failed pull falls back to existing rules rather than blocking the user.
-        let repo_exists = if self.path.join(".git").exists() {
-            gix::open(&self.path).is_ok()
-        } else {
-            false
-        };
+        let git_dir = self.path.join(".git");
 
-        if repo_exists {
-            if self.offline {
-                info!("Offline mode: using existing Sigma repository");
-                return Ok(());
-            }
-            info!("Sigma repository exists, fetching latest...");
-            if let Err(e) = self.pull().await {
-                warn!(
-                    "Failed to pull Sigma repository: {}. Continuing with existing rules.",
-                    e
-                );
-            }
-            return Ok(());
-        }
-
-        if self.path.join(".git").exists() && !repo_exists {
-            warn!("Sigma repository at {:?} is corrupted (gix::open failed). Removing and re-cloning.", self.path);
-            if let Err(e) = std::fs::remove_dir_all(&self.path) {
-                warn!(
-                    "Failed to remove corrupted repository: {}. Will attempt fresh clone.",
-                    e
-                );
-            }
-        }
-
-        if self.offline {
-            anyhow::bail!(
-                "Offline mode enabled but no Sigma repository found at {:?}. \
-                 Run without --offline first to clone the repository.",
+        if git_dir.exists() && !is_repo_complete(&git_dir) {
+            warn!(
+                "Incomplete repository at {:?}, removing and re-cloning",
                 self.path
             );
+            std::fs::remove_dir_all(&git_dir)?;
+        }
+
+        let repo_exists = git_dir.exists();
+
+        if repo_exists {
+            info!("Sigma repository exists, fetching latest...");
+            let http_client = create_http_client(self.token.as_deref())?;
+            let url = self
+                .remote_url
+                .clone()
+                .unwrap_or_else(|| SIGMA_REPO_URL.to_string());
+            if let Err(e) = crate::git::fetch_remote(&http_client, &git_dir, &url) {
+                warn!(
+                    "Failed to fetch Sigma repository: {}. Removing incomplete repo.",
+                    e
+                );
+                std::fs::remove_dir_all(&git_dir)?;
+                return self.clone_repo().await;
+            }
+
+            if let Some(ref new_url) = self.remote_url {
+                update_remote_url(&git_dir, new_url)?;
+            }
+
+            return Ok(());
         }
 
         self.clone_repo().await
     }
 
     async fn clone_repo(&self) -> Result<()> {
-        info!("Cloning Sigma repository from {}...", SIGMA_REPO_URL);
-        let url = SIGMA_REPO_URL.to_string();
+        let url = self
+            .remote_url
+            .clone()
+            .unwrap_or_else(|| SIGMA_REPO_URL.to_string());
+        info!("Cloning Sigma repository from {}...", url);
         let path = self.path.clone();
+        let token = self.token.clone();
 
         tokio::task::spawn_blocking(move || -> Result<()> {
-            let mut prepare = gix::prepare_clone(url, &path)
-                .map_err(|e| anyhow::anyhow!("Failed to prepare clone: {}", e))?;
-
-            let (mut prepare_checkout, fetch_outcome) = prepare
-                .fetch_then_checkout(gix::progress::Discard, &AtomicBool::new(false))
-                .map_err(|e| anyhow::anyhow!("Failed to prepare clone: {}", e))?;
-
-            if fetch_outcome.ref_map.mappings.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "No refs fetched from remote (empty or unreachable)"
-                ));
-            }
-
-            prepare_checkout
-                .main_worktree(gix::progress::Discard, &AtomicBool::new(false))
-                .map_err(|e| anyhow::anyhow!("Failed to checkout worktree: {}", e))?;
-
-            Ok(())
+            let http_client = create_http_client(token.as_deref())?;
+            crate::git::clone_repo(&http_client, &url, &path)
         })
         .await
         .map_err(|e| {
@@ -114,59 +100,91 @@ impl SigmaRepo {
         info!("Sigma repository cloned to {:?}", self.path);
         Ok(())
     }
+}
 
-    async fn pull(&self) -> Result<()> {
-        info!("Fetching Sigma repository from origin...");
-        let path = self.path.clone();
+fn create_http_client(token: Option<&str>) -> Result<crate::git::AuthHttpClient> {
+    let effective_token = token
+        .map(|t| t.to_string())
+        .or_else(|| std::env::var("GITHUB_TOKEN").ok());
+    crate::git::AuthHttpClient::new(effective_token)
+}
 
-        tokio::task::spawn_blocking(move || -> Result<()> {
-            let repo = gix::open(&path)
-                .map_err(|e| anyhow::anyhow!("Failed to open Sigma repository: {}", e))?;
+fn is_repo_complete(git_dir: &Path) -> bool {
+    let has_packed_refs = git_dir.join("packed-refs").exists();
+    let has_objects = git_dir
+        .join("objects")
+        .join("pack")
+        .read_dir()
+        .map(|mut dir| dir.next().is_some())
+        .unwrap_or(false);
+    let has_refs = git_dir
+        .join("refs")
+        .join("heads")
+        .read_dir()
+        .map(|mut dir| dir.next().is_some())
+        .unwrap_or(false);
+    has_packed_refs || has_objects || has_refs
+}
 
-            let remote = repo
-                .find_remote("origin")
-                .map_err(|e| anyhow::anyhow!("Failed to find remote 'origin': {}", e))?;
+fn update_remote_url(git_dir: &Path, new_url: &str) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let content = std::fs::read_to_string(&config_path)?;
 
-            let connection = remote
-                .connect(gix::remote::Direction::Fetch)
-                .map_err(|e| anyhow::anyhow!("Failed to connect to remote: {}", e))?;
+    let line_ending = if content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let lines: Vec<&str> = content.split(line_ending).collect();
 
-            let mut extra_refspecs = Vec::new();
-            let spec = gix::refspec::parse(
-                "+refs/heads/*:refs/remotes/origin/*".as_ref(),
-                gix::refspec::parse::Operation::Fetch,
-            )
-            .expect("hardcoded refspec is always valid");
-            extra_refspecs.push(spec.into());
+    let mut new_lines = Vec::new();
+    let mut in_remote_origin = false;
+    let mut updated = false;
 
-            let fetch_opts = gix::remote::ref_map::Options {
-                prefix_from_spec_as_filter_on_remote: true,
-                handshake_parameters: Vec::new(),
-                extra_refspecs,
-            };
-
-            connection
-                .prepare_fetch(gix::progress::Discard, fetch_opts)
-                .map_err(|e| anyhow::anyhow!("Failed to prepare fetch: {}", e))?
-                .receive(gix::progress::Discard, &AtomicBool::new(false))
-                .map_err(|e| anyhow::anyhow!("Failed to receive pack: {}", e))?;
-
-            info!("Fetch from origin complete");
-            Ok(())
-        })
-        .await
-        .map_err(|e| {
-            if e.is_panic() {
-                let payload = e.into_panic();
-                anyhow::anyhow!("Pull task panicked: {:?}", payload)
+    for line in &lines {
+        let trimmed = line.trim();
+        if trimmed == "[remote \"origin\"]" || trimmed == "[remote origin]" {
+            in_remote_origin = true;
+            new_lines.push((*line).to_string());
+        } else if in_remote_origin {
+            if trimmed.starts_with('[') {
+                if !updated {
+                    new_lines.push(format!(
+                        "\turl = {}",
+                        crate::git::git_config_escape(new_url)
+                    ));
+                    updated = true;
+                }
+                in_remote_origin = false;
+                new_lines.push((*line).to_string());
+            } else if trimmed.starts_with("url") && trimmed.contains('=') {
+                new_lines.push(format!(
+                    "\turl = {}",
+                    crate::git::git_config_escape(new_url)
+                ));
+                updated = true;
             } else {
-                anyhow::anyhow!("Pull task failed: {}", e)
+                new_lines.push((*line).to_string());
             }
-        })??;
-
-        info!("Sigma repository pulled and reset to origin/master");
-        Ok(())
+        } else {
+            new_lines.push((*line).to_string());
+        }
     }
+
+    if in_remote_origin && !updated {
+        new_lines.push(format!(
+            "\turl = {}",
+            crate::git::git_config_escape(new_url)
+        ));
+        updated = true;
+    }
+
+    if updated {
+        std::fs::write(&config_path, new_lines.join(line_ending))?;
+        info!("Updated remote 'origin' URL");
+    }
+
+    Ok(())
 }
 
 pub fn find_rules_dirs(root: &Path) -> Result<Vec<PathBuf>> {
@@ -240,9 +258,6 @@ pub fn find_rules_dirs(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(dirs)
 }
 
-// Depth 8 is deliberately conservative: SigmaHQ rules-* dirs are shallow
-// (max ~5 levels). The 64-depth limit in visit_dirs_inner handles the full
-// file-system traversal; this is just a quick pre-check.
 fn has_yml_files(dir: &Path, depth: u32) -> bool {
     if depth > 8 {
         return false;

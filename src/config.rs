@@ -5,7 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 fn default_author() -> String {
-    whoami::username().unwrap_or_default()
+    "sigmacatch".to_string()
+}
+
+fn default_email() -> String {
+    String::new()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,7 +33,7 @@ impl LogLevel {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct LogConfig {
     pub level_file: LogLevel,
 }
@@ -37,17 +41,20 @@ pub struct LogConfig {
 impl Default for LogConfig {
     fn default() -> Self {
         Self {
-            level_file: LogLevel::Debug,
+            level_file: LogLevel::Info,
         }
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
     #[serde(default = "default_author")]
     pub author: String,
-    pub offline: bool,
+    #[serde(default = "default_email")]
+    pub email: String,
+    #[serde(default)]
+    pub github_token: String,
     pub log: LogConfig,
 }
 
@@ -55,7 +62,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             author: default_author(),
-            offline: false,
+            email: default_email(),
+            github_token: String::new(),
             log: LogConfig::default(),
         }
     }
@@ -66,6 +74,7 @@ impl Config {
         if path.exists() {
             let content = std::fs::read_to_string(path)?;
             let config: Config = serde_yaml::from_str(&content)?;
+            config.validate()?;
             Ok(config)
         } else {
             let config = Self::default();
@@ -76,9 +85,143 @@ impl Config {
         }
     }
 
-    pub fn save(path: &PathBuf, config: &Config) -> anyhow::Result<()> {
-        let yaml = serde_yaml::to_string(config)?;
-        std::fs::write(path, yaml)?;
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if !self.author.is_empty()
+            && self.author != "sigmacatch"
+            && !self
+                .author
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            anyhow::bail!(
+                "config: 'author' must be a valid GitHub username (alphanumeric + hyphens), got {:?}",
+                self.author
+            );
+        }
+        if self.email.is_empty() {
+            anyhow::bail!("config: 'email' is required");
+        }
+        if !self.email.contains('@') {
+            anyhow::bail!("config: 'email' must contain '@', got {:?}", self.email);
+        }
+        let has_config_token = !self.github_token.trim().is_empty();
+        let has_env_token = std::env::var("GITHUB_TOKEN")
+            .map(|t| !t.trim().is_empty())
+            .unwrap_or(false);
+        if !has_config_token && !has_env_token {
+            anyhow::bail!(
+                "config: 'github_token' is required. Set github_token in config.yaml or GITHUB_TOKEN env var. \
+                 Create a token at https://github.com/settings/tokens"
+            );
+        }
+        if has_config_token {
+            let trimmed = self.github_token.trim();
+            if trimmed.contains(char::is_whitespace) {
+                anyhow::bail!("config: 'github_token' contains whitespace — trim it");
+            }
+        }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config_has_default_author() {
+        let config = Config::default();
+        assert_eq!(config.author, "sigmacatch");
+    }
+
+    #[test]
+    fn test_default_config_has_default_email() {
+        let config = Config::default();
+        assert!(config.email.is_empty());
+    }
+
+    #[test]
+    fn test_load_config_minimal() {
+        let yaml = r#"
+author: testuser
+email: user@example.com
+log:
+  level_file: debug
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.author, "testuser");
+        assert_eq!(config.email, "user@example.com");
+    }
+
+    #[test]
+    fn test_deny_unknown_fields() {
+        let yaml = r#"
+author: testuser
+email: user@example.com
+unknown_field: oops
+log:
+  level_file: debug
+"#;
+        let result: Result<Config, _> = serde_yaml::from_str(yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_invalid_author_chars() {
+        let config = Config {
+            author: "user space".to_string(),
+            email: "user@example.com".to_string(),
+            github_token: String::new(),
+            log: LogConfig::default(),
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_email_required() {
+        let config = Config {
+            author: "validuser".to_string(),
+            email: String::new(),
+            github_token: String::new(),
+            log: LogConfig::default(),
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_invalid_email() {
+        let config = Config {
+            author: "validuser".to_string(),
+            email: "notanemail".to_string(),
+            github_token: String::new(),
+            log: LogConfig::default(),
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_valid_config() {
+        let config = Config {
+            author: "valid-user".to_string(),
+            email: "user@example.com".to_string(),
+            github_token: "ghp_validtoken123".to_string(),
+            log: LogConfig::default(),
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_save_and_load_config() {
+        let config = Config {
+            author: "devuser".to_string(),
+            email: "dev@example.com".to_string(),
+            github_token: String::new(),
+            log: LogConfig::default(),
+        };
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let loaded: Config = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(loaded.author, "devuser");
+        assert_eq!(loaded.email, "dev@example.com");
+        assert_eq!(loaded.github_token, "");
     }
 }

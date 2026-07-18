@@ -8,7 +8,7 @@ src/
 ├── config.rs            # Config YAML (serde, Default) avec LogConfig
 ├── logger.rs            # Abonnement tracing à deux couches (stderr info + fichier debug)
 ├── sigma/
-│   ├── loader.rs        # gix clone/pull + offline + find_rules_dirs()
+│   ├── loader.rs        # grit-lib clone/fetch + remote URL update + find_rules_dirs()
 │   └── engine.rs        # SigmaEngine: load rules (post-parse filter), evaluate events, evaluation des règles
 ├── collector/
 │   ├── mod.rs           # pub mod winevt
@@ -27,7 +27,7 @@ src/
 
 1. Load config (create `config.yaml` with defaults if missing)
 2. Create directories: `regression_data/`, `regression_data/rules/`
-3. Acquire SigmaHQ rules via `gix` (clone); `--offline` uses existing repo; exit error if no rules found
+3. Acquire SigmaHQ rules via `grit-lib` (clone); exit error if no rules found
 4. `find_rules_dirs()` scans `sigma/` for `rules` / `rules-*` dirs (excludes `rules-compliance`)
 5. Build skip set by scanning `regression_data/rules/` + `sigma/regression_data/` for existing `info.yml` → `HashSet<String>` of rule IDs
 6. Load Sigma rules from all `rules*` dirs, **excluding skipped rule IDs**; post-parse filter via `rule.logsource.product` filters non-Windows rules (seule optimisation autorisée)

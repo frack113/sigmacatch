@@ -3,7 +3,9 @@
 
 mod collector;
 mod config;
+mod contrib;
 mod evtx;
+mod git;
 mod logger;
 mod parser;
 mod regression;
@@ -36,27 +38,267 @@ struct AggregatedRule {
     description: Option<String>,
 }
 
-async fn stage_0_init(_config: &Config) -> Result<()> {
-    info!("ensuring directory structure…");
+async fn dry_run_git(config: &Config) -> Result<()> {
+    let sep = "─".repeat(60);
+    println!("{}", sep);
+    println!("  DRY-RUN: git diagnostics");
+    println!("{}", sep);
+
+    let config_token = if !config.github_token.trim().is_empty() {
+        Some(config.github_token.trim())
+    } else {
+        None
+    };
+    let env_token = std::env::var("GITHUB_TOKEN").ok();
+    let has_config = config_token.is_some();
+    let has_env = env_token.is_some();
+
+    println!("\n1. Token resolution");
+    println!(
+        "   config.yaml github_token: {}",
+        if has_config { "SET" } else { "missing" }
+    );
+    println!(
+        "   GITHUB_TOKEN env var:     {}",
+        if has_env { "SET" } else { "missing" }
+    );
+    let effective_token = config_token.map(|t| t.to_string()).or(env_token.clone());
+    match &effective_token {
+        Some(t) => println!(
+            "   effective token:          {} chars, prefix={}",
+            t.len(),
+            &t[..t.len().min(4)]
+        ),
+        None => {
+            println!(
+                "   effective token:          NONE — all git operations will be unauthenticated"
+            );
+            println!("\n   ⚠  No token configured. Set github_token in config.yaml or GITHUB_TOKEN env var.");
+            println!("      Create a token at https://github.com/settings/tokens");
+        }
+    }
+
+    let username = &config.author;
+    let fork_url = format!("https://github.com/{}/sigma", username);
+    let clone_url = format!("{}.git", fork_url);
+
+    println!("\n2. Fork detection (HTTP HEAD)");
+    println!("   URL: {}", fork_url);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+    match client.head(&fork_url).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            println!(
+                "   HTTP {} {}",
+                status.as_u16(),
+                status.canonical_reason().unwrap_or("?")
+            );
+            if status.is_success() {
+                println!("   → Fork exists");
+            } else if status == reqwest::StatusCode::NOT_FOUND {
+                println!(
+                    "   → Fork NOT found. Create one at: https://github.com/SigmaHQ/sigma/fork"
+                );
+            } else if status == reqwest::StatusCode::FORBIDDEN
+                || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+            {
+                println!("   → Rate-limited or forbidden — cannot determine fork status");
+            } else {
+                println!("   → Unexpected status");
+            }
+        }
+        Err(e) => {
+            println!("   → Network error: {}", e);
+        }
+    }
+
+    println!("\n3. GitHub API auth check (/user)");
+    let api_url = "https://api.github.com/user";
+    let mut api_req = client.get(api_url).header("User-Agent", "sigmacatch/0.2.0");
+    if let Some(ref t) = effective_token {
+        api_req = api_req.header("Authorization", format!("Bearer {}", t));
+    }
+    match api_req.send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            println!(
+                "   HTTP {} {}",
+                status.as_u16(),
+                status.canonical_reason().unwrap_or("?")
+            );
+            if status.is_success() {
+                let text = resp.text().await.unwrap_or_default();
+                if let Ok(body) = serde_json::from_str::<serde_json::Value>(&text) {
+                    let login = body.get("login").and_then(|v| v.as_str()).unwrap_or("?");
+                    println!("   → Authenticated as: {}", login);
+                }
+            } else if status == reqwest::StatusCode::UNAUTHORIZED {
+                println!("   → Token INVALID or expired. Generate a new one at https://github.com/settings/tokens");
+            } else if status == reqwest::StatusCode::FORBIDDEN {
+                println!("   → Token lacks required scopes (need 'repo' scope)");
+            } else {
+                let _ = resp.text().await;
+                println!("   → Unexpected response");
+            }
+        }
+        Err(e) => {
+            println!("   → Network error: {}", e);
+        }
+    }
+
+    println!("\n4. Git smart HTTP info/refs (no protocol version header)");
+    let info_refs_url = format!("{}/info/refs?service=git-upload-pack", clone_url);
+    println!("   URL: {}", info_refs_url);
+    let auth_info_refs_url = if let Some(ref t) = effective_token {
+        if let Some(rest) = info_refs_url.strip_prefix("https://") {
+            format!("https://x-access-token:{}@{}", t, rest)
+        } else {
+            info_refs_url.clone()
+        }
+    } else {
+        info_refs_url.clone()
+    };
+    let git_req = client
+        .get(&auth_info_refs_url)
+        .header("User-Agent", "sigmacatch/0.2.0");
+    match git_req.send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            println!(
+                "   HTTP {} {}",
+                status.as_u16(),
+                status.canonical_reason().unwrap_or("?")
+            );
+            if status.is_success() {
+                let bytes = resp.bytes().await.unwrap_or_default();
+                let text = String::from_utf8_lossy(&bytes);
+                let refs: Vec<&str> = text.lines().filter(|l| l.contains("refs/")).collect();
+                println!("   → {} refs advertised (showing up to 10):", refs.len());
+                for r in refs.iter().take(10) {
+                    println!("     {}", r);
+                }
+                if refs.is_empty() {
+                    println!("   → No refs found via line parsing.");
+                    let raw_refs: Vec<&str> =
+                        text.split('\0').filter(|s| s.contains("refs/")).collect();
+                    if !raw_refs.is_empty() {
+                        println!("   → Found {} refs via null-byte parsing:", raw_refs.len());
+                        for r in raw_refs.iter().take(10) {
+                            println!(
+                                "     {}",
+                                r.trim_start_matches(|c: char| !c.is_alphanumeric())
+                            );
+                        }
+                    } else {
+                        println!("   → Raw response (first 500 bytes):");
+                        let snippet = String::from_utf8_lossy(&bytes[..bytes.len().min(500)]);
+                        for line in snippet.lines() {
+                            println!("     {:?}", line);
+                        }
+                        if bytes.len() > 500 {
+                            println!("     ... ({} total bytes)", bytes.len());
+                        }
+                    }
+                }
+            } else if status == reqwest::StatusCode::UNAUTHORIZED
+                || status == reqwest::StatusCode::FORBIDDEN
+            {
+                println!(
+                    "   → Access denied. Token needed for private fork, or fork doesn't exist."
+                );
+                println!("     For a private fork, ensure token has 'repo' scope.");
+            } else if status == reqwest::StatusCode::NOT_FOUND {
+                println!("   → Repository not found at this URL");
+            } else {
+                let body = resp.text().await.unwrap_or_default();
+                println!(
+                    "   → Unexpected: {}",
+                    body.chars().take(200).collect::<String>()
+                );
+            }
+        }
+        Err(e) => {
+            println!("   → Network error: {}", e);
+        }
+    }
+
+    println!("\n5. Repo directory state");
+    let sigma_dir = std::path::Path::new("sigma");
+    let git_dir = sigma_dir.join(".git");
+    if git_dir.exists() {
+        let packed_refs = git_dir.join("packed-refs").exists();
+        let has_pack = git_dir
+            .join("objects")
+            .join("pack")
+            .read_dir()
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false);
+        let has_refs = git_dir
+            .join("refs")
+            .join("heads")
+            .read_dir()
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false);
+        println!("   sigma/.git exists:         yes");
+        println!(
+            "   packed-refs:               {}",
+            if packed_refs { "yes" } else { "no" }
+        );
+        println!(
+            "   objects/pack:              {}",
+            if has_pack { "yes" } else { "no" }
+        );
+        println!(
+            "   refs/heads:                {}",
+            if has_refs { "yes" } else { "no" }
+        );
+        if !packed_refs && !has_pack && !has_refs {
+            println!("   → INCOMPLETE repo — delete sigma/.git and re-run");
+        }
+    } else {
+        println!("   sigma/.git:                not present (will clone)");
+    }
+
+    println!("\n{}", sep);
+    println!("  Done. Review output above to identify the failure point.");
+    println!("{}\n", sep);
+    Ok(())
+}
+
+async fn stage_0_init() -> Result<()> {
     std::fs::create_dir_all("sigma")?;
     std::fs::create_dir_all("regression_data")?;
     std::fs::create_dir_all("regression_data/rules")?;
     std::fs::create_dir_all("logs")?;
-
-    let config_path = PathBuf::from("config.yaml");
-    if !config_path.exists() {
-        let config = Config::default();
-        let yaml = serde_yaml::to_string(&config)?;
-        std::fs::write(&config_path, yaml)?;
-        tracing::info!("Created default config file at {:?}", config_path);
-    }
-
+    info!("directory structure ready");
     Ok(())
 }
 
-async fn stage_1_update_repo(_config: &Config, offline: bool) -> Result<()> {
-    let sigma_repo = SigmaRepo::new(std::path::Path::new("sigma")).with_offline(offline);
+async fn stage_1_update_repo(
+    config: &Config,
+    fork_config: Option<&contrib::fork::ForkConfig>,
+) -> Result<()> {
+    let mut sigma_repo = SigmaRepo::new(std::path::Path::new("sigma"));
+
+    if let Some(fc) = fork_config {
+        let base_url = fc.fork_url.strip_suffix(".git").unwrap_or(&fc.fork_url);
+        let clone_url = format!("{}.git", base_url);
+        sigma_repo = sigma_repo.with_remote_url(clone_url);
+    }
+
+    let has_config_token = !config.github_token.trim().is_empty();
+    if has_config_token {
+        sigma_repo = sigma_repo.with_token(config.github_token.trim().to_string());
+    }
+
     sigma_repo.init().await?;
+
+    if let Some(fc) = fork_config {
+        contrib::branch::create_branch(&sigma_repo.path, &fc.branch_name)?;
+    }
+
     info!("Sigma repository ready");
     Ok(())
 }
@@ -111,6 +353,7 @@ fn stage_3_load_rules(
     Ok((engine, rules_count as u64))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn stage_4_work_winevt(
     channels: Vec<String>,
     engine: &SigmaEngine,
@@ -119,7 +362,11 @@ async fn stage_4_work_winevt(
     stats: &mut Stats,
     custom_map: &HashMap<String, String>,
     author: &str,
+    email: &str,
+    sigma_repo_path: &std::path::Path,
 ) -> Result<()> {
+    let output_base = sigma_repo_path.join("regression_data");
+
     info!("Starting winevt collection on channels: {:?}", channels);
 
     let (tx, mut rx) = mpsc::channel::<collector::winevt::WinevtEvent>(1024);
@@ -243,7 +490,7 @@ async fn stage_4_work_winevt(
 
         let mut reg = regression::generator::RegressionData::new(
             agg.header.clone(),
-            std::path::Path::new("regression_data"),
+            &output_base,
             rule_rel_path.as_deref(),
             Some(author),
             agg.description.as_deref(),
@@ -282,6 +529,7 @@ async fn stage_4_work_winevt(
             "Generating regression data for {} rules…",
             to_generate.len()
         );
+        let mut committed_rules: Vec<(String, String)> = Vec::new();
         for (reg, rule_path_opt, rule_id) in &to_generate {
             let _gen_span = info_span!("generate", rule_id = %rule_id).entered();
             match reg.generate() {
@@ -292,6 +540,7 @@ async fn stage_4_work_winevt(
                     let rel_dir = reg
                         .sigma_rel_dir()
                         .unwrap_or_else(|| format!("regression_data/rules/{}", rule_id));
+                    committed_rules.push((rule_id.clone(), rel_dir.clone()));
                     let tests_path = format!("{}/info.yml", rel_dir.replace('\\', "/"));
                     if let Some(rule_yaml_path) = rule_path_opt {
                         if let Ok(content) = std::fs::read(rule_yaml_path) {
@@ -299,12 +548,18 @@ async fn stage_4_work_winevt(
                                 !content.is_empty() && *content.last().unwrap() != b'\n';
                             let prefix = if needs_newline { "\n" } else { "" };
                             let line = format!("{}regression_tests_path: {}\n", prefix, tests_path);
-                            let _ = std::fs::OpenOptions::new()
+                            if let Err(e) = std::fs::OpenOptions::new()
                                 .append(true)
                                 .open(rule_yaml_path)
                                 .and_then(|mut file| {
                                     std::io::Write::write_all(&mut file, line.as_bytes())
-                                });
+                                })
+                            {
+                                warn!(
+                                    "Failed to append regression_tests_path to {:?}: {}",
+                                    rule_yaml_path, e
+                                );
+                            }
                         }
                     }
                 }
@@ -312,6 +567,15 @@ async fn stage_4_work_winevt(
                     let rid = reg.header.rule_id.as_deref().unwrap_or("?");
                     error!("Failed to generate regression for {}: {}", rid, e);
                 }
+            }
+        }
+
+        // Commit regression data
+        if !committed_rules.is_empty() {
+            if let Err(e) =
+                contrib::commit::commit_all_rules(sigma_repo_path, &committed_rules, author, email)
+            {
+                warn!("Failed to commit regression data: {}", e);
             }
         }
     }
@@ -380,10 +644,10 @@ fn resolve_channels_from_rules(
 
 async fn setup_pipeline(
     config: &Config,
-    offline: bool,
+    fork_config: Option<&contrib::fork::ForkConfig>,
 ) -> Result<(SigmaEngine, Vec<String>, HashMap<String, String>)> {
-    stage_0_init(config).await?;
-    stage_1_update_repo(config, offline).await?;
+    stage_0_init().await?;
+    stage_1_update_repo(config, fork_config).await?;
 
     let existing_rules = stage_2_existing_rules(config);
 
@@ -403,6 +667,16 @@ async fn setup_pipeline(
 
     if channels.is_empty() {
         warn!("0 channels resolved — nothing to collect");
+        warn!(
+            "Loaded {} rules, {} active services, {} active categories",
+            engine.rules_count(),
+            engine.active_services().len(),
+            engine.active_categories().len()
+        );
+        if !engine.all_services().is_empty() {
+            let all: Vec<&str> = engine.all_services().iter().map(|s| s.as_str()).collect();
+            info!("All known services in rules: {:?}", all);
+        }
     }
 
     Ok((engine, channels, custom_map))
@@ -431,6 +705,7 @@ async fn run_cycle(
     retired: &mut HashSet<String>,
     custom_map: &HashMap<String, String>,
     author: &str,
+    email: &str,
 ) -> Result<Stats> {
     let mut stats = Stats {
         events_processed: 0,
@@ -453,6 +728,8 @@ async fn run_cycle(
             &mut stats,
             custom_map,
             author,
+            email,
+            std::path::Path::new("sigma"),
         )
         .await?;
     }
@@ -471,7 +748,6 @@ async fn run_cycle(
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let flags: Vec<&str> = args.iter().skip(1).map(|s| s.as_str()).collect();
-    let flag = |name: &str| flags.contains(&name);
     let flag_value = |name: &str| -> Option<String> {
         let mut iter = flags.iter();
         while let Some(f) = iter.next() {
@@ -483,26 +759,42 @@ async fn main() -> Result<()> {
     };
 
     let config_path = PathBuf::from("config.yaml");
+    let just_created = !config_path.exists();
     let mut config = Config::load(&config_path)?;
 
-    if flag("--create-config") {
-        if let Some(author) = flag_value("--author") {
-            config.author = author;
-        }
-        if flag("--offline") {
-            config.offline = true;
-        }
-        Config::save(&config_path, &config)?;
-        println!("Config file created at {:?}", config_path);
-        println!("{:?}", config);
-        return Ok(());
+    if just_created {
+        eprintln!("── config.yaml created ──────────────────────");
+        eprintln!("  Edit config.yaml with your settings,");
+        eprintln!("  then run sigmacatch again.");
+        eprintln!("──────────────────────────────────────────────");
+        std::process::exit(1);
     }
 
     if let Some(author) = flag_value("--author") {
         config.author = author;
+        if !config
+            .author
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            anyhow::bail!(
+                "--author must be a valid GitHub username (alphanumeric + hyphens), got {:?}",
+                config.author
+            );
+        }
     }
-    if flag("--offline") {
-        config.offline = true;
+
+    if config.author == "sigmacatch" {
+        eprintln!("── config.yaml not configured ──────────────");
+        eprintln!("  Update the 'author' field in config.yaml");
+        eprintln!("  before running.");
+        eprintln!("──────────────────────────────────────────────");
+        std::process::exit(1);
+    }
+
+    if flags.contains(&"--dry-run") {
+        dry_run_git(&config).await?;
+        return Ok(());
     }
 
     #[cfg(windows)]
@@ -516,7 +808,15 @@ async fn main() -> Result<()> {
         env!("BUILD_TIME")
     );
 
-    let (engine, cycle_channels, custom_map) = setup_pipeline(&config, config.offline).await?;
+    info!(
+        "Sigmacatch started for {} <{}>",
+        config.author, config.email
+    );
+    let branch_name = contrib::branch::create_branch_name();
+    info!("Branch name: {}", branch_name);
+    let fork_config = contrib::fork::detect_fork(&config.author, &branch_name).await?;
+
+    let (engine, cycle_channels, custom_map) = setup_pipeline(&config, Some(&fork_config)).await?;
 
     if cycle_channels.is_empty() {
         info!("No channels resolved — exiting cleanly");
@@ -540,6 +840,19 @@ async fn main() -> Result<()> {
     loop {
         if !running.load(Ordering::Relaxed) {
             info!("Interrupted, shutting down");
+            if let Err(e) = contrib::branch::push_branch(
+                std::path::Path::new("sigma"),
+                &fork_config.branch_name,
+                "origin",
+                &config.github_token,
+            ) {
+                warn!("Failed to push branch: {}", e);
+            } else {
+                info!(
+                    "Branch '{}' pushed to origin. Next step: create PR at https://github.com/SigmaHQ/sigma/pulls",
+                    fork_config.branch_name
+                );
+            }
             break;
         }
 
@@ -549,7 +862,26 @@ async fn main() -> Result<()> {
             info!("collecting…");
 
             let channels = cycle_channels.clone();
-            run_cycle(channels, &engine, &mut retired, &custom_map, &config.author).await?;
+            run_cycle(
+                channels,
+                &engine,
+                &mut retired,
+                &custom_map,
+                &config.author,
+                &config.email,
+            )
+            .await?;
+        }
+
+        if let Err(e) = contrib::branch::push_branch(
+            std::path::Path::new("sigma"),
+            &fork_config.branch_name,
+            "origin",
+            &config.github_token,
+        ) {
+            warn!("Failed to push branch: {}", e);
+        } else {
+            info!("Branch '{}' pushed to origin", fork_config.branch_name);
         }
 
         info!("waiting 30s before next cycle…");

@@ -9,7 +9,7 @@
 Outil headless qui capture des événements Windows réels via **Windows Event Log API** (winevt), les matche contre les règles SigmaHQ, et sort des données de régression structurées.
 
 **Cycle complet (séquentiel) :**
-1. Acquérir règles SigmaHQ (gix clone/pull)
+1. Acquérir règles SigmaHQ (grit-lib clone/pull)
 2. Charger moteur Sigma (rsigma-eval) avec filtre logsource
 3. Collecter événements Event Log (winevt, channels configurés)
 4. Évaluer events contre toutes les règles chargées
@@ -25,11 +25,17 @@ Outil headless qui capture des événements Windows réels via **Windows Event L
 
 ```
 src/
+├── git.rs               # wrapper grit-lib : clone/fetch/push/branch/commit/checkout (Rust pur, pas de git CLI)
 ├── main.rs              # Pipeline + Stats + AggregatedRule
 ├── config.rs            # Config YAML (serde, Default) + LogConfig
+├── contrib/             # Workflow de contribution SigmaHQ
+│   ├── mod.rs           # pub mod branch, commit, fork
+│   ├── branch.rs        # create_branch_name, create_branch, push_branch (fetch + push normal)
+│   ├── commit.rs        # commit_all_rules avec author env + fallback
+│   └── fork.rs          # ForkConfig, check_fork_exists, detect_fork
 ├── logger.rs            # Two-layer tracing (stderr info + rolling file debug)
 ├── sigma/
-│   ├── loader.rs        # SigmaRepo (gix) + find_rules_dirs()
+│   ├── loader.rs        # SigmaRepo (grit-lib) + remote URL update + find_rules_dirs()
 │   └── engine.rs        # SigmaEngine + évaluation des règles (resolve_logsource depuis mapping)
 ├── collector/
 │   ├── mod.rs           # pub mod winevt
@@ -51,13 +57,13 @@ src/
 `config.yaml` (auto-créé au premier run) :
 
 ```yaml
-author: "username"          # whoami::username() par défaut
-offline: false              # true = utilise sigma/ existant sans git
+author: "sigmacatch"        # nom GitHub pour contrib workflow (doit être changé)
+email: "you@example.com"    # requis pour les commits git
 log:
   level_file: "debug"       # niveau fichier tracing
 ```
 
-**CLI flags :** `--create-config`, `--author <name>`, `--offline`
+**CLI flags :** `--author <name>`
 
 ---
 
@@ -68,7 +74,7 @@ log:
 ```
 config.yaml → Config struct
     ↓
-create_dir_all("sigma/", "regression_data/", "logs/")
+create_dir_all("sigma/", "regression_data/", "regression_data/rules/", "logs/")
     ↓
 logger::init() → tracing subscriber (stderr info + file debug)
 ```
@@ -78,10 +84,15 @@ logger::init() → tracing subscriber (stderr info + file debug)
 ```
 SigmaRepo::new("sigma/")
     ↓
+with_remote_url(URL du fork)
+    ↓
 init() [async]
-    ├── NO .git → gix clone https://github.com/SigmaHQ/sigma.git
-    └── .git EXISTS → gix fetch + reset worktree → origin/master
+    ├── NO .git → grit-lib clone <remote_url> (fork ou SigmaHQ)
+    └── .git EXISTS → mise à jour remote origin (si fork) → grit-lib fetch
          └── échec → WARN, continue avec règles existantes
+    ↓
+create_branch("sigmacatch-contrib/YYYYMMDD_<author>")
+    └── create_branch() → grit-lib create ref + switch HEAD vers la branche (ou switch si existe déjà)
 ```
 
 ### Stage 2 — Skip Set (règles existantes)
@@ -165,17 +176,21 @@ Pour chaque AggregatedRule dans aggregated :
 
 **Sortie :**
 ```
-regression_data/<rule_rel_path>/
+<output_base>/<rule_rel_path>/
 ├── <rule_id>.json      # premier event correspondant (JSON plat)
 ├── <rule_id>.evtx      # EVTX valide via EvtWriteFile (XML Winevt)
 └── info.yml            # métadonnées compatible SigmaHQ
 ```
+- Non-contrib : `output_base` = `regression_data/` (racine du projet)
+- Contrib : `output_base` = `sigma/regression_data/` (dans le repo sigma, commité sur le fork)
 
 ### Post-cycle
 
 ```
+commit_all_rules() → batch grit-lib commit dans le repo sigma
 sleep 30s → loop
 Ctrl+C → running.store(false) → break
+push_branch() → fetch + comparaison + push normal vers le fork (skip si divergé)
 ```
 
 **Stats :** `{ events_processed, matches_found, regression_data_generated }`
@@ -284,8 +299,9 @@ MatchEvent {
 ## 8. Dépendances
 
 | Dépendance | Usage |
-|---|---|
-| `gix` | git operations (clone/pull SigmaHQ) |
+|---|---|---|
+| `grit-lib` | toutes les ops git (clone, fetch, push, branch, commit, checkout) via HTTP, Rust pur |
+| `reqwest` (blocking) | client HTTP pour transport git + détection de fork (API GitHub) |
 | `rsigma-eval` + `rsigma-parser` | Sigma rule loading/evaluation |
 | `tokio` | async runtime |
 | `tracing` + `tracing-subscriber` | logging |
@@ -313,10 +329,10 @@ cargo xwin build --release --target x86_64-pc-windows-msvc   # cross-compile Win
 
 ```
 sigmacatch
-    [--create-config]      # créer config.yaml avec defaults
     [--author <name>]      # override username
-    [--offline]            # utiliser sigma/ existant sans git
 ```
+
+La config est auto-créée au premier run avec les valeurs par défaut. Éditez `config.yaml` avant de lancer.
 
 ---
 
@@ -325,20 +341,24 @@ sigmacatch
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  config.yaml                                                            │
-│    author, offline, log.level_file                                       │
+│    author, email, log.level_file                                         │
 └──────────────────────┬──────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  STAGE 0 — INIT                                                         │
-│  create_dir_all("sigma/", "regression_data/", "logs/")                 │
+│  create_dir_all("sigma/", "regression_data/",                           │
+│                "regression_data/rules/", "logs/")                       │
 │  logger::init() → tracing (stderr info + file debug)                   │
 └──────────────────────┬──────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  STAGE 1 — ACQUISITION SIGMAHQ                                         │
 │  SigmaRepo::new("sigma/")                                               │
-│    ├── NO .git → gix clone SigmaHQ                                     │
-│    └── .git EXISTS → gix fetch + reset → origin/master                │
+│    ├── [contrib] définir l'URL du remote fork                          │
+│    ├── NO .git → grit-lib clone (fork ou SigmaHQ)                           │
+│    └── .git EXISTS → mise à jour remote origin → grit-lib fetch            │
+│    ↓                                                                   │
+│    [contrib] create_branch("sigmacatch-contrib/...") + switch HEAD      │
 └──────────────────────┬──────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -363,7 +383,7 @@ sigmacatch
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  CYCLE — COLLECTE (winevt)                                              │
-│  WinevtCollector (channels: Security, System, Sysmon)                  │
+│  WinevtCollector (channels résolus depuis les règles)                   │
 │    ├── Windows: EvtQueryW → EvtNext → EvtRender → XML                │
 │    │     → parse_event_xml() → WinevtEvent                            │
 │    └── non-Windows: Stub → Ok(vec![])                                 │
@@ -374,7 +394,7 @@ sigmacatch
 │  CYCLE — ÉVALUATION                                                     │
 │  Pour chaque WinevtEvent :                                              │
 │    ├── event.event_json → JSON plat (pré-parsé, fallback XmlParser si None)
-│    ├── provider → LogSource { product: "windows" }                    │
+│    ├── channel → LogSource via resolve_logsource()                   │
 │    └── engine.evaluate_event_with_logsource()                         │
 │         → Vec<EvaluationResult>                                        │
 │  Pour chaque match :                                                    │
@@ -385,25 +405,31 @@ sigmacatch
 │  CYCLE — GÉNÉRATION                                                     │
 │  Pour chaque AggregatedRule :                                           │
 │    ├── skip si rule_id dans retired ou info.yml existant              │
-│    ├── RegressionData::new()                                           │
+│    ├── RegressionData::new(output_base, ...)                          │
+│    │   output_base = regression_data/ ou sigma/regression_data/       │
 │    ├── reg.generate() → triplet :                                     │
 │    │     ├── <rule_id>.json (premier event, JSON plat)                │
 │    │     ├── <rule_id>.evtx (EvtExportLog, ou .xml fallback)          │
 │    │     └── info.yml (UUID v4, metadata SigmaHQ)                     │
 │    └── append "regression_tests_path" au YAML source                  │
+│  ↓                                                                     │
+│  commit_all_rules() → batch grit-lib commit dans sigma                       │
 └──────────────────────┬──────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  POST-CYCLE                                                             │
 │    sleep 30s → loop                                                     │
 │  Ctrl+C → running.store(false) → break                                  │
+│    push_branch() → fetch + comparaison + push normal vers le fork       │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Sortie finale :**
 ```
-regression_data/<rule_rel_path>/
+<output_base>/<rule_rel_path>/
 ├── <rule_id>.json      # premier event correspondant (JSON plat, clés Sigma)
 ├── <rule_id>.evtx      # EVTX valide via EvtWriteFile (XML Winevt)
 └── info.yml            # type: evtx, rule_metadata, regression_tests_info
 ```
+- Non-contrib : `output_base` = `regression_data/` (racine du projet)
+- Contrib : `output_base` = `sigma/regression_data/` (dans le repo sigma, commité sur le fork)

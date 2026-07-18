@@ -18,6 +18,7 @@ cargo build --release
 | Build | [EN](en/build.md) | [FR](fr/build.md) |
 | Output format | [EN](en/output-format.md) | [FR](fr/output-format.md) |
 | Regression data format | [EN](en/regression-data-format.md) | [FR](fr/regression-data-format.md) |
+| Nice-to-have | [EN](en/nice-to-have.md) | [FR](fr/nice-to-have.md) |
 
 ## License
 

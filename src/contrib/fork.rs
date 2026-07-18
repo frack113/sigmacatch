@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+use anyhow::Result;
+use reqwest::{Client, StatusCode};
+use tracing::{info, warn};
+
+#[derive(Debug, Clone)]
+pub struct ForkConfig {
+    pub fork_url: String,
+    pub branch_name: String,
+}
+
+impl ForkConfig {
+    pub fn new(fork_url: String, branch_name: String) -> Self {
+        Self {
+            fork_url,
+            branch_name,
+        }
+    }
+}
+
+/// Check if a GitHub fork exists via HTTP HEAD request.
+/// Returns true if the fork URL responds with 2xx.
+/// Detects rate-limiting (403/429) and assumes fork exists.
+/// Returns an error on network failure (cannot reach GitHub).
+pub async fn check_fork_exists(username: &str) -> Result<bool> {
+    let url = format!("https://github.com/{}/sigma", username);
+    let client = Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+
+    match client.head(&url).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            if status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::FORBIDDEN {
+                warn!(
+                    "GitHub rate-limited while checking fork (HTTP {}). Assuming fork exists to avoid false negative.",
+                    status.as_u16()
+                );
+                return Ok(true);
+            }
+            Ok(status.is_success())
+        }
+        Err(e) => {
+            if e.status() == Some(StatusCode::TOO_MANY_REQUESTS)
+                || e.status() == Some(StatusCode::FORBIDDEN)
+            {
+                warn!("GitHub rate-limited while checking fork. Assuming fork exists.");
+                return Ok(true);
+            }
+            anyhow::bail!(
+                "Cannot reach GitHub to check fork at {}: {}. \
+                 Verify network connectivity and try again.",
+                url,
+                e
+            );
+        }
+    }
+}
+
+/// Detect fork for a given username.
+/// Returns ForkConfig with fork_url if fork exists, errors otherwise.
+pub async fn detect_fork(username: &str, branch_name: &str) -> Result<ForkConfig> {
+    if username.is_empty() {
+        anyhow::bail!("Cannot detect fork: username is empty");
+    }
+
+    let fork_url = format!("https://github.com/{}/sigma", username);
+    let exists = check_fork_exists(username).await?;
+
+    if exists {
+        info!("Fork detected: {}", fork_url);
+        Ok(ForkConfig::new(fork_url, branch_name.to_string()))
+    } else {
+        anyhow::bail!(
+            "Fork {} not found. Create a fork at: https://github.com/SigmaHQ/sigma/fork",
+            fork_url
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fork_config_new() {
+        let config = ForkConfig::new(
+            "https://github.com/testuser/sigma".to_string(),
+            "sigmacatch-contrib/20260714_testuser".to_string(),
+        );
+        assert_eq!(config.fork_url, "https://github.com/testuser/sigma");
+        assert_eq!(config.branch_name, "sigmacatch-contrib/20260714_testuser");
+    }
+
+    #[test]
+    fn test_detect_fork_empty_username() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(detect_fork("", "sigmacatch-contrib/20260714_test"));
+        assert!(result.is_err());
+    }
+}

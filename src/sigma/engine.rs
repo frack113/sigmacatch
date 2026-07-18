@@ -328,6 +328,10 @@ impl SigmaEngine {
     pub fn all_categories(&self) -> &HashSet<String> {
         &self.all_categories
     }
+
+    pub fn rules_count(&self) -> usize {
+        self.rules_count
+    }
 }
 
 enum LoadError {
