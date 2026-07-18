@@ -244,6 +244,11 @@ impl SigmaEngine {
         let content = std::fs::read_to_string(path).map_err(|e| LoadError::Error(e.into()))?;
         let mut collection = parse_sigma_yaml(&content).map_err(|e| LoadError::Error(e.into()))?;
 
+        // NOTE: Skip counters are sequential — each retain is applied to the
+        // collection as it exists after the previous filter. A rule filtered by
+        // non_windows is never counted in status/level counters. The counters
+        // reflect actual pipeline ordering, not independent totals.
+
         let before_non_windows = collection.rules.len();
         collection.rules.retain(|rule| {
             rule.logsource
