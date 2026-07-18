@@ -1,8 +1,8 @@
 # Sigmacatch
 
-Headless tool that captures real Windows events via the **Windows Event Log API** (`winevt`), matches them against [SigmaHQ](https://github.com/SigmaHQ/sigma) rules, and outputs structured regression data ready for SigmaHQ PRs.
+Outil headless qui capture de vrais événements Windows via l'**API Windows Event Log** (`winevt`), les compare à des règles [SigmaHQ](https://github.com/SigmaHQ/sigma), et produit des données de régression structurées prêtes pour les PR SigmaHQ.
 
-## Quick start
+## Démarrage rapide
 
 ```bash
 cargo build --release
@@ -11,7 +11,7 @@ cargo build --release
 
 ## Documentation
 
-A built version of this documentation is published to GitHub Pages: **https://frack113.github.io/sigmacatch/**
+Une version compilée de cette documentation est publiée sur GitHub Pages : **https://frack113.github.io/sigmacatch/**
 
 | | English | Francais |
 |---|---|---|
@@ -22,6 +22,6 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 | Regression data format | [EN](regression-data-format/) | [FR](fr/regression-data-format/) |
 | Nice-to-have | [EN](nice-to-have/) | [FR](fr/nice-to-have/) |
 
-## License
+## Licence
 
 MIT
