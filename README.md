@@ -16,7 +16,7 @@ Sigma engine evaluation (every event against all rules)
     ↓
 regression_data/<rule>/
     ├── <rule_id>.json    ← flat event (Sigma keys)
-    ├── <rule_id>.evtx    ← valid EVTX (via EvtWriteFile)
+    ├── <rule_id>.evtx    ← valid EVTX (via EvtExportLog) or .xml fallback
     └── info.yml          ← SigmaHQ-compatible metadata
 ```
 
@@ -32,9 +32,16 @@ On first run, a `config.yaml` is created with defaults:
 ```yaml
 author: "your-username"
 email: "you@example.com"
+github_token: ""          # GitHub token (or set GITHUB_TOKEN env var) — required for fork push
 log:
   level_file: "debug"
+sigma:
+  min_status: "stable"    # load rules with status >= this threshold
+  min_level: "critical"   # load rules with level >= this threshold
 ```
+
+Rules below the configured `min_status` / `min_level` thresholds are skipped at load time.
+Rules missing a `status` or `level` field are always accepted.
 
 ### CLI flags
 

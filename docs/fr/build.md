@@ -43,7 +43,7 @@ Profil appliqué :
 - `strip = true`
 - `lto = true`
 - `codegen-units = 1`
-- features tokio réduites à `rt`, `rt-multi-thread`, `macros`, `sync`, `time`
+- features tokio : `rt`, `rt-multi-thread`, `macros`, `sync`, `time`, `signal`
 
 ## Binaire
 

@@ -54,14 +54,20 @@ src/
 
 ## 3. Configuration
 
-`config.yaml` (auto-créé au premier run) :
+`config.yaml` (auto-créé au premier run, complété automatiquement si la section `sigma` manque) :
 
 ```yaml
 author: "sigmacatch"        # nom GitHub pour contrib workflow (doit être changé)
 email: "you@example.com"    # requis pour les commits git
+github_token: ""            # token GitHub (ou var env GITHUB_TOKEN) — requis pour le push du fork
 log:
   level_file: "debug"       # niveau fichier tracing
+sigma:
+  min_status: "stable"      # seuil de statut minimal (inclus) : unsupported < deprecated < experimental < test < stable
+  min_level: "critical"     # seuil de niveau minimal (inclus) : informational < low < medium < high < critical
 ```
+
+**Filtrage des règles :** `min_status` et `min_level` sont appliqués au chargement. Les règles dont `status`/`level` est inférieur au seuil sont exclues du moteur. Les règles sans champ `status` ou `level` sont toujours acceptées.
 
 **CLI flags :** `--author <name>`
 
@@ -123,6 +129,7 @@ find_rules_dirs("sigma/")
 Pour chaque .yml / .yaml :
     ├── parse_sigma_yaml() → règles Sigma
     ├── post-parse filter: rule.logsource.product == "windows" (ou absent)
+    ├── filter status/level: rule.status >= min_status ET rule.level >= min_level (config.sigma)
     ├── skip si rule_id dans skip set
     ├── engine.add_collection() → rsigma-eval
     └── track rule_paths HashMap<rule_id, PathBuf>
@@ -130,10 +137,14 @@ Pour chaque .yml / .yaml :
 SigmaEngine in-memory (règles chargées + rule_paths)
 ```
 
+> Affichage d'une table de règles au démarrage (nombre chargé, nombre skipé, services/catégories actifs).
+
+**Filtrage status/level :** les règles dont `status` < `min_status` ou `level` < `min_level` sont exclues (seulement si le champ est présent). Par défaut `min_status=stable`, `min_level=critical` — très restrictif, ne charge que les règles stables/critiques.
+
 ### Cycle — Collecte
 
 ```
-WinevtCollector (channels: Security, System, Sysmon)
+WinevtCollector (channels résolus depuis les règles via resolve_channels_from_rules)
     ├── [Windows] EvtQueryW(channel="*") → EvtNext() → EvtRender() → XML
     │     ├── Un task par channel (tokio::spawn)
     │     ├── XML → parse_event_xml() → WinevtEvent (porte event_json pré-parsé)
@@ -177,9 +188,9 @@ Pour chaque AggregatedRule dans aggregated :
 **Sortie :**
 ```
 <output_base>/<rule_rel_path>/
-├── <rule_id>.json      # premier event correspondant (JSON plat)
-├── <rule_id>.evtx      # EVTX valide via EvtWriteFile (XML Winevt)
-└── info.yml            # métadonnées compatible SigmaHQ
+    ├── <rule_id>.json      # premier event correspondant (JSON plat)
+    ├── <rule_id>.evtx      # EVTX valide via EvtExportLog (ou .xml fallback)
+    └── info.yml            # métadonnées compatible SigmaHQ
 ```
 - Non-contrib : `output_base` = `regression_data/` (racine du projet)
 - Contrib : `output_base` = `sigma/regression_data/` (dans le repo sigma, commité sur le fork)
@@ -428,7 +439,7 @@ La config est auto-créée au premier run avec les valeurs par défaut. Éditez 
 ```
 <output_base>/<rule_rel_path>/
 ├── <rule_id>.json      # premier event correspondant (JSON plat, clés Sigma)
-├── <rule_id>.evtx      # EVTX valide via EvtWriteFile (XML Winevt)
+├── <rule_id>.evtx      # EVTX valide via EvtExportLog (ou .xml fallback)
 └── info.yml            # type: evtx, rule_metadata, regression_tests_info
 ```
 - Non-contrib : `output_base` = `regression_data/` (racine du projet)
