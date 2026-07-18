@@ -394,6 +394,12 @@ impl SigmaEngine {
         }
 
         eprintln!();
+        if self.pre_filter_no_status > 0 || self.pre_filter_no_level > 0 {
+            eprintln!(
+                "   ⚠️  {} rules missing status, {} rules missing level (counted as accepted)",
+                self.pre_filter_no_status, self.pre_filter_no_level
+            );
+        }
         eprintln!(
             "⚙️  Filter: min_status={}, min_level={} → accepted {} rules",
             filter.min_status, filter.min_level, self.rules_count

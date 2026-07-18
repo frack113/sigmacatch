@@ -299,8 +299,15 @@ impl Config {
                         if let Ok(sigma_val) = serde_yaml::to_value(SigmaFilterConfig::default()) {
                             map.insert(serde_yaml::Value::String("sigma".to_string()), sigma_val);
                             if let Ok(new_yaml) = serde_yaml::to_string(&doc) {
-                                let _ = std::fs::write(path, &new_yaml);
-                                eprintln!("   ✓ Fixed: added default sigma section to config.yaml — next run will be clean");
+                                match std::fs::write(path, &new_yaml) {
+                                    Ok(()) => eprintln!(
+                                        "   ✓ Fixed: added default sigma section to config.yaml — next run will be clean"
+                                    ),
+                                    Err(e) => eprintln!(
+                                        "   ⚠️  Could not write config.yaml auto-fix: {}",
+                                        e
+                                    ),
+                                }
                             }
                         }
                     }

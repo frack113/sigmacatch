@@ -4,7 +4,7 @@
 use anyhow::Result;
 use grit_lib::fetch::NoProgress;
 use grit_lib::objects::ObjectId;
-use grit_lib::repo::Repository;
+use grit_lib::odb::Odb;
 use grit_lib::transfer::{FetchOptions, PushOptions, PushRefSpec};
 use grit_lib::transport::http::{http_fetch, HttpClient};
 use grit_lib::write_tree::write_tree_from_index;
@@ -344,8 +344,42 @@ pub(crate) fn read_loose_or_packed_ref(git_dir: &Path, ref_name: &str) -> Option
     }
 }
 
-pub(crate) fn resolve_head(repo: &Repository) -> Result<ObjectId> {
-    let head_path = repo.head_path();
+fn open_odb(git_dir: &Path) -> Odb {
+    Odb::new(&git_dir.join("objects")).with_config_git_dir(git_dir.to_path_buf())
+}
+
+/// Returns true if `ancestor` is reachable from `descendant` by walking commit
+/// parents. Built on `Odb` directly to avoid `Repository::open` (which
+/// `canonicalize()`s paths and breaks on Windows `\\?\` UNC prefixes).
+pub fn is_ancestor(git_dir: &Path, ancestor: ObjectId, descendant: ObjectId) -> Result<bool> {
+    if ancestor == descendant {
+        return Ok(true);
+    }
+    let odb = open_odb(git_dir);
+    let mut visited = std::collections::HashSet::new();
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(descendant);
+    while let Some(oid) = queue.pop_front() {
+        if !visited.insert(oid) {
+            continue;
+        }
+        if oid == ancestor {
+            return Ok(true);
+        }
+        let obj = odb
+            .read(&oid)
+            .map_err(|e| anyhow::anyhow!("Failed to read commit {}: {}", oid, e))?;
+        let commit = grit_lib::objects::parse_commit(&obj.data)
+            .map_err(|e| anyhow::anyhow!("Failed to parse commit {}: {}", oid, e))?;
+        for parent in commit.parents {
+            queue.push_back(parent);
+        }
+    }
+    Ok(false)
+}
+
+pub(crate) fn resolve_head(git_dir: &Path) -> Result<ObjectId> {
+    let head_path = git_dir.join("HEAD");
     let content = std::fs::read_to_string(&head_path)?;
     let content = content.trim();
     if let Some(ref_str) = content.strip_prefix("ref: ") {
@@ -354,7 +388,7 @@ pub(crate) fn resolve_head(repo: &Repository) -> Result<ObjectId> {
             "refs/heads/{}",
             ref_path_str.trim_start_matches("refs/heads/")
         );
-        if let Some(oid_str) = read_loose_or_packed_ref(&repo.git_dir, &full_ref) {
+        if let Some(oid_str) = read_loose_or_packed_ref(git_dir, &full_ref) {
             return ObjectId::from_hex(&oid_str)
                 .map_err(|e| anyhow::anyhow!("Invalid OID '{}': {}", oid_str, e));
         }
@@ -369,29 +403,39 @@ pub(crate) fn resolve_head(repo: &Repository) -> Result<ObjectId> {
 }
 
 fn checkout_main_branch(git_dir: &Path, work_tree: &Path) -> Result<()> {
-    let repo = Repository::open(git_dir, Some(work_tree))?;
-    let head_oid = resolve_head(&repo)?;
+    let head_path = git_dir.join("HEAD");
+    let head_content = std::fs::read_to_string(&head_path)?;
+    let head_ref = head_content.trim().to_string();
 
-    let commit_obj = repo
-        .odb
+    let oid_str = if let Some(ref_str) = head_ref.strip_prefix("ref: ") {
+        let ref_name = ref_str.trim();
+        read_loose_or_packed_ref(git_dir, ref_name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Cannot resolve HEAD ref '{}' — branch not found locally",
+                ref_name
+            )
+        })?
+    } else {
+        head_ref.clone()
+    };
+
+    let head_oid = ObjectId::from_hex(&oid_str)
+        .map_err(|e| anyhow::anyhow!("Invalid HEAD OID '{}': {}", oid_str, e))?;
+
+    let odb = open_odb(git_dir);
+    let commit_obj = odb
         .read(&head_oid)
         .map_err(|e| anyhow::anyhow!("Failed to read HEAD commit {}: {}", head_oid, e))?;
     let commit = grit_lib::objects::parse_commit(&commit_obj.data)
         .map_err(|e| anyhow::anyhow!("Failed to parse HEAD commit: {}", e))?;
 
-    checkout_tree(&repo, commit.tree, work_tree, "")?;
+    checkout_tree(&odb, commit.tree, work_tree, "")?;
     info!("Checked out working tree at {:?}", work_tree);
     Ok(())
 }
 
-fn checkout_tree(
-    repo: &Repository,
-    tree_oid: ObjectId,
-    base_path: &Path,
-    prefix: &str,
-) -> Result<()> {
-    let obj = repo
-        .odb
+fn checkout_tree(odb: &Odb, tree_oid: ObjectId, base_path: &Path, prefix: &str) -> Result<()> {
+    let obj = odb
         .read(&tree_oid)
         .map_err(|e| anyhow::anyhow!("Failed to read tree {}: {}", tree_oid, e))?;
     let entries = grit_lib::objects::parse_tree(&obj.data)
@@ -417,10 +461,9 @@ fn checkout_tree(
 
         if entry.mode == 0o040000 {
             std::fs::create_dir_all(&full_path)?;
-            checkout_tree(repo, entry.oid, base_path, &rel_path)?;
+            checkout_tree(odb, entry.oid, base_path, &rel_path)?;
         } else if entry.mode == 0o120000 {
-            let blob = repo
-                .odb
+            let blob = odb
                 .read(&entry.oid)
                 .map_err(|e| anyhow::anyhow!("Failed to read symlink blob: {}", e))?;
             let target = String::from_utf8_lossy(&blob.data);
@@ -432,8 +475,7 @@ fn checkout_tree(
             if let Some(parent) = full_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            let blob = repo
-                .odb
+            let blob = odb
                 .read(&entry.oid)
                 .map_err(|e| anyhow::anyhow!("Failed to read blob {}: {}", entry.oid, e))?;
             std::fs::write(&full_path, &blob.data)?;
@@ -544,13 +586,14 @@ pub fn switch_head(git_dir: &Path, branch_name: &str) -> Result<()> {
 }
 
 fn commit_tree(
-    repo: &Repository,
+    git_dir: &Path,
+    odb: &Odb,
     tree_oid: ObjectId,
     message: &str,
     author: &str,
     email: &str,
 ) -> Result<()> {
-    let parent_oid = resolve_head(repo)?;
+    let parent_oid = resolve_head(git_dir)?;
     let now = chrono::Utc::now().timestamp();
     let author_line = format!("{} <{}> {} +0000", author, email, now);
     let committer_line = author_line.clone();
@@ -568,19 +611,19 @@ fn commit_tree(
     };
 
     let raw = grit_lib::objects::serialize_commit(&commit);
-    let commit_oid = repo
-        .odb
+    let commit_oid = odb
         .write(grit_lib::objects::ObjectKind::Commit, &raw)
         .map_err(|e| anyhow::anyhow!("Failed to write commit object: {}", e))?;
 
-    let head_content = std::fs::read_to_string(repo.head_path())?;
+    let head_path = git_dir.join("HEAD");
+    let head_content = std::fs::read_to_string(&head_path)?;
     let head_ref = head_content
         .trim()
         .strip_prefix("ref: ")
         .map(|s| s.trim().to_string());
 
     if let Some(ref_name) = head_ref {
-        let full_path = repo.git_dir.join(&ref_name);
+        let full_path = git_dir.join(&ref_name);
         std::fs::write(&full_path, format!("{}\n", commit_oid))?;
         info!(
             "Committed {} to {}: {}",
@@ -589,7 +632,7 @@ fn commit_tree(
             message.trim()
         );
     } else {
-        std::fs::write(repo.head_path(), format!("{}\n", commit_oid))?;
+        std::fs::write(&head_path, format!("{}\n", commit_oid))?;
         info!(
             "Committed {} to detached HEAD: {}",
             commit_oid,
@@ -608,18 +651,16 @@ pub fn stage_and_commit_dir(
     author: &str,
     email: &str,
 ) -> Result<()> {
-    let repo = Repository::open(git_dir, Some(work_tree))?;
+    let odb = open_odb(git_dir);
     let mut index = grit_lib::index::Index::new();
     let dir_path = work_tree.join(dir);
     if dir_path.exists() {
-        let git_dir = &repo.git_dir;
-        add_directory_to_index(&repo, &dir_path, work_tree, git_dir, &mut index)?;
+        add_directory_to_index(git_dir, &dir_path, work_tree, &mut index)?;
     }
-    repo.write_index(&mut index)
-        .map_err(|e| anyhow::anyhow!("Failed to write index: {}", e))?;
-    let tree_oid = write_tree_from_index(&repo.odb, &index, "")
+    write_index(git_dir, &index).map_err(|e| anyhow::anyhow!("Failed to write index: {}", e))?;
+    let tree_oid = write_tree_from_index(&odb, &index, "")
         .map_err(|e| anyhow::anyhow!("Failed to write tree: {}", e))?;
-    commit_tree(&repo, tree_oid, message, author, email)
+    commit_tree(git_dir, &odb, tree_oid, message, author, email)
 }
 
 pub fn commit_single_dir(
@@ -630,32 +671,41 @@ pub fn commit_single_dir(
     author: &str,
     email: &str,
 ) -> Result<()> {
-    let repo = Repository::open(git_dir, Some(work_tree))?;
     let dir_path = work_tree.join(dir_rel);
     if !dir_path.exists() {
         return Err(anyhow::anyhow!("Directory does not exist: {:?}", dir_path));
     }
 
+    let odb = open_odb(git_dir);
     let mut index = grit_lib::index::Index::new();
-    let git_dir = &repo.git_dir;
-    add_directory_to_index(&repo, &dir_path, work_tree, git_dir, &mut index)?;
+    add_directory_to_index(git_dir, &dir_path, work_tree, &mut index)?;
 
-    repo.write_index(&mut index)
-        .map_err(|e| anyhow::anyhow!("Failed to write index: {}", e))?;
+    write_index(git_dir, &index).map_err(|e| anyhow::anyhow!("Failed to write index: {}", e))?;
 
-    let tree_oid = write_tree_from_index(&repo.odb, &index, "")
+    let tree_oid = write_tree_from_index(&odb, &index, "")
         .map_err(|e| anyhow::anyhow!("Failed to write tree: {}", e))?;
 
-    commit_tree(&repo, tree_oid, message, author, email)
+    commit_tree(git_dir, &odb, tree_oid, message, author, email)
+}
+
+fn write_index(git_dir: &Path, index: &grit_lib::index::Index) -> Result<()> {
+    let index_path = git_dir.join("index");
+    if let Some(parent) = index_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    index
+        .write(&index_path)
+        .map_err(|e| anyhow::anyhow!("Failed to write index: {}", e))?;
+    Ok(())
 }
 
 fn add_directory_to_index(
-    repo: &Repository,
+    git_dir: &Path,
     dir: &Path,
     base: &Path,
-    git_dir: &Path,
     index: &mut grit_lib::index::Index,
 ) -> Result<()> {
+    let odb = open_odb(git_dir);
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -671,11 +721,10 @@ fn add_directory_to_index(
             .map_err(|_| anyhow::anyhow!("Path not under base"))?;
 
         if file_type.is_dir() {
-            add_directory_to_index(repo, &path, base, git_dir, index)?;
+            add_directory_to_index(git_dir, &path, base, index)?;
         } else if file_type.is_file() {
             let contents = std::fs::read(&path)?;
-            let blob_oid = repo
-                .odb
+            let blob_oid = odb
                 .write(grit_lib::objects::ObjectKind::Blob, &contents)
                 .map_err(|e| anyhow::anyhow!("Failed to write blob {}: {}", rel.display(), e))?;
 
