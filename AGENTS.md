@@ -136,10 +136,6 @@ Contrib est toujours actif — fork detection, branch, commit, push tournent à 
 
 ## Conventions
 
-### Branch policy
-
-**Never work on `main`.** Always create a feature branch before making changes. If no branch exists, create one with a descriptive name (e.g. `feat/status-level-filter`, `fix/evtx-export`, `refactor/skip-set`).
-
 ### Commit messages
 
 Toujours utiliser un emoji UTF-8 en préfixe :
