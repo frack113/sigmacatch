@@ -11,6 +11,8 @@ cargo build --release
 
 ## Documentation
 
+A built version of this documentation is published to GitHub Pages: **https://frack113.github.io/sigmacatch/**
+
 | | English | Francais |
 |---|---|---|
 | Architecture | [EN](en/architecture.md) | [FR](fr/architecture.md) |

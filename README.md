@@ -67,6 +67,8 @@ On Linux/macOS the collector is a stub (returns empty vec) — the pipeline stil
 
 ## Documentation
 
+A built version of this documentation is published to GitHub Pages: **https://frack113.github.io/sigmacatch/**
+
 | | English | Francais |
 |---|---|---|
 | Architecture | [EN](docs/en/architecture.md) | [FR](docs/fr/architecture.md) |
