@@ -328,7 +328,7 @@ fn stage_2_existing_rules(_config: &Config) -> HashSet<String> {
 }
 
 fn stage_3_load_rules(
-    _config: &Config,
+    config: &Config,
     existing_rules: &HashSet<String>,
 ) -> Result<(SigmaEngine, u64)> {
     let rules_dirs = find_rules_dirs(std::path::Path::new("sigma"))?;
@@ -343,6 +343,7 @@ fn stage_3_load_rules(
     let rules_count = engine.load_rules_from_dirs(
         &rules_dirs.iter().map(|d| d.as_path()).collect::<Vec<_>>(),
         existing_rules,
+        &config.sigma,
     )?;
 
     info!(

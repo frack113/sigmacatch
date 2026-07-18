@@ -21,6 +21,146 @@ pub enum LogLevel {
     Error,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MinStatus {
+    Unsupported,
+    Deprecated,
+    Experimental,
+    Test,
+    Stable,
+}
+
+impl MinStatus {
+    pub fn ordinal(&self) -> u8 {
+        match self {
+            MinStatus::Unsupported => 0,
+            MinStatus::Deprecated => 1,
+            MinStatus::Experimental => 2,
+            MinStatus::Test => 3,
+            MinStatus::Stable => 4,
+        }
+    }
+
+    pub fn accepts(&self, rule_status: &rsigma_parser::Status) -> bool {
+        let rule_ord = match rule_status {
+            rsigma_parser::Status::Unsupported => 0,
+            rsigma_parser::Status::Deprecated => 1,
+            rsigma_parser::Status::Experimental => 2,
+            rsigma_parser::Status::Test => 3,
+            rsigma_parser::Status::Stable => 4,
+        };
+        rule_ord >= self.ordinal()
+    }
+}
+
+impl std::fmt::Display for MinStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MinStatus::Unsupported => write!(f, "unsupported"),
+            MinStatus::Deprecated => write!(f, "deprecated"),
+            MinStatus::Experimental => write!(f, "experimental"),
+            MinStatus::Test => write!(f, "test"),
+            MinStatus::Stable => write!(f, "stable"),
+        }
+    }
+}
+
+impl std::str::FromStr for MinStatus {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "unsupported" => Ok(MinStatus::Unsupported),
+            "deprecated" => Ok(MinStatus::Deprecated),
+            "experimental" => Ok(MinStatus::Experimental),
+            "test" => Ok(MinStatus::Test),
+            "stable" => Ok(MinStatus::Stable),
+            _ => Err(format!(
+                "unknown status '{}', expected: unsupported, deprecated, experimental, test, stable",
+                s
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MinLevel {
+    Informational,
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl MinLevel {
+    pub fn ordinal(&self) -> u8 {
+        match self {
+            MinLevel::Informational => 0,
+            MinLevel::Low => 1,
+            MinLevel::Medium => 2,
+            MinLevel::High => 3,
+            MinLevel::Critical => 4,
+        }
+    }
+
+    pub fn accepts(&self, rule_level: &rsigma_parser::Level) -> bool {
+        let rule_ord = match rule_level {
+            rsigma_parser::Level::Informational => 0,
+            rsigma_parser::Level::Low => 1,
+            rsigma_parser::Level::Medium => 2,
+            rsigma_parser::Level::High => 3,
+            rsigma_parser::Level::Critical => 4,
+        };
+        rule_ord >= self.ordinal()
+    }
+}
+
+impl std::fmt::Display for MinLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MinLevel::Informational => write!(f, "informational"),
+            MinLevel::Low => write!(f, "low"),
+            MinLevel::Medium => write!(f, "medium"),
+            MinLevel::High => write!(f, "high"),
+            MinLevel::Critical => write!(f, "critical"),
+        }
+    }
+}
+
+impl std::str::FromStr for MinLevel {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "informational" => Ok(MinLevel::Informational),
+            "low" => Ok(MinLevel::Low),
+            "medium" => Ok(MinLevel::Medium),
+            "high" => Ok(MinLevel::High),
+            "critical" => Ok(MinLevel::Critical),
+            _ => Err(format!(
+                "unknown level '{}', expected: informational, low, medium, high, critical",
+                s
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SigmaFilterConfig {
+    pub min_status: MinStatus,
+    pub min_level: MinLevel,
+}
+
+impl Default for SigmaFilterConfig {
+    fn default() -> Self {
+        Self {
+            min_status: MinStatus::Stable,
+            min_level: MinLevel::Critical,
+        }
+    }
+}
+
 impl LogLevel {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -56,6 +196,8 @@ pub struct Config {
     #[serde(default)]
     pub github_token: String,
     pub log: LogConfig,
+    #[serde(default)]
+    pub sigma: SigmaFilterConfig,
 }
 
 impl Default for Config {
@@ -65,6 +207,7 @@ impl Default for Config {
             email: default_email(),
             github_token: String::new(),
             log: LogConfig::default(),
+            sigma: SigmaFilterConfig::default(),
         }
     }
 }
@@ -173,6 +316,7 @@ log:
             email: "user@example.com".to_string(),
             github_token: String::new(),
             log: LogConfig::default(),
+            sigma: SigmaFilterConfig::default(),
         };
         assert!(config.validate().is_err());
     }
@@ -184,6 +328,7 @@ log:
             email: String::new(),
             github_token: String::new(),
             log: LogConfig::default(),
+            sigma: SigmaFilterConfig::default(),
         };
         assert!(config.validate().is_err());
     }
@@ -195,6 +340,7 @@ log:
             email: "notanemail".to_string(),
             github_token: String::new(),
             log: LogConfig::default(),
+            sigma: SigmaFilterConfig::default(),
         };
         assert!(config.validate().is_err());
     }
@@ -206,6 +352,7 @@ log:
             email: "user@example.com".to_string(),
             github_token: "ghp_validtoken123".to_string(),
             log: LogConfig::default(),
+            sigma: SigmaFilterConfig::default(),
         };
         assert!(config.validate().is_ok());
     }
@@ -217,6 +364,7 @@ log:
             email: "dev@example.com".to_string(),
             github_token: String::new(),
             log: LogConfig::default(),
+            sigma: SigmaFilterConfig::default(),
         };
         let yaml = serde_yaml::to_string(&config).unwrap();
         let loaded: Config = serde_yaml::from_str(&yaml).unwrap();
