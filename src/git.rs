@@ -519,16 +519,26 @@ fn validate_branch_name(name: &str) -> Result<()> {
     if name.is_empty() {
         anyhow::bail!("branch name must not be empty");
     }
-    if name.contains('/')
-        || name.contains('\\')
-        || name.contains('\0')
-        || name.contains('\n')
-        || name.contains('\r')
-    {
-        anyhow::bail!("branch name contains invalid characters: {:?}", name);
+    // Git forbids these characters in ref names; '/' is allowed (namespace
+    // separator, e.g. feature/foo). See git-check-ref-format(1).
+    for c in ['\0', '\n', '\r', '\\', '~', '^', ':', '?', '*', '['] {
+        if name.contains(c) {
+            anyhow::bail!("branch name contains invalid character {:?}: {:?}", c, name);
+        }
     }
-    if name == "." || name == ".." {
-        anyhow::bail!("branch name cannot be '.' or '..'");
+    if name.starts_with('/') || name.ends_with('/') || name.contains("//") {
+        anyhow::bail!("branch name has invalid '/' placement: {:?}", name);
+    }
+    for component in name.split('/') {
+        if component.is_empty() || component == "." || component == ".." {
+            anyhow::bail!(
+                "branch name component cannot be empty, '.' or '..': {:?}",
+                name
+            );
+        }
+        if component.ends_with(".lock") {
+            anyhow::bail!("branch name component cannot end with '.lock': {:?}", name);
+        }
     }
     Ok(())
 }
