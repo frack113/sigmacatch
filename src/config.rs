@@ -21,6 +21,11 @@ pub enum LogLevel {
     Error,
 }
 
+/// Minimum Sigma rule status threshold (inclusive).
+///
+/// Rules with `status >= min_status` are loaded.
+/// Hierarchy: unsupported < deprecated < experimental < test < stable.
+/// Rules without a status field are always accepted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MinStatus {
@@ -32,6 +37,7 @@ pub enum MinStatus {
 }
 
 impl MinStatus {
+    /// Returns ordinal value for comparison (0 = lowest, 4 = highest).
     pub fn ordinal(&self) -> u8 {
         match self {
             MinStatus::Unsupported => 0,
@@ -42,6 +48,7 @@ impl MinStatus {
         }
     }
 
+    /// Returns `true` if `rule_status` meets or exceeds this threshold.
     pub fn accepts(&self, rule_status: &rsigma_parser::Status) -> bool {
         let rule_ord = match rule_status {
             rsigma_parser::Status::Unsupported => 0,
@@ -83,6 +90,11 @@ impl std::str::FromStr for MinStatus {
     }
 }
 
+/// Minimum Sigma rule level threshold (inclusive).
+///
+/// Rules with `level >= min_level` are loaded.
+/// Hierarchy: informational < low < medium < high < critical.
+/// Rules without a level field are always accepted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MinLevel {
@@ -94,6 +106,7 @@ pub enum MinLevel {
 }
 
 impl MinLevel {
+    /// Returns ordinal value for comparison (0 = lowest, 4 = highest).
     pub fn ordinal(&self) -> u8 {
         match self {
             MinLevel::Informational => 0,
@@ -104,6 +117,7 @@ impl MinLevel {
         }
     }
 
+    /// Returns `true` if `rule_level` meets or exceeds this threshold.
     pub fn accepts(&self, rule_level: &rsigma_parser::Level) -> bool {
         let rule_ord = match rule_level {
             rsigma_parser::Level::Informational => 0,
@@ -145,10 +159,16 @@ impl std::str::FromStr for MinLevel {
     }
 }
 
+/// Sigma rule filter configuration (status and level thresholds).
+///
+/// Applied during rule loading to exclude rules below configured thresholds.
+/// Rules missing a status or level field are always accepted (pass-through).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SigmaFilterConfig {
+    /// Minimum status threshold (default: stable). Only rules with `status >= min_status` are loaded.
     pub min_status: MinStatus,
+    /// Minimum level threshold (default: critical). Only rules with `level >= min_level` are loaded.
     pub min_level: MinLevel,
 }
 
@@ -262,6 +282,19 @@ impl Config {
             if trimmed.contains(char::is_whitespace) {
                 anyhow::bail!("config: 'github_token' contains whitespace — trim it");
             }
+        }
+        if self.sigma.min_status.ordinal() >= MinStatus::Stable.ordinal() {
+            tracing::warn!(
+                "sigma.min_status = {} — very restrictive, only stable rules will be loaded",
+                self.sigma.min_status
+            );
+        }
+        if self.sigma.min_level.ordinal() >= MinLevel::High.ordinal() {
+            tracing::warn!(
+                "sigma.min_level = {} — very restrictive, only {} and higher rules will be loaded",
+                self.sigma.min_level,
+                self.sigma.min_level
+            );
         }
         Ok(())
     }

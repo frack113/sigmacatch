@@ -400,8 +400,8 @@ mod tests {
 
     fn default_filter() -> SigmaFilterConfig {
         SigmaFilterConfig {
-            min_status: MinStatus::Stable,
-            min_level: MinLevel::Critical,
+            min_status: MinStatus::Unsupported,
+            min_level: MinLevel::Informational,
         }
     }
 
@@ -761,7 +761,7 @@ detection:
     }
 
     #[test]
-    fn test_status_experimental_rejected_by_default() {
+    fn test_status_experimental_accepted_by_default() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.yml");
         std::fs::write(&path, &rule_with_status("test-exp-1", "experimental")).unwrap();
@@ -770,11 +770,14 @@ detection:
         let count = engine
             .load_rules_from_dirs(&[dir.path()], &HashSet::new(), &default_filter())
             .unwrap();
-        assert_eq!(count, 0, "experimental rejected when min_status=stable");
+        assert_eq!(
+            count, 1,
+            "experimental accepted when min_status=unsupported"
+        );
     }
 
     #[test]
-    fn test_status_test_rejected_by_default() {
+    fn test_status_test_accepted_by_default() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.yml");
         std::fs::write(&path, &rule_with_status("test-test-1", "test")).unwrap();
@@ -783,7 +786,7 @@ detection:
         let count = engine
             .load_rules_from_dirs(&[dir.path()], &HashSet::new(), &default_filter())
             .unwrap();
-        assert_eq!(count, 0, "test rejected when min_status=stable");
+        assert_eq!(count, 1, "test accepted when min_status=unsupported");
     }
 
     #[test]
@@ -796,7 +799,7 @@ detection:
         let count = engine
             .load_rules_from_dirs(&[dir.path()], &HashSet::new(), &default_filter())
             .unwrap();
-        assert_eq!(count, 1, "stable accepted when min_status=stable");
+        assert_eq!(count, 1, "stable accepted when min_status=unsupported");
     }
 
     #[test]
@@ -868,7 +871,7 @@ detection:
     }
 
     #[test]
-    fn test_level_informational_rejected_by_default() {
+    fn test_level_informational_accepted_by_default() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.yml");
         std::fs::write(&path, &rule_with_level("test-lvl-info", "informational")).unwrap();
@@ -877,7 +880,10 @@ detection:
         let count = engine
             .load_rules_from_dirs(&[dir.path()], &HashSet::new(), &default_filter())
             .unwrap();
-        assert_eq!(count, 0, "informational rejected when min_level=critical");
+        assert_eq!(
+            count, 1,
+            "informational accepted when min_level=informational"
+        );
     }
 
     #[test]
