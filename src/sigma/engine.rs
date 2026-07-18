@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
 
-use crate::config::SigmaFilterConfig;
+use crate::config::{MinLevel, MinStatus, SigmaFilterConfig};
 
 const MAX_RULE_FILE_SIZE: u64 = 1_048_576;
 const MAX_VISIT_DEPTH: u32 = 64;
@@ -24,6 +24,10 @@ pub struct SigmaEngine {
     active_services: HashSet<String>,
     all_categories: HashSet<String>,
     active_categories: HashSet<String>,
+    pre_filter_counts: HashMap<(u8, u8), usize>,
+    pre_filter_total: usize,
+    pre_filter_no_status: usize,
+    pre_filter_no_level: usize,
 }
 
 impl std::fmt::Debug for SigmaEngine {
@@ -47,6 +51,10 @@ impl Default for SigmaEngine {
             active_services: HashSet::new(),
             all_categories: HashSet::new(),
             active_categories: HashSet::new(),
+            pre_filter_counts: HashMap::new(),
+            pre_filter_total: 0,
+            pre_filter_no_status: 0,
+            pre_filter_no_level: 0,
         }
     }
 }
@@ -259,6 +267,18 @@ impl SigmaEngine {
         });
         reasons.non_windows += before_non_windows - collection.rules.len();
 
+        for rule in &collection.rules {
+            self.pre_filter_total += 1;
+            match (rule.status.as_ref(), rule.level.as_ref()) {
+                (Some(s), Some(l)) => {
+                    let key = (MinStatus::from(s).ordinal(), MinLevel::from(l).ordinal());
+                    *self.pre_filter_counts.entry(key).or_insert(0) += 1;
+                }
+                (None, _) => self.pre_filter_no_status += 1,
+                (_, None) => self.pre_filter_no_level += 1,
+            }
+        }
+
         let before_status = collection.rules.len();
         collection.rules.retain(|rule| {
             rule.status
@@ -337,6 +357,47 @@ impl SigmaEngine {
         }
 
         Ok((collection.rules.len(), reasons))
+    }
+
+    pub fn print_rule_table(&self, filter: &SigmaFilterConfig) {
+        const STATUS_LABELS: [&str; 5] = ["unsup", "dep", "exp", "test", "stable"];
+        const LEVEL_LABELS: [&str; 5] = ["informational", "low", "medium", "high", "critical"];
+
+        let total = self.pre_filter_total;
+        if total == 0 {
+            eprintln!("⚠️  No rules loaded");
+            return;
+        }
+
+        eprintln!("🔍 Checking {} rules…\n", total);
+
+        eprint!("{:<20} │", "");
+        for label in &STATUS_LABELS {
+            eprint!(" {:^6} │", label);
+        }
+        eprintln!();
+
+        eprint!("{}", "─".repeat(20));
+        for _ in 0..5 {
+            eprint!("┼{}", "─".repeat(8));
+        }
+        eprintln!();
+
+        for (ri, level) in LEVEL_LABELS.iter().enumerate() {
+            eprint!("{:<20} │", level);
+            for si in 0..5 {
+                let key = (si as u8, ri as u8);
+                let count = self.pre_filter_counts.get(&key).copied().unwrap_or(0);
+                eprint!(" {:>6} │", count);
+            }
+            eprintln!();
+        }
+
+        eprintln!();
+        eprintln!(
+            "⚙️  Filter: min_status={}, min_level={} → accepted {} rules",
+            filter.min_status, filter.min_level, self.rules_count
+        );
     }
 
     pub fn evaluate_event_with_logsource(

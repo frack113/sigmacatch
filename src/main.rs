@@ -346,6 +346,8 @@ fn stage_3_load_rules(
         &config.sigma,
     )?;
 
+    engine.print_rule_table(&config.sigma);
+
     info!(
         "Loaded {} rules from {} directories",
         rules_count,

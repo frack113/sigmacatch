@@ -85,7 +85,7 @@ impl MinStatus {
         MinStatus::from(rule_status).ordinal() >= self.ordinal()
     }
 
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             MinStatus::Unsupported => "unsupported",
             MinStatus::Deprecated => "deprecated",
@@ -160,7 +160,7 @@ impl MinLevel {
         MinLevel::from(rule_level).ordinal() >= self.ordinal()
     }
 
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             MinLevel::Informational => "informational",
             MinLevel::Low => "low",
@@ -280,7 +280,33 @@ impl Config {
     pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
         if path.exists() {
             let content = std::fs::read_to_string(path)?;
+
+            let has_sigma = serde_yaml::from_str::<serde_yaml::Value>(&content)
+                .ok()
+                .is_some_and(|v| v.get("sigma").is_some());
+
             let config: Config = serde_yaml::from_str(&content)?;
+
+            if !has_sigma {
+                eprintln!(
+                    "⚠️  config.yaml missing 'sigma' section — using defaults: min_status={}, min_level={}",
+                    config.sigma.min_status,
+                    config.sigma.min_level,
+                );
+
+                if let Ok(mut doc) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+                    if let serde_yaml::Value::Mapping(ref mut map) = doc {
+                        if let Ok(sigma_val) = serde_yaml::to_value(SigmaFilterConfig::default()) {
+                            map.insert(serde_yaml::Value::String("sigma".to_string()), sigma_val);
+                            if let Ok(new_yaml) = serde_yaml::to_string(&doc) {
+                                let _ = std::fs::write(path, &new_yaml);
+                                eprintln!("   ✓ Fixed: added default sigma section to config.yaml — next run will be clean");
+                            }
+                        }
+                    }
+                }
+            }
+
             config.validate()?;
             Ok(config)
         } else {
