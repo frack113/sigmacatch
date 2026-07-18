@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 use anyhow::Result;
+use rayon::prelude::*;
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::Engine;
 use rsigma_parser::{parse_sigma_yaml, LogSource};
@@ -112,7 +113,6 @@ impl SigmaEngine {
         filter: &SigmaFilterConfig,
     ) -> (usize, SkipReasons) {
         info!("Loading Sigma rules from {:?}", dir);
-        let mut count = 0;
         let mut reasons = SkipReasons::default();
         let mut errors = Vec::new();
 
@@ -121,14 +121,89 @@ impl SigmaEngine {
             return (0, reasons);
         }
 
-        self.visit_dirs(
-            dir,
-            &mut count,
-            &mut reasons,
-            &mut errors,
-            skip_rules,
-            filter,
-        );
+        // Sequential walk: collect the rule file paths cheaply (no parse).
+        let mut files = Vec::new();
+        self.collect_rule_files(dir, &mut files, 0);
+
+        // Parse + filter each file in parallel (CPU-bound, no shared state).
+        let parsed: Vec<std::result::Result<ParsedFile, (PathBuf, anyhow::Error)>> = files
+            .par_iter()
+            .map(|path| Self::parse_rule_file(path, skip_rules, filter))
+            .collect();
+
+        // Merge results sequentially: preserves dedupe order and counter accuracy.
+        // All surviving rules are accumulated into ONE SigmaCollection and handed
+        // to the engine a single time. `add_collection` rebuilds the whole rule
+        // index on every call, so calling it per-file would be O(N^2); batching
+        // it is the dominant speedup.
+        let mut combined: rsigma_parser::SigmaCollection = Default::default();
+        let mut count = 0usize;
+        for result in parsed {
+            match result {
+                Ok(mut pf) => {
+                    reasons.skip_set += pf.reasons.skip_set;
+                    reasons.non_windows += pf.reasons.non_windows;
+                    reasons.status += pf.reasons.status;
+                    reasons.level += pf.reasons.level;
+                    reasons.other += pf.reasons.other;
+
+                    for (key, n) in pf.pre_filter_counts {
+                        *self.pre_filter_counts.entry(key).or_insert(0) += n;
+                    }
+                    self.pre_filter_total += pf.pre_filter_total;
+                    self.pre_filter_no_status += pf.pre_filter_no_status;
+                    self.pre_filter_no_level += pf.pre_filter_no_level;
+                    self.all_services.extend(pf.all_services);
+                    self.all_categories.extend(pf.all_categories);
+
+                    // Cross-file dedupe: first occurrence (walk order) wins.
+                    let before_duplicate = pf.collection.rules.len();
+                    pf.collection.rules.retain(|rule| {
+                        if let Some(ref id) = rule.id {
+                            if self.rule_paths.contains_key(id) {
+                                warn!(
+                                    "Rule '{}' already mapped to {:?}, skipping duplicate from {:?}",
+                                    id, self.rule_paths[id], pf.path
+                                );
+                                return false;
+                            }
+                        }
+                        true
+                    });
+                    reasons.duplicate += before_duplicate - pf.collection.rules.len();
+
+                    for rule in &pf.collection.rules {
+                        if let Some(ref service) = rule.logsource.service {
+                            self.active_services.insert(service.clone());
+                        }
+                        if let Some(ref category) = rule.logsource.category {
+                            self.active_categories.insert(category.clone());
+                        }
+                    }
+
+                    if !pf.collection.rules.is_empty() {
+                        let n = pf.collection.rules.len();
+                        for (id, p) in pf.rule_paths {
+                            self.rule_paths.insert(id.clone(), p);
+                        }
+                        for (id, d) in pf.rule_descriptions {
+                            self.rule_descriptions.insert(id, d);
+                        }
+                        combined.rules.append(&mut pf.collection.rules);
+                        count += n;
+                    }
+                }
+                Err((path, e)) => {
+                    errors.push((path, e));
+                }
+            }
+        }
+
+        if !combined.rules.is_empty() {
+            if let Err(e) = self.engine.add_collection(&combined) {
+                errors.push((dir.to_path_buf(), e.into()));
+            }
+        }
 
         info!(
             "Loaded {} rules from {:?} ({} errors, {} skip_set, {} non_windows, {} status, {} level, {} duplicate, {} other)",
@@ -150,29 +225,7 @@ impl SigmaEngine {
         (count, reasons)
     }
 
-    fn visit_dirs(
-        &mut self,
-        dir: &Path,
-        count: &mut usize,
-        reasons: &mut SkipReasons,
-        errors: &mut Vec<(std::path::PathBuf, anyhow::Error)>,
-        skip_rules: &HashSet<String>,
-        filter: &SigmaFilterConfig,
-    ) {
-        self.visit_dirs_inner(dir, count, reasons, errors, skip_rules, filter, 0)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn visit_dirs_inner(
-        &mut self,
-        dir: &Path,
-        count: &mut usize,
-        reasons: &mut SkipReasons,
-        errors: &mut Vec<(std::path::PathBuf, anyhow::Error)>,
-        skip_rules: &HashSet<String>,
-        filter: &SigmaFilterConfig,
-        depth: u32,
-    ) {
+    fn collect_rule_files(&self, dir: &Path, files: &mut Vec<PathBuf>, depth: u32) {
         if depth > MAX_VISIT_DEPTH {
             warn!(
                 "Max depth ({}) exceeded at {:?}, stopping recursion",
@@ -208,26 +261,14 @@ impl SigmaEngine {
             }
 
             if path.is_dir() {
-                self.visit_dirs_inner(&path, count, reasons, errors, skip_rules, filter, depth + 1);
+                self.collect_rule_files(&path, files, depth + 1);
             } else if let Some(ext) = path
                 .extension()
                 .and_then(|e| e.to_str())
                 .map(|e| e.to_ascii_lowercase())
             {
                 if ext == "yml" || ext == "yaml" {
-                    match self.load_rule_file(&path, skip_rules, filter) {
-                        Ok((n, r)) => {
-                            *count += n;
-                            reasons.skip_set += r.skip_set;
-                            reasons.non_windows += r.non_windows;
-                            reasons.duplicate += r.duplicate;
-                            reasons.other += r.other;
-                        }
-                        Err(LoadError::Error(e)) => {
-                            warn!("Failed to load rule {:?}: {}", path, e);
-                            errors.push((path, e));
-                        }
-                    }
+                    files.push(path);
                 }
             } else if path.extension().is_some() {
                 warn!("Non-UTF8 file extension: {:?}", path.display());
@@ -235,22 +276,45 @@ impl SigmaEngine {
         }
     }
 
-    fn load_rule_file(
-        &mut self,
+    /// Parse and filter a single rule file. Pure: mutates no shared state, so it
+    /// is safe to run in a `rayon` parallel iterator. Returns an owned
+    /// `ParsedFile` (Send) ready for sequential merge.
+    fn parse_rule_file(
         path: &Path,
         skip_rules: &HashSet<String>,
         filter: &SigmaFilterConfig,
-    ) -> std::result::Result<(usize, SkipReasons), LoadError> {
+    ) -> std::result::Result<ParsedFile, (PathBuf, anyhow::Error)> {
         let mut reasons = SkipReasons::default();
 
-        let metadata = std::fs::metadata(path).map_err(|e| LoadError::Error(e.into()))?;
+        let metadata = match std::fs::metadata(path) {
+            Ok(m) => m,
+            Err(e) => return Err((path.to_path_buf(), e.into())),
+        };
         if metadata.len() > MAX_RULE_FILE_SIZE {
             warn!("Rule file too large (>1MB), skipping: {:?}", path);
-            return Ok((0, reasons));
+            return Ok(ParsedFile {
+                path: path.to_path_buf(),
+                collection: Default::default(),
+                reasons,
+                pre_filter_total: 0,
+                pre_filter_no_status: 0,
+                pre_filter_no_level: 0,
+                pre_filter_counts: HashMap::new(),
+                all_services: HashSet::new(),
+                all_categories: HashSet::new(),
+                rule_paths: HashMap::new(),
+                rule_descriptions: HashMap::new(),
+            });
         }
 
-        let content = std::fs::read_to_string(path).map_err(|e| LoadError::Error(e.into()))?;
-        let mut collection = parse_sigma_yaml(&content).map_err(|e| LoadError::Error(e.into()))?;
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => return Err((path.to_path_buf(), e.into())),
+        };
+        let mut collection = match parse_sigma_yaml(&content) {
+            Ok(c) => c,
+            Err(e) => return Err((path.to_path_buf(), e.into())),
+        };
 
         // NOTE: Skip counters are sequential — each retain is applied to the
         // collection as it exists after the previous filter. A rule filtered by
@@ -267,15 +331,28 @@ impl SigmaEngine {
         });
         reasons.non_windows += before_non_windows - collection.rules.len();
 
+        let mut pre_filter_total = 0usize;
+        let mut pre_filter_no_status = 0usize;
+        let mut pre_filter_no_level = 0usize;
+        let mut pre_filter_counts: HashMap<(u8, u8), usize> = HashMap::new();
+        let mut all_services = HashSet::new();
+        let mut all_categories = HashSet::new();
+
         for rule in &collection.rules {
-            self.pre_filter_total += 1;
+            pre_filter_total += 1;
             match (rule.status.as_ref(), rule.level.as_ref()) {
                 (Some(s), Some(l)) => {
                     let key = (MinStatus::from(s).ordinal(), MinLevel::from(l).ordinal());
-                    *self.pre_filter_counts.entry(key).or_insert(0) += 1;
+                    *pre_filter_counts.entry(key).or_insert(0) += 1;
                 }
-                (None, _) => self.pre_filter_no_status += 1,
-                (_, None) => self.pre_filter_no_level += 1,
+                (None, _) => pre_filter_no_status += 1,
+                (_, None) => pre_filter_no_level += 1,
+            }
+            if let Some(ref service) = rule.logsource.service {
+                all_services.insert(service.clone());
+            }
+            if let Some(ref category) = rule.logsource.category {
+                all_categories.insert(category.clone());
             }
         }
 
@@ -297,66 +374,36 @@ impl SigmaEngine {
         });
         reasons.level += before_level - collection.rules.len();
 
-        for rule in &collection.rules {
-            if let Some(ref service) = rule.logsource.service {
-                self.all_services.insert(service.clone());
-            }
-            if let Some(ref category) = rule.logsource.category {
-                self.all_categories.insert(category.clone());
-            }
-        }
-
         let before_skip = collection.rules.len();
         collection
             .rules
             .retain(|rule| !rule.id.as_ref().is_some_and(|id| skip_rules.contains(id)));
         reasons.skip_set += before_skip - collection.rules.len();
 
-        for rule in &collection.rules {
-            if rule.id.is_none() {
-                warn!("Rule without ID loaded from {:?}: {}", path, rule.title);
-            }
-            if let Some(ref service) = rule.logsource.service {
-                self.active_services.insert(service.clone());
-            }
-            if let Some(ref category) = rule.logsource.category {
-                self.active_categories.insert(category.clone());
-            }
-        }
-
-        let before_duplicate = collection.rules.len();
-        collection.rules.retain(|rule| {
-            if let Some(ref id) = rule.id {
-                if self.rule_paths.contains_key(id) {
-                    warn!(
-                        "Rule '{}' already mapped to {:?}, skipping duplicate from {:?}",
-                        id, self.rule_paths[id], path
-                    );
-                    return false;
-                }
-            }
-            true
-        });
-        reasons.duplicate += before_duplicate - collection.rules.len();
-
-        if collection.rules.is_empty() {
-            return Ok((0, reasons));
-        }
-
-        self.engine
-            .add_collection(&collection)
-            .map_err(|e| LoadError::Error(e.into()))?;
-
+        let mut rule_paths = HashMap::new();
+        let mut rule_descriptions = HashMap::new();
         for rule in &collection.rules {
             if let Some(ref id) = rule.id {
-                self.rule_paths.insert(id.clone(), path.to_path_buf());
+                rule_paths.insert(id.clone(), path.to_path_buf());
                 if let Some(ref desc) = rule.description {
-                    self.rule_descriptions.insert(id.clone(), desc.clone());
+                    rule_descriptions.insert(id.clone(), desc.clone());
                 }
             }
         }
 
-        Ok((collection.rules.len(), reasons))
+        Ok(ParsedFile {
+            path: path.to_path_buf(),
+            collection,
+            reasons,
+            pre_filter_total,
+            pre_filter_no_status,
+            pre_filter_no_level,
+            pre_filter_counts,
+            all_services,
+            all_categories,
+            rule_paths,
+            rule_descriptions,
+        })
     }
 
     pub fn print_rule_table(&self, filter: &SigmaFilterConfig) {
@@ -444,10 +491,6 @@ impl SigmaEngine {
     }
 }
 
-enum LoadError {
-    Error(anyhow::Error),
-}
-
 #[derive(Default)]
 pub struct SkipReasons {
     pub skip_set: usize,
@@ -456,6 +499,22 @@ pub struct SkipReasons {
     pub level: usize,
     pub duplicate: usize,
     pub other: usize,
+}
+
+/// Owned, `Send` result of parsing a single rule file in parallel.
+/// Merged sequentially into `SigmaEngine` afterwards.
+struct ParsedFile {
+    path: PathBuf,
+    collection: rsigma_parser::SigmaCollection,
+    pre_filter_total: usize,
+    pre_filter_no_status: usize,
+    pre_filter_no_level: usize,
+    pre_filter_counts: HashMap<(u8, u8), usize>,
+    all_services: HashSet<String>,
+    all_categories: HashSet<String>,
+    rule_paths: HashMap<String, PathBuf>,
+    rule_descriptions: HashMap<String, String>,
+    reasons: SkipReasons,
 }
 
 impl SkipReasons {
