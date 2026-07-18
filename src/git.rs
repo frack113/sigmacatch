@@ -161,6 +161,10 @@ pub fn init_repo(git_dir: &Path, _work_tree: &Path, remote_url: &str) -> Result<
     std::fs::write(git_dir.join("config"), config)?;
     std::fs::write(git_dir.join("description"), b"SigmaHQ rules repository\n")?;
 
+    // HEAD must exist before any Repository::open (grit-lib's fetch/push internals
+    // open the repo and require HEAD to be present).
+    std::fs::write(git_dir.join("HEAD"), b"ref: refs/heads/main\n")?;
+
     info!("Initialized git repository");
     Ok(())
 }
