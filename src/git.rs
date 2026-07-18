@@ -192,6 +192,11 @@ pub fn fetch_remote(
     info!("Fetching from {}", sanitize_url(repo_url));
     let opts = FetchOptions {
         refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_string()],
+        // Shallow single-commit history + no tags: we only need a working tree
+        // to checkout and a tip to commit regression data on top of. Fetching
+        // full history and all tags makes the clone take minutes for no benefit.
+        tags: grit_lib::transfer::TagMode::None,
+        depth: Some(1),
         ..Default::default()
     };
     let outcome = http_fetch(http_client, git_dir, repo_url, &opts, &mut NoProgress)?;

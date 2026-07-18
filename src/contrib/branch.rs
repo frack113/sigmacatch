@@ -56,6 +56,8 @@ pub fn push_branch(
             "+refs/heads/{}:refs/remotes/{}/{}",
             branch_name, remote, branch_name
         )],
+        tags: grit_lib::transfer::TagMode::None,
+        depth: Some(1),
         ..Default::default()
     };
     let _fetch_outcome = grit_lib::transport::http::http_fetch(
