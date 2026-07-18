@@ -131,11 +131,20 @@ Pour chaque .yml / .yaml :
     ├── post-parse filter: rule.logsource.product == "windows" (ou absent)
     ├── filter status/level: rule.status >= min_status ET rule.level >= min_level (config.sigma)
     ├── skip si rule_id dans skip set
-    ├── engine.add_collection() → rsigma-eval
-    └── track rule_paths HashMap<rule_id, PathBuf>
+    └── dédoublonnage cross-fichier (1re occurrence, ordre du walk, gagne)
+    ↓
+Merge séquentiel : accumule les règles survivantes dans UNE SigmaCollection,
+puis UN SEUL engine.add_collection() → rsigma-eval (un seul rebuild d'index)
     ↓
 SigmaEngine in-memory (règles chargées + rule_paths)
 ```
+
+> **Note perf :** `add_collection()` de `rsigma-eval` rebuild l'index complet
+> des règles à chaque appel. L'ancien `add_collection` par fichier était en
+> O(N²) (N rebuilds d'un index de N règles). Regrouper toutes les règles
+> survivantes dans une seule collection fait passer le chargement de ~33s à
+> ~0,2s pour tout SigmaHQ (~2800 règles). Le parse tourne en parallèle via
+> `rayon`.
 
 > Affichage d'une table de règles au démarrage (nombre chargé, nombre skipé, services/catégories actifs).
 
@@ -268,8 +277,11 @@ MatchEvent {
 ### SigmaEngine (`sigma/engine.rs`)
 
 - Charge règles depuis `rules*` dirs
+- Walk séquentiel collecte les chemins ; parse + post-parse filter en parallèle (`rayon::par_iter`)
 - Post-parse filter: `rule.logsource.product` filtre les règles non-Windows après `parse_sigma_yaml`
+- Filtre status/level appliqué par fichier pendant le parse parallèle
 - Skip-at-load = seule optimisation (règles avec `info.yml` existant)
+- Toutes les règles survivantes mergées dans une seule `SigmaCollection`, compilées en **un seul** `add_collection()` (évite les rebuilds d'index O(N²))
 - `LogSource` dérivé du channel Event Log + provider (resolve_logsource)
 - `evaluate_event_with_logsource()` → `Vec<EvaluationResult>` via rsigma-eval
 

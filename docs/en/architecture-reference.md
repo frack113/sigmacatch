@@ -126,16 +126,27 @@ Rules with existing regression (complete or incomplete) → **excluded from Sigm
 find_rules_dirs("sigma/")
     → Vec<PathBuf> (rules, rules-*, excludes rules-compliance)
     ↓
-For each .yml / .yaml:
+Sequential walk: collect all .yml / .yaml paths (cheap, no parse)
+    ↓
+Parallel parse + filter (rayon::par_iter, no shared state):
+    For each file:
     ├── parse_sigma_yaml() → Sigma rules
     ├── post-parse filter: rule.logsource.product == "windows" (or absent)
     ├── status/level filter: rule.status >= min_status AND rule.level >= min_level (config.sigma)
     ├── skip if rule_id in skip set
-    ├── engine.add_collection() → rsigma-eval
-    └── track rule_paths HashMap<rule_id, PathBuf>
+    └── cross-file dedupe (first occurrence, walk order, wins)
+    ↓
+Sequential merge: accumulate surviving rules into ONE SigmaCollection,
+then a SINGLE engine.add_collection() → rsigma-eval (one index rebuild)
     ↓
 SigmaEngine in-memory (loaded rules + rule_paths)
 ```
+
+> **Performance note:** `rsigma-eval`'s `add_collection()` rebuilds the whole
+> rule index on every call. The old per-file `add_collection` was O(N²)
+> (N rebuilds of an N-rule index). Batching all surviving rules into one
+> collection drops rule loading from ~33s to ~0.2s for the full SigmaHQ
+> set (~2800 rules). Parsing itself runs in parallel via `rayon`.
 
 > A startup rule table is displayed (rules loaded, rules skipped, active services/categories).
 
@@ -268,8 +279,11 @@ MatchEvent {
 ### SigmaEngine (`sigma/engine.rs`)
 
 - Loads rules from `rules*` dirs
+- Sequential walk collects file paths; parse + post-parse filter run in parallel (`rayon::par_iter`)
 - Post-parse filter: `rule.logsource.product` filters non-Windows rules after `parse_sigma_yaml`
+- Status/level filter applied per-file during the parallel parse
 - Skip-at-load = sole optimization (rules with existing `info.yml`)
+- All surviving rules merged into one `SigmaCollection`, compiled in a **single** `add_collection()` call (avoids O(N²) index rebuilds)
 - `LogSource` derived from Event Log channel + provider (resolve_logsource)
 - `evaluate_event_with_logsource()` → `Vec<EvaluationResult>` via rsigma-eval
 
