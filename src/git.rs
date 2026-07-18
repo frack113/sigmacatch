@@ -12,33 +12,52 @@ use grit_lib::write_tree::write_tree_from_index;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::sync::Mutex;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 pub struct AuthHttpClient {
     client: reqwest::blocking::Client,
     token: Mutex<Option<String>>,
 }
 
-impl AuthHttpClient {
-    pub fn new(token: Option<String>) -> Self {
-        Self {
-            client: reqwest::blocking::Client::builder()
-                .user_agent("sigmacatch/0.1.1")
-                .timeout(std::time::Duration::from_secs(120))
-                .connect_timeout(std::time::Duration::from_secs(30))
-                .redirect(reqwest::redirect::Policy::limited(10))
-                .build()
-                .expect("valid reqwest blocking client"),
-            token: Mutex::new(token),
+fn sanitize_url(url: &str) -> String {
+    if let Some(at_pos) = url.find('@') {
+        if let Some(scheme_end) = url[..at_pos].find("://") {
+            let prefix = &url[..scheme_end + 3];
+            return format!("{}<redacted>@{}", prefix, &url[at_pos + 1..]);
         }
+    }
+    url.to_string()
+}
+
+impl AuthHttpClient {
+    pub fn new(token: Option<String>) -> Result<Self> {
+        let client = reqwest::blocking::Client::builder()
+            .user_agent("sigmacatch/0.2.0")
+            .timeout(std::time::Duration::from_secs(120))
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .build()?;
+        Ok(Self {
+            client,
+            token: Mutex::new(token),
+        })
     }
 
     fn add_auth(&self, url: &str) -> String {
-        let token = self.token.lock().expect("token lock");
+        let token = self.token.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(ref t) = *token {
             if url.starts_with("https://") {
                 if let Some(rest) = url.strip_prefix("https://") {
-                    return format!("https://x-access-token:{}@{}", t, rest);
+                    let encoded: String = t
+                        .bytes()
+                        .map(|b| match b {
+                            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                                (b as char).to_string()
+                            }
+                            _ => format!("%{:02X}", b),
+                        })
+                        .collect();
+                    return format!("https://x-access-token:{}@{}", encoded, rest);
                 }
             }
         }
@@ -49,6 +68,7 @@ impl AuthHttpClient {
 impl HttpClient for AuthHttpClient {
     fn get(&self, url: &str, git_protocol: Option<&str>) -> grit_lib::error::Result<Vec<u8>> {
         let auth_url = self.add_auth(url);
+        debug!("[HTTP GET] {} (protocol={:?})", sanitize_url(&auth_url), git_protocol);
         let mut req = self.client.get(&auth_url);
         if let Some(proto) = git_protocol {
             req = req.header("Git-Protocol", proto);
@@ -57,6 +77,7 @@ impl HttpClient for AuthHttpClient {
             .send()
             .map_err(|e| grit_lib::error::Error::Message(e.to_string()))?;
         let status = resp.status();
+        debug!("[HTTP GET] {} → {}", sanitize_url(&auth_url), status);
         if !status.is_success() {
             return Err(grit_lib::error::Error::Message(format!(
                 "HTTP GET {}: {}",
@@ -77,6 +98,8 @@ impl HttpClient for AuthHttpClient {
         git_protocol: Option<&str>,
     ) -> grit_lib::error::Result<Vec<u8>> {
         let auth_url = self.add_auth(url);
+        debug!("[HTTP POST] {} body={}B content_type={} accept={} protocol={:?}",
+            sanitize_url(&auth_url), body.len(), content_type, accept, git_protocol);
         let mut req = self
             .client
             .post(&auth_url)
@@ -90,6 +113,7 @@ impl HttpClient for AuthHttpClient {
             .send()
             .map_err(|e| grit_lib::error::Error::Message(e.to_string()))?;
         let status = resp.status();
+        debug!("[HTTP POST] {} → {}", sanitize_url(&auth_url), status);
         if !status.is_success() {
             return Err(grit_lib::error::Error::Message(format!(
                 "HTTP POST {}: {}",
@@ -106,8 +130,6 @@ pub fn init_repo(git_dir: &Path, _work_tree: &Path, remote_url: &str) -> Result<
     std::fs::create_dir_all(git_dir.join("objects").join("pack"))?;
     std::fs::create_dir_all(git_dir.join("refs").join("heads"))?;
     std::fs::create_dir_all(git_dir.join("refs").join("tags"))?;
-
-    std::fs::write(git_dir.join("HEAD"), b"ref: refs/heads/main\n")?;
 
     let escaped_url = git_config_escape(remote_url);
     let config = format!(
@@ -148,15 +170,11 @@ pub(crate) fn git_config_escape(value: &str) -> String {
     }
 }
 
-fn sanitize_url(url: &str) -> String {
-    if let Some(rest) = url.split('@').nth(1) {
-        format!("https://<redacted>@{}", rest)
-    } else {
-        url.to_string()
-    }
-}
-
-pub fn fetch_remote(http_client: &dyn HttpClient, git_dir: &Path, repo_url: &str) -> Result<usize> {
+pub fn fetch_remote(
+    http_client: &dyn HttpClient,
+    git_dir: &Path,
+    repo_url: &str,
+) -> Result<(usize, Option<String>)> {
     info!("Fetching from {}", sanitize_url(repo_url));
     let opts = FetchOptions {
         refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_string()],
@@ -164,8 +182,12 @@ pub fn fetch_remote(http_client: &dyn HttpClient, git_dir: &Path, repo_url: &str
     };
     let outcome = http_fetch(http_client, git_dir, repo_url, &opts, &mut NoProgress)?;
     let count = outcome.updates.len();
-    info!("Fetched {} ref updates", count);
-    Ok(count)
+    info!(
+        "Fetched {} ref updates (default branch: {})",
+        count,
+        outcome.default_branch.as_deref().unwrap_or("unknown")
+    );
+    Ok((count, outcome.default_branch))
 }
 
 pub fn push_branch(
@@ -174,8 +196,11 @@ pub fn push_branch(
     remote_url: &str,
     branch_name: &str,
 ) -> Result<()> {
-    let repo = Repository::open(git_dir, None)?;
-    let head_oid = resolve_head(&repo)?;
+    let ref_name = format!("refs/heads/{}", branch_name);
+    let oid_str = read_loose_or_packed_ref(git_dir, &ref_name)
+        .ok_or_else(|| anyhow::anyhow!("Branch '{}' not found locally", branch_name))?;
+    let head_oid = ObjectId::from_hex(&oid_str)
+        .map_err(|e| anyhow::anyhow!("Invalid OID for branch '{}': {}", branch_name, e))?;
     let spec = PushRefSpec {
         src: Some(head_oid),
         dst: format!("refs/heads/{}", branch_name),
@@ -214,10 +239,59 @@ pub fn clone_repo(http_client: &dyn HttpClient, url: &str, dest: &Path) -> Resul
 
     info!("Cloning into {:?}", dest);
     init_repo(&git_dir, dest, url)?;
-    let count = fetch_remote(http_client, &git_dir, url)?;
+    let (count, default_branch) = match fetch_remote(http_client, &git_dir, url) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&git_dir);
+            return Err(e);
+        }
+    };
     if count == 0 {
+        let _ = std::fs::remove_dir_all(&git_dir);
         anyhow::bail!("No refs fetched from remote — empty or unreachable repository");
     }
+
+    if let Some(branch_name) = &default_branch {
+        let remote_ref = format!("refs/remotes/origin/{}", branch_name);
+        let local_ref = format!("refs/heads/{}", branch_name);
+        if let Some(oid_str) = read_loose_or_packed_ref(&git_dir, &remote_ref) {
+            let head_content = format!("ref: {}\n", local_ref);
+            std::fs::write(git_dir.join("HEAD"), &head_content)?;
+            let loose_path = git_dir.join(&local_ref);
+            if let Some(parent) = loose_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&loose_path, format!("{}\n", oid_str))?;
+            info!(
+                "HEAD set to {} (→ {})",
+                local_ref,
+                &oid_str[..12.min(oid_str.len())]
+            );
+        } else {
+            warn!(
+                "Default branch '{}' not found in remote tracking refs",
+                branch_name
+            );
+        }
+    } else {
+        let head_file = git_dir.join("HEAD");
+        if !head_file.exists() {
+            let remote_ref = "refs/remotes/origin/main";
+            if let Some(oid_str) = read_loose_or_packed_ref(&git_dir, remote_ref) {
+                std::fs::write(&head_file, format!("{}\n", oid_str))?;
+                info!("HEAD set to detached {} (fallback)", &oid_str[..12.min(oid_str.len())]);
+            } else {
+                let remote_ref = "refs/remotes/origin/master";
+                if let Some(oid_str) = read_loose_or_packed_ref(&git_dir, remote_ref) {
+                    std::fs::write(&head_file, format!("{}\n", oid_str))?;
+                    info!("HEAD set to detached {} (fallback master)", &oid_str[..12.min(oid_str.len())]);
+                } else {
+                    warn!("No default branch found — HEAD not set");
+                }
+            }
+        }
+    }
+
     checkout_main_branch(&git_dir, dest)?;
     Ok(())
 }
@@ -239,14 +313,15 @@ fn read_packed_ref(git_dir: &Path, ref_name: &str) -> Option<String> {
     None
 }
 
-fn read_loose_or_packed_ref(git_dir: &Path, ref_name: &str) -> Option<String> {
+pub(crate) fn read_loose_or_packed_ref(git_dir: &Path, ref_name: &str) -> Option<String> {
     let loose_path = git_dir.join(ref_name);
-    if loose_path.exists() {
-        return std::fs::read_to_string(&loose_path)
-            .ok()
-            .map(|s| s.trim().to_string());
+    match std::fs::read_to_string(&loose_path) {
+        Ok(content) => {
+            let trimmed = content.trim().to_string();
+            if trimmed.is_empty() { None } else { Some(trimmed) }
+        }
+        Err(_) => read_packed_ref(git_dir, ref_name),
     }
-    read_packed_ref(git_dir, ref_name)
 }
 
 pub(crate) fn resolve_head(repo: &Repository) -> Result<ObjectId> {
@@ -303,7 +378,13 @@ fn checkout_tree(
         .map_err(|e| anyhow::anyhow!("Failed to parse tree: {}", e))?;
 
     for entry in entries {
-        let entry_name = String::from_utf8_lossy(&entry.name).to_string();
+        let entry_name = match std::str::from_utf8(&entry.name) {
+            Ok(s) => s.to_string(),
+            Err(e) => {
+                warn!("Skipping tree entry with invalid UTF-8 name: {}", e);
+                continue;
+            }
+        };
         let rel_path = if prefix.is_empty() {
             entry_name.clone()
         } else {
@@ -363,6 +444,19 @@ fn set_executable(_path: &Path, _mode: u32) -> Result<()> {
     Ok(())
 }
 
+fn validate_branch_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        anyhow::bail!("branch name must not be empty");
+    }
+    if name.contains('/') || name.contains('\\') || name.contains('\0') || name.contains('\n') || name.contains('\r') {
+        anyhow::bail!("branch name contains invalid characters: {:?}", name);
+    }
+    if name == "." || name == ".." {
+        anyhow::bail!("branch name cannot be '.' or '..'");
+    }
+    Ok(())
+}
+
 fn find_tracking_branch(git_dir: &Path) -> Result<String> {
     for candidate in &["master", "main"] {
         let ref_name = format!("refs/remotes/origin/{}", candidate);
@@ -374,6 +468,7 @@ fn find_tracking_branch(git_dir: &Path) -> Result<String> {
 }
 
 pub fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
+    validate_branch_name(branch_name)?;
     let full_ref_name = format!("refs/heads/{}", branch_name);
     let ref_path = git_dir.join(&full_ref_name);
 
@@ -410,9 +505,17 @@ pub fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
 }
 
 pub fn switch_head(git_dir: &Path, branch_name: &str) -> Result<()> {
+    validate_branch_name(branch_name)?;
+    let local_ref = format!("refs/heads/{}", branch_name);
+    if read_loose_or_packed_ref(git_dir, &local_ref).is_none() {
+        anyhow::bail!(
+            "Cannot switch to branch '{}' — ref '{}' not found locally",
+            branch_name, local_ref
+        );
+    }
     std::fs::write(
         git_dir.join("HEAD"),
-        format!("ref: refs/heads/{}\n", branch_name),
+        format!("ref: {}\n", local_ref),
     )?;
     info!("Switched HEAD to branch '{}'", branch_name);
     Ok(())
@@ -475,24 +578,25 @@ fn commit_tree(
     Ok(())
 }
 
-pub fn stage_and_commit(
+pub fn stage_and_commit_dir(
     git_dir: &Path,
     work_tree: &Path,
+    dir: &str,
     message: &str,
     author: &str,
     email: &str,
 ) -> Result<()> {
     let repo = Repository::open(git_dir, Some(work_tree))?;
-
-    build_index_from_worktree(&repo)?;
-
-    let index = repo
-        .load_index()
-        .map_err(|e| anyhow::anyhow!("Failed to load index: {}", e))?;
-
+    let mut index = grit_lib::index::Index::new();
+    let dir_path = work_tree.join(dir);
+    if dir_path.exists() {
+        let git_dir = &repo.git_dir;
+        add_directory_to_index(&repo, &dir_path, work_tree, git_dir, &mut index)?;
+    }
+    repo.write_index(&mut index)
+        .map_err(|e| anyhow::anyhow!("Failed to write index: {}", e))?;
     let tree_oid = write_tree_from_index(&repo.odb, &index, "")
         .map_err(|e| anyhow::anyhow!("Failed to write tree: {}", e))?;
-
     commit_tree(&repo, tree_oid, message, author, email)
 }
 
@@ -521,25 +625,6 @@ pub fn commit_single_dir(
         .map_err(|e| anyhow::anyhow!("Failed to write tree: {}", e))?;
 
     commit_tree(&repo, tree_oid, message, author, email)
-}
-
-fn build_index_from_worktree(repo: &Repository) -> Result<()> {
-    let work_tree = repo
-        .work_tree
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Repository has no work tree"))?;
-
-    let mut index = repo
-        .load_index()
-        .unwrap_or_else(|_| grit_lib::index::Index::new());
-    let git_dir = &repo.git_dir;
-
-    add_directory_to_index(repo, work_tree, work_tree, git_dir, &mut index)?;
-
-    repo.write_index(&mut index)
-        .map_err(|e| anyhow::anyhow!("Failed to write index: {}", e))?;
-
-    Ok(())
 }
 
 fn add_directory_to_index(

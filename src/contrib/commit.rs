@@ -36,7 +36,7 @@ pub fn commit_all_rules(
     }
 
     let message = format!(
-        "feat(sigma): add regression data for {} rule(s)",
+        "✨ feat(sigma): add regression data for {} rule(s)",
         valid_rules.len()
     );
 
@@ -52,7 +52,7 @@ pub fn commit_all_rules(
         email
     };
 
-    match crate::git::stage_and_commit(&git_dir, repo_path, &message, git_author, git_email) {
+    match crate::git::stage_and_commit_dir(&git_dir, repo_path, "regression_data", &message, git_author, git_email) {
         Ok(_) => {
             info!("Committed {} rules in batch", valid_rules.len());
             Ok(())
@@ -84,15 +84,32 @@ fn individual_commits(
         email
     };
 
+    let mut successes = 0u32;
+    let mut failures = 0u32;
     for (rule_id, reg_dir) in rules {
         let git_dir = repo_path.join(".git");
-        let msg = format!("feat(sigma): add regression data for {}", rule_id);
+        let msg = format!("✨ feat(sigma): add regression data for {}", rule_id);
         match crate::git::commit_single_dir(
             &git_dir, repo_path, reg_dir, &msg, git_author, git_email,
         ) {
-            Ok(_) => info!("Committed {} (fallback)", rule_id),
-            Err(e) => warn!("Failed to commit '{}': {}", rule_id, e),
+            Ok(_) => {
+                info!("Committed {} (fallback)", rule_id);
+                successes += 1;
+            }
+            Err(e) => {
+                warn!("Failed to commit '{}': {}", rule_id, e);
+                failures += 1;
+            }
         }
+    }
+    if successes == 0 && !rules.is_empty() {
+        anyhow::bail!("All {} individual commits failed", rules.len());
+    }
+    if failures > 0 {
+        warn!(
+            "{} individual commits succeeded, {} failed",
+            successes, failures
+        );
     }
     Ok(())
 }

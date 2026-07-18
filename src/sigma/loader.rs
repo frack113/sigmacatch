@@ -13,6 +13,7 @@ pub(crate) const SIGMA_REPO_URL: &str = "https://github.com/SigmaHQ/sigma.git";
 pub struct SigmaRepo {
     pub path: PathBuf,
     remote_url: Option<String>,
+    token: Option<String>,
 }
 
 impl SigmaRepo {
@@ -20,6 +21,7 @@ impl SigmaRepo {
         Self {
             path: path.to_path_buf(),
             remote_url: None,
+            token: None,
         }
     }
 
@@ -28,22 +30,35 @@ impl SigmaRepo {
         self
     }
 
+    pub fn with_token(mut self, token: String) -> Self {
+        self.token = Some(token);
+        self
+    }
+
     pub async fn init(&self) -> Result<()> {
         let git_dir = self.path.join(".git");
+
+        if git_dir.exists() && !is_repo_complete(&git_dir) {
+            warn!("Incomplete repository at {:?}, removing and re-cloning", self.path);
+            std::fs::remove_dir_all(&git_dir)?;
+        }
+
         let repo_exists = git_dir.exists();
 
         if repo_exists {
             info!("Sigma repository exists, fetching latest...");
-            let http_client = create_http_client()?;
+            let http_client = create_http_client(self.token.as_deref())?;
             let url = self
                 .remote_url
                 .clone()
                 .unwrap_or_else(|| SIGMA_REPO_URL.to_string());
             if let Err(e) = crate::git::fetch_remote(&http_client, &git_dir, &url) {
                 warn!(
-                    "Failed to pull Sigma repository: {}. Continuing with existing rules.",
+                    "Failed to fetch Sigma repository: {}. Removing incomplete repo.",
                     e
                 );
+                std::fs::remove_dir_all(&git_dir)?;
+                return self.clone_repo().await;
             }
 
             if let Some(ref new_url) = self.remote_url {
@@ -63,9 +78,10 @@ impl SigmaRepo {
             .unwrap_or_else(|| SIGMA_REPO_URL.to_string());
         info!("Cloning Sigma repository from {}...", url);
         let path = self.path.clone();
+        let token = self.token.clone();
 
         tokio::task::spawn_blocking(move || -> Result<()> {
-            let http_client = create_http_client()?;
+            let http_client = create_http_client(token.as_deref())?;
             crate::git::clone_repo(&http_client, &url, &path)
         })
         .await
@@ -83,9 +99,25 @@ impl SigmaRepo {
     }
 }
 
-fn create_http_client() -> Result<crate::git::AuthHttpClient> {
-    let token = std::env::var("GITHUB_TOKEN").ok();
-    Ok(crate::git::AuthHttpClient::new(token))
+fn create_http_client(token: Option<&str>) -> Result<crate::git::AuthHttpClient> {
+    let effective_token = token
+        .map(|t| t.to_string())
+        .or_else(|| std::env::var("GITHUB_TOKEN").ok());
+    crate::git::AuthHttpClient::new(effective_token)
+}
+
+fn is_repo_complete(git_dir: &Path) -> bool {
+    let has_packed_refs = git_dir.join("packed-refs").exists();
+    let has_objects = git_dir
+        .join("objects")
+        .join("pack")
+        .read_dir()
+        .map(|mut dir| dir.next().is_some())
+        .unwrap_or(false);
+    let has_refs = git_dir.join("refs").join("heads").read_dir()
+        .map(|mut dir| dir.next().is_some())
+        .unwrap_or(false);
+    has_packed_refs || has_objects || has_refs
 }
 
 fn update_remote_url(git_dir: &Path, new_url: &str) -> Result<()> {
