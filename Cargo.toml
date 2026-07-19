@@ -36,7 +36,6 @@ tracing-appender = "0.2"
 
 # Utilitaires
 anyhow = "1.0"
-dunce = "1.0"
 phf = { version = "0.11", features = ["macros"] }
 chrono = "0.4"
 rayon = "1.10"
@@ -52,6 +51,7 @@ codegen-units = 1
 tempfile = "3.12"
 
 [target.'cfg(windows)'.dependencies]
+dunce = "1.0"
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_System_Com",

@@ -720,8 +720,20 @@ pub fn git_pull(git_dir: &Path, token: Option<&str>) -> Result<()> {
 }
 
 /// Push a local branch to the named remote.
+/// Verifies HEAD is on the expected branch before pushing.
 pub fn git_push(repo_path: &Path, remote: &str, branch: &str, token: Option<&str>) -> Result<()> {
     let git_dir = repo_path.join(".git");
+
+    let head_content = std::fs::read_to_string(git_dir.join("HEAD"))?;
+    let expected_ref = format!("ref: refs/heads/{}\n", branch);
+    if head_content != expected_ref {
+        anyhow::bail!(
+            "HEAD is not on branch '{}' (HEAD: {}). Refusing to push.",
+            branch,
+            head_content.trim()
+        );
+    }
+
     let http_client = AuthHttpClient::new(token.map(String::from))?;
     let remote_url = read_remote_url_from_config(&git_dir, remote)?;
     push_branch(&http_client, &git_dir, &remote_url, branch)
@@ -765,7 +777,10 @@ pub fn git_commit(
 
 /// Generate a branch name for sigmacatch contribution branches.
 pub fn create_branch_name() -> String {
-    format!("sigmacatch-contrib/{}", chrono::Utc::now().format("%Y%m%d"))
+    format!(
+        "sigmacatch-contrib/{}",
+        chrono::Local::now().format("%Y%m%d")
+    )
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

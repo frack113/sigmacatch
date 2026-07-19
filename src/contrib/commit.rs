@@ -8,12 +8,12 @@ use tracing::{info, warn};
 use crate::regression::format::validate_rule_id;
 
 fn commit_identity(author: &str, email: &str) -> (String, String) {
-    let name = if author.is_empty() {
+    let name = if author.trim().is_empty() {
         "sigmacatch"
     } else {
         author
     };
-    let addr = if email.is_empty() {
+    let addr = if email.trim().is_empty() {
         "sigmacatch@localhost"
     } else {
         email

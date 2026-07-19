@@ -304,7 +304,9 @@ async fn stage_1_update_repo(
         for candidate in &["master", "main"] {
             let local_ref = format!("refs/heads/{}", candidate);
             if git::read_loose_or_packed_ref(&git_dir, &local_ref).is_some() {
-                let _ = git::switch_head(&git_dir, candidate);
+                if let Err(e) = git::switch_head(&git_dir, candidate) {
+                    warn!("Failed to switch to '{}': {}", candidate, e);
+                }
                 break;
             }
         }

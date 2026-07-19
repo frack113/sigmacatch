@@ -50,8 +50,14 @@ impl SigmaRepo {
 
         if repo_exists {
             info!("Sigma repository exists, pulling latest...");
-            let token = self.token.as_deref();
-            if let Err(e) = crate::git::git_pull(&git_dir, token) {
+            let git_dir_clone = git_dir.clone();
+            let token = self.token.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                crate::git::git_pull(&git_dir_clone, token.as_deref())
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Pull task panicked: {}", e))?;
+            if let Err(e) = result {
                 warn!(
                     "Failed to pull Sigma repository: {}. Removing incomplete repo.",
                     e
@@ -72,9 +78,11 @@ impl SigmaRepo {
             .unwrap_or_else(|| SIGMA_REPO_URL.to_string());
         info!("Cloning Sigma repository from {}...", url);
         let path = self.path.clone();
-        let token = self.token.as_deref();
+        let token = self.token.clone();
 
-        crate::git::git_clone(&url, &path, token)?;
+        tokio::task::spawn_blocking(move || crate::git::git_clone(&url, &path, token.as_deref()))
+            .await
+            .map_err(|e| anyhow::anyhow!("Clone task panicked: {}", e))??;
 
         info!("Sigma repository cloned to {:?}", self.path);
         Ok(())
