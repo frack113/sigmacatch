@@ -798,17 +798,7 @@ fn validate_branch_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn find_tracking_branch(git_dir: &Path) -> Result<String> {
-    for candidate in &["master", "main"] {
-        let ref_name = format!("refs/remotes/origin/{}", candidate);
-        if read_loose_or_packed_ref(git_dir, &ref_name).is_some() {
-            return Ok((*candidate).to_string());
-        }
-    }
-    anyhow::bail!("Cannot find origin/master or origin/main for branch creation")
-}
-
-/// Create a new branch from the remote tracking branch and switch HEAD to it.
+/// Create a new branch from the current HEAD and switch to it.
 pub fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
     validate_branch_name(branch_name)?;
     let full_ref_name = format!("refs/heads/{}", branch_name);
@@ -823,24 +813,17 @@ pub fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
         return Ok(());
     }
 
-    let tracking = find_tracking_branch(git_dir)?;
-    let remote_ref_name = format!("refs/remotes/origin/{}", tracking);
-    let target_oid = read_loose_or_packed_ref(git_dir, &remote_ref_name).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Remote tracking ref '{}' not found after fetch",
-            remote_ref_name
-        )
-    })?;
+    let head_oid = resolve_head(git_dir)?;
 
     if let Some(parent) = ref_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&ref_path, format!("{}\n", target_oid))?;
+    std::fs::write(&ref_path, format!("{}\n", head_oid))?;
     switch_head(git_dir, branch_name)?;
 
     info!(
-        "Created and switched to branch '{}' from 'origin/{}'",
-        branch_name, tracking
+        "Created and switched to branch '{}' from HEAD ({})",
+        branch_name, head_oid
     );
     Ok(())
 }
