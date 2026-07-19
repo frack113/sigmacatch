@@ -9,17 +9,14 @@ use channel_mapping::CHANNEL_TO_SERVICE_MAP;
 use rsigma_parser::LogSource;
 use serde_json::Value;
 use std::collections::HashMap;
-use taxonomy::{
-    CHANNEL_EVENT_TO_CATEGORY, CHANNEL_EVENT_TO_SUBCATEGORY, CHANNEL_TO_SERVICE,
-    PROVIDER_TO_SERVICE,
-};
+use taxonomy::{CHANNEL_EVENT_TO_CATEGORY, CHANNEL_EVENT_TO_SUBCATEGORY, PROVIDER_TO_SERVICE};
 use tracing::debug;
 
 /// Resolve LogSource from channel, provider, and event_id.
 ///
 /// INVARIANT: channel > provider > default
 /// Priority order MUST NOT be changed:
-///   1. Channel → service (CHANNEL_TO_SERVICE + custom_map override)
+///   1. Channel → service (CHANNEL_TO_SERVICE_MAP + custom_map override)
 ///   2. Provider → service (PROVIDER_TO_SERVICE) fallback
 ///   3. Default: product=windows, service=None, category=None
 ///
@@ -29,56 +26,39 @@ pub fn resolve_logsource(
     provider: &str,
     event_id: u32,
     custom_map: &HashMap<String, String>,
-    event_data: Option<&Value>,
+    _event_data: Option<&Value>,
 ) -> LogSource {
-    let lookup_service = |ch: &str| -> Option<String> {
-        if let Some(service) = custom_map.get(ch) {
-            return Some(service.clone());
-        }
-        CHANNEL_TO_SERVICE.get(ch).map(|s| s.to_string())
-    };
-
-    if let Some(service) = lookup_service(channel) {
-        let composite_key = format!("{}:{}", channel, event_id);
-        let base_category = CHANNEL_EVENT_TO_SUBCATEGORY
-            .get(&composite_key)
-            .copied()
-            .or_else(|| CHANNEL_EVENT_TO_CATEGORY.get(&composite_key).copied());
-
-        let category = match base_category {
-            Some(cat) if event_data.is_some() => match event_id {
-                12..=14 => Some("registry_event".to_string()),
-                _ => Some(cat.to_string()),
-            },
-            _ => base_category.map(|s| s.to_string()),
+    // 1. Custom override (highest priority)
+    if let Some(service) = custom_map.get(channel) {
+        debug!(
+            "LogSource resolved via custom_map: service={}, category={:?}",
+            service,
+            get_category(channel, event_id)
+        );
+        return LogSource {
+            product: Some("windows".into()),
+            service: Some(service.clone()),
+            category: get_category(channel, event_id).map(|s| s.to_string()),
+            ..LogSource::default()
         };
+    }
 
+    // 2. Channel → service from YAML mapping
+    if let Some(service) = CHANNEL_TO_SERVICE_MAP.get(channel) {
+        let category = get_category(channel, event_id);
         debug!(
             "LogSource resolved via channel: service={}, category={:?}",
             service, category
         );
         return LogSource {
             product: Some("windows".into()),
-            service: Some(service),
+            service: Some(service.to_string()),
             category: category.map(|s| s.to_string()),
             ..LogSource::default()
         };
     }
 
-    // Fallback to embedded channel_mapping for WinEventLog channels
-    if let Some(service) = CHANNEL_TO_SERVICE_MAP.get(channel) {
-        debug!(
-            "LogSource resolved via channel_mapping: service={}",
-            service
-        );
-        return LogSource {
-            product: Some("windows".into()),
-            service: Some(service.to_string()),
-            category: None,
-            ..LogSource::default()
-        };
-    }
-
+    // 3. Provider → service fallback
     if let Some(service) = PROVIDER_TO_SERVICE.get(provider) {
         debug!(
             "LogSource resolved via provider fallback: service={}",
@@ -101,6 +81,15 @@ pub fn resolve_logsource(
     }
 }
 
+/// Extract category from channel + event_id using static category maps.
+fn get_category(channel: &str, event_id: u32) -> Option<&'static str> {
+    let composite_key = format!("{}:{}", channel, event_id);
+    CHANNEL_EVENT_TO_SUBCATEGORY
+        .get(&composite_key)
+        .copied()
+        .or_else(|| CHANNEL_EVENT_TO_CATEGORY.get(&composite_key).copied())
+}
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct ChannelTarget {
@@ -108,97 +97,118 @@ pub struct ChannelTarget {
     pub event_ids: Option<Vec<u32>>,
 }
 
+/// Build a reverse map: service (or service:category) → Vec<ChannelTarget>.
+///
+/// Sources (in priority):
+/// 1. Custom map → custom service keys
+/// 2. CHANNEL_TO_SERVICE_MAP (YAML) → service keys
+/// 3. CHANNEL_EVENT_TO_CATEGORY (static) → service:category keys
 #[allow(dead_code)]
 pub fn build_logsource_to_channels(
     custom_map: &HashMap<String, String>,
 ) -> HashMap<String, Vec<ChannelTarget>> {
-    let mut chan_to_service: Vec<(&'static str, &'static str)> = CHANNEL_TO_SERVICE
-        .entries()
-        .map(|(k, v)| (*k, *v))
-        .collect();
-    chan_to_service.sort_by_key(|(a, _)| *a);
+    let mut service_targets: HashMap<String, Vec<String>> = HashMap::new();
+    let mut category_targets: HashMap<String, Vec<(String, Vec<u32>)>> = HashMap::new();
 
-    let mut cat_entries: Vec<(&'static str, &'static str)> = CHANNEL_EVENT_TO_CATEGORY
-        .entries()
-        .map(|(k, v)| (*k, *v))
-        .chain(
-            CHANNEL_EVENT_TO_SUBCATEGORY
-                .entries()
-                .map(|(k, v)| (*k, *v)),
-        )
-        .collect();
-    cat_entries.sort_by_key(|(a, _)| *a);
-
-    let mut map: HashMap<String, HashMap<String, Option<Vec<u32>>>> = HashMap::new();
-
-    for (channel, service) in &chan_to_service {
-        map.entry((*service).to_string())
-            .or_default()
-            .entry((*channel).to_string())
-            .or_insert(None);
-    }
-
-    // Add channel_mapping entries (no event IDs, no categories)
+    // Build service-level keys from YAML (primary source)
     for (channel, service) in &*CHANNEL_TO_SERVICE_MAP {
-        map.entry(service.clone())
+        service_targets
+            .entry(service.clone())
             .or_default()
-            .entry(channel.clone())
-            .or_insert(None);
+            .push(channel.clone());
     }
 
-    for (key, category) in &cat_entries {
+    // Add custom channels to service-level keys (lowest priority)
+    for (channel, service) in custom_map {
+        service_targets
+            .entry(service.clone())
+            .or_default()
+            .push(channel.clone());
+    }
+
+    // Build category-level keys from CHANNEL_EVENT_TO_CATEGORY
+    for (key, category) in &CHANNEL_EVENT_TO_CATEGORY {
         if let Some(colon_pos) = key.rfind(':') {
             let channel = &key[..colon_pos];
             let eid_str = &key[colon_pos + 1..];
             if let Ok(eid) = eid_str.parse::<u32>() {
-                if let Some(service) = CHANNEL_TO_SERVICE.get(channel) {
+                if let Some(service) = CHANNEL_TO_SERVICE_MAP.get(channel) {
                     let cat_key = format!("{}:{}", service, category);
-                    let eids = map
+                    category_targets
                         .entry(cat_key)
                         .or_default()
-                        .entry(channel.to_string())
-                        .or_insert_with(|| Some(Vec::new()));
-                    if let Some(ref mut v) = eids {
-                        v.push(eid);
+                        .push((channel.to_string(), vec![eid]));
+                }
+            }
+        }
+    }
+
+    // Add subcategory events to parent category (subcategory is a refinement, not a replacement)
+    for (key, subcat) in &CHANNEL_EVENT_TO_SUBCATEGORY {
+        if let Some(colon_pos) = key.rfind(':') {
+            let channel = &key[..colon_pos];
+            let eid_str = &key[colon_pos + 1..];
+            if let Ok(eid) = eid_str.parse::<u32>() {
+                if let Some(service) = CHANNEL_TO_SERVICE_MAP.get(channel) {
+                    let subcat_key = format!("{}:{}", service, subcat);
+                    let parent_key = format!(
+                        "{}:{}",
+                        service,
+                        CHANNEL_EVENT_TO_CATEGORY
+                            .get(key)
+                            .copied()
+                            .unwrap_or_default()
+                    );
+                    category_targets
+                        .entry(subcat_key)
+                        .or_default()
+                        .push((channel.to_string(), vec![eid]));
+                    if let Some(parent_targets) = category_targets.get_mut(&parent_key) {
+                        parent_targets.push((channel.to_string(), vec![eid]));
                     }
                 }
             }
         }
     }
 
-    for (channel, service) in custom_map {
-        map.entry(service.clone())
-            .or_default()
-            .entry(channel.clone())
-            .or_insert(None);
+    // Convert to final format, merging service + category targets
+    let mut merged: HashMap<String, Vec<ChannelTarget>> = HashMap::new();
+
+    for (service, channels) in service_targets {
+        let mut targets: Vec<ChannelTarget> = channels
+            .into_iter()
+            .map(|channel| ChannelTarget {
+                channel,
+                event_ids: None,
+            })
+            .collect();
+        targets.sort_by(|a, b| a.channel.cmp(&b.channel));
+        merged.insert(service, targets);
     }
 
-    map.into_iter()
-        .map(|(key, channels)| {
-            let mut targets: Vec<ChannelTarget> = channels
-                .into_iter()
-                .filter_map(|(channel, eids)| {
-                    if eids.as_ref().is_none_or(|v| v.is_empty()) {
-                        Some(ChannelTarget {
-                            channel,
-                            event_ids: None,
-                        })
-                    } else {
-                        eids.map(|mut v| {
-                            v.sort();
-                            v.dedup();
-                            ChannelTarget {
-                                channel,
-                                event_ids: Some(v),
-                            }
-                        })
-                    }
-                })
-                .collect();
-            targets.sort_by(|a, b| a.channel.cmp(&b.channel));
-            (key, targets)
-        })
-        .collect()
+    for (cat_key, targets) in category_targets {
+        let existing: Vec<ChannelTarget> = merged.remove(&cat_key).unwrap_or_default();
+        let mut by_channel: HashMap<String, Vec<u32>> = HashMap::new();
+        for (channel, eids) in targets {
+            by_channel.entry(channel).or_default().extend(eids);
+        }
+        let mut merged_targets: Vec<ChannelTarget> = by_channel
+            .into_iter()
+            .map(|(channel, mut eids)| {
+                eids.sort();
+                eids.dedup();
+                ChannelTarget {
+                    channel,
+                    event_ids: Some(eids),
+                }
+            })
+            .collect();
+        merged_targets.extend(existing);
+        merged_targets.sort_by(|a, b| a.channel.cmp(&b.channel));
+        merged.insert(cat_key, merged_targets);
+    }
+
+    merged
 }
 
 #[cfg(test)]

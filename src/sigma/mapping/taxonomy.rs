@@ -3,80 +3,6 @@
 
 use phf::phf_map;
 
-// ─── Channel → Service (table principale, ~50 entrées) ─────────────────
-pub static CHANNEL_TO_SERVICE: phf::Map<&'static str, &'static str> = phf_map! {
-    "Microsoft-Windows-Sysmon/Operational" => "sysmon",
-    "Security" => "security",
-    "System" => "system",
-    "Application" => "application",
-    "Windows PowerShell" => "powershell-classic",
-    "Microsoft-Windows-PowerShell/Operational" => "powershell",
-    "PowerShellCore/Operational" => "powershell",
-    "Microsoft-Windows-Windows Defender/Operational" => "windefend",
-    "Microsoft-Windows-TaskScheduler/Operational" => "taskscheduler",
-    "Microsoft-Windows-WMI-Activity/Operational" => "wmi",
-    "Microsoft-Windows-DNS Client Events/Operational" => "dns-client",
-    "Microsoft-Windows-DNS-Client/Operational" => "dns-client",
-    "DNS Server" => "dns-server",
-    "Microsoft-Windows-DNS-Server/Analytical" => "dns-server-analytic",
-    "Microsoft-Windows-DNS-Server/Audit" => "dns-server-audit",
-    "Microsoft-Windows-AppLocker/EXE and DLL" => "applocker",
-    "Microsoft-Windows-AppLocker/MSI and Script" => "applocker",
-    "Microsoft-Windows-AppLocker/Packaged app-Deployment" => "applocker",
-    "Microsoft-Windows-AppLocker/Packaged app-Execution" => "applocker",
-    "Microsoft-Windows-Bits-Client/Operational" => "bits-client",
-    "Microsoft-Windows-DHCP-Server/Operational" => "dhcp",
-    "Microsoft-Windows-Diagnosis-Scripted/Operational" => "diagnosis-scripted",
-    "Microsoft-Windows-DriverFrameworks-UserMode/Operational" => "driver-framework",
-    "Microsoft-Windows-BitLocker/BitLocker Management" => "bitlocker",
-    "Microsoft-Windows-CAPI2/Operational" => "capi2",
-    "Microsoft-Windows-CertificateServicesClient-Lifecycle-System/Operational" => "certificateservicesclient-lifecycle-system",
-    "Microsoft-Windows-CodeIntegrity/Operational" => "codeintegrity-operational",
-    "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall" => "firewall-as",
-    "Microsoft-Windows-Hyper-V-Worker" => "hyper-v-worker",
-    "Microsoft-IIS-Configuration/Operational" => "iis-configuration",
-    "Microsoft-Windows-Kernel-EventTracing" => "kernel-event-tracing",
-    "Microsoft-Windows-Kernel-ShimEngine/Operational" => "kernel-shimengine",
-    "Microsoft-Windows-Kernel-ShimEngine/Diagnostic" => "kernel-shimengine",
-    "Microsoft-Windows-LDAP-Client/Debug" => "ldap",
-    "Microsoft-Windows-LSA/Operational" => "lsa-server",
-    "MSExchange Management" => "msexchange-management",
-    "Microsoft-Windows-Ntfs/Operational" => "ntfs",
-    "Microsoft-Windows-NTLM/Operational" => "ntlm",
-    "OpenSSH/Operational" => "openssh",
-    "Microsoft-Windows-PrintService/Admin" => "printservice-admin",
-    "Microsoft-Windows-PrintService/Operational" => "printservice-operational",
-    "Microsoft-Windows-Security-Mitigations/Kernel Mode" => "security-mitigations",
-    "Microsoft-Windows-Security-Mitigations/User Mode" => "security-mitigations",
-    "Microsoft-Windows-SENSE/Operational" => "sense",
-    "Microsoft-ServiceBus-Client/Operational" => "servicebus-client",
-    "Microsoft-ServiceBus-Client/Admin" => "servicebus-client",
-    "Microsoft-Windows-Shell-Core/Operational" => "shell-core",
-    "Microsoft-Windows-SmbClient/Security" => "smbclient-security",
-    "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational" => "terminalservices-localsessionmanager",
-    "Microsoft-Windows-VHDMP/Operational" => "vhdmp",
-    "Microsoft-Windows-Application-Experience/Program-Telemetry" => "application-experience",
-    "Microsoft-Windows-Application-Experience/Program-Compatibility-Assistant" => "application-experience",
-    "Microsoft-Windows-AppModel-Runtime/Admin" => "appmodel-runtime",
-    "Microsoft-Windows-AppXDeploymentServer/Operational" => "appxdeployment-server",
-    "Microsoft-Windows-AppxPackaging/Operational" => "appxpackaging-om",
-    "Microsoft-Windows-Kernel-PnP/Device Configuration" => "pnp",
-};
-
-// ─── Provider → Service (fallback strict, channel inconnu) ────────────
-pub static PROVIDER_TO_SERVICE: phf::Map<&'static str, &'static str> = phf_map! {
-    "Microsoft-Windows-Sysmon" => "sysmon",
-    "Microsoft-Windows-Security-Auditing" => "security",
-    "Microsoft-Windows-PowerShell" => "powershell",
-    "Microsoft-Windows-Windows Defender" => "windefend",
-    "Service Control Manager" => "system",
-    "Microsoft-Windows-Kernel-Process" => "process",
-    "Microsoft-Windows-Kernel-Network" => "network",
-    "Microsoft-Windows-Kernel-File" => "file",
-    "Microsoft-Windows-Kernel-Registry" => "registry",
-    "Microsoft-Windows-DNS-Client" => "dns",
-};
-
 // ─── Channel:EventID → Category (clé composite "channel:eid") ─────────
 pub static CHANNEL_EVENT_TO_CATEGORY: phf::Map<&'static str, &'static str> = phf_map! {
     // Sysmon
@@ -140,48 +66,24 @@ pub static CHANNEL_EVENT_TO_SUBCATEGORY: phf::Map<&'static str, &'static str> = 
     "Microsoft-Windows-Sysmon/Operational:14" => "registry_rename",
 };
 
+// ─── Provider → Service (fallback strict, channel inconnu) ────────────
+pub static PROVIDER_TO_SERVICE: phf::Map<&'static str, &'static str> = phf_map! {
+    "Microsoft-Windows-Sysmon" => "sysmon",
+    "Microsoft-Windows-Security-Auditing" => "security",
+    "Microsoft-Windows-PowerShell" => "powershell",
+    "Microsoft-Windows-Windows Defender" => "windefend",
+    "Service Control Manager" => "system",
+    "Microsoft-Windows-Kernel-Process" => "process",
+    "Microsoft-Windows-Kernel-Network" => "network",
+    "Microsoft-Windows-Kernel-File" => "file",
+    "Microsoft-Windows-Kernel-Registry" => "registry",
+    "Microsoft-Windows-DNS-Client" => "dns",
+    "Microsoft-Windows-SmbClient" => "smbclient",
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_channel_to_service_sysmon() {
-        assert_eq!(
-            CHANNEL_TO_SERVICE.get("Microsoft-Windows-Sysmon/Operational"),
-            Some(&"sysmon")
-        );
-    }
-
-    #[test]
-    fn test_channel_to_service_security() {
-        assert_eq!(CHANNEL_TO_SERVICE.get("Security"), Some(&"security"));
-    }
-
-    #[test]
-    fn test_channel_to_service_unknown() {
-        assert!(CHANNEL_TO_SERVICE.get("UnknownChannel").is_none());
-    }
-
-    #[test]
-    fn test_provider_to_service_sysmon() {
-        assert_eq!(
-            PROVIDER_TO_SERVICE.get("Microsoft-Windows-Sysmon"),
-            Some(&"sysmon")
-        );
-    }
-
-    #[test]
-    fn test_provider_to_service_fallback() {
-        assert_eq!(
-            PROVIDER_TO_SERVICE.get("Microsoft-Windows-Kernel-Process"),
-            Some(&"process")
-        );
-    }
-
-    #[test]
-    fn test_provider_to_service_unknown() {
-        assert!(PROVIDER_TO_SERVICE.get("UnknownProvider").is_none());
-    }
 
     #[test]
     fn test_channel_event_to_category_sysmon_1() {
@@ -218,5 +120,26 @@ mod tests {
     #[test]
     fn test_channel_event_to_category_unknown() {
         assert!(CHANNEL_EVENT_TO_CATEGORY.get("Security:0").is_none());
+    }
+
+    #[test]
+    fn test_provider_to_service_sysmon() {
+        assert_eq!(
+            PROVIDER_TO_SERVICE.get("Microsoft-Windows-Sysmon"),
+            Some(&"sysmon")
+        );
+    }
+
+    #[test]
+    fn test_provider_to_service_fallback() {
+        assert_eq!(
+            PROVIDER_TO_SERVICE.get("Microsoft-Windows-Kernel-Process"),
+            Some(&"process")
+        );
+    }
+
+    #[test]
+    fn test_provider_to_service_unknown() {
+        assert!(PROVIDER_TO_SERVICE.get("UnknownProvider").is_none());
     }
 }

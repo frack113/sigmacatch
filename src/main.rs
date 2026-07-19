@@ -866,6 +866,111 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    if flags.contains(&"--channels-only") {
+        stage_0_init().await?;
+        let custom_map = load_custom_mapping(PathBuf::from("custom_channels.yaml").as_path());
+        let load_all = flags.contains(&"--all-rules");
+        let existing_rules = if load_all {
+            HashSet::new()
+        } else {
+            stage_2_existing_rules(&config)
+        };
+        let engine_path = std::path::Path::new("sigma");
+        let rules_dirs = find_rules_dirs(engine_path)?;
+        if rules_dirs.is_empty() {
+            anyhow::bail!("No rules directories found in sigma/");
+        }
+        let mut engine = SigmaEngine::new();
+        let filter = config::SigmaFilterConfig {
+            min_status: config::MinStatus::Unsupported,
+            min_level: config::MinLevel::Informational,
+        };
+        let rules_count = engine.load_rules_from_dirs(
+            &rules_dirs.iter().map(|d| d.as_path()).collect::<Vec<_>>(),
+            &existing_rules,
+            &filter,
+        )?;
+        let channels = resolve_channels_from_rules(&engine, &custom_map);
+        let active_services = engine.active_services();
+        let all_services = engine.all_services();
+        let active_categories = engine.active_categories();
+        let all_categories = engine.all_categories();
+
+        let sep = "─".repeat(60);
+        println!("\n{}", sep);
+        println!("  CHANNEL RESOLUTION RESULT");
+        println!("{}", sep);
+
+        println!(
+            "\nRules: {} loaded, {} skipped (existing regression)",
+            rules_count,
+            existing_rules.len()
+        );
+        println!("Active services ({}):", active_services.len());
+        let mut sorted_active: Vec<_> = active_services.iter().map(|s| s.as_str()).collect();
+        sorted_active.sort();
+        for svc in &sorted_active {
+            if let Some(targets) = build_logsource_to_channels(&custom_map).get(*svc) {
+                let channels: Vec<&str> = targets.iter().map(|t| t.channel.as_str()).collect();
+                println!("  {} → {} channel(s)", svc, targets.len());
+                for ch in &channels {
+                    println!("    - {}", ch);
+                }
+            } else {
+                println!("  {} → (no mapping)", svc);
+            }
+        }
+
+        println!("\nActive categories ({}):", active_categories.len());
+        let mut sorted_cats: Vec<_> = active_categories.iter().map(|s| s.as_str()).collect();
+        sorted_cats.sort();
+        for cat in &sorted_cats {
+            for svc in sorted_active.iter() {
+                let composite = format!("{}:{}", svc, cat);
+                if let Some(targets) =
+                    build_logsource_to_channels(&custom_map).get(composite.as_str())
+                {
+                    println!("  {}:{}", svc, cat);
+                    for t in targets {
+                        println!("    - {} (EventID: {:?})", t.channel, t.event_ids);
+                    }
+                }
+            }
+        }
+
+        println!(
+            "\nSkipped services ({}):",
+            all_services.len() - active_services.len()
+        );
+        let skipped: Vec<&str> = all_services
+            .difference(active_services)
+            .map(|s| s.as_str())
+            .collect();
+        for svc in &skipped {
+            println!("  - {}", svc);
+        }
+
+        println!(
+            "\nSkipped categories ({}):",
+            all_categories.len() - active_categories.len()
+        );
+        let skipped_cats: Vec<&str> = all_categories
+            .difference(active_categories)
+            .map(|s| s.as_str())
+            .collect();
+        for cat in &skipped_cats {
+            println!("  - {}", cat);
+        }
+
+        println!("\nChannels to collect ({}):", channels.len());
+        for ch in &channels {
+            println!("  - {}", ch);
+        }
+        println!("\n{}", sep);
+
+        return Ok(());
+    }
+
     #[cfg(windows)]
     setup_console();
 

@@ -2102,7 +2102,6 @@ dependencies = [
  "dunce",
  "evtx",
  "grit-lib",
- "once_cell",
  "phf",
  "rayon",
  "reqwest",

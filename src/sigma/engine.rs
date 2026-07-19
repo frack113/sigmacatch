@@ -4,6 +4,7 @@
 use anyhow::Result;
 use rayon::prelude::*;
 use rsigma_eval::event::JsonEvent;
+use rsigma_eval::pipeline::parse_pipeline;
 use rsigma_eval::Engine;
 use rsigma_parser::{parse_sigma_yaml, LogSource};
 use serde_json::Value;
@@ -43,6 +44,9 @@ impl Default for SigmaEngine {
     fn default() -> Self {
         let mut engine = Engine::new();
         engine.set_include_event(true);
+        let pipeline_yaml = include_str!("../pipelines/windows.yml");
+        let pipeline = parse_pipeline(pipeline_yaml).expect("windows pipeline YAML is valid");
+        engine.add_pipeline(pipeline);
         Self {
             engine,
             rules_count: 0,
