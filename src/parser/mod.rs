@@ -145,6 +145,26 @@ impl XmlParser {
             .descendants()
             .find(|n| n.tag_name().name() == "UserData");
         if let Some(user_data) = user_data {
+            // UserData contains a single wrapper element (e.g.
+            // <Operation_EssStarted>) whose children are the actual fields.
+            // Extract every child with tag name + text content.
+            if let Some(wrapper) = user_data.children().find(|n| !n.is_text()) {
+                for node in wrapper.children() {
+                    if node.is_text() {
+                        continue;
+                    }
+                    let name = node.tag_name().name().to_string();
+                    if name.is_empty() {
+                        continue;
+                    }
+                    if let Some(text) = node.text() {
+                        if !text.is_empty() && !map.contains_key(&name) {
+                            map.insert(name, Value::String(text.to_string()));
+                        }
+                    }
+                }
+            }
+            // Legacy fallback: EventXML / Data tags (non-standard)
             for node in user_data.descendants() {
                 if node.tag_name().name() == "EventXML" || node.tag_name().name() == "Data" {
                     if let Some(text) = node.text() {
@@ -332,5 +352,24 @@ mod tests {
             obj.get("Image").unwrap(),
             "C:\\Windows\\System32\\SearchFilterHost.exe"
         );
+    }
+
+    #[test]
+    fn test_parse_user_data_fields() {
+        let xml = r#"<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-WMI-Activity' Guid='{1418ef04-b0b4-4623-bf7e-d74ab47bbdaa}'/><EventID>5859</EventID><Version>0</Version><Level>0</Level><Task>0</Task><Opcode>0</Opcode><Keywords>0x4000000000000000</Keywords><TimeCreated SystemTime='2026-07-17T12:31:05.6648960Z'/><EventRecordID>428</EventRecordID><Channel>Microsoft-Windows-WMI-Activity/Operational</Channel><Computer>rust</Computer><Security UserID='S-1-5-18'/></System><UserData><Operation_EssStarted xmlns='http://manifests.microsoft.com/win/2006/windows/WMI'><NamespaceName>//./root/CIMV2</NamespaceName><Query>select * from MSFT_SCMEventLogEvent</Query><User>S-1-5-32-544</User><Processid>3280</Processid><Provider>SCM Event Provider</Provider><queryid>0</queryid><PossibleCause>Permanent</PossibleCause></Operation_EssStarted></UserData></Event>"#;
+
+        let parser = XmlParser {};
+        let result = parser.parse(xml).unwrap();
+        let obj = result.as_object().unwrap();
+
+        assert_eq!(obj.get("EventID").unwrap(), "5859");
+        assert_eq!(obj.get("Provider").unwrap(), "SCM Event Provider");
+        assert_eq!(
+            obj.get("Query").unwrap(),
+            "select * from MSFT_SCMEventLogEvent"
+        );
+        assert_eq!(obj.get("User").unwrap(), "S-1-5-32-544");
+        assert_eq!(obj.get("PossibleCause").unwrap(), "Permanent");
+        assert_eq!(obj.get("NamespaceName").unwrap(), "//./root/CIMV2");
     }
 }
