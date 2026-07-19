@@ -313,7 +313,7 @@ async fn stage_1_update_repo(
     sigma_repo.init().await?;
 
     if let Some(fc) = fork_config {
-        git::create_branch(&sigma_repo.path, &fc.branch_name)?;
+        git::create_branch(&sigma_repo.path.join(".git"), &fc.branch_name)?;
     }
 
     info!("Sigma repository ready");
