@@ -49,25 +49,16 @@ impl SigmaRepo {
         let repo_exists = git_dir.exists();
 
         if repo_exists {
-            info!("Sigma repository exists, fetching latest...");
-            let http_client = create_http_client(self.token.as_deref())?;
-            let url = self
-                .remote_url
-                .clone()
-                .unwrap_or_else(|| SIGMA_REPO_URL.to_string());
-            if let Err(e) = crate::git::fetch_remote(&http_client, &git_dir, &url) {
+            info!("Sigma repository exists, pulling latest...");
+            let token = self.token.as_deref();
+            if let Err(e) = crate::git::git_pull(&git_dir, token) {
                 warn!(
-                    "Failed to fetch Sigma repository: {}. Removing incomplete repo.",
+                    "Failed to pull Sigma repository: {}. Removing incomplete repo.",
                     e
                 );
                 std::fs::remove_dir_all(&git_dir)?;
                 return self.clone_repo().await;
             }
-
-            if let Some(ref new_url) = self.remote_url {
-                update_remote_url(&git_dir, new_url)?;
-            }
-
             return Ok(());
         }
 
@@ -81,32 +72,13 @@ impl SigmaRepo {
             .unwrap_or_else(|| SIGMA_REPO_URL.to_string());
         info!("Cloning Sigma repository from {}...", url);
         let path = self.path.clone();
-        let token = self.token.clone();
+        let token = self.token.as_deref();
 
-        tokio::task::spawn_blocking(move || -> Result<()> {
-            let http_client = create_http_client(token.as_deref())?;
-            crate::git::clone_repo(&http_client, &url, &path)
-        })
-        .await
-        .map_err(|e| {
-            if e.is_panic() {
-                let payload = e.into_panic();
-                anyhow::anyhow!("Clone task panicked: {:?}", payload)
-            } else {
-                anyhow::anyhow!("Clone task failed: {}", e)
-            }
-        })??;
+        crate::git::git_clone(&url, &path, token)?;
 
         info!("Sigma repository cloned to {:?}", self.path);
         Ok(())
     }
-}
-
-fn create_http_client(token: Option<&str>) -> Result<crate::git::AuthHttpClient> {
-    let effective_token = token
-        .map(|t| t.to_string())
-        .or_else(|| std::env::var("GITHUB_TOKEN").ok());
-    crate::git::AuthHttpClient::new(effective_token)
 }
 
 fn is_repo_complete(git_dir: &Path) -> bool {
@@ -125,68 +97,6 @@ fn is_repo_complete(git_dir: &Path) -> bool {
         .unwrap_or(false);
     has_packed_refs || has_objects || has_refs
 }
-
-fn update_remote_url(git_dir: &Path, new_url: &str) -> Result<()> {
-    let config_path = git_dir.join("config");
-    let content = std::fs::read_to_string(&config_path)?;
-
-    let line_ending = if content.contains("\r\n") {
-        "\r\n"
-    } else {
-        "\n"
-    };
-    let lines: Vec<&str> = content.split(line_ending).collect();
-
-    let mut new_lines = Vec::new();
-    let mut in_remote_origin = false;
-    let mut updated = false;
-
-    for line in &lines {
-        let trimmed = line.trim();
-        if trimmed == "[remote \"origin\"]" || trimmed == "[remote origin]" {
-            in_remote_origin = true;
-            new_lines.push((*line).to_string());
-        } else if in_remote_origin {
-            if trimmed.starts_with('[') {
-                if !updated {
-                    new_lines.push(format!(
-                        "\turl = {}",
-                        crate::git::git_config_escape(new_url)
-                    ));
-                    updated = true;
-                }
-                in_remote_origin = false;
-                new_lines.push((*line).to_string());
-            } else if trimmed.starts_with("url") && trimmed.contains('=') {
-                new_lines.push(format!(
-                    "\turl = {}",
-                    crate::git::git_config_escape(new_url)
-                ));
-                updated = true;
-            } else {
-                new_lines.push((*line).to_string());
-            }
-        } else {
-            new_lines.push((*line).to_string());
-        }
-    }
-
-    if in_remote_origin && !updated {
-        new_lines.push(format!(
-            "\turl = {}",
-            crate::git::git_config_escape(new_url)
-        ));
-        updated = true;
-    }
-
-    if updated {
-        std::fs::write(&config_path, new_lines.join(line_ending))?;
-        info!("Updated remote 'origin' URL");
-    }
-
-    Ok(())
-}
-
 pub fn find_rules_dirs(root: &Path) -> Result<Vec<PathBuf>> {
     let mut dirs = Vec::new();
     let mut excluded = Vec::new();
@@ -217,7 +127,7 @@ pub fn find_rules_dirs(root: &Path) -> Result<Vec<PathBuf>> {
                     }
                     #[cfg(not(unix))]
                     {
-                        let abs_path = std::fs::canonicalize(&path).ok();
+                        let abs_path = dunce::canonicalize(&path).ok();
                         if let Some(abs) = abs_path {
                             if !visited_paths.insert(abs) {
                                 warn!("Skipping symlink cycle detected at: {:?}", path);

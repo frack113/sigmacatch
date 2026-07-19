@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
+//! Git operations via grit-lib (pure Rust Git reimplementation).
+//!
+//! Architecture:
+//!   Transport    → AuthHttpClient (HttpClient trait) for HTTPS auth
+//!   Plumbing     → Raw git ops: Odb, Index, commit, checkout, refs
+//!   Porcelain    → High-level wrappers: clone, pull, push, add, commit
+
 use anyhow::Result;
 use grit_lib::fetch::NoProgress;
 use grit_lib::objects::ObjectId;
@@ -14,10 +21,9 @@ use std::path::Path;
 use std::sync::Mutex;
 use tracing::{debug, info, warn};
 
-pub struct AuthHttpClient {
-    client: reqwest::blocking::Client,
-    token: Mutex<Option<String>>,
-}
+// ═══════════════════════════════════════════════════════════════════════════════
+// Transport: AuthHttpClient
+// ═══════════════════════════════════════════════════════════════════════════════
 
 fn sanitize_url(url: &str) -> String {
     if let Some(at_pos) = url.find('@') {
@@ -27,6 +33,11 @@ fn sanitize_url(url: &str) -> String {
         }
     }
     url.to_string()
+}
+
+pub struct AuthHttpClient {
+    client: reqwest::blocking::Client,
+    token: Mutex<Option<String>>,
 }
 
 impl AuthHttpClient {
@@ -136,6 +147,30 @@ impl HttpClient for AuthHttpClient {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Plumbing — low-level git operations
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn open_odb(git_dir: &Path) -> Odb {
+    Odb::new(&git_dir.join("objects")).with_config_git_dir(git_dir.to_path_buf())
+}
+
+pub(crate) fn git_config_escape(value: &str) -> String {
+    if value.contains('"') || value.contains('\\') || value.contains('\n') || value.contains('\r') {
+        let escaped = value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r");
+        format!("\"{}\"", escaped)
+    } else if value.contains(' ') || value.contains('\t') {
+        format!("\"{}\"", value)
+    } else {
+        value.to_string()
+    }
+}
+
+/// Initialize a bare `.git` directory with config and HEAD.
 pub fn init_repo(git_dir: &Path, _work_tree: &Path, remote_url: &str) -> Result<()> {
     std::fs::create_dir_all(git_dir.join("objects").join("pack"))?;
     std::fs::create_dir_all(git_dir.join("refs").join("heads"))?;
@@ -161,29 +196,14 @@ pub fn init_repo(git_dir: &Path, _work_tree: &Path, remote_url: &str) -> Result<
     std::fs::write(git_dir.join("config"), config)?;
     std::fs::write(git_dir.join("description"), b"SigmaHQ rules repository\n")?;
 
-    // HEAD must exist before any Repository::open (grit-lib's fetch/push internals
-    // open the repo and require HEAD to be present).
+    // HEAD must exist before any grit-lib operation
     std::fs::write(git_dir.join("HEAD"), b"ref: refs/heads/main\n")?;
 
     info!("Initialized git repository");
     Ok(())
 }
 
-pub(crate) fn git_config_escape(value: &str) -> String {
-    if value.contains('"') || value.contains('\\') || value.contains('\n') || value.contains('\r') {
-        let escaped = value
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r");
-        format!("\"{}\"", escaped)
-    } else if value.contains(' ') || value.contains('\t') {
-        format!("\"{}\"", value)
-    } else {
-        value.to_string()
-    }
-}
-
+/// Fetch from remote via smart HTTP.
 pub fn fetch_remote(
     http_client: &dyn HttpClient,
     git_dir: &Path,
@@ -192,9 +212,6 @@ pub fn fetch_remote(
     info!("Fetching from {}", sanitize_url(repo_url));
     let opts = FetchOptions {
         refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_string()],
-        // Shallow single-commit history + no tags: we only need a working tree
-        // to checkout and a tip to commit regression data on top of. Fetching
-        // full history and all tags makes the clone take minutes for no benefit.
         tags: grit_lib::transfer::TagMode::None,
         depth: Some(1),
         ..Default::default()
@@ -209,46 +226,7 @@ pub fn fetch_remote(
     Ok((count, outcome.default_branch))
 }
 
-pub fn push_branch(
-    http_client: &dyn HttpClient,
-    git_dir: &Path,
-    remote_url: &str,
-    branch_name: &str,
-) -> Result<()> {
-    let ref_name = format!("refs/heads/{}", branch_name);
-    let oid_str = read_loose_or_packed_ref(git_dir, &ref_name)
-        .ok_or_else(|| anyhow::anyhow!("Branch '{}' not found locally", branch_name))?;
-    let head_oid = ObjectId::from_hex(&oid_str)
-        .map_err(|e| anyhow::anyhow!("Invalid OID for branch '{}': {}", branch_name, e))?;
-    let spec = PushRefSpec {
-        src: Some(head_oid),
-        dst: format!("refs/heads/{}", branch_name),
-        force: false,
-        delete: false,
-        expected_old: None,
-        expect_absent: false,
-    };
-    let opts = PushOptions {
-        atomic: false,
-        dry_run: false,
-        push_options: Vec::new(),
-    };
-    let outcome = grit_lib::push::push_http(
-        http_client,
-        git_dir,
-        remote_url,
-        &[spec],
-        &opts,
-        &mut NoProgress,
-    )?;
-    if outcome.results.is_empty() {
-        warn!("No refs were pushed");
-    } else {
-        info!("Pushed branch '{}'", branch_name);
-    }
-    Ok(())
-}
-
+/// Full clone: init + fetch + set HEAD + checkout worktree.
 pub fn clone_repo(http_client: &dyn HttpClient, url: &str, dest: &Path) -> Result<()> {
     let git_dir = dest.join(".git");
     if git_dir.exists() {
@@ -295,24 +273,22 @@ pub fn clone_repo(http_client: &dyn HttpClient, url: &str, dest: &Path) -> Resul
     } else {
         let head_file = git_dir.join("HEAD");
         if !head_file.exists() {
-            let remote_ref = "refs/remotes/origin/main";
-            if let Some(oid_str) = read_loose_or_packed_ref(&git_dir, remote_ref) {
+            if let Some(oid_str) = read_loose_or_packed_ref(&git_dir, "refs/remotes/origin/main") {
                 std::fs::write(&head_file, format!("{}\n", oid_str))?;
                 info!(
                     "HEAD set to detached {} (fallback)",
                     &oid_str[..12.min(oid_str.len())]
                 );
+            } else if let Some(oid_str) =
+                read_loose_or_packed_ref(&git_dir, "refs/remotes/origin/master")
+            {
+                std::fs::write(&head_file, format!("{}\n", oid_str))?;
+                info!(
+                    "HEAD set to detached {} (fallback master)",
+                    &oid_str[..12.min(oid_str.len())]
+                );
             } else {
-                let remote_ref = "refs/remotes/origin/master";
-                if let Some(oid_str) = read_loose_or_packed_ref(&git_dir, remote_ref) {
-                    std::fs::write(&head_file, format!("{}\n", oid_str))?;
-                    info!(
-                        "HEAD set to detached {} (fallback master)",
-                        &oid_str[..12.min(oid_str.len())]
-                    );
-                } else {
-                    warn!("No default branch found — HEAD not set");
-                }
+                warn!("No default branch found — HEAD not set");
             }
         }
     }
@@ -320,6 +296,49 @@ pub fn clone_repo(http_client: &dyn HttpClient, url: &str, dest: &Path) -> Resul
     checkout_main_branch(&git_dir, dest)?;
     Ok(())
 }
+
+/// Push a local branch to the remote via smart HTTP.
+pub fn push_branch(
+    http_client: &dyn HttpClient,
+    git_dir: &Path,
+    remote_url: &str,
+    branch_name: &str,
+) -> Result<()> {
+    let ref_name = format!("refs/heads/{}", branch_name);
+    let oid_str = read_loose_or_packed_ref(git_dir, &ref_name)
+        .ok_or_else(|| anyhow::anyhow!("Branch '{}' not found locally", branch_name))?;
+    let head_oid = ObjectId::from_hex(&oid_str)
+        .map_err(|e| anyhow::anyhow!("Invalid OID for branch '{}': {}", branch_name, e))?;
+    let spec = PushRefSpec {
+        src: Some(head_oid),
+        dst: format!("refs/heads/{}", branch_name),
+        force: false,
+        delete: false,
+        expected_old: None,
+        expect_absent: false,
+    };
+    let opts = PushOptions {
+        atomic: false,
+        dry_run: false,
+        push_options: Vec::new(),
+    };
+    let outcome = grit_lib::push::push_http(
+        http_client,
+        git_dir,
+        remote_url,
+        &[spec],
+        &opts,
+        &mut NoProgress,
+    )?;
+    if outcome.results.is_empty() {
+        warn!("No refs were pushed");
+    } else {
+        info!("Pushed branch '{}'", branch_name);
+    }
+    Ok(())
+}
+
+// ── Refs ─────────────────────────────────────────────────────────────────────
 
 fn read_packed_ref(git_dir: &Path, ref_name: &str) -> Option<String> {
     let packed_path = git_dir.join("packed-refs");
@@ -353,40 +372,6 @@ pub(crate) fn read_loose_or_packed_ref(git_dir: &Path, ref_name: &str) -> Option
     }
 }
 
-fn open_odb(git_dir: &Path) -> Odb {
-    Odb::new(&git_dir.join("objects")).with_config_git_dir(git_dir.to_path_buf())
-}
-
-/// Returns true if `ancestor` is reachable from `descendant` by walking commit
-/// parents. Built on `Odb` directly to avoid `Repository::open` (which
-/// `canonicalize()`s paths and breaks on Windows `\\?\` UNC prefixes).
-pub fn is_ancestor(git_dir: &Path, ancestor: ObjectId, descendant: ObjectId) -> Result<bool> {
-    if ancestor == descendant {
-        return Ok(true);
-    }
-    let odb = open_odb(git_dir);
-    let mut visited = std::collections::HashSet::new();
-    let mut queue = std::collections::VecDeque::new();
-    queue.push_back(descendant);
-    while let Some(oid) = queue.pop_front() {
-        if !visited.insert(oid) {
-            continue;
-        }
-        if oid == ancestor {
-            return Ok(true);
-        }
-        let obj = odb
-            .read(&oid)
-            .map_err(|e| anyhow::anyhow!("Failed to read commit {}: {}", oid, e))?;
-        let commit = grit_lib::objects::parse_commit(&obj.data)
-            .map_err(|e| anyhow::anyhow!("Failed to parse commit {}: {}", oid, e))?;
-        for parent in commit.parents {
-            queue.push_back(parent);
-        }
-    }
-    Ok(false)
-}
-
 pub(crate) fn resolve_head(git_dir: &Path) -> Result<ObjectId> {
     let head_path = git_dir.join("HEAD");
     let content = std::fs::read_to_string(&head_path)?;
@@ -410,6 +395,31 @@ pub(crate) fn resolve_head(git_dir: &Path) -> Result<ObjectId> {
             .map_err(|e| anyhow::anyhow!("Invalid detached HEAD OID '{}': {}", content, e))
     }
 }
+
+/// Parse remote URL from `.git/config` for a given remote name.
+fn read_remote_url_from_config(git_dir: &Path, remote: &str) -> Result<String> {
+    let config_path = git_dir.join("config");
+    let content = std::fs::read_to_string(&config_path)?;
+    let target = format!("[remote \"{}\"]", remote);
+    let mut in_remote = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_remote = trimmed == target;
+        } else if in_remote {
+            if let Some(url) = trimmed.strip_prefix("url = ") {
+                return Ok(url.to_string());
+            }
+        }
+    }
+    anyhow::bail!(
+        "Remote '{}' not found in git config at {:?}",
+        remote,
+        config_path
+    )
+}
+
+// ── Checkout ─────────────────────────────────────────────────────────────────
 
 fn checkout_main_branch(git_dir: &Path, work_tree: &Path) -> Result<()> {
     let head_path = git_dir.join("HEAD");
@@ -498,7 +508,6 @@ fn checkout_tree(odb: &Odb, tree_oid: ObjectId, base_path: &Path, prefix: &str) 
 
 #[cfg(unix)]
 fn set_executable(path: &Path, mode: u32) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
     let metadata = std::fs::metadata(path)?;
     let mut perms = metadata.permissions();
     if mode == 0o100755 {
@@ -515,94 +524,17 @@ fn set_executable(_path: &Path, _mode: u32) -> Result<()> {
     Ok(())
 }
 
-fn validate_branch_name(name: &str) -> Result<()> {
-    if name.is_empty() {
-        anyhow::bail!("branch name must not be empty");
-    }
-    // Git forbids these characters in ref names; '/' is allowed (namespace
-    // separator, e.g. feature/foo). See git-check-ref-format(1).
-    for c in ['\0', '\n', '\r', '\\', '~', '^', ':', '?', '*', '['] {
-        if name.contains(c) {
-            anyhow::bail!("branch name contains invalid character {:?}: {:?}", c, name);
-        }
-    }
-    if name.starts_with('/') || name.ends_with('/') || name.contains("//") {
-        anyhow::bail!("branch name has invalid '/' placement: {:?}", name);
-    }
-    for component in name.split('/') {
-        if component.is_empty() || component == "." || component == ".." {
-            anyhow::bail!(
-                "branch name component cannot be empty, '.' or '..': {:?}",
-                name
-            );
-        }
-        if component.ends_with(".lock") {
-            anyhow::bail!("branch name component cannot end with '.lock': {:?}", name);
-        }
-    }
-    Ok(())
+#[cfg(unix)]
+fn is_exec_file(metadata: &std::fs::Metadata) -> bool {
+    metadata.permissions().mode() & 0o111 != 0
 }
 
-fn find_tracking_branch(git_dir: &Path) -> Result<String> {
-    for candidate in &["master", "main"] {
-        let ref_name = format!("refs/remotes/origin/{}", candidate);
-        if read_loose_or_packed_ref(git_dir, &ref_name).is_some() {
-            return Ok((*candidate).to_string());
-        }
-    }
-    anyhow::bail!("Cannot find origin/master or origin/main for branch creation")
+#[cfg(not(unix))]
+fn is_exec_file(_metadata: &std::fs::Metadata) -> bool {
+    false
 }
 
-pub fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
-    validate_branch_name(branch_name)?;
-    let full_ref_name = format!("refs/heads/{}", branch_name);
-    let ref_path = git_dir.join(&full_ref_name);
-
-    if ref_path.exists() {
-        info!(
-            "Branch '{}' already exists locally, switching to it",
-            branch_name
-        );
-        switch_head(git_dir, branch_name)?;
-        return Ok(());
-    }
-
-    let tracking = find_tracking_branch(git_dir)?;
-    let remote_ref_name = format!("refs/remotes/origin/{}", tracking);
-    let target_oid = read_loose_or_packed_ref(git_dir, &remote_ref_name).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Remote tracking ref '{}' not found after fetch (not in loose refs or packed-refs)",
-            remote_ref_name
-        )
-    })?;
-
-    if let Some(parent) = ref_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&ref_path, format!("{}\n", target_oid))?;
-    switch_head(git_dir, branch_name)?;
-
-    info!(
-        "Created and switched to branch '{}' from 'origin/{}'",
-        branch_name, tracking
-    );
-    Ok(())
-}
-
-pub fn switch_head(git_dir: &Path, branch_name: &str) -> Result<()> {
-    validate_branch_name(branch_name)?;
-    let local_ref = format!("refs/heads/{}", branch_name);
-    if read_loose_or_packed_ref(git_dir, &local_ref).is_none() {
-        anyhow::bail!(
-            "Cannot switch to branch '{}' — ref '{}' not found locally",
-            branch_name,
-            local_ref
-        );
-    }
-    std::fs::write(git_dir.join("HEAD"), format!("ref: {}\n", local_ref))?;
-    info!("Switched HEAD to branch '{}'", branch_name);
-    Ok(())
-}
+// ── Commit ───────────────────────────────────────────────────────────────────
 
 fn commit_tree(
     git_dir: &Path,
@@ -662,50 +594,7 @@ fn commit_tree(
     Ok(())
 }
 
-pub fn stage_and_commit_dir(
-    git_dir: &Path,
-    work_tree: &Path,
-    dir: &str,
-    message: &str,
-    author: &str,
-    email: &str,
-) -> Result<()> {
-    let odb = open_odb(git_dir);
-    let mut index = grit_lib::index::Index::new();
-    let dir_path = work_tree.join(dir);
-    if dir_path.exists() {
-        add_directory_to_index(git_dir, &dir_path, work_tree, &mut index)?;
-    }
-    write_index(git_dir, &index).map_err(|e| anyhow::anyhow!("Failed to write index: {}", e))?;
-    let tree_oid = write_tree_from_index(&odb, &index, "")
-        .map_err(|e| anyhow::anyhow!("Failed to write tree: {}", e))?;
-    commit_tree(git_dir, &odb, tree_oid, message, author, email)
-}
-
-pub fn commit_single_dir(
-    git_dir: &Path,
-    work_tree: &Path,
-    dir_rel: &str,
-    message: &str,
-    author: &str,
-    email: &str,
-) -> Result<()> {
-    let dir_path = work_tree.join(dir_rel);
-    if !dir_path.exists() {
-        return Err(anyhow::anyhow!("Directory does not exist: {:?}", dir_path));
-    }
-
-    let odb = open_odb(git_dir);
-    let mut index = grit_lib::index::Index::new();
-    add_directory_to_index(git_dir, &dir_path, work_tree, &mut index)?;
-
-    write_index(git_dir, &index).map_err(|e| anyhow::anyhow!("Failed to write index: {}", e))?;
-
-    let tree_oid = write_tree_from_index(&odb, &index, "")
-        .map_err(|e| anyhow::anyhow!("Failed to write tree: {}", e))?;
-
-    commit_tree(git_dir, &odb, tree_oid, message, author, email)
-}
+// ── Index ────────────────────────────────────────────────────────────────────
 
 fn write_index(git_dir: &Path, index: &grit_lib::index::Index) -> Result<()> {
     let index_path = git_dir.join("index");
@@ -801,12 +690,209 @@ fn add_directory_to_index(
     Ok(())
 }
 
-#[cfg(unix)]
-fn is_exec_file(metadata: &std::fs::Metadata) -> bool {
-    metadata.permissions().mode() & 0o111 != 0
+// ── Ancestry ─────────────────────────────────────────────────────────────────
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Porcelain — high-level wrappers called by the rest of the app
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Clone a repository using token auth.
+/// Wraps `clone_repo` by creating an `AuthHttpClient` from token.
+pub fn git_clone(url: &str, dest: &Path, token: Option<&str>) -> Result<()> {
+    let http_client = AuthHttpClient::new(token.map(String::from))?;
+    clone_repo(&http_client, url, dest)
 }
 
-#[cfg(not(unix))]
-fn is_exec_file(_metadata: &std::fs::Metadata) -> bool {
-    false
+/// Fetch from origin and fast-forward the current branch.
+pub fn git_pull(git_dir: &Path, token: Option<&str>) -> Result<()> {
+    let http_client = AuthHttpClient::new(token.map(String::from))?;
+    let remote_url = read_remote_url_from_config(git_dir, "origin")?;
+
+    fetch_remote(&http_client, git_dir, &remote_url)?;
+    fast_forward_branch(git_dir)?;
+
+    // Re-checkout worktree to reflect any changes from fast-forward
+    let work_tree = git_dir
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Cannot determine worktree from git_dir"))?;
+    checkout_main_branch(git_dir, work_tree)?;
+    Ok(())
+}
+
+/// Push a local branch to the named remote.
+pub fn git_push(repo_path: &Path, remote: &str, branch: &str, token: Option<&str>) -> Result<()> {
+    let git_dir = repo_path.join(".git");
+    let http_client = AuthHttpClient::new(token.map(String::from))?;
+    let remote_url = read_remote_url_from_config(&git_dir, remote)?;
+    push_branch(&http_client, &git_dir, &remote_url, branch)
+}
+
+/// Stage files under `paths` (relative to `work_tree`) into the git index.
+pub fn git_add(git_dir: &Path, work_tree: &Path, paths: &[&str]) -> Result<()> {
+    let mut index = grit_lib::index::Index::new();
+    for path in paths {
+        let dir_path = work_tree.join(path);
+        if dir_path.exists() {
+            add_directory_to_index(git_dir, &dir_path, work_tree, &mut index)?;
+        } else {
+            warn!("Path does not exist, skipping: {:?}", dir_path);
+        }
+    }
+    write_index(git_dir, &index)?;
+    Ok(())
+}
+
+/// Commit whatever is currently staged in the index.
+/// Must be called after `git_add`.
+pub fn git_commit(
+    git_dir: &Path,
+    _work_tree: &Path,
+    msg: &str,
+    author: &str,
+    email: &str,
+) -> Result<()> {
+    let index_path = git_dir.join("index");
+    if !index_path.exists() {
+        anyhow::bail!("No index to commit — call git_add first");
+    }
+    let odb = open_odb(git_dir);
+    let index = grit_lib::index::Index::load(&index_path)
+        .map_err(|e| anyhow::anyhow!("Failed to load index: {}", e))?;
+    let tree_oid = write_tree_from_index(&odb, &index, "")
+        .map_err(|e| anyhow::anyhow!("Failed to write tree: {}", e))?;
+    commit_tree(git_dir, &odb, tree_oid, msg, author, email)
+}
+
+/// Generate a branch name for sigmacatch contribution branches.
+pub fn create_branch_name() -> String {
+    format!("sigmacatch-contrib/{}", chrono::Utc::now().format("%Y%m%d"))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Branch and HEAD management
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn validate_branch_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        anyhow::bail!("branch name must not be empty");
+    }
+    for c in ['\0', '\n', '\r', '\\', '~', '^', ':', '?', '*', '['] {
+        if name.contains(c) {
+            anyhow::bail!("branch name contains invalid character {:?}: {:?}", c, name);
+        }
+    }
+    if name.starts_with('/') || name.ends_with('/') || name.contains("//") {
+        anyhow::bail!("branch name has invalid '/' placement: {:?}", name);
+    }
+    for component in name.split('/') {
+        if component.is_empty() || component == "." || component == ".." {
+            anyhow::bail!(
+                "branch name component cannot be empty, '.' or '..': {:?}",
+                name
+            );
+        }
+        if component.ends_with(".lock") {
+            anyhow::bail!("branch name component cannot end with '.lock': {:?}", name);
+        }
+    }
+    Ok(())
+}
+
+fn find_tracking_branch(git_dir: &Path) -> Result<String> {
+    for candidate in &["master", "main"] {
+        let ref_name = format!("refs/remotes/origin/{}", candidate);
+        if read_loose_or_packed_ref(git_dir, &ref_name).is_some() {
+            return Ok((*candidate).to_string());
+        }
+    }
+    anyhow::bail!("Cannot find origin/master or origin/main for branch creation")
+}
+
+/// Create a new branch from the remote tracking branch and switch HEAD to it.
+pub fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
+    validate_branch_name(branch_name)?;
+    let full_ref_name = format!("refs/heads/{}", branch_name);
+    let ref_path = git_dir.join(&full_ref_name);
+
+    if ref_path.exists() {
+        info!(
+            "Branch '{}' already exists locally, switching to it",
+            branch_name
+        );
+        switch_head(git_dir, branch_name)?;
+        return Ok(());
+    }
+
+    let tracking = find_tracking_branch(git_dir)?;
+    let remote_ref_name = format!("refs/remotes/origin/{}", tracking);
+    let target_oid = read_loose_or_packed_ref(git_dir, &remote_ref_name).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Remote tracking ref '{}' not found after fetch",
+            remote_ref_name
+        )
+    })?;
+
+    if let Some(parent) = ref_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&ref_path, format!("{}\n", target_oid))?;
+    switch_head(git_dir, branch_name)?;
+
+    info!(
+        "Created and switched to branch '{}' from 'origin/{}'",
+        branch_name, tracking
+    );
+    Ok(())
+}
+
+/// Switch HEAD to an existing local branch.
+pub fn switch_head(git_dir: &Path, branch_name: &str) -> Result<()> {
+    validate_branch_name(branch_name)?;
+    let local_ref = format!("refs/heads/{}", branch_name);
+    if read_loose_or_packed_ref(git_dir, &local_ref).is_none() {
+        anyhow::bail!(
+            "Cannot switch to branch '{}' — ref '{}' not found locally",
+            branch_name,
+            local_ref
+        );
+    }
+    std::fs::write(git_dir.join("HEAD"), format!("ref: {}\n", local_ref))?;
+    info!("Switched HEAD to branch '{}'", branch_name);
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Internal helpers
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// After a fetch, update the local branch ref to match its remote tracking ref.
+fn fast_forward_branch(git_dir: &Path) -> Result<()> {
+    let head_content = std::fs::read_to_string(git_dir.join("HEAD"))?;
+    let head_content = head_content.trim();
+
+    let Some(ref_str) = head_content.strip_prefix("ref: ") else {
+        warn!("Detached HEAD — cannot fast-forward");
+        return Ok(());
+    };
+
+    let ref_name = ref_str.trim();
+    let branch_name = ref_name.strip_prefix("refs/heads/").unwrap_or(ref_name);
+
+    let remote_ref = format!("refs/remotes/origin/{}", branch_name);
+    let Some(remote_oid) = read_loose_or_packed_ref(git_dir, &remote_ref) else {
+        warn!(
+            "Remote tracking ref '{}' not found — cannot fast-forward",
+            remote_ref
+        );
+        return Ok(());
+    };
+
+    let local_path = git_dir.join(ref_name);
+    std::fs::write(&local_path, format!("{}\n", remote_oid))?;
+    info!(
+        "Fast-forwarded '{}' to {}",
+        branch_name,
+        &remote_oid[..12.min(remote_oid.len())]
+    );
+    Ok(())
 }
