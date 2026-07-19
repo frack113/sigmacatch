@@ -1,0 +1,53 @@
+channel_to_service:
+  WinEventLog:Application: application
+  WinEventLog:MSExchange Management: msexchange-management
+  WinEventLog:Microsoft-IIS-Configuration/Operational: iis-configuration
+  WinEventLog:Microsoft-ServiceBus-Client/Admin: servicebus-client
+  WinEventLog:Microsoft-ServiceBus-Client/Operational: servicebus-client
+  WinEventLog:Microsoft-Windows-AppLocker/EXE and DLL: applocker
+  WinEventLog:Microsoft-Windows-AppLocker/MSI and Script: applocker
+  WinEventLog:Microsoft-Windows-AppLocker/Packaged app-Deployment: applocker
+  WinEventLog:Microsoft-Windows-AppLocker/Packaged app-Execution: applocker
+  WinEventLog:Microsoft-Windows-AppModel-Runtime/Admin: appmodel-runtime
+  WinEventLog:Microsoft-Windows-AppXDeploymentServer/Operational: appxdeployment-server
+  WinEventLog:Microsoft-Windows-Application-Experience/Program-Compatibility-Assistant: application-experience
+  WinEventLog:Microsoft-Windows-Application-Experience/Program-Telemetry: application-experience
+  WinEventLog:Microsoft-Windows-AppxPackaging/Operational: appxpackaging-om
+  WinEventLog:Microsoft-Windows-BitLocker/BitLocker Management: bitlocker
+  WinEventLog:Microsoft-Windows-Bits-Client/Operational: bits-client
+  WinEventLog:Microsoft-Windows-CAPI2/Operational: capi2
+  WinEventLog:Microsoft-Windows-CertificateServicesClient-Lifecycle-System/Operational: certificateservicesclient-lifecycle-system
+  WinEventLog:Microsoft-Windows-CodeIntegrity/Operational: codeintegrity-operational
+  WinEventLog:Microsoft-Windows-DHCP-Server/Operational: dhcp
+  WinEventLog:Microsoft-Windows-DNS Client Events/Operational: dns-client
+  WinEventLog:Microsoft-Windows-Diagnosis-Scripted/Operational: diagnosis-scripted
+  WinEventLog:Microsoft-Windows-Hyper-V-Worker: hyper-v-worker
+  WinEventLog:Microsoft-Windows-Kernel-EventTracing: kernel-event-tracing
+  WinEventLog:Microsoft-Windows-Kernel-ShimEngine/Diagnostic: kernel-shimengine
+  WinEventLog:Microsoft-Windows-Kernel-ShimEngine/Operational: kernel-shimengine
+  WinEventLog:Microsoft-Windows-LDAP-Client/Debug: ldap
+  WinEventLog:Microsoft-Windows-LSA/Operational: lsa-server
+  WinEventLog:Microsoft-Windows-NTLM/Operational: ntlm
+  WinEventLog:Microsoft-Windows-Ntfs/Operational: ntfs
+  WinEventLog:Microsoft-Windows-PowerShell/Operational: powershell
+  WinEventLog:Microsoft-Windows-PrintService/Admin: printservice-admin
+  WinEventLog:Microsoft-Windows-PrintService/Operational: printservice-operational
+  WinEventLog:Microsoft-Windows-SENSE/Operational: sense
+  WinEventLog:Microsoft-Windows-SMBServer/Connectivity: smbserver-connectivity
+  WinEventLog:Microsoft-Windows-Security-Mitigations/Kernel Mode: security-mitigations
+  WinEventLog:Microsoft-Windows-Security-Mitigations/User Mode: security-mitigations
+  WinEventLog:Microsoft-Windows-Shell-Core/Operational: shell-core
+  WinEventLog:Microsoft-Windows-SmbClient/Connectivity: smbclient-connectivity
+  WinEventLog:Microsoft-Windows-SmbClient/Security: smbclient-security
+  WinEventLog:Microsoft-Windows-Sysmon/Operational: sysmon
+  WinEventLog:Microsoft-Windows-TaskScheduler/Operational: taskscheduler
+  WinEventLog:Microsoft-Windows-TerminalServices-LocalSessionManager/Operational: terminalservices-localsessionmanager
+  WinEventLog:Microsoft-Windows-VHDMP/Operational: vhdmp
+  WinEventLog:Microsoft-Windows-WMI-Activity/Operational: wmi
+  WinEventLog:Microsoft-Windows-Windows Defender/Operational: windefend
+  WinEventLog:Microsoft-Windows-Windows Firewall With Advanced Security/Firewall: firewall-as
+  WinEventLog:OpenSSH/Operational: openssh
+  WinEventLog:PowerShellCore/Operational: powershell
+  WinEventLog:Security: security
+  WinEventLog:System: system
+  WinEventLog:Windows PowerShell: powershell-classic

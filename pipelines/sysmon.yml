@@ -1,0 +1,370 @@
+name: sigmacatch-windows
+priority: 10
+transformations:
+- id: evt_clipboard_change_24
+  type: add_condition
+  conditions:
+    EventID: 24
+  rule_conditions:
+  - type: logsource
+    category: clipboard_change
+    product: windows
+    service: sysmon
+- id: evt_create_remote_thread_8
+  type: add_condition
+  conditions:
+    EventID: 8
+  rule_conditions:
+  - type: logsource
+    category: create_remote_thread
+    product: windows
+    service: sysmon
+- id: evt_create_stream_hash_15
+  type: add_condition
+  conditions:
+    EventID: 15
+  rule_conditions:
+  - type: logsource
+    category: create_stream_hash
+    product: windows
+    service: sysmon
+- id: evt_dns_query_22
+  type: add_condition
+  conditions:
+    EventID: 22
+  rule_conditions:
+  - type: logsource
+    category: dns_query
+    product: windows
+    service: sysmon
+- id: evt_driver_load_6
+  type: add_condition
+  conditions:
+    EventID: 6
+  rule_conditions:
+  - type: logsource
+    category: driver_load
+    product: windows
+    service: sysmon
+- id: evt_file_block_executable_27
+  type: add_condition
+  conditions:
+    EventID: 27
+  rule_conditions:
+  - type: logsource
+    category: file_block_executable
+    product: windows
+    service: sysmon
+- id: evt_file_block_shredding_28
+  type: add_condition
+  conditions:
+    EventID: 28
+  rule_conditions:
+  - type: logsource
+    category: file_block_shredding
+    product: windows
+    service: sysmon
+- id: evt_file_change_2
+  type: add_condition
+  conditions:
+    EventID: 2
+  rule_conditions:
+  - type: logsource
+    category: file_change
+    product: windows
+    service: sysmon
+- id: evt_file_delete_23
+  type: add_condition
+  conditions:
+    EventID: 23
+  rule_conditions:
+  - type: logsource
+    category: file_delete
+    product: windows
+    service: sysmon
+- id: evt_file_delete_detected_26
+  type: add_condition
+  conditions:
+    EventID: 26
+  rule_conditions:
+  - type: logsource
+    category: file_delete_detected
+    product: windows
+    service: sysmon
+- id: evt_file_event_11
+  type: add_condition
+  conditions:
+    EventID: 11
+  rule_conditions:
+  - type: logsource
+    category: file_event
+    product: windows
+    service: sysmon
+- id: evt_file_executable_detected_29
+  type: add_condition
+  conditions:
+    EventID: 29
+  rule_conditions:
+  - type: logsource
+    category: file_executable_detected
+    product: windows
+    service: sysmon
+- id: evt_image_load_7
+  type: add_condition
+  conditions:
+    EventID: 7
+  rule_conditions:
+  - type: logsource
+    category: image_load
+    product: windows
+    service: sysmon
+- id: evt_network_connection_3
+  type: add_condition
+  conditions:
+    EventID: 3
+  rule_conditions:
+  - type: logsource
+    category: network_connection
+    product: windows
+    service: sysmon
+- id: evt_pipe_created_17
+  type: add_condition
+  conditions:
+    EventID: 17
+  rule_conditions:
+  - type: logsource
+    category: pipe_created
+    product: windows
+    service: sysmon
+- id: evt_pipe_created_18
+  type: add_condition
+  conditions:
+    EventID: 18
+  rule_conditions:
+  - type: logsource
+    category: pipe_created
+    product: windows
+    service: sysmon
+- id: evt_process_access_10
+  type: add_condition
+  conditions:
+    EventID: 10
+  rule_conditions:
+  - type: logsource
+    category: process_access
+    product: windows
+    service: sysmon
+- id: evt_process_creation_1
+  type: add_condition
+  conditions:
+    EventID: 1
+  rule_conditions:
+  - type: logsource
+    category: process_creation
+    product: windows
+    service: sysmon
+- id: evt_process_creation_4688
+  type: add_condition
+  conditions:
+    EventID: 4688
+  rule_conditions:
+  - type: logsource
+    category: process_creation
+    product: windows
+    service: security
+- id: evt_process_tampering_25
+  type: add_condition
+  conditions:
+    EventID: 25
+  rule_conditions:
+  - type: logsource
+    category: process_tampering
+    product: windows
+    service: sysmon
+- id: evt_process_termination_5
+  type: add_condition
+  conditions:
+    EventID: 5
+  rule_conditions:
+  - type: logsource
+    category: process_termination
+    product: windows
+    service: sysmon
+- id: evt_ps_classic_provider_start_600
+  type: add_condition
+  conditions:
+    EventID: 600
+  rule_conditions:
+  - type: logsource
+    category: ps_classic_provider_start
+    product: windows
+    service: powershell-classic
+- id: evt_ps_classic_script_800
+  type: add_condition
+  conditions:
+    EventID: 800
+  rule_conditions:
+  - type: logsource
+    category: ps_classic_script
+    product: windows
+    service: powershell-classic
+- id: evt_ps_classic_start_400
+  type: add_condition
+  conditions:
+    EventID: 400
+  rule_conditions:
+  - type: logsource
+    category: ps_classic_start
+    product: windows
+    service: powershell-classic
+- id: evt_ps_module_4103
+  type: add_condition
+  conditions:
+    EventID: 4103
+  rule_conditions:
+  - type: logsource
+    category: ps_module
+    product: windows
+    service: powershell
+- id: evt_ps_script_4104
+  type: add_condition
+  conditions:
+    EventID: 4104
+  rule_conditions:
+  - type: logsource
+    category: ps_script
+    product: windows
+    service: powershell
+- id: evt_raw_access_thread_9
+  type: add_condition
+  conditions:
+    EventID: 9
+  rule_conditions:
+  - type: logsource
+    category: raw_access_thread
+    product: windows
+    service: sysmon
+- id: evt_registry_add_12
+  type: add_condition
+  conditions:
+    EventID: 12
+  rule_conditions:
+  - type: logsource
+    category: registry_add
+    product: windows
+    service: sysmon
+- id: evt_registry_delete_12
+  type: add_condition
+  conditions:
+    EventID: 12
+  rule_conditions:
+  - type: logsource
+    category: registry_delete
+    product: windows
+    service: sysmon
+- id: evt_registry_event_12
+  type: add_condition
+  conditions:
+    EventID: 12
+  rule_conditions:
+  - type: logsource
+    category: registry_event
+    product: windows
+    service: sysmon
+- id: evt_registry_event_13
+  type: add_condition
+  conditions:
+    EventID: 13
+  rule_conditions:
+  - type: logsource
+    category: registry_event
+    product: windows
+    service: sysmon
+- id: evt_registry_event_14
+  type: add_condition
+  conditions:
+    EventID: 14
+  rule_conditions:
+  - type: logsource
+    category: registry_event
+    product: windows
+    service: sysmon
+- id: evt_registry_rename_14
+  type: add_condition
+  conditions:
+    EventID: 14
+  rule_conditions:
+  - type: logsource
+    category: registry_rename
+    product: windows
+    service: sysmon
+- id: evt_registry_set_13
+  type: add_condition
+  conditions:
+    EventID: 13
+  rule_conditions:
+  - type: logsource
+    category: registry_set
+    product: windows
+    service: sysmon
+- id: evt_sysmon_error_255
+  type: add_condition
+  conditions:
+    EventID: 255
+  rule_conditions:
+  - type: logsource
+    category: sysmon_error
+    product: windows
+    service: sysmon
+- id: evt_sysmon_status_4
+  type: add_condition
+  conditions:
+    EventID: 4
+  rule_conditions:
+  - type: logsource
+    category: sysmon_status
+    product: windows
+    service: sysmon
+- id: evt_sysmon_status_16
+  type: add_condition
+  conditions:
+    EventID: 16
+  rule_conditions:
+  - type: logsource
+    category: sysmon_status
+    product: windows
+    service: sysmon
+- id: evt_wmi_event_19
+  type: add_condition
+  conditions:
+    EventID: 19
+  rule_conditions:
+  - type: logsource
+    category: wmi_event
+    product: windows
+    service: sysmon
+- id: evt_wmi_event_20
+  type: add_condition
+  conditions:
+    EventID: 20
+  rule_conditions:
+  - type: logsource
+    category: wmi_event
+    product: windows
+    service: sysmon
+- id: evt_wmi_event_21
+  type: add_condition
+  conditions:
+    EventID: 21
+  rule_conditions:
+  - type: logsource
+    category: wmi_event
+    product: windows
+    service: sysmon
+- id: sysmon_logsource
+  type: change_logsource
+  rule_conditions:
+  - type: logsource
+    product: windows
+  product: windows
+  service: sysmon
