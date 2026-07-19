@@ -228,10 +228,7 @@ fn extract_source_channels(thor: &serde_yaml::Value) -> Result<Vec<SourceChannel
             continue;
         }
 
-        by_service
-            .entry(service)
-            .or_default()
-            .extend(channels);
+        by_service.entry(service).or_default().extend(channels);
     }
 
     Ok(by_service
@@ -431,7 +428,10 @@ async fn main() -> Result<()> {
     for sc in &source_channels {
         total_channels += sc.channels.len();
     }
-    println!("Tier 2: Found {} service → channel mappings", source_channels.len());
+    println!(
+        "Tier 2: Found {} service → channel mappings",
+        source_channels.len()
+    );
     println!("Tier 2: Total unique channels: {}", total_channels);
 
     // Write Tier 1

@@ -483,6 +483,7 @@ async fn stage_4_work_winevt(
             provider,
             event_id_num,
             custom_map,
+            Some(&event_json),
         );
         let matches = engine.evaluate_event_with_logsource(&event_json, &logsource);
 
