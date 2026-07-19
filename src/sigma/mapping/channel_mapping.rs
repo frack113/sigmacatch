@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 /// Embedded channel_mapping.yml from pipeline_generator output.
 /// Maps WinEventLog channel names to Sigma services.
-static CHANNEL_MAPPING_YAML: &str = include_str!("channel_mapping.yml");
+static CHANNEL_MAPPING_YAML: &str = include_str!("../../../src/pipelines/channel_mapping.yml");
 
 #[derive(Deserialize)]
 struct ChannelMappingFile {
