@@ -269,8 +269,6 @@ async fn dry_run_git(config: &Config) -> Result<()> {
 
 async fn stage_0_init() -> Result<()> {
     std::fs::create_dir_all("sigma")?;
-    std::fs::create_dir_all("regression_data")?;
-    std::fs::create_dir_all("regression_data/rules")?;
     std::fs::create_dir_all("logs")?;
     info!("directory structure ready");
     Ok(())
@@ -323,16 +321,10 @@ async fn stage_1_update_repo(
 }
 
 fn stage_2_existing_rules(_config: &Config) -> HashSet<String> {
-    let rules_dir = PathBuf::from("regression_data").join("rules");
     let sigma_regression_dir = PathBuf::from("sigma").join("regression_data");
 
-    let skip_set = regression::build_skip_set(
-        &[
-            ("regression_data/rules", &rules_dir),
-            ("sigma_regression", &sigma_regression_dir),
-        ],
-        64,
-    );
+    let skip_set =
+        regression::build_skip_set(&[("sigma/regression_data", &sigma_regression_dir)], 64);
 
     let existing_rules = skip_set.into_rule_ids();
 
