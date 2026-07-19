@@ -320,7 +320,6 @@ fn resolve_logsource(
     provider: &str,
     event_id: u32,
     _custom_map: &HashMap<String, String>,
-    _event_data: Option<&Value>,
 ) -> LogSource {
     let lookup_service =
         |ch: &str| -> Option<String> { CHANNEL_TO_SERVICE.get(ch).map(|s| (*s).to_string()) };
@@ -613,13 +612,7 @@ fn validate_triplet(
         .unwrap_or("0");
     let event_id: u32 = event_id_str.parse().unwrap_or(0);
 
-    let event_logsource = resolve_logsource(
-        channel,
-        provider,
-        event_id,
-        &HashMap::new(),
-        Some(&first_event),
-    );
+    let event_logsource = resolve_logsource(channel, provider, event_id, &HashMap::new());
 
     let mut engine = Engine::new();
 

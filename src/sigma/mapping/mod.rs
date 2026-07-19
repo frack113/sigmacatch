@@ -7,7 +7,6 @@ pub mod taxonomy;
 
 use channel_mapping::CHANNEL_TO_SERVICE_MAP;
 use rsigma_parser::LogSource;
-use serde_json::Value;
 use std::collections::HashMap;
 use taxonomy::{CHANNEL_EVENT_TO_CATEGORY, CHANNEL_EVENT_TO_SUBCATEGORY, PROVIDER_TO_SERVICE};
 use tracing::debug;
@@ -26,7 +25,6 @@ pub fn resolve_logsource(
     provider: &str,
     event_id: u32,
     custom_map: &HashMap<String, String>,
-    _event_data: Option<&Value>,
 ) -> LogSource {
     // 1. Custom override (highest priority)
     if let Some(service) = custom_map.get(channel) {
@@ -222,7 +220,6 @@ mod tests {
             "",
             1,
             &HashMap::new(),
-            None,
         );
         assert_eq!(ls.product.as_deref(), Some("windows"));
         assert_eq!(ls.service.as_deref(), Some("sysmon"));
@@ -231,20 +228,14 @@ mod tests {
 
     #[test]
     fn test_resolve_channel_unknown_provider_fallback() {
-        let ls = resolve_logsource("", "Microsoft-Windows-Sysmon", 1, &HashMap::new(), None);
+        let ls = resolve_logsource("", "Microsoft-Windows-Sysmon", 1, &HashMap::new());
         assert_eq!(ls.product.as_deref(), Some("windows"));
         assert_eq!(ls.service.as_deref(), Some("sysmon"));
     }
 
     #[test]
     fn test_resolve_both_unknown() {
-        let ls = resolve_logsource(
-            "UnknownChannel",
-            "UnknownProvider",
-            0,
-            &HashMap::new(),
-            None,
-        );
+        let ls = resolve_logsource("UnknownChannel", "UnknownProvider", 0, &HashMap::new());
         assert_eq!(ls.product.as_deref(), Some("windows"));
         assert_eq!(ls.service, None);
         assert_eq!(ls.category, None);
@@ -338,14 +329,14 @@ mod tests {
     fn test_resolve_logsource_with_custom_override() {
         let mut custom = HashMap::new();
         custom.insert("Security".to_string(), "custom_security".to_string());
-        let ls = resolve_logsource("Security", "", 4624, &custom, None);
+        let ls = resolve_logsource("Security", "", 4624, &custom);
         assert_eq!(ls.service.as_deref(), Some("custom_security"));
     }
 
     #[test]
     fn test_resolve_logsource_custom_fallback_to_static() {
         let custom = HashMap::new();
-        let ls = resolve_logsource("Microsoft-Windows-Sysmon/Operational", "", 1, &custom, None);
+        let ls = resolve_logsource("Microsoft-Windows-Sysmon/Operational", "", 1, &custom);
         assert_eq!(ls.service.as_deref(), Some("sysmon"));
     }
 
@@ -367,20 +358,14 @@ mod tests {
     #[test]
     fn test_resolve_logsource_custom_category() {
         let custom = HashMap::new();
-        let ls = resolve_logsource("Security", "", 4624, &custom, None);
+        let ls = resolve_logsource("Security", "", 4624, &custom);
         assert_eq!(ls.category.as_deref(), Some("login"));
     }
 
     #[test]
     fn test_resolve_logsource_provider_fallback_no_custom() {
         let custom = HashMap::new();
-        let ls = resolve_logsource(
-            "UnknownChannel",
-            "Microsoft-Windows-Sysmon",
-            1,
-            &custom,
-            None,
-        );
+        let ls = resolve_logsource("UnknownChannel", "Microsoft-Windows-Sysmon", 1, &custom);
         assert_eq!(ls.service.as_deref(), Some("sysmon"));
         assert_eq!(ls.category, None);
     }
@@ -395,7 +380,6 @@ mod tests {
                     "",
                     $eid,
                     &HashMap::new(),
-                    None,
                 );
                 assert_eq!(ls.product.as_deref(), Some("windows"));
                 assert_eq!(ls.service.as_deref(), Some("sysmon"));
@@ -457,26 +441,14 @@ mod tests {
     // ─── PowerShellCore category tests ─────────────────────────────────
     #[test]
     fn test_powershellcore_4103_ps_module() {
-        let ls = resolve_logsource(
-            "PowerShellCore/Operational",
-            "",
-            4103,
-            &HashMap::new(),
-            None,
-        );
+        let ls = resolve_logsource("PowerShellCore/Operational", "", 4103, &HashMap::new());
         assert_eq!(ls.service.as_deref(), Some("powershell"));
         assert_eq!(ls.category.as_deref(), Some("ps_module"));
     }
 
     #[test]
     fn test_powershellcore_4104_ps_script() {
-        let ls = resolve_logsource(
-            "PowerShellCore/Operational",
-            "",
-            4104,
-            &HashMap::new(),
-            None,
-        );
+        let ls = resolve_logsource("PowerShellCore/Operational", "", 4104, &HashMap::new());
         assert_eq!(ls.service.as_deref(), Some("powershell"));
         assert_eq!(ls.category.as_deref(), Some("ps_script"));
     }
@@ -484,28 +456,28 @@ mod tests {
     // ─── Security category tests ───────────────────────────────────────
     #[test]
     fn test_security_4672_privilege_use() {
-        let ls = resolve_logsource("Security", "", 4672, &HashMap::new(), None);
+        let ls = resolve_logsource("Security", "", 4672, &HashMap::new());
         assert_eq!(ls.service.as_deref(), Some("security"));
         assert_eq!(ls.category.as_deref(), Some("privilege_use"));
     }
 
     #[test]
     fn test_security_4625_login_failure() {
-        let ls = resolve_logsource("Security", "", 4625, &HashMap::new(), None);
+        let ls = resolve_logsource("Security", "", 4625, &HashMap::new());
         assert_eq!(ls.service.as_deref(), Some("security"));
         assert_eq!(ls.category.as_deref(), Some("login_failure"));
     }
 
     #[test]
     fn test_security_4634_logoff() {
-        let ls = resolve_logsource("Security", "", 4634, &HashMap::new(), None);
+        let ls = resolve_logsource("Security", "", 4634, &HashMap::new());
         assert_eq!(ls.service.as_deref(), Some("security"));
         assert_eq!(ls.category.as_deref(), Some("logoff"));
     }
 
     #[test]
     fn test_security_4647_logoff() {
-        let ls = resolve_logsource("Security", "", 4647, &HashMap::new(), None);
+        let ls = resolve_logsource("Security", "", 4647, &HashMap::new());
         assert_eq!(ls.service.as_deref(), Some("security"));
         assert_eq!(ls.category.as_deref(), Some("logoff"));
     }
@@ -513,13 +485,7 @@ mod tests {
     // ─── Kernel-File provider (file_access / file_rename) ──────────────
     #[test]
     fn test_kernel_file_provider_fallback() {
-        let ls = resolve_logsource(
-            "",
-            "Microsoft-Windows-Kernel-File",
-            0,
-            &HashMap::new(),
-            None,
-        );
+        let ls = resolve_logsource("", "Microsoft-Windows-Kernel-File", 0, &HashMap::new());
         assert_eq!(ls.product.as_deref(), Some("windows"));
         assert_eq!(ls.service.as_deref(), Some("file"));
         assert_eq!(ls.category, None); // provider fallback only resolves service, not category
