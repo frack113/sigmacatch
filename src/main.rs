@@ -367,6 +367,40 @@ fn stage_3_load_rules(
     Ok((engine, rules_count as u64))
 }
 
+/// Delete regression directories under `base` that contain generated files
+/// (.json/.evtx) but no `info.yml`. Such directories are partial artifacts from
+/// a prior run that aborted before committing; they are never part of the skip
+/// set and must not be carried into the current run's commit.
+fn clean_partial_regressions(base: &std::path::Path) {
+    if !base.exists() {
+        return;
+    }
+    let walk = match std::fs::read_dir(base) {
+        Ok(w) => w,
+        Err(_) => return,
+    };
+    for entry in walk.flatten() {
+        let sub = entry.path();
+        if !sub.is_dir() {
+            continue;
+        }
+        for inner in std::fs::read_dir(&sub).into_iter().flatten().flatten() {
+            let dir = inner.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let has_info = dir.join("info.yml").exists();
+            if !has_info {
+                if let Err(e) = std::fs::remove_dir_all(&dir) {
+                    warn!("Failed to clean partial regression dir {:?}: {}", dir, e);
+                } else {
+                    info!("Cleaned partial regression dir {:?}", dir);
+                }
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn stage_4_work_winevt(
     channels: Vec<String>,
@@ -380,6 +414,12 @@ async fn stage_4_work_winevt(
     sigma_repo_path: &std::path::Path,
 ) -> Result<()> {
     let output_base = sigma_repo_path.join("regression_data");
+
+    // Remove partial regression artifacts left by a crashed/aborted prior run
+    // (a directory tree under regression_data/ that has generated files but no
+    // info.yml). These are not part of the skip set and would otherwise be
+    // re-staged and committed, polluting the branch.
+    clean_partial_regressions(&output_base);
 
     info!("Starting winevt collection on channels: {:?}", channels);
 
@@ -543,7 +583,7 @@ async fn stage_4_work_winevt(
             "Generating regression data for {} rules…",
             to_generate.len()
         );
-        let mut committed_rules: Vec<(String, String)> = Vec::new();
+        let mut committed_rules: Vec<(String, String, Option<String>)> = Vec::new();
         for (reg, rule_path_opt, rule_id) in &to_generate {
             let _gen_span = info_span!("generate", rule_id = %rule_id).entered();
             match reg.generate() {
@@ -554,25 +594,39 @@ async fn stage_4_work_winevt(
                     let rel_dir = reg
                         .sigma_rel_dir()
                         .unwrap_or_else(|| format!("regression_data/rules/{}", rule_id));
-                    committed_rules.push((rule_id.clone(), rel_dir.clone()));
+                    let rule_yaml_rel = rule_path_opt
+                        .as_ref()
+                        .and_then(|p| p.strip_prefix(sigma_repo_path).ok())
+                        .and_then(|p| p.to_str())
+                        .map(|s| s.to_string().replace('\\', "/"));
+                    committed_rules.push((rule_id.clone(), rel_dir.clone(), rule_yaml_rel));
                     let tests_path = format!("{}/info.yml", rel_dir.replace('\\', "/"));
                     if let Some(rule_yaml_path) = rule_path_opt {
                         if let Ok(content) = std::fs::read(rule_yaml_path) {
-                            let needs_newline =
-                                !content.is_empty() && *content.last().unwrap() != b'\n';
-                            let prefix = if needs_newline { "\n" } else { "" };
-                            let line = format!("{}regression_tests_path: {}\n", prefix, tests_path);
-                            if let Err(e) = std::fs::OpenOptions::new()
-                                .append(true)
-                                .open(rule_yaml_path)
-                                .and_then(|mut file| {
-                                    std::io::Write::write_all(&mut file, line.as_bytes())
+                            let text = String::from_utf8_lossy(&content).to_string();
+                            let expected_line = format!("regression_tests_path: {}", tests_path);
+                            let has_correct = text.lines().any(|l| l.trim() == expected_line);
+                            // Drop any stale regression_tests_path line (e.g. an older run
+                            // wrote it with a `sigma/` prefix that the CI cannot resolve).
+                            let filtered: Vec<&str> = text
+                                .lines()
+                                .filter(|l| {
+                                    !l.trim().starts_with("regression_tests_path:")
+                                        || l.trim() == expected_line
                                 })
-                            {
-                                warn!(
-                                    "Failed to append regression_tests_path to {:?}: {}",
-                                    rule_yaml_path, e
-                                );
+                                .collect();
+                            if !has_correct {
+                                let mut new_text = filtered.join("\n");
+                                if !new_text.is_empty() && !new_text.ends_with('\n') {
+                                    new_text.push('\n');
+                                }
+                                new_text.push_str(&format!("{}\n", expected_line));
+                                if let Err(e) = std::fs::write(rule_yaml_path, new_text) {
+                                    warn!(
+                                        "Failed to update regression_tests_path in {:?}: {}",
+                                        rule_yaml_path, e
+                                    );
+                                }
                             }
                         }
                     }

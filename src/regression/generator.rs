@@ -80,12 +80,9 @@ impl RegressionData {
     }
 
     pub fn sigma_rel_dir(&self) -> Option<String> {
-        self.rule_rel_path.as_ref().and_then(|rel_path| {
-            Some(format!(
-                "{}/{}",
-                self.output_path.file_name()?.to_string_lossy(),
-                rel_path.display().to_string().replace('\\', "/")
-            ))
+        self.rule_rel_path.as_ref().map(|rel_path| {
+            let rel = rel_path.display().to_string().replace('\\', "/");
+            format!("regression_data/{}", rel)
         })
     }
 
@@ -121,10 +118,10 @@ impl RegressionData {
 
         let sigma_evtx_path = if first.is_some() {
             let evtx_name = format!("{}.evtx", rule_id);
-            rule_dir
-                .join(&evtx_name)
-                .to_string_lossy()
-                .replace('\\', "/")
+            // Relative to the repository root (no `sigma/` prefix), matching
+            // the SigmaHQ regression_tests_path convention. The CI runner
+            // resolves this path from the repo root.
+            format!("{}/{}", self.sigma_rel_dir().unwrap_or_default(), evtx_name)
         } else {
             String::new()
         };
@@ -134,7 +131,7 @@ impl RegressionData {
             .as_deref()
             .unwrap_or("Sigma Regression Generator");
 
-        let description = self.description.as_deref().unwrap_or("");
+        let description = self.description.as_deref().unwrap_or("N/A");
 
         let provider = first
             .map(|e| e.provider.as_str())

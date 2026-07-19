@@ -333,6 +333,17 @@ pub fn push_branch(
     if outcome.results.is_empty() {
         warn!("No refs were pushed");
     } else {
+        for result in &outcome.results {
+            if result.status.is_error() {
+                anyhow::bail!(
+                    "Push of '{}' rejected by remote: {:?}. \
+                     The remote branch has diverged (likely another machine or a prior \
+                     partial push). Delete the branch on GitHub and re-run, or rename it.",
+                    branch_name,
+                    result.status
+                );
+            }
+        }
         info!("Pushed branch '{}'", branch_name);
     }
     Ok(())
@@ -596,6 +607,40 @@ fn commit_tree(
 
 // ── Index ────────────────────────────────────────────────────────────────────
 
+/// Look up the file mode recorded in the parent (HEAD) tree for `rel_path`
+/// (forward-slash separated). Returns `None` if the path does not exist in HEAD.
+fn lookup_parent_mode(git_dir: &Path, rel_path: &str) -> Option<u32> {
+    let odb = open_odb(git_dir);
+    let head_oid = resolve_head(git_dir).ok()?;
+    let head_obj = odb.read(&head_oid).ok()?;
+    let commit = grit_lib::objects::parse_commit(&head_obj.data).ok()?;
+    let mut tree_oid = commit.tree;
+    let mut prefix = String::new();
+    for component in rel_path.split('/') {
+        let obj = odb.read(&tree_oid).ok()?;
+        let entries = grit_lib::objects::parse_tree(&obj.data).ok()?;
+        let entry = entries.into_iter().find(|e| {
+            std::str::from_utf8(&e.name)
+                .map(|n| n == component)
+                .unwrap_or(false)
+        })?;
+        if prefix.is_empty() {
+            prefix = component.to_string();
+        } else {
+            prefix = format!("{}/{}", prefix, component);
+        }
+        if prefix == rel_path {
+            return Some(entry.mode);
+        }
+        if entry.mode == 0o040000 {
+            tree_oid = entry.oid;
+        } else {
+            return None;
+        }
+    }
+    None
+}
+
 fn add_tree_to_index(
     odb: &Odb,
     tree_oid: ObjectId,
@@ -659,13 +704,82 @@ fn write_index(git_dir: &Path, index: &grit_lib::index::Index) -> Result<()> {
     Ok(())
 }
 
+fn add_file_to_index(
+    git_dir: &Path,
+    file_path: &Path,
+    base: &Path,
+    index: &mut grit_lib::index::Index,
+) -> Result<()> {
+    let odb = open_odb(git_dir);
+    let contents = std::fs::read(file_path)?;
+    let blob_oid = odb
+        .write(grit_lib::objects::ObjectKind::Blob, &contents)
+        .map_err(|e| anyhow::anyhow!("Failed to write blob: {}", e))?;
+
+    let metadata = file_path.metadata()?;
+    let is_exec = is_exec_file(&metadata);
+    let mut mode = if is_exec { 0o100755 } else { 0o100644 };
+
+    let rel = file_path
+        .strip_prefix(base)
+        .map_err(|_| anyhow::anyhow!("Path not under base"))?;
+    let path_str = rel.to_string_lossy().replace('\\', "/");
+    let path_bytes = path_str.as_bytes().to_vec();
+
+    // Preserve the mode recorded in the parent tree for this path. On Windows
+    // (non-unix) is_exec_file is always false, so a path that upstream stores
+    // at mode 100755 (e.g. .evtx files checked into SigmaHQ) would otherwise be
+    // re-staged as 100644 and produce spurious mode-change diffs. Reuse the
+    // parent mode when the path already exists in HEAD.
+    if let Some(parent_mode) = lookup_parent_mode(git_dir, &path_str) {
+        mode = parent_mode;
+    }
+    #[cfg(unix)]
+    let entry = grit_lib::index::IndexEntry {
+        ctime_sec: 0,
+        ctime_nsec: 0,
+        mtime_sec: 0,
+        mtime_nsec: 0,
+        dev: metadata.dev() as u32,
+        ino: metadata.ino() as u32,
+        mode,
+        uid: metadata.uid(),
+        gid: metadata.gid(),
+        size: metadata.len() as u32,
+        oid: blob_oid,
+        flags: (path_bytes.len().min(0xfff)) as u16,
+        flags_extended: None,
+        path: path_bytes,
+        base_index_pos: 0,
+    };
+    #[cfg(not(unix))]
+    let entry = grit_lib::index::IndexEntry {
+        ctime_sec: 0,
+        ctime_nsec: 0,
+        mtime_sec: 0,
+        mtime_nsec: 0,
+        dev: 0,
+        ino: 0,
+        mode,
+        uid: 0,
+        gid: 0,
+        size: 0,
+        oid: blob_oid,
+        flags: (path_bytes.len().min(0xfff)) as u16,
+        flags_extended: None,
+        path: path_bytes,
+        base_index_pos: 0,
+    };
+    index.add_or_replace(entry);
+    Ok(())
+}
+
 fn add_directory_to_index(
     git_dir: &Path,
     dir: &Path,
     base: &Path,
     index: &mut grit_lib::index::Index,
 ) -> Result<()> {
-    let odb = open_odb(git_dir);
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -676,67 +790,10 @@ fn add_directory_to_index(
         if file_type.is_symlink() {
             continue;
         }
-        let rel = path
-            .strip_prefix(base)
-            .map_err(|_| anyhow::anyhow!("Path not under base"))?;
-
         if file_type.is_dir() {
             add_directory_to_index(git_dir, &path, base, index)?;
         } else if file_type.is_file() {
-            let contents = std::fs::read(&path)?;
-            let blob_oid = odb
-                .write(grit_lib::objects::ObjectKind::Blob, &contents)
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "Failed to write blob {}: {}",
-                        rel.to_string_lossy().replace('\\', "/"),
-                        e
-                    )
-                })?;
-
-            let metadata = path.metadata()?;
-            let is_exec = is_exec_file(&metadata);
-            let mode = if is_exec { 0o100755 } else { 0o100644 };
-
-            let path_str = rel.to_string_lossy().replace('\\', "/");
-            let path_bytes = path_str.as_bytes().to_vec();
-            #[cfg(unix)]
-            let entry = grit_lib::index::IndexEntry {
-                ctime_sec: 0,
-                ctime_nsec: 0,
-                mtime_sec: 0,
-                mtime_nsec: 0,
-                dev: metadata.dev() as u32,
-                ino: metadata.ino() as u32,
-                mode,
-                uid: metadata.uid(),
-                gid: metadata.gid(),
-                size: metadata.len() as u32,
-                oid: blob_oid,
-                flags: (path_bytes.len().min(0xfff)) as u16,
-                flags_extended: None,
-                path: path_bytes,
-                base_index_pos: 0,
-            };
-            #[cfg(not(unix))]
-            let entry = grit_lib::index::IndexEntry {
-                ctime_sec: 0,
-                ctime_nsec: 0,
-                mtime_sec: 0,
-                mtime_nsec: 0,
-                dev: 0,
-                ino: 0,
-                mode,
-                uid: 0,
-                gid: 0,
-                size: 0,
-                oid: blob_oid,
-                flags: (path_bytes.len().min(0xfff)) as u16,
-                flags_extended: None,
-                path: path_bytes,
-                base_index_pos: 0,
-            };
-            index.add_or_replace(entry);
+            add_file_to_index(git_dir, &path, base, index)?;
         }
     }
     Ok(())
@@ -795,11 +852,15 @@ pub fn git_push(repo_path: &Path, remote: &str, branch: &str, token: Option<&str
 pub fn git_add(git_dir: &Path, work_tree: &Path, paths: &[&str]) -> Result<()> {
     let mut index = grit_lib::index::Index::new();
     for path in paths {
-        let dir_path = work_tree.join(path);
-        if dir_path.exists() {
-            add_directory_to_index(git_dir, &dir_path, work_tree, &mut index)?;
-        } else {
-            warn!("Path does not exist, skipping: {:?}", dir_path);
+        let full_path = work_tree.join(path);
+        if !full_path.exists() {
+            warn!("Path does not exist, skipping: {:?}", full_path);
+            continue;
+        }
+        if full_path.is_dir() {
+            add_directory_to_index(git_dir, &full_path, work_tree, &mut index)?;
+        } else if full_path.is_file() {
+            add_file_to_index(git_dir, &full_path, work_tree, &mut index)?;
         }
     }
     write_index(git_dir, &index)?;
@@ -842,6 +903,12 @@ pub fn git_commit(
 
     let tree_oid = write_tree_from_index(&odb, &merged_index, "")
         .map_err(|e| anyhow::anyhow!("Failed to write tree: {}", e))?;
+
+    // Nothing changed relative to HEAD — skip creating an empty commit.
+    if tree_oid == parent_commit.tree {
+        anyhow::bail!("Nothing to commit — the staged changes match the current HEAD tree");
+    }
+
     commit_tree(git_dir, &odb, tree_oid, msg, author, email)
 }
 
@@ -884,21 +951,23 @@ fn validate_branch_name(name: &str) -> Result<()> {
 }
 
 /// Create a new branch from the current HEAD and switch to it.
+/// If the branch already exists locally, it is deleted and recreated from the
+/// current HEAD so that a stale/dirty local branch (e.g. from a previous run
+/// whose push failed) cannot diverge from the freshly pulled upstream.
 pub fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
     validate_branch_name(branch_name)?;
     let full_ref_name = format!("refs/heads/{}", branch_name);
     let ref_path = git_dir.join(&full_ref_name);
 
+    let head_oid = resolve_head(git_dir)?;
+
     if ref_path.exists() {
         info!(
-            "Branch '{}' already exists locally, switching to it",
-            branch_name
+            "Branch '{}' already exists locally, recreating from HEAD ({})",
+            branch_name, head_oid
         );
-        switch_head(git_dir, branch_name)?;
-        return Ok(());
+        std::fs::remove_file(&ref_path)?;
     }
-
-    let head_oid = resolve_head(git_dir)?;
 
     if let Some(parent) = ref_path.parent() {
         std::fs::create_dir_all(parent)?;
