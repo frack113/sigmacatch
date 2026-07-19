@@ -18,7 +18,7 @@ use sigma::loader::{find_rules_dirs, SigmaRepo};
 use sigma::mapping::build_logsource_to_channels;
 use sigma::mapping::custom::load_custom_mapping;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::signal;
@@ -293,13 +293,80 @@ async fn stage_1_update_repo(
         sigma_repo = sigma_repo.with_token(config.github_token.trim().to_string());
     }
 
+    // Switch to master/main before pulling, so the contrib branch is created
+    // from the latest tracking branch, not from a stale contrib branch.
+    let sigma_path = PathBuf::from("sigma");
+    let git_dir = sigma_path.join(".git");
+    if git_dir.exists() {
+        switch_to_tracking_branch(&git_dir)?;
+    }
+
     sigma_repo.init().await?;
 
     if let Some(fc) = fork_config {
-        contrib::branch::create_branch(&sigma_repo.path, &fc.branch_name)?;
+        git::create_branch(&sigma_repo.path, &fc.branch_name)?;
     }
 
     info!("Sigma repository ready");
+    Ok(())
+}
+
+/// If HEAD points to a contrib branch, switch to the tracking branch
+/// (master/main) so the next pull fast-forwards the right ref.
+fn switch_to_tracking_branch(git_dir: &Path) -> Result<()> {
+    use std::io::Read;
+
+    let head_path = git_dir.join("HEAD");
+    let mut buf = String::new();
+    std::fs::File::open(&head_path)?.read_to_string(&mut buf)?;
+    let head = buf.trim();
+
+    // Already on a tracking branch — nothing to do
+    let Some(ref_str) = head.strip_prefix("ref: refs/heads/") else {
+        return Ok(());
+    };
+    let current_branch = ref_str.trim();
+    if current_branch == "master" || current_branch == "main" {
+        return Ok(());
+    }
+
+    // Try to switch to master or main
+    for candidate in &["master", "main"] {
+        let local_ref = format!("refs/heads/{}", candidate);
+        let ref_path = git_dir.join(&local_ref);
+        if ref_path.exists() {
+            git::switch_head(git_dir, candidate)?;
+            info!(
+                "Switched from '{}' to '{}' before pull",
+                current_branch, candidate
+            );
+            return Ok(());
+        }
+    }
+
+    // No local master/main — create one from the remote tracking ref
+    for candidate in &["master", "main"] {
+        let remote_ref = format!("refs/remotes/origin/{}", candidate);
+        if let Some(oid_str) = git::read_loose_or_packed_ref(git_dir, &remote_ref) {
+            let local_ref = format!("refs/heads/{}", candidate);
+            let ref_path = git_dir.join(&local_ref);
+            if let Some(parent) = ref_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&ref_path, format!("{}\n", oid_str))?;
+            git::switch_head(git_dir, candidate)?;
+            info!(
+                "Created local '{}' from '{}' and switched",
+                candidate, remote_ref
+            );
+            return Ok(());
+        }
+    }
+
+    warn!(
+        "Could not find any tracking branch — staying on '{}'",
+        current_branch
+    );
     Ok(())
 }
 
@@ -815,7 +882,7 @@ async fn main() -> Result<()> {
         "Sigmacatch started for {} <{}>",
         config.author, config.email
     );
-    let branch_name = contrib::branch::create_branch_name();
+    let branch_name = git::create_branch_name();
     info!("Branch name: {}", branch_name);
     let fork_config = contrib::fork::detect_fork(&config.author, &branch_name).await?;
 
@@ -843,11 +910,15 @@ async fn main() -> Result<()> {
     loop {
         if !running.load(Ordering::Relaxed) {
             info!("Interrupted, shutting down");
-            if let Err(e) = contrib::branch::push_branch(
+            if let Err(e) = git::git_push(
                 std::path::Path::new("sigma"),
-                &fork_config.branch_name,
                 "origin",
-                &config.github_token,
+                &fork_config.branch_name,
+                if !config.github_token.trim().is_empty() {
+                    Some(config.github_token.trim())
+                } else {
+                    None
+                },
             ) {
                 warn!("Failed to push branch: {}", e);
             } else {
@@ -876,11 +947,15 @@ async fn main() -> Result<()> {
             .await?;
         }
 
-        if let Err(e) = contrib::branch::push_branch(
+        if let Err(e) = git::git_push(
             std::path::Path::new("sigma"),
-            &fork_config.branch_name,
             "origin",
-            &config.github_token,
+            &fork_config.branch_name,
+            if !config.github_token.trim().is_empty() {
+                Some(config.github_token.trim())
+            } else {
+                None
+            },
         ) {
             warn!("Failed to push branch: {}", e);
         } else {

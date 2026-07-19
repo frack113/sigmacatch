@@ -357,7 +357,7 @@ fn read_packed_ref(git_dir: &Path, ref_name: &str) -> Option<String> {
     None
 }
 
-pub(crate) fn read_loose_or_packed_ref(git_dir: &Path, ref_name: &str) -> Option<String> {
+pub fn read_loose_or_packed_ref(git_dir: &Path, ref_name: &str) -> Option<String> {
     let loose_path = git_dir.join(ref_name);
     match std::fs::read_to_string(&loose_path) {
         Ok(content) => {
