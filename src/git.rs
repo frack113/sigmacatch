@@ -596,6 +596,58 @@ fn commit_tree(
 
 // ── Index ────────────────────────────────────────────────────────────────────
 
+fn add_tree_to_index(
+    odb: &Odb,
+    tree_oid: ObjectId,
+    prefix: &str,
+    index: &mut grit_lib::index::Index,
+) -> Result<()> {
+    let obj = odb
+        .read(&tree_oid)
+        .map_err(|e| anyhow::anyhow!("Failed to read tree {}: {}", tree_oid, e))?;
+    let entries = grit_lib::objects::parse_tree(&obj.data)
+        .map_err(|e| anyhow::anyhow!("Failed to parse tree: {}", e))?;
+    for entry in entries {
+        let Ok(name) = std::str::from_utf8(&entry.name) else {
+            warn!("Skipping tree entry with invalid UTF-8 name");
+            continue;
+        };
+        let rel_path = if prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}/{}", prefix, name)
+        };
+        if entry.mode == 0o040000 {
+            add_tree_to_index(odb, entry.oid, &rel_path, index)?;
+        } else {
+            let mode = match entry.mode {
+                0o100755 => 0o100755,
+                0o120000 => 0o120000,
+                _ => 0o100644,
+            };
+            let path_bytes = rel_path.as_bytes().to_vec();
+            index.add_or_replace(grit_lib::index::IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode,
+                uid: 0,
+                gid: 0,
+                size: 0,
+                oid: entry.oid,
+                flags: (path_bytes.len().min(0xfff)) as u16,
+                flags_extended: None,
+                path: path_bytes,
+                base_index_pos: 0,
+            });
+        }
+    }
+    Ok(())
+}
+
 fn write_index(git_dir: &Path, index: &grit_lib::index::Index) -> Result<()> {
     let index_path = git_dir.join("index");
     if let Some(parent) = index_path.parent() {
@@ -756,6 +808,8 @@ pub fn git_add(git_dir: &Path, work_tree: &Path, paths: &[&str]) -> Result<()> {
 
 /// Commit whatever is currently staged in the index.
 /// Must be called after `git_add`.
+/// Merges the parent commit's tree with staged changes so existing
+/// files are preserved in the new commit (not just the staged ones).
 pub fn git_commit(
     git_dir: &Path,
     _work_tree: &Path,
@@ -768,9 +822,25 @@ pub fn git_commit(
         anyhow::bail!("No index to commit — call git_add first");
     }
     let odb = open_odb(git_dir);
-    let index = grit_lib::index::Index::load(&index_path)
+
+    let staged_index = grit_lib::index::Index::load(&index_path)
         .map_err(|e| anyhow::anyhow!("Failed to load index: {}", e))?;
-    let tree_oid = write_tree_from_index(&odb, &index, "")
+
+    // Merge parent tree entries + staged changes into a single tree
+    let parent_oid = resolve_head(git_dir)?;
+    let parent_obj = odb
+        .read(&parent_oid)
+        .map_err(|e| anyhow::anyhow!("Failed to read HEAD commit: {}", e))?;
+    let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)
+        .map_err(|e| anyhow::anyhow!("Failed to parse HEAD commit: {}", e))?;
+
+    let mut merged_index = grit_lib::index::Index::new();
+    add_tree_to_index(&odb, parent_commit.tree, "", &mut merged_index)?;
+    for entry in &staged_index.entries {
+        merged_index.add_or_replace(grit_lib::index::IndexEntry { ..entry.clone() });
+    }
+
+    let tree_oid = write_tree_from_index(&odb, &merged_index, "")
         .map_err(|e| anyhow::anyhow!("Failed to write tree: {}", e))?;
     commit_tree(git_dir, &odb, tree_oid, msg, author, email)
 }
