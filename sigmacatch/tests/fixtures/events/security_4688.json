@@ -1,0 +1,30 @@
+{
+  "Event": {
+    "System": {
+      "Provider": {"Name": "Microsoft-Windows-Security-Auditing"},
+      "EventID": "4688",
+      "Version": "2",
+      "Level": "0",
+      "Task": "13312",
+      "Opcode": "0",
+      "Keywords": "0x8020000000000000",
+      "TimeCreated": {"@SystemTime": "2024-01-15T10:00:00.1234567Z"},
+      "EventRecordID": "12345",
+      "Execution": {"ProcessID": "4", "ThreadID": "72"},
+      "Channel": "Security",
+      "Computer": "DESKTOP-TEST",
+      "Security": null
+    },
+    "EventData": {
+      "SubjectUserSid": "S-1-5-18",
+      "SubjectUserName": "SYSTEM",
+      "SubjectDomainName": "NT AUTHORITY",
+      "SubjectLogonId": "0x3e7",
+      "NewProcessId": "0xabc",
+      "NewProcessName": "C:\\Windows\\System32\\cmd.exe",
+      "TokenElevationType": "%%1936",
+      "ProcessId": "0x1f4",
+      "CommandLine": "cmd.exe /c whoami"
+    }
+  }
+}

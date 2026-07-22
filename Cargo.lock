@@ -2094,6 +2094,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "sigma-core"
+version = "0.1.0"
+dependencies = [
+ "phf",
+ "rsigma-parser",
+ "serde",
+ "tempfile",
+ "tracing",
+ "yaml_serde",
+]
+
+[[package]]
 name = "sigmacatch"
 version = "0.2.0"
 dependencies = [
@@ -2105,17 +2117,18 @@ dependencies = [
  "phf",
  "rayon",
  "reqwest",
- "roxmltree",
  "rsigma-eval",
  "rsigma-parser",
  "serde",
  "serde_json",
+ "sigma-core",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
  "uuid",
+ "win-evt-core",
  "windows",
  "yaml_serde",
 ]
@@ -2887,6 +2900,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf85cb06032201fa7c6f829d7db5a7e5aa45bcc0655327713065f6f0576731bf"
 dependencies = [
  "rustls-pki-types",
+]
+
+[[package]]
+name = "win-evt-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "roxmltree",
+ "serde_json",
 ]
 
 [[package]]

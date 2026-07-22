@@ -1,0 +1,34 @@
+{
+  "Event": {
+    "System": {
+      "Provider": {"Name": "Microsoft-Windows-Security-Auditing"},
+      "EventID": "4625",
+      "Version": "0",
+      "Level": "0",
+      "Task": "12544",
+      "Opcode": "0",
+      "Keywords": "0x8010000000000000",
+      "TimeCreated": {"@SystemTime": "2024-01-15T11:00:00.0000000Z"},
+      "EventRecordID": "67890",
+      "Execution": {"ProcessID": "4", "ThreadID": "100"},
+      "Channel": "Security",
+      "Computer": "DESKTOP-TEST",
+      "Security": null
+    },
+    "EventData": {
+      "SubjectUserSid": "S-1-5-18",
+      "SubjectUserName": "SYSTEM",
+      "SubjectDomainName": "NT AUTHORITY",
+      "SubjectLogonId": "0x3e7",
+      "TargetUserSid": "S-1-0-0",
+      "TargetUserName": "admin",
+      "TargetDomainName": "DESKTOP-TEST",
+      "Status": "0xc000006d",
+      "FailureReason": "%%2313",
+      "SubStatus": "0xc000006a",
+      "LogonType": "3",
+      "LogonProcessName": "NtLmSsp",
+      "WorkstationName": "DESKTOP-TEST"
+    }
+  }
+}
