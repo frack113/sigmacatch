@@ -18,10 +18,10 @@ path = "src/bin/evtx_check.rs"
 
 [dependencies]
 # Crate workspace — mapping + engine
-sigma-core = { path = "../crates/sigma-core" }
+sigma-mapping = { path = "../crates/sigma-mapping" }
 
-# Crate workspace — Event Log core
-win-evt-core = { path = "../crates/win-evt-core" }
+# Crate workspace — Event Log XML parser
+winevt-xml = { path = "../crates/winevt-xml" }
 
 # Git (100% Rust, no git binary required)
 grit-lib = "0.5"

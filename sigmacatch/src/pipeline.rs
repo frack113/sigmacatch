@@ -6,7 +6,7 @@ use rsigma_parser::LogSource;
 use serde_json::Value;
 use std::path::PathBuf;
 
-pub use win_evt_core::types::WinevtEvent;
+pub use winevt_xml::types::WinevtEvent;
 
 #[derive(Debug, Clone)]
 pub struct Alert {

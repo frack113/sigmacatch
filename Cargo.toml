@@ -5,8 +5,8 @@
 resolver = "2"
 members = [
     "sigmacatch",
-    "crates/win-evt-core",
-    "crates/sigma-core",
+    "crates/winevt-xml",
+    "crates/sigma-mapping",
 ]
 
 [profile.release]

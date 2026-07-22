@@ -239,7 +239,7 @@ fn render_event_to_xml(event_handle: EVT_HANDLE) -> Result<Option<WinevtEvent>> 
     let xml_str = xml_str.trim().to_string();
 
     if let Some(json) = parse_event_xml(&xml_str) {
-        let event = win_evt_core::types::WinevtEvent::from_json(json, xml_str);
+        let event = winevt_xml::types::WinevtEvent::from_json(json, xml_str);
         Ok(Some(event))
     } else {
         Ok(Some(WinevtEvent {
@@ -253,7 +253,7 @@ fn render_event_to_xml(event_handle: EVT_HANDLE) -> Result<Option<WinevtEvent>> 
 
 #[cfg(windows)]
 fn parse_event_xml(xml: &str) -> Option<serde_json::Value> {
-    win_evt_core::xml_parser::parse_winevt_xml(xml).ok()
+    winevt_xml::xml_parser::parse_winevt_xml(xml).ok()
 }
 
-pub use win_evt_core::types::WinevtEvent;
+pub use winevt_xml::types::WinevtEvent;

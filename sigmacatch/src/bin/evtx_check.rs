@@ -24,8 +24,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use rsigma_parser::parse_sigma_yaml;
-use sigma_core::mapping::resolve_logsource;
-use win_evt_core::xml_parser::validate_event_id;
+use sigma_mapping::mapping::resolve_logsource;
+use winevt_xml::xml_parser::validate_event_id;
 
 // ─── Regression Data Scanner ──────────────────────────────────────────────────
 

@@ -2094,7 +2094,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
-name = "sigma-core"
+name = "sigma-mapping"
 version = "0.1.0"
 dependencies = [
  "phf",
@@ -2121,15 +2121,15 @@ dependencies = [
  "rsigma-parser",
  "serde",
  "serde_json",
- "sigma-core",
+ "sigma-mapping",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
  "uuid",
- "win-evt-core",
  "windows",
+ "winevt-xml",
  "yaml_serde",
 ]
 
@@ -2903,15 +2903,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "win-evt-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "roxmltree",
- "serde_json",
-]
-
-[[package]]
 name = "winapi-util"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3111,6 +3102,15 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
+
+[[package]]
+name = "winevt-xml"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "roxmltree",
+ "serde_json",
+]
 
 [[package]]
 name = "winstructs"

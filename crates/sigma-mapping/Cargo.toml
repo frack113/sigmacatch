@@ -1,5 +1,5 @@
 [package]
-name = "sigma-core"
+name = "sigma-mapping"
 version = "0.1.0"
 edition = "2021"
 
