@@ -15,17 +15,13 @@
 
 use anyhow::{anyhow, Result};
 use evtx::EvtxParser;
-use rsigma_eval::event::JsonEvent;
-use rsigma_eval::pipeline::parse_pipeline;
-use rsigma_eval::Engine;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rsigma_parser::parse_sigma_yaml;
+use detection_engine::DetectionEngine;
 use sigma_mapping::mapping::resolve_logsource;
-use winevt_xml::xml_parser::validate_event_id;
 
 // ─── Regression Data Scanner ──────────────────────────────────────────────────
 
@@ -220,17 +216,9 @@ impl ValidationStats {
     }
 }
 
-fn build_engine(sigma_dir: &Path) -> Result<Engine> {
-    let mut engine = Engine::new();
-
-    let flatten_yaml = include_str!("../pipelines/flatten_winevt.yml");
-    let flatten_pipeline =
-        parse_pipeline(flatten_yaml).expect("flatten_winevt pipeline YAML is valid");
-    engine.add_pipeline(flatten_pipeline);
-
-    let windows_yaml = include_str!("../pipelines/windows.yml");
-    let windows_pipeline = parse_pipeline(windows_yaml).expect("windows pipeline YAML is valid");
-    engine.add_pipeline(windows_pipeline);
+fn build_engine(sigma_dir: &Path) -> Result<DetectionEngine> {
+    let mut engine = DetectionEngine::new();
+    engine.load_default_pipelines();
 
     let rules_dirs = [
         sigma_dir.join("rules"),
@@ -240,63 +228,17 @@ fn build_engine(sigma_dir: &Path) -> Result<Engine> {
     ];
 
     for rules_dir in &rules_dirs {
-        if !rules_dir.exists() {
-            continue;
-        }
-        for entry in
-            fs::read_dir(rules_dir).map_err(|e| anyhow!("Cannot read {:?}: {}", rules_dir, e))?
-        {
-            let entry = entry.map_err(|e| anyhow!("Read error: {}", e))?;
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            collect_rules_recursive(&path, &mut engine)
-                .map_err(|e| anyhow!("Failed to collect rules from {:?}: {}", path, e))?;
+        if rules_dir.exists() {
+            engine.load_rules_from_dir(rules_dir)?;
         }
     }
 
     Ok(engine)
 }
 
-fn collect_rules_recursive(dir: &Path, engine: &mut Engine) -> Result<()> {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(()),
-    };
-
-    for entry in entries.flatten() {
-        let ep = entry.path();
-        if ep.is_file() {
-            if let Some(ext) = ep.extension().and_then(|e| e.to_str()) {
-                if ext == "yml" || ext == "yaml" {
-                    if let Some(name) = ep.file_name().and_then(|n| n.to_str()) {
-                        if name == "index.yml" {
-                            continue;
-                        }
-                    }
-                    let content = fs::read_to_string(&ep)
-                        .map_err(|e| anyhow!("Failed to read {:?}: {}", ep, e))?;
-                    let collection = parse_sigma_yaml(&content)
-                        .map_err(|e| anyhow!("Failed to parse {:?}: {}", ep, e))?;
-                    if !collection.rules.is_empty() {
-                        engine.add_collection(&collection).map_err(|e| {
-                            anyhow!("Engine add_collection failed for {:?}: {}", ep, e)
-                        })?;
-                    }
-                }
-            }
-        } else if ep.is_dir() {
-            collect_rules_recursive(&ep, engine)?;
-        }
-    }
-
-    Ok(())
-}
-
 fn validate_triplet(
     triplet: &RegressionTriplet,
-    engine: &Engine,
+    engine: &DetectionEngine,
     expected_rule_id: &str,
     expected_match_count: usize,
 ) -> Result<(String, bool, String)> {
@@ -332,7 +274,7 @@ fn validate_triplet(
         ));
     }
 
-    let first_event = validate_event_id(&events[0]);
+    let first_event = &events[0];
 
     // Derive logsource from nested JSON paths
     let event_obj = first_event
@@ -355,8 +297,7 @@ fn validate_triplet(
 
     let event_logsource = resolve_logsource(channel, provider, event_id, &HashMap::new());
 
-    let json_event = JsonEvent::borrow(&first_event);
-    let matches = engine.evaluate_with_logsource(&json_event, &event_logsource);
+    let matches = engine.evaluate(first_event, &event_logsource);
 
     // Check that the expected rule is in the matched rules
     let matched_rule_ids: Vec<&str> = matches
@@ -452,7 +393,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    println!("Engine ready.\n");
+    println!("Engine ready — {} rule(s) loaded.\n", engine.rule_count());
 
     println!("Running validation...");
     println!();

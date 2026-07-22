@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[package]
+name = "detection-engine"
+version = "0.1.0"
+edition = "2021"
+description = "Thin wrapper around rsigma-eval for loading pipelines and rules, then evaluating events"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+rsigma-eval = "0.20"
+rsigma-parser = "0.20"
+serde_json = "1.0"
+tracing = "0.1"
+winevt-xml = { path = "../winevt-xml" }

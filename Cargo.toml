@@ -8,6 +8,7 @@ members = [
     "crates/winevt-xml",
     "crates/sigma-mapping",
     "crates/sigma-regression",
+    "crates/detection-engine",
 ]
 
 [profile.release]

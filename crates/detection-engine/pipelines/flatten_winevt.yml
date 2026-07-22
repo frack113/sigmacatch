@@ -1,0 +1,137 @@
+# Flatten Winevt pipeline.
+#
+# Maps flat SigmaHQ field names to nested JSON paths in RULES.
+# Engine receives nested JSON, rules use dotted paths after this pipeline.
+#
+# Priority: 0 (runs BEFORE windows.yml at priority 5)
+#
+# Without this pipeline: rules use "EventID: 1"
+# With this pipeline: rules use "Event.System.EventID: 1"
+
+name: flatten_winevt
+priority: 0
+
+transformations:
+  # System fields
+  - id: sys_system_fields
+    type: field_name_mapping
+    mapping:
+      EventID: Event.System.EventID
+      ProviderName: Event.System.Provider.#attributes.Name
+      Channel: Event.System.Channel
+      TimeCreated: Event.System.TimeCreated.#attributes.SystemTime
+      EventRecordID: Event.System.EventRecordID
+      Computer: Event.System.Computer
+      UserID: Event.System.Security.#attributes.UserID
+    rule_conditions:
+      - type: logsource
+        product: windows
+
+  # Execution fields
+  - id: sys_execution_fields
+    type: field_name_mapping
+    mapping:
+      ProcessID: Event.System.Execution.#attributes.ProcessID
+      ThreadID: Event.System.Execution.#attributes.ThreadID
+    rule_conditions:
+      - type: logsource
+        product: windows
+
+  # Common EventData fields — individual mapping for bare field names
+  - id: common_eventdata_fields
+    type: field_name_mapping
+    mapping:
+      CommandLine: Event.EventData.CommandLine
+      Image: Event.EventData.Image
+      ParentImage: Event.EventData.ParentImage
+      TargetImage: Event.EventData.TargetImage
+      SourceImage: Event.EventData.SourceImage
+      OriginalFileName: Event.EventData.OriginalFileName
+      Description: Event.EventData.Description
+      PackageSourceUri: Event.EventData.PackageSourceUri
+      HasFullTrust: Event.EventData.HasFullTrust
+      Provider: Event.EventData.Provider
+      Query: Event.EventData.Query
+      User: Event.EventData.User
+      PossibleCause: Event.EventData.PossibleCause
+      SourceProcessId: Event.EventData.SourceProcessId
+      TargetProcessId: Event.EventData.TargetProcessId
+      PipeName: Event.EventData.PipeName
+      DestinationIp: Event.EventData.DestinationIp
+      SourceIp: Event.EventData.SourceIp
+      DestinationPort: Event.EventData.DestinationPort
+      SourcePort: Event.EventData.SourcePort
+      DestinationHostname: Event.EventData.DestinationHostname
+      Protocol: Event.EventData.Protocol
+      UserAgent: Event.EventData.UserAgent
+      NewProcessName: Event.EventData.NewProcessName
+      NewProcessId: Event.EventData.NewProcessId
+      ParentProcessId: Event.EventData.ParentProcessId
+      SubjectUserSid: Event.EventData.SubjectUserSid
+      SubjectUserName: Event.EventData.SubjectUserName
+      SubjectDomainName: Event.EventData.SubjectDomainName
+      SubjectLogonId: Event.EventData.SubjectLogonId
+      TargetUserName: Event.EventData.TargetUserName
+      TargetDomainName: Event.EventData.TargetDomainName
+      TargetLogonId: Event.EventData.TargetLogonId
+      LogonType: Event.EventData.LogonType
+      WorkstationName: Event.EventData.WorkstationName
+      IpAddress: Event.EventData.IpAddress
+      IpPort: Event.EventData.IpPort
+      ServiceName: Event.EventData.ServiceName
+      ServiceType: Event.EventData.ServiceType
+      ImagePath: Event.EventData.ImagePath
+      FileVersion: Event.EventData.FileVersion
+      Product: Event.EventData.Product
+      Company: Event.EventData.Company
+      Hash: Event.EventData.Hash
+      Hashes: Event.EventData.Hashes
+      Imphash: Event.EventData.Imphash
+      IntegrityLevel: Event.EventData.IntegrityLevel
+      CurrentDirectory: Event.EventData.CurrentDirectory
+      ParentCommandLine: Event.EventData.ParentCommandLine
+      RuleName: Event.EventData.RuleName
+      UtcTime: Event.EventData.UtcTime
+      ProcessGuid: Event.EventData.ProcessGuid
+      ProcessId: Event.EventData.ProcessId
+      SourceUser: Event.EventData.SourceUser
+      TargetUser: Event.EventData.TargetUser
+      SourceHostname: Event.EventData.SourceHostname
+      TargetHostname: Event.EventData.TargetHostname
+      CallTrace: Event.EventData.CallTrace
+      GrantedAccess: Event.EventData.GrantedAccess
+      CallerProcessId: Event.EventData.CallerProcessId
+      CallerProcessName: Event.EventData.CallerProcessName
+      Initiated: Event.EventData.Initiated
+      EventType: Event.EventData.EventType
+      ObjectValueName: Event.EventData.ObjectValueName
+      ObjectType: Event.EventData.ObjectType
+      TargetFilename: Event.EventData.TargetFilename
+      TargetObject: Event.EventData.TargetObject
+      Details: Event.EventData.Details
+      NewName: Event.EventData.NewName
+      ImageLoaded: Event.EventData.ImageLoaded
+      Signature: Event.EventData.Signature
+      SignatureStatus: Event.EventData.SignatureStatus
+      Signed: Event.EventData.Signed
+    rule_conditions:
+      - type: logsource
+        product: windows
+
+  # EventData fields — bulk prefix mapping for EventData.* convention
+  - id: sys_eventdata_prefix
+    type: field_name_prefix_mapping
+    mapping:
+      EventData.: Event.EventData.
+    rule_conditions:
+      - type: logsource
+        product: windows
+
+  # UserData fields — 1-level nesting
+  - id: sys_userdata_fields
+    type: field_name_prefix_mapping
+    mapping:
+      UserData.: Event.UserData.
+    rule_conditions:
+      - type: logsource
+        product: windows

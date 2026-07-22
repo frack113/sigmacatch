@@ -469,6 +469,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
 
 [[package]]
+name = "detection-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rsigma-eval",
+ "rsigma-parser",
+ "serde_json",
+ "tracing",
+ "winevt-xml",
+]
+
+[[package]]
 name = "dialoguer"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2190,6 +2202,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "detection-engine",
  "dunce",
  "evtx",
  "grit-lib",
