@@ -3,18 +3,24 @@
 
 # Sigmacatch
 
+> ⚠️ **WIP** — this project is under active development. APIs, config, and output formats may change without notice. Not production-ready.
+
 Capture real Windows events via the **Windows Event Log API** (`winevt`), match them against [SigmaHQ](https://github.com/SigmaHQ/sigma) rules, and output structured regression data ready for SigmaHQ PRs.
 
 ## What it does
 
 ```
-SigmaHQ rules (auto-cloned)
+SigmaHQ rules (auto-cloned via grit-lib)
     ↓
-WinevtCollector (live Windows events)
+Load rules → filter Windows → apply pipeline
     ↓
-Sigma engine evaluation (every event against all rules)
+WinevtCollector (live Windows events via EvtQueryW)
     ↓
-regression_data/<rule>/
+Sigma engine evaluates every event against all rules
+    ↓
+Aggregate matches by rule_id → generate regression triplet
+    ↓
+regression_data/<rule_rel_path>/
     ├── <rule_id>.json    ← flat event (Sigma keys)
     ├── <rule_id>.evtx    ← valid EVTX (via EvtExportLog) or .xml fallback
     └── info.yml          ← SigmaHQ-compatible metadata
@@ -78,15 +84,24 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 | Regression data format | [EN](docs/en/regression-data-format.md) | [FR](docs/fr/regression-data-format.md) |
 | Nice-to-have | [EN](docs/en/nice-to-have.md) | [FR](docs/fr/nice-to-have.md) |
 
+## Workspace
+
+The project is a cargo workspace of 4 crates:
+
+| Crate | Purpose |
+|---|---|
+| `sigmacatch` | Binary + pipeline, all orchestration |
+| `winevt-xml` | `WinevtEvent` struct + XML/JSON parsing |
+| `sigma-mapping` | LogSource resolution, taxonomy tables, custom channel mappings |
+| `sigma-regression` | SigmaHQ regression data format (`InfoYml`, `SkipSet`, triplet) |
+
 ## Built with
 
-- [rsigma-eval](https://crates.io/crates/rsigma-eval) + [rsigma-parser](https://crates.io/crates/rsigma-parser) — Sigma rule loading and evaluation (rule engine, `parse_sigma_yaml`, `add_collection`)
-- [grit-lib](https://github.com/anoma/grit-lib) — pure Rust git library for clone, fetch, push, branch, commit, checkout. No `git` CLI needed.
-- [tokio](https://crates.io/crates/tokio) — async runtime for git ops and orchestration
-- [windows](https://crates.io/crates/windows) — Windows Event Log API (`EvtQueryW`/`EvtNext`/`EvtRender`/`EvtExportLog`), cfg-gated
-- [rayon](https://crates.io/crates/rayon) — parallel rule parsing
-- [serde](https://crates.io/crates/serde) / [serde_json](https://crates.io/crates/serde_json) / [serde_yaml](https://crates.io/crates/yaml_serde) — config and event/regression serialization
-- [tracing](https://crates.io/crates/tracing) + [tracing-subscriber](https://crates.io/crates/tracing-subscriber) — logging
+- [rsigma-eval](https://crates.io/crates/rsigma-eval) + [rsigma-parser](https://crates.io/crates/rsigma-parser) — Sigma rule loading and evaluation
+- [grit-lib](https://github.com/anoma/grit-lib) — pure Rust git, no CLI needed
+- [tokio](https://crates.io/crates/tokio) — async runtime
+- [windows](https://crates.io/crates/windows) — Windows Event Log API, cfg-gated
+- [serde](https://crates.io/crates/serde) / [serde_json](https://crates.io/crates/serde_json) / [serde_yaml](https://crates.io/crates/yaml_serde) — serialization
 
 ## License
 

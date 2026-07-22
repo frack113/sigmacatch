@@ -45,8 +45,8 @@ cargo run --release --bin evtx_check ./sigma
 
 ## Comment ajouter un outil
 
-1. Créer `src/bin/<name>.rs` avec un docstring en tête
-2. Ajouter l'entrée dans `Cargo.toml` :
+1. Créer `sigmacatch/src/bin/<name>.rs` avec un docstring en tête
+2. Ajouter l'entrée dans `sigmacatch/Cargo.toml` :
 
 ```toml
 [[bin]]
