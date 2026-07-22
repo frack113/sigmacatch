@@ -49,7 +49,7 @@ tracing-appender = "0.2"
 
 # Utilitaires
 anyhow = "1.0"
-phf = { version = "0.11", features = ["macros"] }
+phf = { version = "0.14", features = ["macros"] }
 chrono = "0.4"
 rayon = "1.10"
 uuid = { version = "1", features = ["v4"] }
