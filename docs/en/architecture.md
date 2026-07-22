@@ -1,9 +1,27 @@
 # Architecture
 
-## Source tree
+## Cargo workspace
+
+The project is a cargo workspace of 4 crates:
 
 ```
-src/
+sigmacatch/
+├── Cargo.toml           # Workspace root
+├── crates/
+│   ├── winevt-xml/      # WinevtEvent struct + XML parser
+│   ├── sigma-mapping/   # LogSource resolution, custom mappings, taxonomy tables
+│   └── sigma-regression/ # InfoYml, SkipSet, triplet validation (SigmaHQ regression format)
+└── sigmacatch/          # Binary + pipeline
+    └── src/
+        ├── main.rs
+        ├── bin/evtx_check.rs
+        └── ...
+```
+
+## Source tree (`sigmacatch/src/`)
+
+```
+sigmacatch/src/
 ├── main.rs              # Binary + pipeline (run_pipeline, Stats, AggregatedRule)
 ├── config.rs            # YAML config (serde, Default) with LogConfig
 ├── logger.rs            # Two-layer tracing subscriber (stderr info + daily rolling file debug)
@@ -17,11 +35,29 @@ src/
 │   └── writer.rs        # write_evtx() via EvtExportLog API (→ valid EVTX or .xml fallback)
 ├── parser/
 │   └── mod.rs           # XmlParser (Winevt XML → flat JSON)
-└── regression/
-    ├── mod.rs           # SkipSet, build_skip_set(), validate_rule_id(), triplet validation
-    ├── generator.rs     # RegressionData: aggregate + write output
-    └── info_yml.rs      # InfoYml struct (rule_metadata, regression_tests_info)
+├── regression/
+│   ├── mod.rs           # Re-exports from sigma-regression + generator
+│   └── generator.rs     # RegressionData: aggregate + write output
+├── github/
+│   ├── mod.rs           # pub mod branch, commit, fork
+│   ├── branch.rs        # Branch management (create, push)
+│   ├── commit.rs        # Commit workflow with author/email validation
+│   └── fork.rs          # Fork detection via GitHub API
+├── pipelines/
+│   └── windows.yml      # Embedded Sigma rule transformation pipeline
+└── bin/
+    └── evtx_check.rs    # Batch validation tool
 ```
+
+## Crate dependency graph
+
+```
+sigmacatch ──┬── winevt-xml      (WinevtEvent, XML → JSON parser)
+             ├── sigma-mapping   (LogSource resolution, taxonomy)
+             └── sigma-regression (InfoYml, SkipSet, triplet)
+```
+
+All 3 crates are independent (no cross-dependency between them). `sigmacatch` depends on all 3, plus external crates (`rsigma-eval`, `grit-lib`, `tokio`, `windows`, etc.).
 
 ## Pipeline (single run, sequential)
 

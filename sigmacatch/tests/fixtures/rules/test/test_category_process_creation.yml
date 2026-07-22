@@ -1,0 +1,22 @@
+title: Test Replace.exe Category Matching
+id: 33333333-3333-3333-3333-333333333333
+status: test
+description: Test rule mirroring SigmaHQ replace.exe rule using category-based logsource
+author: Test Author
+date: 2024-01-01
+references:
+  - https://github.com/SigmaHQ/sigma
+tags:
+  - attack.execution
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith: '\replace.exe'
+  argument:
+    CommandLine|contains|windash: '-a'
+  condition: selection and argument
+falsepositives:
+  - Unknown
+level: high

@@ -1,0 +1,4 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+pub mod event_log;

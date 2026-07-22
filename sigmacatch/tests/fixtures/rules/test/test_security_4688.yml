@@ -1,0 +1,22 @@
+title: Test Security Process Creation
+id: 11111111-1111-1111-1111-111111111111
+status: test
+description: Test rule matching Security EventID 4688 (Process Creation)
+author: Test Author
+date: 2024-01-01
+references:
+  - https://attack.mitre.org/techniques/T1059/
+tags:
+  - attack.defense_evasion
+  - attack.execution
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: '4688'
+    Channel: 'Security'
+  condition: selection
+falsepositives:
+  - Unknown
+level: medium

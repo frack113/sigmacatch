@@ -45,8 +45,24 @@ Applied profile:
 - `codegen-units = 1`
 - tokio features: `rt`, `rt-multi-thread`, `macros`, `sync`, `time`, `signal`
 
+## Workspace
+
+The project is a cargo workspace with 4 crates:
+
+```bash
+# Build everything
+cargo build --workspace
+
+# Build a specific crate
+cargo build -p sigmacatch
+cargo build -p winevt-xml
+cargo build -p sigma-mapping
+cargo build -p sigma-regression
+```
+
 ## Binary
 
 | Binary | Path | Description |
 |---|---|---|
-| `sigmacatch` | `src/main.rs` | Headless only. Outputs stats as JSON to stdout, writes regression data to disk |
+| `sigmacatch` | `sigmacatch/src/main.rs` | Headless capture + evaluation + regression generation |
+| `evtx_check` | `sigmacatch/src/bin/evtx_check.rs` | Batch validation of Sigma engine against .evtx regression data |
