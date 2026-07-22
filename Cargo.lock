@@ -2106,6 +2106,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sigma-regression"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "tempfile",
+ "tracing",
+ "uuid",
+ "yaml_serde",
+]
+
+[[package]]
 name = "sigmacatch"
 version = "0.2.0"
 dependencies = [
@@ -2122,6 +2135,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sigma-mapping",
+ "sigma-regression",
  "tempfile",
  "tokio",
  "tracing",
