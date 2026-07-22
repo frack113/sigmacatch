@@ -2,11 +2,11 @@
 
 Binaires secondaires en dehors du binaire principal (`sigmacatch`), chacun avec sa propre fonction.
 
-## validate_motor
+## evtx_check
 
-**Fichier :** `src/bin/validate_motor.rs`
+**Fichier :** `sigmacatch/src/bin/evtx_check.rs`
 
-**Usage :** `cargo run --release --bin validate_motor <sigmahq_dir>`
+**Usage :** `cargo run --release --bin evtx_check <sigmahq_dir>`
 
 **Fonction :** Batch validation du moteur de détection Sigma contre les données de régression SigmaHQ.
 
@@ -38,7 +38,7 @@ Binaires secondaires en dehors du binaire principal (`sigmacatch`), chacun avec 
 ### Exemple
 
 ```bash
-cargo run --release --bin validate_motor ./sigma
+cargo run --release --bin evtx_check ./sigma
 ```
 
 ---

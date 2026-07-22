@@ -51,7 +51,7 @@ chrono = "0.4"
 rayon = "1.10"
 uuid = { version = "1", features = ["v4"] }
 
-# EVTX parsing (for validate_motor tool)
+# EVTX parsing (for evtx_check tool)
 evtx = "0.12"
 
 [dev-dependencies]
