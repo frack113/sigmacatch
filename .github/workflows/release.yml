@@ -19,7 +19,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: sigmacatch-x86_64-unknown-linux-gnu
           path: target/release/sigmacatch
@@ -35,7 +35,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --target x86_64-pc-windows-msvc
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: sigmacatch-x86_64-pc-windows-msvc
           path: target/x86_64-pc-windows-msvc/release/sigmacatch.exe
@@ -56,7 +56,7 @@ jobs:
         with:
           tool: git-cliff
       - run: git-cliff --latest -o CHANGELOG.md
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           pattern: sigmacatch-*
           path: artifacts

@@ -6,7 +6,8 @@
 
 [advisories]
 yanked = "warn"
-ignore = []
+# encoding v0.2.33 is unmaintained but required by evtx v0.12.2 (latest, no alternative)
+ignore = ["RUSTSEC-2021-0153"]
 
 [licenses]
 allow = [
