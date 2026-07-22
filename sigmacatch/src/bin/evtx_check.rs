@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! validate-motor: batch validation of the Sigma detection engine against SigmaHQ regression data.
+//! evtx_check: batch validation of the Sigma detection engine against SigmaHQ regression data.
 //!
 //! Pipeline:
 //!   1. Scan <sigmahq_dir>/regression_data for info.yml files
@@ -11,7 +11,7 @@
 //!   5. Report per-rule pass/fail + summary
 //!
 //! Usage:
-//!   cargo run --release --bin validate_motor <sigmahq_dir>
+//!   cargo run --release --bin evtx_check <sigmahq_dir>
 
 use anyhow::{anyhow, Result};
 use evtx::EvtxParser;
@@ -24,8 +24,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use rsigma_parser::parse_sigma_yaml;
-use sigmacatch::parser::winevt::validate_event_id;
-use sigmacatch::sigma::mapping::resolve_logsource;
+use sigma_core::mapping::resolve_logsource;
+use win_evt_core::xml_parser::validate_event_id;
 
 // ─── Regression Data Scanner ──────────────────────────────────────────────────
 
@@ -407,14 +407,14 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
-        eprintln!("Usage: validate_motor <sigmahq_dir>");
+        eprintln!("Usage: evtx_check <sigmahq_dir>");
         eprintln!();
         eprintln!("Scans <sigmahq_dir>/regression_data/ for info.yml triplets");
         eprintln!("evaluates each EVTX against all loaded Sigma rules, and");
         eprintln!("validates that expected rules match with correct hit counts.");
         eprintln!();
         eprintln!("Example:");
-        eprintln!("  cargo run --release --bin validate_motor ./sigma");
+        eprintln!("  cargo run --release --bin evtx_check ./sigma");
         std::process::exit(1);
     }
 
