@@ -3,6 +3,7 @@
 
 pub mod collectors;
 pub mod config;
+pub mod detection;
 pub mod evtx;
 pub mod github;
 pub mod logger;

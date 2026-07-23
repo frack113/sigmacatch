@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use detection_engine::DetectionEngine;
+use detection_engine::BareEngine;
 use sigma_mapping::mapping::resolve_logsource;
 
 // ─── Regression Data Scanner ──────────────────────────────────────────────────
@@ -216,29 +216,20 @@ impl ValidationStats {
     }
 }
 
-fn build_engine(sigma_dir: &Path) -> Result<DetectionEngine> {
-    let mut engine = DetectionEngine::new();
-    engine.load_default_pipelines();
-
-    let rules_dirs = [
+fn build_engine(sigma_dir: &Path) -> Result<BareEngine> {
+    let dirs = [
         sigma_dir.join("rules"),
         sigma_dir.join("rules-dfir"),
         sigma_dir.join("rules-emerging-threats"),
         sigma_dir.join("rules-threat-hunting"),
     ];
-
-    for rules_dir in &rules_dirs {
-        if rules_dir.exists() {
-            engine.load_rules_from_dir(rules_dir)?;
-        }
-    }
-
-    Ok(engine)
+    let refs: Vec<&Path> = dirs.iter().map(|d| d.as_path()).collect();
+    BareEngine::from_rules_dirs(&refs)
 }
 
 fn validate_triplet(
     triplet: &RegressionTriplet,
-    engine: &DetectionEngine,
+    engine: &BareEngine,
     expected_rule_id: &str,
     expected_match_count: usize,
 ) -> Result<(String, bool, String)> {

@@ -3,6 +3,7 @@
 
 use sigmacatch::collectors;
 use sigmacatch::config;
+use sigmacatch::detection::SigmaDetectionEngine;
 use sigmacatch::github;
 use sigmacatch::logger;
 use sigmacatch::parser;
@@ -16,6 +17,7 @@ use sigma::engine::SigmaEngine;
 use sigma::loader::{find_rules_dirs, SigmaRepo};
 use sigma::mapping::build_logsource_to_channels;
 use sigma::mapping::custom::load_custom_mapping;
+use sigmacatch_types::Event;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,7 +34,7 @@ struct Stats {
 
 struct AggregatedRule {
     header: rsigma_eval::result::RuleHeader,
-    events: Vec<(serde_json::Value, String, String)>,
+    events: Vec<(serde_json::Value, String)>,
     rule_path: Option<PathBuf>,
     description: Option<String>,
 }
@@ -440,8 +442,13 @@ async fn stage_4_work_winevt(
 
     drop(tx); // Drop original sender so rx will close when all tasks are done
 
+    // Create detection engine once before the event loop
+    let det_engine = SigmaDetectionEngine::new(engine, custom_map);
+
     // Process events from all channels
     while let Some(event) = rx.recv().await {
+        let _event_span =
+            info_span!("event", event_id = event.event_id, channel = %event.channel).entered();
         stats.events_processed += 1;
 
         // Use pre-parsed JSON from collector, fall back to parsing XML
@@ -459,57 +466,45 @@ async fn stage_4_work_winevt(
             },
         };
 
-        // Evaluate against all rules
-        let _eval_span = info_span!(
-            "evaluate",
-            event_id = event.event_id,
-            channel = event.channel
-        )
-        .entered();
-        let provider = event_json
-            .get("ProviderName")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let event_id_num = event_json
-            .get("EventID_num")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
-        let logsource = crate::sigma::mapping::resolve_logsource(
-            &event.channel,
-            provider,
-            event_id_num,
-            custom_map,
-        );
-        let matches = engine.evaluate_event_with_logsource(&event_json, &logsource);
+        let eval_event = Event::new(event_json.clone(), event.raw_xml.clone().into_bytes());
 
-        for match_result in &matches {
-            let rule_id = match_result
-                .header
-                .rule_id
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string());
+        // Evaluate via SigmaDetectionEngine
+        let alerts = det_engine.evaluate(&eval_event);
 
-            if retired.contains(&rule_id) {
+        for alert in &alerts {
+            let rule_id = &alert.rule_id;
+
+            if retired.contains(rule_id) {
                 continue;
             }
 
             debug!("Rule {} matched", rule_id);
-
             stats.matches_found += 1;
 
-            let entry = aggregated
-                .entry(rule_id.clone())
-                .or_insert_with(|| AggregatedRule {
-                    header: match_result.header.clone(),
-                    events: Vec::new(),
-                    rule_path: engine.rule_path(&rule_id).cloned(),
-                    description: engine.rule_description(&rule_id).map(|s| s.to_string()),
-                });
-            entry.events.push((
-                event_json.clone(),
-                event.raw_xml.clone(),
-                provider.to_string(),
-            ));
+            if !aggregated.contains_key(rule_id) {
+                let header = rsigma_eval::result::RuleHeader {
+                    rule_title: alert.rule_title.clone(),
+                    rule_id: Some(rule_id.clone()),
+                    level: None,
+                    tags: Vec::new(),
+                    custom_attributes: std::sync::Arc::new(HashMap::new()),
+                    enrichments: None,
+                };
+                aggregated.insert(
+                    rule_id.clone(),
+                    AggregatedRule {
+                        header,
+                        events: Vec::new(),
+                        rule_path: engine.rule_path(rule_id).cloned(),
+                        description: engine.rule_description(rule_id).map(|s| s.to_string()),
+                    },
+                );
+            }
+            aggregated
+                .get_mut(rule_id)
+                .expect("just inserted")
+                .events
+                .push((event_json.clone(), event.raw_xml.clone()));
         }
     }
 
@@ -550,19 +545,28 @@ async fn stage_4_work_winevt(
             continue;
         }
 
-        for (event_json, raw_xml, provider) in &agg.events {
+        for (event_json, raw_xml) in &agg.events {
             let channel = event_json
                 .get("Channel")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
             let record_id = event_json.get("EventRecordID_num").and_then(|v| v.as_u64());
+            let provider = event_json
+                .get("Event")
+                .and_then(|v| v.get("System"))
+                .and_then(|v| v.get("Provider"))
+                .and_then(|v| v.get("#attributes"))
+                .and_then(|v| v.get("Name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             reg.add_event(
                 event_json.clone(),
                 raw_xml.clone(),
                 channel,
                 record_id,
-                provider.clone(),
+                provider,
             );
         }
         let rule_id = agg
