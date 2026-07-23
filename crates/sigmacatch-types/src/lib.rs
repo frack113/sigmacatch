@@ -5,6 +5,7 @@
 //!
 //! - [`Event`] — parsed event JSON + raw source bytes (input to the detection engine)
 //! - [`Alert`] — a rule match produced by the detection engine (output)
+//! - [`RegressionHeader`] — minimal rule metadata for regression data generation
 
 use serde_json::Value;
 
@@ -62,6 +63,43 @@ impl Alert {
                 .unwrap_or_else(|| "unknown".to_string()),
             event_json: event.event_json.clone(),
             event_raw: event.event_raw.clone(),
+        }
+    }
+}
+
+/// Minimal rule metadata required for regression data generation.
+///
+/// Decouples the regression data format from `rsigma_eval::result::RuleHeader`.
+/// Evolutive — add fields here without touching rsigma internals.
+#[derive(Debug, Clone)]
+pub struct RegressionHeader {
+    pub rule_id: String,
+    pub rule_title: String,
+}
+
+impl RegressionHeader {
+    pub fn new(rule_id: String, rule_title: String) -> Self {
+        Self {
+            rule_id,
+            rule_title,
+        }
+    }
+}
+
+impl From<Alert> for RegressionHeader {
+    fn from(a: Alert) -> Self {
+        Self {
+            rule_id: a.rule_id,
+            rule_title: a.rule_title,
+        }
+    }
+}
+
+impl From<rsigma_eval::result::RuleHeader> for RegressionHeader {
+    fn from(h: rsigma_eval::result::RuleHeader) -> Self {
+        Self {
+            rule_id: h.rule_id.unwrap_or_else(|| "unknown".to_string()),
+            rule_title: h.rule_title,
         }
     }
 }

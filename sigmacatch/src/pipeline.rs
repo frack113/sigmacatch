@@ -164,7 +164,7 @@ impl Generator for RegressionGenerator {
                 .map(|s| s.to_string());
 
             let mut reg = RegressionData::new(
-                first.header.clone(),
+                sigmacatch_types::RegressionHeader::from(first.header.clone()),
                 &config.output_path,
                 rule_rel_path.as_deref(),
                 Some(&config.author),

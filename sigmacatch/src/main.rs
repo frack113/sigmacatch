@@ -33,7 +33,7 @@ struct Stats {
 }
 
 struct AggregatedRule {
-    header: rsigma_eval::result::RuleHeader,
+    header: sigmacatch_types::RegressionHeader,
     events: Vec<(serde_json::Value, String)>,
     rule_path: Option<PathBuf>,
     description: Option<String>,
@@ -482,14 +482,10 @@ async fn stage_4_work_winevt(
             stats.matches_found += 1;
 
             if !aggregated.contains_key(rule_id) {
-                let header = rsigma_eval::result::RuleHeader {
-                    rule_title: alert.rule_title.clone(),
-                    rule_id: Some(rule_id.clone()),
-                    level: None,
-                    tags: Vec::new(),
-                    custom_attributes: std::sync::Arc::new(HashMap::new()),
-                    enrichments: None,
-                };
+                let header = sigmacatch_types::RegressionHeader::new(
+                    rule_id.clone(),
+                    alert.rule_title.clone(),
+                );
                 aggregated.insert(
                     rule_id.clone(),
                     AggregatedRule {
@@ -569,11 +565,7 @@ async fn stage_4_work_winevt(
                 provider,
             );
         }
-        let rule_id = agg
-            .header
-            .rule_id
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string());
+        let rule_id = agg.header.rule_id.clone();
         to_generate.push((reg, agg.rule_path.clone(), rule_id));
     }
 
@@ -633,7 +625,7 @@ async fn stage_4_work_winevt(
                     }
                 }
                 Err(e) => {
-                    let rid = reg.header.rule_id.as_deref().unwrap_or("?");
+                    let rid = &reg.header.rule_id;
                     error!("Failed to generate regression for {}: {}", rid, e);
                 }
             }

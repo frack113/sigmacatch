@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 use anyhow::{Context, Result};
-use rsigma_eval::result::RuleHeader;
 use serde_json::Value;
+use sigmacatch_types::RegressionHeader;
 use std::path::{Path, PathBuf};
 use tracing::info;
 
@@ -18,7 +18,7 @@ pub struct MatchEvent {
 }
 
 pub struct RegressionData {
-    pub header: RuleHeader,
+    pub header: RegressionHeader,
     pub events: Vec<MatchEvent>,
     pub output_path: PathBuf,
     pub rule_rel_path: Option<PathBuf>,
@@ -29,7 +29,7 @@ pub struct RegressionData {
 
 impl RegressionData {
     pub fn new(
-        header: RuleHeader,
+        header: RegressionHeader,
         output_path: &Path,
         rule_rel_path: Option<&Path>,
         author: Option<&str>,
@@ -68,7 +68,7 @@ impl RegressionData {
         if let Some(rel_path) = &self.rule_rel_path {
             return Ok(self.output_path.join(rel_path));
         }
-        let rule_id = self.header.rule_id.as_deref().unwrap_or("unknown");
+        let rule_id = &self.header.rule_id;
         if rule_id.contains('/')
             || rule_id.contains('\\')
             || rule_id.contains("..")
@@ -99,7 +99,7 @@ impl RegressionData {
 
     pub fn generate(&self) -> Result<()> {
         let rule_dir = self.rule_dir()?;
-        let rule_id = self.header.rule_id.as_deref().unwrap_or("unknown");
+        let rule_id = &self.header.rule_id;
         std::fs::create_dir_all(&rule_dir)
             .with_context(|| format!("Failed to create rule directory {:?}", rule_dir))?;
 
