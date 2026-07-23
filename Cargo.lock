@@ -476,6 +476,7 @@ dependencies = [
  "rsigma-eval",
  "rsigma-parser",
  "serde_json",
+ "sigmacatch-types",
  "tracing",
  "winevt-xml",
 ]
@@ -2215,6 +2216,7 @@ dependencies = [
  "serde_json",
  "sigma-mapping",
  "sigma-regression",
+ "sigmacatch-types",
  "tempfile",
  "tokio",
  "tracing",
@@ -2224,6 +2226,14 @@ dependencies = [
  "windows",
  "winevt-xml",
  "yaml_serde",
+]
+
+[[package]]
+name = "sigmacatch-types"
+version = "0.1.0"
+dependencies = [
+ "rsigma-eval",
+ "serde_json",
 ]
 
 [[package]]
@@ -3212,6 +3222,7 @@ dependencies = [
  "anyhow",
  "roxmltree",
  "serde_json",
+ "sigmacatch-types",
 ]
 
 [[package]]

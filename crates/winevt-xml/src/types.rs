@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+pub use sigmacatch_types::Event;
+
 /// Captures a single Windows Event Log event: raw XML, parsed JSON, and
 /// channel/event_id metadata extracted at collection time.
 ///
@@ -30,5 +32,13 @@ impl WinevtEvent {
             raw_xml,
             event_json: Some(json),
         }
+    }
+
+    /// Convert to a generic Event. Returns `None` if the event has no parsed JSON.
+    pub fn into_event(self) -> Option<Event> {
+        Some(Event {
+            event_json: self.event_json?,
+            event_raw: self.raw_xml.into_bytes(),
+        })
     }
 }
