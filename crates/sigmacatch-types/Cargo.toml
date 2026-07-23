@@ -1,0 +1,10 @@
+[package]
+name = "sigmacatch-types"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Shared types (Event, Alert) for all sigmacatch crates and binaries"
+
+[dependencies]
+serde_json = "1.0"
+rsigma-eval = "0.20"
