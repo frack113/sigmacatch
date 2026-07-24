@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 use anyhow::Result;
+use rsigma_parser::{parse_sigma_yaml, SigmaCollection};
+use std::collections::HashSet;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -174,6 +176,56 @@ pub fn find_rules_dirs(root: &Path) -> Result<Vec<PathBuf>> {
     }
 
     Ok(dirs)
+}
+
+/// Load all Sigma rules from the given directories, skipping rules in the skip set.
+pub fn load_all_rules(dirs: &[&Path], skip_ids: &HashSet<String>) -> Result<SigmaCollection> {
+    let mut collection = SigmaCollection::default();
+
+    for dir in dirs {
+        let skip_set = skip_ids.clone();
+        let mut pending = vec![dir.to_path_buf()];
+
+        while let Some(current) = pending.pop() {
+            if !current.exists() || !current.is_dir() {
+                continue;
+            }
+
+            for entry in std::fs::read_dir(&current)?.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        if ext == "yml" || ext == "yaml" {
+                            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                                if name == "index.yml" {
+                                    continue;
+                                }
+                            }
+                            if let Ok(content) = std::fs::read_to_string(&path) {
+                                match parse_sigma_yaml(&content) {
+                                    Ok(parsed) => {
+                                        for rule in parsed.rules {
+                                            let rule_id = rule.id.clone().unwrap_or_default();
+                                            if !skip_set.contains(&rule_id) {
+                                                collection.rules.push(rule);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        info!("Failed to parse {:?}: {}", path, e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if path.is_dir() {
+                    pending.push(path);
+                }
+            }
+        }
+    }
+
+    Ok(collection)
 }
 
 fn has_yml_files(dir: &Path, depth: u32) -> bool {
