@@ -14,7 +14,7 @@ use serde_json::Value;
 use std::path::Path;
 use tracing::info;
 
-use winevt_xml::xml_parser::validate_event_id;
+use sigmacatch_types::validate_event_id;
 
 pub use sigmacatch_types::Alert;
 

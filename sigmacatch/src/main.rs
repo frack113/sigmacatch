@@ -6,7 +6,6 @@ use sigmacatch::config;
 use sigmacatch::detection::SigmaDetectionEngine;
 use sigmacatch::github;
 use sigmacatch::logger;
-use sigmacatch::parser;
 use sigmacatch::regression;
 use sigmacatch::repo;
 use sigmacatch::sigma;
@@ -440,7 +439,7 @@ async fn stage_4_work_winevt(
 
     info!("Starting winevt collection on channels: {:?}", channels);
 
-    let (tx, mut rx) = mpsc::channel::<collectors::event_log::WinevtEvent>(1024);
+    let (tx, mut rx) = mpsc::channel::<Event>(1024);
 
     // Spawn one task per channel
     let mut collector_tasks = Vec::new();
@@ -464,28 +463,11 @@ async fn stage_4_work_winevt(
     // Process events from all channels
     while let Some(event) = rx.recv().await {
         let _event_span =
-            info_span!("event", event_id = event.event_id, channel = %event.channel).entered();
+            info_span!("event", event_id = event.event_id(), channel = %event.channel()).entered();
         stats.events_processed += 1;
 
-        // Use pre-parsed JSON from collector, fall back to parsing XML
-        let event_json = match event.event_json {
-            Some(json) => json,
-            None => match parser::winevt::parse_winevt_xml(&event.raw_xml) {
-                Ok(json) => json,
-                Err(e) => {
-                    warn!(
-                        "Failed to parse event XML (EventID={}, channel={}): {} — skipping",
-                        event.event_id, event.channel, e
-                    );
-                    continue;
-                }
-            },
-        };
-
-        let eval_event = Event::new(event_json.clone(), event.raw_xml.clone().into_bytes());
-
         // Evaluate via SigmaDetectionEngine
-        let alerts = det_engine.evaluate(&eval_event);
+        let alerts = det_engine.evaluate(&event);
 
         for alert in &alerts {
             let rule_id = &alert.rule_id;

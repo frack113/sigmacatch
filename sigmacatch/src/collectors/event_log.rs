@@ -18,6 +18,7 @@ use windows::Win32::System::EventLog::{
 use windows::Win32::System::Threading::INFINITE;
 
 use anyhow::Result;
+use sigmacatch_types::Event;
 use tokio::sync::mpsc as tokio_mpsc;
 
 /// WinevtCollector — stub non-Windows (pas de collecte Event Log)
@@ -33,7 +34,7 @@ impl WinevtCollector {
     }
 
     #[allow(dead_code)]
-    pub async fn stream(self, _tx: tokio_mpsc::Sender<WinevtEvent>) -> Result<()> {
+    pub async fn stream(self, _tx: tokio_mpsc::Sender<Event>) -> Result<()> {
         #[cfg(not(windows))]
         use tracing::info;
         info!("WinevtCollector: non-Windows platform, returning empty events");
@@ -55,7 +56,7 @@ impl WinevtCollector {
         }
     }
 
-    pub async fn stream(self, tx: tokio_mpsc::Sender<WinevtEvent>) -> Result<()> {
+    pub async fn stream(self, tx: tokio_mpsc::Sender<Event>) -> Result<()> {
         info!("Starting winevt collection on channel: {}", self.channel);
         let result = tokio::task::spawn_blocking({
             let channel = self.channel.clone();
@@ -92,7 +93,7 @@ impl WinevtCollector {
 }
 
 #[cfg(windows)]
-pub fn collect_events(channel: &str) -> Result<Vec<WinevtEvent>> {
+pub fn collect_events(channel: &str) -> Result<Vec<Event>> {
     let co_init_result = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
     let com_initialized = co_init_result == S_OK || co_init_result == RPC_E_CHANGED_MODE;
 
@@ -187,7 +188,7 @@ pub fn collect_events(channel: &str) -> Result<Vec<WinevtEvent>> {
 }
 
 #[cfg(windows)]
-fn render_event_to_xml(event_handle: EVT_HANDLE) -> Result<Option<WinevtEvent>> {
+fn render_event_to_xml(event_handle: EVT_HANDLE) -> Result<Option<Event>> {
     let mut buffer: Vec<u16> = vec![0u16; 32768];
     let mut buffer_used: u32 = 0;
     let mut value_count: u32 = 0;
@@ -238,22 +239,8 @@ fn render_event_to_xml(event_handle: EVT_HANDLE) -> Result<Option<WinevtEvent>> 
     xml_str.truncate(xml_str.find('\0').unwrap_or(xml_str.len()));
     let xml_str = xml_str.trim().to_string();
 
-    if let Some(json) = parse_event_xml(&xml_str) {
-        let event = winevt_xml::types::WinevtEvent::from_json(json, xml_str);
-        Ok(Some(event))
-    } else {
-        Ok(Some(WinevtEvent {
-            channel: String::new(),
-            event_id: 0,
-            raw_xml: xml_str,
-            event_json: None,
-        }))
+    match Event::from_xml(&xml_str) {
+        Ok(event) => Ok(Some(event)),
+        Err(_) => Ok(None),
     }
 }
-
-#[cfg(windows)]
-fn parse_event_xml(xml: &str) -> Option<serde_json::Value> {
-    winevt_xml::xml_parser::parse_winevt_xml(xml).ok()
-}
-
-pub use winevt_xml::types::WinevtEvent;

@@ -23,9 +23,6 @@ detection-engine = { path = "../crates/detection-engine" }
 # Crate workspace — mapping
 sigma-mapping = { path = "../crates/sigma-mapping" }
 
-# Crate workspace — Event Log XML parser
-winevt-xml = { path = "../crates/winevt-xml" }
-
 # Crate workspace — shared types
 sigmacatch-types = { path = "../crates/sigmacatch-types" }
 

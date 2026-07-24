@@ -8,3 +8,4 @@ description = "Shared types (Event, Alert) for all sigmacatch crates and binarie
 [dependencies]
 serde_json = "1.0"
 rsigma-eval = "0.20"
+roxmltree = "0.21"

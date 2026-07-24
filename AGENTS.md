@@ -14,51 +14,74 @@
 ## Architecture
 
 ```
-src/
-├── git.rs               # grit-lib wrapper: clone/fetch/push/commit/branch/checkout (pure Rust, no git CLI)
-├── main.rs              # Binary + pipeline (run_pipeline, Stats, AggregatedRule)
-├── config.rs            # YAML config (serde, Default) with LogConfig
-├── contrib/             # SigmaHQ contribution workflow
-│   ├── mod.rs           # pub mod branch, commit, fork
-│   ├── branch.rs        # create_branch_name(), create_branch() with HEAD switch, push_branch() with fetch + safe push
-│   ├── commit.rs        # commit_all_rules() with author/email env, validate_rule_id, fallback
-│   └── fork.rs          # ForkConfig, check_fork_exists() (rate-limit aware), detect_fork()
-├── logger.rs            # Two-layer tracing subscriber (stderr info + daily rolling file debug)
-├── sigma/
-│   ├── loader.rs        # grit-lib clone/fetch + remote URL update + find_rules_dirs()
-│   ├── engine.rs        # SigmaEngine: load rules (post-parse filter), evaluate events, provider_to_logsource
-│   ├── mapping/
-│   │   ├── mod.rs       # resolve_logsource(), build_logsource_to_channels()
-│   │   ├── taxonomy.rs  # 3 static phf tables (CHANNEL_TO_SERVICE, CHANNEL_EVENT_TO_CATEGORY, PROVIDER_TO_SERVICE)
-│   │   └── custom.rs    # load_custom_mapping() for custom_channels.yaml
-│   └── regression/      # (moved to regression/ at project root)
-├── collector/
-│   ├── mod.rs           # pub mod winevt
-│   └── winevt.rs        # WinevtCollector (EvtQueryW, EvtNext, EvtRender)
-├── evtx/
-│   └── writer.rs        # write_evtx() via EvtExportLog API (→ EVTX valide ou .xml fallback)
-├── parser/
-│   └── mod.rs           # XmlParser (Winevt XML → JSON plat)
-└── regression/
-    ├── mod.rs           # SkipSet, build_skip_set(), validate_rule_id(), triplet validation
-    ├── generator.rs     # RegressionData: aggregate + write output
-    └── info_yml.rs      # InfoYml struct (rule_metadata, regression_tests_info)
+sigmacatch/                      # Binary + pipeline (orchestration)
+└── src/
+    ├── main.rs                  # Pipeline loop + CLI + Stats + AggregatedRule
+    ├── lib.rs                   # pub mod declarations
+    ├── config.rs                # YAML config (Config, SigmaFilterConfig, MinStatus, MinLevel)
+    ├── logger.rs                # Two-layer tracing subscriber (stderr info + daily rolling file debug)
+    ├── repo.rs                  # grit-lib wrapper: clone/fetch/push/commit/branch (pure Rust, no git CLI)
+    ├── detection/mod.rs         # SigmaDetectionEngine (extract channel/provider, resolve logsource)
+    ├── collectors/
+    │   ├── mod.rs               # pub mod event_log
+    │   └── event_log.rs         # WinevtCollector (EvtQueryW, EvtNext, EvtRender)
+    ├── evtx/
+    │   └── writer.rs            # write_evtx() via EvtExportLog API (→ EVTX valide ou .xml fallback)
+    ├── parser/
+    │   └── winevt.rs            # re-export from winevt-xml crate
+    ├── sigma/
+    │   ├── mod.rs               # pub mod engine, loader, mapping
+    │   ├── engine.rs            # SigmaEngine: load rules (post-parse filter), evaluate events
+    │   ├── loader.rs            # SigmaRepo (grit-lib) + find_rules_dirs()
+    │   └── mapping/mod.rs       # re-export from sigma-mapping crate
+    ├── regression/mod.rs        # re-export from sigma-regression crate
+    ├── github/
+    │   ├── mod.rs               # pub mod commit, fork
+    │   ├── commit.rs            # commit_all_rules() with author/email env, validate_rule_id, fallback
+    │   └── fork.rs              # ForkConfig, check_fork_exists() (rate-limit aware), detect_fork()
+    └── bin/
+        └── evtx_check.rs        # Batch validation of Sigma engine against .evtx regression data
+
+crates/
+├── detection-engine/            # BareEngine wrapper + embedded pipelines (windows.yml, flatten_winevt.yml)
+├── sigma-mapping/               # LogSource resolution, taxonomy (phf tables + channel_mapping.yml), custom mappings
+├── sigma-regression/            # SkipSet, RegressionData, InfoYml, triplet validation (SigmaHQ format)
+├── sigmacatch-types/            # Shared types: Event, Alert, RegressionHeader
+└── winevt-xml/                  # WinevtEvent struct + XML/JSON parsing (roxmltree)
 ```
 
-### Mapping module (`src/sigma/mapping/`)
+### Mapping module (`crates/sigma-mapping/src/mapping/`)
 
-- `taxonomy.rs`: 3 static `phf` tables implementing the SigmaHQ Windows taxonomy
-  - `CHANNEL_TO_SERVICE`: channel name → Sigma service (~60 entries)
+- `channel_mapping.rs`: `CHANNEL_TO_SERVICE_MAP` — `LazyLock<HashMap>` parsed from embedded `channel_mapping.yml` (channel name → Sigma service)
+- `taxonomy.rs`: 2 static `phf` tables implementing the SigmaHQ Windows taxonomy
   - `CHANNEL_EVENT_TO_CATEGORY`: (channel, event_id) → category (~35 entries)
-  - `PROVIDER_TO_SERVICE`: ETW provider → service fallback
+  - `CHANNEL_EVENT_TO_SUBCATEGORY`: Sysmon registry subcategories (EID 12→registry_add, 13→registry_set, 14→registry_rename)
+  - `PROVIDER_TO_SERVICE`: ETW provider → service fallback (~11 entries)
 - `custom.rs`: optional `custom_channels.yaml` overrides (v1.1)
 - `mod.rs`: `resolve_logsource(channel, provider, event_id, custom_map) → LogSource`
-  - Priority: custom channel → CHANNEL_TO_SERVICE → PROVIDER_TO_SERVICE → default
-  - See `# INVARIANT:` comment in `src/sigma/mapping/mod.rs`
-  - Category via `CHANNEL_EVENT_TO_CATEGORY[(channel, event_id)]`
+  - Priority: custom channel → CHANNEL_TO_SERVICE_MAP → PROVIDER_TO_SERVICE → default
+  - See `# INVARIANT:` comment in `crates/sigma-mapping/src/mapping/mod.rs`
+  - Category via `CHANNEL_EVENT_TO_SUBCATEGORY` (priority) → `CHANNEL_EVENT_TO_CATEGORY`
 - `build_logsource_to_channels(custom_map) → HashMap<String, Vec<ChannelTarget>>`
   - Generates 1→N map from static tables + custom mappings (runtime, not a static table)
   - Keys: `service` and `service:category` (e.g., `"sysmon"`, `"sysmon:process_creation"`)
+
+### Processing pipeline (`crates/detection-engine/pipelines/`)
+
+- `windows.yml`: embedded Sigma rule transformation pipeline (loaded via `include_str!` in `detection-engine`)
+  - Maps Sigma rule `logsource.category` → Sysmon EventID conditions
+  - Uses `add_condition` transformation with `rule_conditions` to gate when each condition fires
+  - `EventType: CreateKey` / `EventType: DeleteKey` for registry_add / registry_delete sub-categories
+  - **rsigma-eval v0.20 constraint**: `conditions` values in `add_condition` are single `SigmaValue` (integer/string/bool/null). **YAML arrays (`[17, 18]`) are NOT supported** — they become `SigmaValue::Null`. Always use separate transformation entries for each EventID (e.g., `[4, 16]` → two entries with `EventID: 4` and `EventID: 16`).
+  - `rule_conditions`: `type: logsource` with `category`, `product`, `service` filters. All conditions use AND logic.
+  - `field_name_conditions`: `include_fields` / `exclude_fields` with `match_type: plain` or `match_type: regex`
+  - `field_name_cond_not`: negate field name conditions (boolean)
+  - `detection_item_conditions`: `match_string` (regex), `is_null`
+  - `rule_cond_expression`: logical expression over named conditions (`and`, `or`, `not`, `(`, `)`)
+  - `prepend`: put added condition before existing detection (`new AND existing`) for short-circuit optimization
+  - Supported transformation types: `field_name_mapping`, `field_name_prefix_mapping`, `field_name_prefix`, `field_name_suffix`, `drop_detection_item`, `add_condition`, `change_logsource`, `replace_string`, `value_placeholders`, `wildcard_placeholders`, `query_expression_placeholders`, `set_state`, `rule_failure`, `detection_item_failure`, `field_name_transform`, `hashes_fields`, `map_string`, `set_value`, `convert_type`, `regex`, `add_field`, `remove_field`, `set_field`, `set_custom_attribute`, `case_transformation`, `nest`, `include`
+- `flatten_winevt.yml`: flattens nested Winevt XML event structure for Sigma evaluation
+- Pipeline loaded once at engine init → applied to every rule before compilation
 
 ### Pipeline (rules-driven collection)
 
@@ -111,7 +134,7 @@ src/
 - **Moteur temps réel** : `rsigma-eval` chargé une fois avec toutes les règles non skipées ; chaque event est évalué contre toutes les règles chargées. Aucun event perdu. Le skip-at-load est l'unique optimisation.
 - **LogSource dérivée du channel ETW** (`resolve_logsource`), avec provider comme fallback.
   - Priority: channel → service > provider → service > default
-  - See `# INVARIANT:` comment in `src/sigma/mapping/mod.rs`
+  - See `# INVARIANT:` comment in `crates/sigma-mapping/src/mapping/mod.rs`
 - **EVTX via `EvtExportLog`** : re-queries l'event par RecordID depuis le live log. Si succès → `.evtx` binaire valide. Si échec (event purgé) ou non-Windows → fallback `.xml` (raw XML, pas de binaire invalide).
   - **Known limitation** : race condition avec la rétention du log — si l'event a été purgé entre la collecte et l'export, `EvtExportLog` échoue silencieusement (`ERROR_EVT_QUERY_RESULT_STALE`).
 
@@ -124,14 +147,18 @@ src/
 ```yaml
 author: "username"
 email: "you@example.com"
+github_token: ""          # GitHub token (or set GITHUB_TOKEN env var) — required for fork push
 log:
   level_file: "debug"
+sigma:
+  min_status: "stable"    # load rules with status >= this threshold
+  min_level: "critical"   # load rules with level >= this threshold
 ```
 
 Les chemins `sigma/`, `regression_data/`, `logs/` sont hardcodés et créés automatiquement par `stage_0_init`.
 
-CLI flags (in `main.rs`): `--author <name>`.
-`Config` porte `author` (username), `email` (requis pour les commits git) et `LogConfig` (niveau fichier).
+CLI flags (in `main.rs`): `--author <name>`, `--dry-run`, `--channels-only`, `--all-rules`.
+`Config` porte `author` (username), `email` (requis pour les commits git), `github_token` (requis pour le push fork) et `LogConfig` (niveau fichier).
 Contrib est toujours actif — fork detection, branch, commit, push tournent à chaque run.
 
 ## Conventions
@@ -232,15 +259,18 @@ Workflows séparés par fonction dans `.github/workflows/` :
 | `lint.yml` | push/PR → `main` | `fmt` (`cargo fmt --check`) + `clippy` (`cargo clippy -- -W warnings`) |
 | `build.yml` | push/PR → `main` | `linux` (`cargo build --release`) + `windows` (MSVC `windows-latest`) |
 | `test.yml` | push/PR → `main` | `test` (`cargo test`) |
+| `audit.yml` | push/PR → `main` | `cargo-deny` (advisories, sources, licenses) |
+| `release.yml` | push tag `v*` | linux build + windows build + git-cliff changelog + GitHub release |
+| `documentation.yml` | push/PR → `main` | mkdocs-material build + deploy to GitHub Pages |
 
-- **Pas de workflow monolithique** — un fichier par fonction (lint, build, test)
+- **Pas de workflow monolithique** — un fichier par fonction (lint, build, test, audit, release, docs)
 - `actions/checkout@v7`, `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2`
 - Dependabot gère les mises à jour automatiques (`github-actions` + `cargo` ecosystems)
-- Les 3 checks doivent passer avant merge
+- Les 3 checks principaux (lint, build, test) doivent passer avant merge
 
 ## Dependency Management
 
-- Les specifiers dans `Cargo.toml` utilisent la version majeure (ex: `"0.85"`, `"0.18"`) pour recevoir les correctifs automatiquement via `cargo update`
+- Les specifiers dans `Cargo.toml` utilisent la version majeure (ex: `"0.85"`, `"0.20"`) pour recevoir les correctifs automatiquement via `cargo update`
 - `cargo upgrade` est réservé pour les mises à jour intentionnelles de specifiers
 - Les PR Dependabot doivent être reviewées avant merge
 
@@ -253,6 +283,9 @@ Workflows séparés par fonction dans `.github/workflows/` :
 - `tracing` + `tracing-subscriber` — logging
 - `serde` / `serde_json` / `serde_yaml` (`yaml_serde`) — config + event/regression serialization
 - `anyhow`, `chrono`, `uuid` — error handling, dates, IDs
+- `rayon` — parallel rule file parsing
+- `phf` — static hash maps for taxonomy tables (in `sigma-mapping`)
+- `evtx` — EVTX file parsing (used by `evtx_check` binary)
 - `tempfile` (dev) — integration tests
 - `windows` (`cfg(windows)`) — Winevt API (`EvtQueryW`/`EvtNext`/`EvtRender`/`EvtExportLog`)
 
