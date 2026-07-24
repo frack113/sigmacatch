@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-pub mod collectors;
 pub mod config;
+
+pub use input_winevt_channel;
 
 pub mod evtx;
 pub mod github;

@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 use detection_engine::DetectionEngine;
-use sigmacatch::collectors;
 use sigmacatch::config;
 use sigmacatch::github;
+use sigmacatch::input_winevt_channel;
 use sigmacatch::logger;
 use sigmacatch::regression;
 use sigmacatch::repo;
@@ -13,17 +13,15 @@ use sigmacatch::sigma;
 use anyhow::{Context, Result};
 use config::Config;
 use sigma::loader::{find_rules_dirs, SigmaRepo};
-use sigma::mapping::build_logsource_to_channels;
 use sigma::mapping::custom::load_custom_mapping;
 use sigma_regression::generator::EvtxWriter;
-use sigmacatch_types::{Alert, Event};
+use sigmacatch_types::Alert;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::signal;
-use tokio::sync::mpsc;
 use tracing::{debug, error, info, info_span, warn};
 
 struct Stats {
@@ -536,74 +534,76 @@ async fn stage_4_work_winevt(
 
     info!("Starting winevt collection on channels: {:?}", channels);
 
-    let (tx, mut rx) = mpsc::channel::<Event>(1024);
+    input_winevt_channel::init(channels.clone());
+    input_winevt_channel::run();
 
-    // Spawn one task per channel
-    let mut collector_tasks = Vec::new();
-    for channel in channels {
-        let tx = tx.clone();
-        let task = tokio::spawn(async move {
-            let channel_name = channel.clone();
-            let collector = collectors::event_log::WinevtCollector::new(channel);
-            if let Err(e) = collector.stream(tx).await {
-                error!("WinevtCollector error on channel '{}': {}", channel_name, e);
+    // Drain events from the singleton collector in batches
+    loop {
+        match input_winevt_channel::get_events() {
+            Some(events) => {
+                for event in events {
+                    let _event_span =
+                        info_span!("event", event_id = event.event_id(), channel = %event.channel()).entered();
+                    ctx.stats.events_processed += 1;
+
+                    let logsource = sigma_mapping::mapping::resolve_logsource(
+                        event.channel(),
+                        event.provider(),
+                        event.event_id(),
+                        &ctx.custom_map,
+                    );
+                    let results = engine.evaluate(&event.event_json, &logsource);
+                    let alerts: Vec<Alert> = results
+                        .into_iter()
+                        .map(|r| Alert::from_evaluation_result(r, &event))
+                        .collect();
+
+                    for alert in alerts {
+                        let rule_id = &alert.rule_id;
+
+                        if ctx.retired.contains(rule_id) {
+                            continue;
+                        }
+
+                        debug!("Rule {} matched", rule_id);
+                        ctx.stats.matches_found += 1;
+
+                        ctx.aggregated
+                            .entry(rule_id.clone())
+                            .or_insert_with(|| AggregatedRule {
+                                header: sigmacatch_types::RegressionHeader::new(
+                                    rule_id.clone(),
+                                    alert.rule_title.clone(),
+                                ),
+                                alerts: Vec::new(),
+                                rule_path: None,
+                                description: None,
+                            })
+                            .alerts
+                            .push(alert);
+                    }
+                }
             }
-        });
-        collector_tasks.push(task);
-    }
-
-    drop(tx); // Drop original sender so rx will close when all tasks are done
-
-    // Process events from all channels
-    while let Some(event) = rx.recv().await {
-        let _event_span =
-            info_span!("event", event_id = event.event_id(), channel = %event.channel()).entered();
-        ctx.stats.events_processed += 1;
-
-        let logsource = sigma_mapping::mapping::resolve_logsource(
-            event.channel(),
-            event.provider(),
-            event.event_id(),
-            &ctx.custom_map,
-        );
-        let results = engine.evaluate(&event.event_json, &logsource);
-        let alerts: Vec<Alert> = results
-            .into_iter()
-            .map(|r| Alert::from_evaluation_result(r, &event))
-            .collect();
-
-        for alert in alerts {
-            let rule_id = &alert.rule_id;
-
-            if ctx.retired.contains(rule_id) {
-                continue;
+            None => {
+                // No events available right now — wait and check again
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                if !input_winevt_channel::is_initialized() {
+                    break;
+                }
             }
+        }
 
-            debug!("Rule {} matched", rule_id);
-            ctx.stats.matches_found += 1;
-
-            ctx.aggregated
-                .entry(rule_id.clone())
-                .or_insert_with(|| AggregatedRule {
-                    header: sigmacatch_types::RegressionHeader::new(
-                        rule_id.clone(),
-                        alert.rule_title.clone(),
-                    ),
-                    alerts: Vec::new(),
-                    rule_path: None,
-                    description: None,
-                })
-                .alerts
-                .push(alert);
+        // Exit if no events were collected after a brief wait
+        // (collection completed on non-Windows or all channels exhausted)
+        if ctx.stats.events_processed == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+            if input_winevt_channel::get_events().is_none() {
+                break;
+            }
         }
     }
 
-    // Wait for all collector tasks to complete
-    for task in collector_tasks {
-        if let Err(e) = task.await {
-            error!("Collector task error: {}", e);
-        }
-    }
+    input_winevt_channel::stop();
 
     info!(
         "{} events processed, {} rule matches",
@@ -729,7 +729,7 @@ async fn stage_4_work_winevt(
 
 fn resolve_channels_from_rules(
     engine: &DetectionEngine,
-    custom_map: &HashMap<String, String>,
+    _custom_map: &HashMap<String, String>,
 ) -> Vec<String> {
     let rules_count = engine.rule_count();
     if rules_count == 0 {
@@ -737,17 +737,15 @@ fn resolve_channels_from_rules(
         return Vec::new();
     }
 
-    // Without service/category tracking, collect all known channels from the mapping
-    let map = build_logsource_to_channels(custom_map);
-    let channels_set: HashSet<String> = map
-        .values()
-        .flat_map(|targets| targets.iter().map(|t| t.channel.to_string()))
-        .collect();
+    let channels = input_winevt_channel::get_all_channels();
 
-    let mut channels: Vec<String> = channels_set.into_iter().collect();
-    channels.sort();
-
-    info!("Channels to collect: {:?}", channels);
+    info!("Channels to collect: {} channels", channels.len());
+    if !channels.is_empty() {
+        info!(
+            "First 10 channels: {:?}",
+            &channels[..channels.len().min(10)]
+        );
+    }
 
     channels
 }
