@@ -161,6 +161,7 @@ mod tests {
     fn sample_alert(rule_id: &str, event_json: serde_json::Value) -> Alert {
         Alert::new(
             rule_id.to_string(),
+            rule_id.to_string(),
             "medium".to_string(),
             &sigmacatch_types::Event::new(event_json, b"<xml/>".to_vec()),
         )
