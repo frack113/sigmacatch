@@ -14,16 +14,14 @@
 //!   cargo run --release --bin evtx_check <sigmahq_dir>
 
 use anyhow::{anyhow, Result};
-use std::collections::HashMap;
-use std::fs;
-use std::path::Path;
-
-use detection_engine::BareEngine;
+use detection_engine::DetectionEngine;
 use input_evtx::parse_evtx_file;
 use sigma_mapping::mapping::resolve_logsource;
 use sigmacatch::regression::loader::{load_all, RegressionInfo};
 use sigmacatch::sigma::loader::find_rules_dirs;
-use sigmacatch_types::Event;
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
@@ -78,7 +76,7 @@ impl ValidationStats {
 
 fn validate_regression(
     regression: &RegressionInfo,
-    engine: &BareEngine,
+    engine: &DetectionEngine,
     expected_match_count: usize,
 ) -> Result<(String, bool, String)> {
     let rule_name = regression
@@ -94,7 +92,7 @@ fn validate_regression(
         .rule_metadata
         .first()
         .map(|r| r.title.clone())
-        .unwrap_or_default();
+        .unwrap_or_else(|| "<no title>".to_string());
 
     let data_path = regression
         .data_path
@@ -109,23 +107,18 @@ fn validate_regression(
         ));
     }
 
-    // Parse EVTX → Event
+    // Parse EVTX → Event (uses sigmacatch_types::Event)
     let events = parse_evtx_file(data_path).map_err(|e| anyhow!("EVTX parse error: {}", e))?;
     let event = events
         .first()
         .ok_or_else(|| anyhow!("No records in EVTX: {}", data_path.display()))?
         .clone();
 
-    let channel_str = event
-        .channel
-        .clone()
-        .unwrap_or_else(|| event.channel().to_string());
-    let logsource = resolve_logsource(
-        &channel_str,
-        &extract_provider(&event),
-        event.event_id(),
-        &HashMap::new(),
-    );
+    let channel = event.channel().to_string();
+    let provider = event.provider().to_string();
+    let event_id = event.event_id();
+
+    let logsource = resolve_logsource(&channel, &provider, event_id, &HashMap::new());
 
     let matches = engine.evaluate(&event.event_json, &logsource);
 
@@ -142,9 +135,9 @@ fn validate_regression(
         Err(anyhow!(
             "FALSE NEGATIVE — expected rule '{}' not matched (EventID={}, Channel={}, provider={}) — got {} match(es)",
             regression.rule_id,
-            event.event_id(),
-            event.channel(),
-            extract_provider(&event),
+            event_id,
+            channel,
+            provider,
             actual_match_count
         ))
     } else if expected_match_count > 0 && actual_match_count != expected_match_count {
@@ -168,19 +161,6 @@ fn validate_regression(
     }
 }
 
-fn extract_provider(event: &Event) -> String {
-    event
-        .event_json
-        .get("Event")
-        .and_then(|v| v.get("System"))
-        .and_then(|v| v.get("Provider"))
-        .and_then(|v| v.get("#attributes"))
-        .and_then(|v| v.get("Name"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string()
-}
-
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 fn main() {
@@ -198,7 +178,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    let sigma_dir = std::path::PathBuf::from(&args[1]);
+    let sigma_dir = PathBuf::from(&args[1]);
     let regression_dir = sigma_dir.join("regression_data");
 
     println!("SigmaHQ directory: {}", sigma_dir.display());
@@ -233,7 +213,7 @@ fn main() {
         }
     };
     let refs: Vec<&Path> = dirs.iter().map(|d| d.as_path()).collect();
-    let engine = match BareEngine::from_rules_dirs(&refs) {
+    let engine = match DetectionEngine::from_rules_dirs(&refs) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("Failed to build engine: {}", e);
@@ -326,6 +306,3 @@ fn main() {
         std::process::exit(1);
     }
 }
-
-#[cfg(test)]
-mod tests {}

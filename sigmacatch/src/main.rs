@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
+use detection_engine::DetectionEngine;
 use sigmacatch::collectors;
 use sigmacatch::config;
-use sigmacatch::detection::SigmaDetectionEngine;
 use sigmacatch::github;
 use sigmacatch::logger;
 use sigmacatch::regression;
 use sigmacatch::repo;
 use sigmacatch::sigma;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use config::Config;
-use sigma::engine::SigmaEngine;
 use sigma::loader::{find_rules_dirs, SigmaRepo};
 use sigma::mapping::build_logsource_to_channels;
 use sigma::mapping::custom::load_custom_mapping;
@@ -189,7 +188,10 @@ impl DryRunConfig {
                     status.canonical_reason().unwrap_or("?")
                 );
                 if status.is_success() {
-                    let text = resp.text().await.unwrap_or_default();
+                    let text = resp
+                        .text()
+                        .await
+                        .context("Failed to read /user response body")?;
                     if let Ok(body) = serde_json::from_str::<serde_json::Value>(&text) {
                         let login = body.get("login").and_then(|v| v.as_str()).unwrap_or("?");
                         println!("   → Authenticated as: {}", login);
@@ -234,7 +236,10 @@ impl DryRunConfig {
                     status.canonical_reason().unwrap_or("?")
                 );
                 if status.is_success() {
-                    let bytes = resp.bytes().await.unwrap_or_default();
+                    let bytes = resp
+                        .bytes()
+                        .await
+                        .context("Failed to read info/refs response")?;
                     let text = String::from_utf8_lossy(&bytes);
                     let refs: Vec<&str> = text.lines().filter(|l| l.contains("refs/")).collect();
                     self.refs_found = refs.len();
@@ -278,7 +283,7 @@ impl DryRunConfig {
                 } else if status == reqwest::StatusCode::NOT_FOUND {
                     println!("   → Repository not found at this URL");
                 } else {
-                    let body = resp.text().await.unwrap_or_default();
+                    let body = resp.text().await.ok().unwrap_or_default();
                     println!(
                         "   → Unexpected: {}",
                         body.chars().take(200).collect::<String>()
@@ -450,9 +455,9 @@ fn stage_2_existing_rules(_config: &Config) -> HashSet<String> {
 }
 
 fn stage_3_load_rules(
-    config: &Config,
+    _config: &Config,
     existing_rules: &HashSet<String>,
-) -> Result<(SigmaEngine, u64)> {
+) -> Result<(DetectionEngine, u64)> {
     let rules_dirs = find_rules_dirs(std::path::Path::new("sigma"))?;
     if rules_dirs.is_empty() {
         anyhow::bail!(
@@ -461,21 +466,21 @@ fn stage_3_load_rules(
         );
     }
 
-    let mut engine = SigmaEngine::new();
-    let rules_count = engine.load_rules_from_dirs(
-        &rules_dirs.iter().map(|d| d.as_path()).collect::<Vec<_>>(),
-        existing_rules,
-        &config.sigma,
-    )?;
+    let rules_dirs_refs: Vec<&std::path::Path> = rules_dirs.iter().map(|d| d.as_path()).collect();
+    let collection = sigma::loader::load_all_rules(&rules_dirs_refs, existing_rules)?;
 
-    engine.print_rule_table(&config.sigma);
+    let mut engine = DetectionEngine::new();
+    engine.load_collection(collection)?;
+
+    let rules_count = engine.rule_count() as u64;
 
     info!(
-        "Loaded {} rules from {} directories",
+        "Loaded {} rules from {} directories ({} skipped by existing regression data)",
         rules_count,
-        rules_dirs.len()
+        rules_dirs.len(),
+        existing_rules.len(),
     );
-    Ok((engine, rules_count as u64))
+    Ok((engine, rules_count))
 }
 
 /// Delete regression directories under `base` that contain generated files
@@ -514,7 +519,7 @@ fn clean_partial_regressions(base: &std::path::Path) {
 
 async fn stage_4_work_winevt(
     channels: Vec<String>,
-    engine: &SigmaEngine,
+    engine: &DetectionEngine,
     mut ctx: WorkContext,
 ) -> Result<(
     HashSet<String>,
@@ -549,17 +554,23 @@ async fn stage_4_work_winevt(
 
     drop(tx); // Drop original sender so rx will close when all tasks are done
 
-    // Create detection engine once before the event loop
-    let det_engine = SigmaDetectionEngine::new(engine, &ctx.custom_map);
-
     // Process events from all channels
     while let Some(event) = rx.recv().await {
         let _event_span =
             info_span!("event", event_id = event.event_id(), channel = %event.channel()).entered();
         ctx.stats.events_processed += 1;
 
-        // Evaluate via SigmaDetectionEngine
-        let alerts = det_engine.evaluate(&event);
+        let logsource = sigma_mapping::mapping::resolve_logsource(
+            event.channel(),
+            event.provider(),
+            event.event_id(),
+            &ctx.custom_map,
+        );
+        let results = engine.evaluate(&event.event_json, &logsource);
+        let alerts: Vec<Alert> = results
+            .into_iter()
+            .map(|r| Alert::from_evaluation_result(r, &event))
+            .collect();
 
         for alert in alerts {
             let rule_id = &alert.rule_id;
@@ -579,8 +590,8 @@ async fn stage_4_work_winevt(
                         alert.rule_title.clone(),
                     ),
                     alerts: Vec::new(),
-                    rule_path: engine.rule_path(rule_id).cloned(),
-                    description: engine.rule_description(rule_id).map(|s| s.to_string()),
+                    rule_path: None,
+                    description: None,
                 })
                 .alerts
                 .push(alert);
@@ -717,58 +728,24 @@ async fn stage_4_work_winevt(
 }
 
 fn resolve_channels_from_rules(
-    engine: &SigmaEngine,
+    engine: &DetectionEngine,
     custom_map: &HashMap<String, String>,
 ) -> Vec<String> {
-    let map = build_logsource_to_channels(custom_map);
-    let active_services = engine.active_services();
-    let all_services = engine.all_services();
-    let active_categories = engine.active_categories();
-    let all_categories = engine.all_categories();
+    let rules_count = engine.rule_count();
+    if rules_count == 0 {
+        info!("No rules loaded — cannot resolve channels");
+        return Vec::new();
+    }
 
-    let mut channels_set: HashSet<String> = active_services
-        .iter()
-        .filter_map(|service| map.get(service.as_str()))
+    // Without service/category tracking, collect all known channels from the mapping
+    let map = build_logsource_to_channels(custom_map);
+    let channels_set: HashSet<String> = map
+        .values()
         .flat_map(|targets| targets.iter().map(|t| t.channel.to_string()))
         .collect();
 
-    for category in active_categories {
-        for service in active_services {
-            let composite = format!("{}:{}", service, category);
-            if let Some(targets) = map.get(composite.as_str()) {
-                for t in targets {
-                    channels_set.insert(t.channel.to_string());
-                }
-            }
-        }
-    }
-
     let mut channels: Vec<String> = channels_set.into_iter().collect();
     channels.sort();
-
-    let mut active: Vec<&str> = active_services.iter().map(|s| s.as_str()).collect();
-    active.sort();
-    info!("Active services: {:?}", active);
-
-    let mut active_cats: Vec<&str> = active_categories.iter().map(|s| s.as_str()).collect();
-    active_cats.sort();
-    info!("Active categories: {:?}", active_cats);
-
-    let skipped: Vec<&str> = all_services
-        .difference(active_services)
-        .map(|s| s.as_str())
-        .collect();
-    if !skipped.is_empty() {
-        info!("Skipped services: {:?} (all rules skipped)", skipped);
-    }
-
-    let skipped_cats: Vec<&str> = all_categories
-        .difference(active_categories)
-        .map(|s| s.as_str())
-        .collect();
-    if !skipped_cats.is_empty() {
-        info!("Skipped categories: {:?} (all rules skipped)", skipped_cats);
-    }
 
     info!("Channels to collect: {:?}", channels);
 
@@ -778,7 +755,7 @@ fn resolve_channels_from_rules(
 async fn setup_pipeline(
     config: &Config,
     fork_config: Option<&github::fork::ForkConfig>,
-) -> Result<(SigmaEngine, Vec<String>, HashMap<String, String>)> {
+) -> Result<(DetectionEngine, Vec<String>, HashMap<String, String>)> {
     stage_0_init().await?;
     stage_1_update_repo(config, fork_config).await?;
 
@@ -800,16 +777,6 @@ async fn setup_pipeline(
 
     if channels.is_empty() {
         warn!("0 channels resolved — nothing to collect");
-        warn!(
-            "Loaded {} rules, {} active services, {} active categories",
-            engine.rules_count(),
-            engine.active_services().len(),
-            engine.active_categories().len()
-        );
-        if !engine.all_services().is_empty() {
-            let all: Vec<&str> = engine.all_services().iter().map(|s| s.as_str()).collect();
-            info!("All known services in rules: {:?}", all);
-        }
     }
 
     Ok((engine, channels, custom_map))
@@ -834,7 +801,7 @@ fn setup_console() {
 
 async fn run_cycle(
     channels: Vec<String>,
-    engine: &SigmaEngine,
+    engine: &DetectionEngine,
     mut retired: HashSet<String>,
     custom_map: HashMap<String, String>,
     author: String,
@@ -927,111 +894,6 @@ async fn main() -> Result<()> {
 
     if flags.contains(&"--dry-run") {
         dry_run_git(&config).await?;
-        return Ok(());
-    }
-
-    if flags.contains(&"--channels-only") {
-        stage_0_init().await?;
-        let custom_map = load_custom_mapping(PathBuf::from("custom_channels.yaml").as_path());
-        let load_all = flags.contains(&"--all-rules");
-        let existing_rules = if load_all {
-            HashSet::new()
-        } else {
-            stage_2_existing_rules(&config)
-        };
-        let engine_path = std::path::Path::new("sigma");
-        let rules_dirs = find_rules_dirs(engine_path)?;
-        if rules_dirs.is_empty() {
-            anyhow::bail!("No rules directories found in sigma/");
-        }
-        let mut engine = SigmaEngine::new();
-        let filter = config::SigmaFilterConfig {
-            min_status: config::MinStatus::Unsupported,
-            min_level: config::MinLevel::Informational,
-        };
-        let rules_count = engine.load_rules_from_dirs(
-            &rules_dirs.iter().map(|d| d.as_path()).collect::<Vec<_>>(),
-            &existing_rules,
-            &filter,
-        )?;
-        let channels = resolve_channels_from_rules(&engine, &custom_map);
-        let active_services = engine.active_services();
-        let all_services = engine.all_services();
-        let active_categories = engine.active_categories();
-        let all_categories = engine.all_categories();
-
-        let sep = "─".repeat(60);
-        println!("\n{}", sep);
-        println!("  CHANNEL RESOLUTION RESULT");
-        println!("{}", sep);
-
-        println!(
-            "\nRules: {} loaded, {} skipped (existing regression)",
-            rules_count,
-            existing_rules.len()
-        );
-        println!("Active services ({}):", active_services.len());
-        let mut sorted_active: Vec<_> = active_services.iter().map(|s| s.as_str()).collect();
-        sorted_active.sort();
-        for svc in &sorted_active {
-            if let Some(targets) = build_logsource_to_channels(&custom_map).get(*svc) {
-                let channels: Vec<&str> = targets.iter().map(|t| t.channel.as_str()).collect();
-                println!("  {} → {} channel(s)", svc, targets.len());
-                for ch in &channels {
-                    println!("    - {}", ch);
-                }
-            } else {
-                println!("  {} → (no mapping)", svc);
-            }
-        }
-
-        println!("\nActive categories ({}):", active_categories.len());
-        let mut sorted_cats: Vec<_> = active_categories.iter().map(|s| s.as_str()).collect();
-        sorted_cats.sort();
-        for cat in &sorted_cats {
-            for svc in sorted_active.iter() {
-                let composite = format!("{}:{}", svc, cat);
-                if let Some(targets) =
-                    build_logsource_to_channels(&custom_map).get(composite.as_str())
-                {
-                    println!("  {}:{}", svc, cat);
-                    for t in targets {
-                        println!("    - {} (EventID: {:?})", t.channel, t.event_ids);
-                    }
-                }
-            }
-        }
-
-        println!(
-            "\nSkipped services ({}):",
-            all_services.len() - active_services.len()
-        );
-        let skipped: Vec<&str> = all_services
-            .difference(active_services)
-            .map(|s| s.as_str())
-            .collect();
-        for svc in &skipped {
-            println!("  - {}", svc);
-        }
-
-        println!(
-            "\nSkipped categories ({}):",
-            all_categories.len() - active_categories.len()
-        );
-        let skipped_cats: Vec<&str> = all_categories
-            .difference(active_categories)
-            .map(|s| s.as_str())
-            .collect();
-        for cat in &skipped_cats {
-            println!("  - {}", cat);
-        }
-
-        println!("\nChannels to collect ({}):", channels.len());
-        for ch in &channels {
-            println!("  - {}", ch);
-        }
-        println!("\n{}", sep);
-
         return Ok(());
     }
 
