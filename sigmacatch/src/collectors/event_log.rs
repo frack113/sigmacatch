@@ -14,8 +14,12 @@ use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTME
 use windows::Win32::System::EventLog::{
     EvtClose, EvtNext, EvtQuery, EvtRender, EvtRenderEventXml, EVT_HANDLE,
 };
+
 #[cfg(windows)]
-use windows::Win32::System::Threading::INFINITE;
+const EVT_NEXT_TIMEOUT_MS: u32 = 5000;
+
+#[cfg(windows)]
+const MAX_EVENTS: u64 = 100_000;
 
 use anyhow::Result;
 use sigmacatch_types::Event;
@@ -135,7 +139,7 @@ pub fn collect_events(channel: &str) -> Result<Vec<Event>> {
             EvtNext(
                 EVT_HANDLE(query),
                 &mut event_handles,
-                INFINITE,
+                EVT_NEXT_TIMEOUT_MS,
                 0,
                 &mut returned,
             )
@@ -153,6 +157,13 @@ pub fn collect_events(channel: &str) -> Result<Vec<Event>> {
             match render_event_to_xml(EVT_HANDLE(event_handle)) {
                 Ok(Some(event)) => {
                     event_count += 1;
+                    if event_count > MAX_EVENTS {
+                        info!(
+                            "Max events limit ({}) reached for channel '{}', stopping collection",
+                            MAX_EVENTS, channel
+                        );
+                        break;
+                    }
                     events.push(event);
                 }
                 Ok(None) => {}
