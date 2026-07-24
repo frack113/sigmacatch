@@ -3,7 +3,10 @@
 
 pub mod generator;
 pub mod info;
+pub mod loader;
 pub mod triplet;
+
+pub use loader::{load_all, RegressionInfo};
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
