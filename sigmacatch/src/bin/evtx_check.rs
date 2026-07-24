@@ -4,9 +4,9 @@
 //! evtx_check: batch validation of the Sigma detection engine against SigmaHQ regression data.
 //!
 //! Pipeline:
-//!   1. Scan <sigmahq_dir>/regression_data for info.yml files
+//!   1. Scan <sigmahq_dir>/regression_data for info.yml entries via load_all()
 //!   2. Load all Sigma rules from the sigma dir into a single engine
-//!   3. For each info.yml triplet: parse EVTX, evaluate against the engine
+//!   3. For each regression entry: parse data file, evaluate against the engine
 //!   4. Validate: expected rule matches + hit count matches
 //!   5. Report per-rule pass/fail + summary
 //!
@@ -14,156 +14,15 @@
 //!   cargo run --release --bin evtx_check <sigmahq_dir>
 
 use anyhow::{anyhow, Result};
-use evtx::EvtxParser;
-use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use detection_engine::BareEngine;
 use sigma_mapping::mapping::resolve_logsource;
-
-// ─── Regression Data Scanner ──────────────────────────────────────────────────
-
-#[derive(Debug)]
-struct RegressionTriplet {
-    evtx_path: PathBuf,
-    info_path: PathBuf,
-}
-
-fn scan_regression_data(base: &Path) -> Result<Vec<RegressionTriplet>> {
-    let mut triplets = Vec::new();
-
-    if !base.exists() {
-        return Err(anyhow!("Directory does not exist: {}", base.display()));
-    }
-
-    let walk = fs::read_dir(base)?;
-    for entry in walk.flatten() {
-        let sub = entry.path();
-        if !sub.is_dir() {
-            continue;
-        }
-        scan_dir_recursive(&sub, base, &mut triplets)?;
-    }
-
-    triplets.sort_by(|a, b| a.info_path.cmp(&b.info_path));
-    Ok(triplets)
-}
-
-#[allow(clippy::only_used_in_recursion)]
-fn scan_dir_recursive(
-    dir: &Path,
-    base: &Path,
-    triplets: &mut Vec<RegressionTriplet>,
-) -> Result<()> {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(()),
-    };
-
-    let mut has_info = false;
-    let mut has_evtx = false;
-    let mut info_path = None;
-    let mut evtx_path = None;
-
-    for entry in entries.flatten() {
-        let ep = entry.path();
-        if ep.is_file() {
-            match ep.extension().and_then(|e| e.to_str()) {
-                Some("yml") | Some("yaml") => {
-                    if ep.file_name().map(|n| n == "info.yml").unwrap_or(false) {
-                        has_info = true;
-                        info_path = Some(ep);
-                    }
-                }
-                Some("evtx") => {
-                    has_evtx = true;
-                    evtx_path = Some(ep);
-                }
-                _ => {}
-            }
-        } else if ep.is_dir() {
-            scan_dir_recursive(&ep, base, triplets)?;
-        }
-    }
-
-    if has_info && has_evtx {
-        if let (Some(info), Some(evtx)) = (info_path, evtx_path) {
-            triplets.push(RegressionTriplet {
-                evtx_path: evtx,
-                info_path: info,
-            });
-        }
-    }
-
-    Ok(())
-}
-
-// ─── Rule Resolution ──────────────────────────────────────────────────────────
-
-#[allow(dead_code)]
-fn find_rule_file(info_path: &Path, sigma_dir: &Path) -> Result<PathBuf> {
-    let info: InfoYml = InfoYml::load(info_path)?;
-    let rule_id = info
-        .rule_metadata
-        .first()
-        .ok_or_else(|| anyhow!("No rule_metadata in info.yml"))?
-        .id
-        .clone();
-
-    for rules_subdir in [
-        "rules",
-        "rules-dfir",
-        "rules-emerging-threats",
-        "rules-threat-hunting",
-    ] {
-        let rules_dir = sigma_dir.join(rules_subdir);
-        if !rules_dir.exists() {
-            continue;
-        }
-        if let Ok(found) = find_rule_by_id(&rules_dir, &rule_id) {
-            return Ok(found);
-        }
-    }
-
-    Err(anyhow!(
-        "Rule file not found for ID {} in {}",
-        rule_id,
-        sigma_dir.display()
-    ))
-}
-
-#[allow(dead_code)]
-fn find_rule_by_id(dir: &Path, rule_id: &str) -> Result<PathBuf> {
-    let entries = fs::read_dir(dir)?;
-    for entry in entries.flatten() {
-        let ep = entry.path();
-        if ep.is_file() {
-            if let Some(name) = ep.file_name().and_then(|n| n.to_str()) {
-                if name == "index.yml" {
-                    continue;
-                }
-                if let Ok(content) = fs::read_to_string(&ep) {
-                    for line in content.lines() {
-                        if line.trim() == format!("id: {}", rule_id) {
-                            return Ok(ep);
-                        }
-                    }
-                }
-            }
-        } else if ep.is_dir() {
-            if let Ok(found) = find_rule_by_id(&ep, rule_id) {
-                return Ok(found);
-            }
-        }
-    }
-    Err(anyhow!("Not found"))
-}
-
-// ─── info.yml ────────────────────────────────────────────────────────────────
-
-use sigmacatch::regression::info::InfoYml;
+use sigmacatch::regression::loader::{load_all, RegressionInfo};
+use sigmacatch::sigma::loader::find_rules_dirs;
+use sigmacatch_types::Event;
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
@@ -216,25 +75,12 @@ impl ValidationStats {
     }
 }
 
-fn build_engine(sigma_dir: &Path) -> Result<BareEngine> {
-    let dirs = [
-        sigma_dir.join("rules"),
-        sigma_dir.join("rules-dfir"),
-        sigma_dir.join("rules-emerging-threats"),
-        sigma_dir.join("rules-threat-hunting"),
-    ];
-    let refs: Vec<&Path> = dirs.iter().map(|d| d.as_path()).collect();
-    BareEngine::from_rules_dirs(&refs)
-}
-
-fn validate_triplet(
-    triplet: &RegressionTriplet,
+fn validate_regression(
+    regression: &RegressionInfo,
     engine: &BareEngine,
-    expected_rule_id: &str,
     expected_match_count: usize,
 ) -> Result<(String, bool, String)> {
-    let info = InfoYml::load(&triplet.info_path)?;
-    let rule_name = triplet
+    let rule_name = regression
         .info_path
         .parent()
         .and_then(|p| p.file_name())
@@ -242,53 +88,47 @@ fn validate_triplet(
         .unwrap_or("unknown")
         .to_string();
 
-    let rule_title = info
+    let rule_title = regression
+        .info
         .rule_metadata
         .first()
         .map(|r| r.title.clone())
         .unwrap_or_default();
 
-    // Parse EVTX
-    let mut parser = EvtxParser::from_path(&triplet.evtx_path)
-        .map_err(|e| anyhow!("Failed to open EVTX file: {}", e))?;
+    let data_path = regression
+        .data_path
+        .as_ref()
+        .ok_or_else(|| anyhow!("No data file for rule '{}'", regression.rule_id))?;
 
-    let events: Vec<Value> = parser
-        .records_json_value()
-        .flatten()
-        .map(|r| r.data)
-        .collect();
-
-    if events.is_empty() {
+    if regression.logtype != "evtx" {
         return Err(anyhow!(
-            "No events extracted from EVTX: {}",
-            triplet.evtx_path.display()
+            "Unsupported logtype '{}' for rule '{}'",
+            regression.logtype,
+            regression.rule_id
         ));
     }
 
-    let first_event = &events[0];
+    // Parse EVTX → XML → Event
+    let mut parser = evtx::EvtxParser::from_path(data_path)
+        .map_err(|e| anyhow!("Failed to open EVTX: {}", e))?;
 
-    // Derive logsource from nested JSON paths
-    let event_obj = first_event
-        .get("Event")
-        .and_then(|v| v.as_object())
-        .ok_or_else(|| anyhow!("EVTX event missing Event key"))?;
-    let system = event_obj
-        .get("System")
-        .and_then(|v| v.as_object())
-        .ok_or_else(|| anyhow!("EVTX event missing Event.System"))?;
+    let record = parser
+        .records()
+        .next()
+        .ok_or_else(|| anyhow!("No records in EVTX: {}", data_path.display()))?
+        .map_err(|e| anyhow!("EVTX record error: {}", e))?;
 
-    let channel = system.get("Channel").and_then(|v| v.as_str()).unwrap_or("");
-    let provider = system
-        .get("Provider")
-        .and_then(|v| v.get("#attributes"))
-        .and_then(|a| a.get("Name"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let event_id: u32 = system.get("EventID").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let event =
+        Event::from_xml(&record.data).map_err(|e| anyhow!("XML parse error: {}", e.message))?;
 
-    let event_logsource = resolve_logsource(channel, provider, event_id, &HashMap::new());
+    let logsource = resolve_logsource(
+        event.channel(),
+        &extract_provider(&event),
+        event.event_id(),
+        &HashMap::new(),
+    );
 
-    let matches = engine.evaluate(first_event, &event_logsource);
+    let matches = engine.evaluate(&event.event_json, &logsource);
 
     // Check that the expected rule is in the matched rules
     let matched_rule_ids: Vec<&str> = matches
@@ -296,20 +136,16 @@ fn validate_triplet(
         .filter_map(|m| m.header.rule_id.as_deref())
         .collect();
 
-    let rule_matched = matched_rule_ids.contains(&expected_rule_id);
+    let rule_matched = matched_rule_ids.contains(&regression.rule_id.as_str());
     let actual_match_count = matches.len();
 
     if !rule_matched && expected_match_count > 0 {
         Err(anyhow!(
-            "FALSE NEGATIVE — expected rule '{}' not matched (EventID={}, Channel={:?}, provider={:?}) — got {} match(es)",
-            expected_rule_id,
-            system.get("EventID").and_then(|v| v.as_u64()).unwrap_or(0),
-            system.get("Channel").and_then(|v| v.as_str()),
-            system
-                .get("Provider")
-                .and_then(|v| v.get("#attributes"))
-                .and_then(|a| a.get("Name"))
-                .and_then(|v| v.as_str()),
+            "FALSE NEGATIVE — expected rule '{}' not matched (EventID={}, Channel={}, provider={}) — got {} match(es)",
+            regression.rule_id,
+            event.event_id(),
+            event.channel(),
+            extract_provider(&event),
             actual_match_count
         ))
     } else if expected_match_count > 0 && actual_match_count != expected_match_count {
@@ -317,12 +153,12 @@ fn validate_triplet(
             "HIT MISMATCH — expected {} hit(s), got {} (rule '{}')",
             expected_match_count,
             actual_match_count,
-            expected_rule_id
+            regression.rule_id
         ))
     } else if !rule_matched {
         Err(anyhow!(
             "RULE NOT MATCHED — expected rule '{}' not in results ({} match(es), no match_count in info.yml)",
-            expected_rule_id, actual_match_count
+            regression.rule_id, actual_match_count
         ))
     } else {
         Ok((
@@ -333,6 +169,19 @@ fn validate_triplet(
     }
 }
 
+fn extract_provider(event: &Event) -> String {
+    event
+        .event_json
+        .get("Event")
+        .and_then(|v| v.get("System"))
+        .and_then(|v| v.get("Provider"))
+        .and_then(|v| v.get("#attributes"))
+        .and_then(|v| v.get("Name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 fn main() {
@@ -341,8 +190,8 @@ fn main() {
     if args.len() < 2 {
         eprintln!("Usage: evtx_check <sigmahq_dir>");
         eprintln!();
-        eprintln!("Scans <sigmahq_dir>/regression_data/ for info.yml triplets");
-        eprintln!("evaluates each EVTX against all loaded Sigma rules, and");
+        eprintln!("Scans <sigmahq_dir>/regression_data/ for info.yml entries,");
+        eprintln!("evaluates each data file against all loaded Sigma rules, and");
         eprintln!("validates that expected rules match with correct hit counts.");
         eprintln!();
         eprintln!("Example:");
@@ -350,34 +199,42 @@ fn main() {
         std::process::exit(1);
     }
 
-    let sigma_dir = PathBuf::from(&args[1]);
+    let sigma_dir = std::path::PathBuf::from(&args[1]);
     let regression_dir = sigma_dir.join("regression_data");
 
     println!("SigmaHQ directory: {}", sigma_dir.display());
     println!("Scanning regression data: {}", regression_dir.display());
     println!();
 
-    let triplets = match scan_regression_data(&regression_dir) {
-        Ok(t) => t,
+    let regressions = match load_all(&regression_dir) {
+        Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to scan regression data: {}", e);
             std::process::exit(1);
         }
     };
 
-    if triplets.is_empty() {
+    if regressions.is_empty() {
         eprintln!(
-            "No regression triplets found in {}",
+            "No regression entries found in {}",
             regression_dir.display()
         );
         std::process::exit(1);
     }
 
-    println!("Found {} regression triplet(s)", triplets.len());
+    println!("Found {} regression entry(ies)", regressions.len());
     println!();
 
     println!("Loading Sigma rules into engine...");
-    let engine = match build_engine(&sigma_dir) {
+    let dirs = match find_rules_dirs(&sigma_dir) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Failed to find rule directories: {}", e);
+            std::process::exit(1);
+        }
+    };
+    let refs: Vec<&Path> = dirs.iter().map(|d| d.as_path()).collect();
+    let engine = match BareEngine::from_rules_dirs(&refs) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("Failed to build engine: {}", e);
@@ -392,9 +249,9 @@ fn main() {
     let mut stats = ValidationStats::new();
     let mut skipped: Vec<(String, String)> = Vec::new();
 
-    for triplet in &triplets {
+    for regression in &regressions {
         stats.total += 1;
-        let name = triplet
+        let name = regression
             .info_path
             .parent()
             .and_then(|p| p.file_name())
@@ -402,14 +259,19 @@ fn main() {
             .unwrap_or("unknown")
             .to_string();
 
-        let evtx_exists = triplet.evtx_path.exists();
-        let evtx_size = if evtx_exists {
-            fs::metadata(&triplet.evtx_path)
-                .map(|m| m.len())
-                .unwrap_or(0)
-        } else {
-            0
-        };
+        let data_size = regression
+            .data_path
+            .as_ref()
+            .and_then(|p| fs::metadata(p).ok())
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        let expected_match_count = regression
+            .info
+            .regression_tests_info
+            .first()
+            .map(|t| t.match_count)
+            .unwrap_or(0);
 
         print!(
             "  [{:>4}/{:<4}] {:<50} ... ",
@@ -418,44 +280,22 @@ fn main() {
             name
         );
 
-        if !evtx_exists {
-            skipped.push((name.clone(), "evtx file missing".to_string()));
-            println!("[SKIP] evtx file missing");
+        if regression.data_path.is_none() {
+            skipped.push((name.clone(), "no data file found".to_string()));
+            println!("[SKIP] no data file found");
             continue;
         }
 
-        if evtx_size < 0x1000 {
+        if data_size < 0x1000 {
             skipped.push((
                 name.clone(),
-                format!("evtx too small ({} bytes)", evtx_size),
+                format!("data file too small ({} bytes)", data_size),
             ));
-            println!("[SKIP] evtx too small ({} bytes)", evtx_size);
+            println!("[SKIP] data file too small ({} bytes)", data_size);
             continue;
         }
 
-        let info = match InfoYml::load(&triplet.info_path) {
-            Ok(i) => i,
-            Err(e) => {
-                let msg = e.to_string();
-                stats.total += 0; // already counted
-                stats.add_fail(name.clone(), msg.clone());
-                println!("[SKIP] {}", e);
-                continue;
-            }
-        };
-
-        let expected_rule_id = info
-            .rule_metadata
-            .first()
-            .map(|r| r.id.as_str())
-            .unwrap_or("unknown");
-        let expected_match_count = info
-            .regression_tests_info
-            .first()
-            .map(|t| t.match_count)
-            .unwrap_or(0);
-
-        match validate_triplet(triplet, &engine, expected_rule_id, expected_match_count) {
+        match validate_regression(regression, &engine, expected_match_count) {
             Ok((display_name, is_pass, detail)) => {
                 if is_pass {
                     stats.add_pass();
@@ -475,7 +315,7 @@ fn main() {
     }
 
     if !skipped.is_empty() {
-        println!("\n[SKIPPED] {} triplet(s) (missing data):", skipped.len());
+        println!("\n[SKIPPED] {} entry(ies) (missing data):", skipped.len());
         for (name, reason) in &skipped {
             println!("  - {} — {}", name, reason);
         }
@@ -489,27 +329,4 @@ fn main() {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    #[test]
-    fn test_find_rule_by_id() {
-        let dir = tempfile::tempdir().unwrap();
-        let yml_path = dir.path().join("test_rule.yml");
-        fs::write(&yml_path, "id: abc123\ntitle: Test\n").unwrap();
-
-        let found = find_rule_by_id(dir.path(), "abc123");
-        assert!(found.is_ok());
-        assert_eq!(found.unwrap(), yml_path);
-    }
-
-    #[test]
-    fn test_find_rule_by_id_not_found() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("other.yml"), "id: xyz789\n").unwrap();
-
-        let found = find_rule_by_id(dir.path(), "abc123");
-        assert!(found.is_err());
-    }
-}
+mod tests {}
