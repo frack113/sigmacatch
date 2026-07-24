@@ -208,3 +208,195 @@ fn has_yml_files(dir: &Path, depth: u32) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_find_rules_dirs_nonexistent_root() {
+        let result = find_rules_dirs(Path::new("/nonexistent/path/12345"));
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_find_rules_dirs_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = find_rules_dirs(tmp.path()).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_find_rules_dirs_discover_rules() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join("rules")).unwrap();
+        fs::write(tmp.path().join("rules").join("rule.yml"), "test: value").unwrap();
+        let result = find_rules_dirs(tmp.path()).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].file_name().unwrap(), "rules");
+    }
+
+    #[test]
+    fn test_find_rules_dirs_discover_rules_contrib() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join("rules-filestorage")).unwrap();
+        fs::write(
+            tmp.path().join("rules-filestorage").join("test.yml"),
+            "test: value",
+        )
+        .unwrap();
+        let result = find_rules_dirs(tmp.path()).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].file_name().unwrap(), "rules-filestorage");
+    }
+
+    #[test]
+    fn test_find_rules_dirs_excludes_rules_compliance() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join("rules-compliance")).unwrap();
+        fs::create_dir(tmp.path().join("rules")).unwrap();
+        let result = find_rules_dirs(tmp.path()).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].file_name().unwrap(), "rules");
+    }
+
+    #[test]
+    fn test_find_rules_dirs_multiple_rules_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join("rules")).unwrap();
+        fs::write(tmp.path().join("rules").join("r.yml"), "test: 1").unwrap();
+        fs::create_dir(tmp.path().join("rules-filestorage")).unwrap();
+        fs::write(
+            tmp.path().join("rules-filestorage").join("r.yml"),
+            "test: 1",
+        )
+        .unwrap();
+        fs::create_dir(tmp.path().join("rules-corporate")).unwrap();
+        fs::write(tmp.path().join("rules-corporate").join("r.yml"), "test: 1").unwrap();
+        let result = find_rules_dirs(tmp.path()).unwrap();
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_find_rules_dirs_nested_not_discovered() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join("rules")).unwrap();
+        let nested = tmp.path().join("rules").join("nested");
+        fs::create_dir(&nested).unwrap();
+        let result = find_rules_dirs(tmp.path()).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].file_name().unwrap(), "rules");
+    }
+
+    #[test]
+    fn test_find_rules_dirs_nested_has_yml_discovered() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join("rules")).unwrap();
+        let nested = tmp.path().join("rules").join("nested");
+        fs::create_dir(&nested).unwrap();
+        fs::write(nested.join("rule.yml"), "test: true").unwrap();
+        let result = find_rules_dirs(tmp.path()).unwrap();
+        // Only the top-level `rules` dir is discovered, not `rules/nested`
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].file_name().unwrap(), "rules");
+    }
+
+    #[test]
+    fn test_has_yml_files_with_yaml() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("test.yaml"), "test: value").unwrap();
+        assert!(has_yml_files(tmp.path(), 0));
+    }
+
+    #[test]
+    fn test_has_yml_files_with_yml() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("test.yml"), "test: value").unwrap();
+        assert!(has_yml_files(tmp.path(), 0));
+    }
+
+    #[test]
+    fn test_has_yml_files_no_yaml() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("test.txt"), "test").unwrap();
+        assert!(!has_yml_files(tmp.path(), 0));
+    }
+
+    #[test]
+    fn test_has_yml_files_deeply_nested() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut current = tmp.path().to_path_buf();
+        for i in 0..5 {
+            current = current.join(format!("level_{}", i));
+            fs::create_dir(&current).unwrap();
+        }
+        fs::write(current.join("rule.yml"), "test: true").unwrap();
+        assert!(has_yml_files(tmp.path(), 0));
+    }
+
+    #[test]
+    fn test_has_yml_files_deeper_than_depth_limit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut current = tmp.path().to_path_buf();
+        for i in 0..10 {
+            current = current.join(format!("level_{}", i));
+            fs::create_dir(&current).unwrap();
+        }
+        fs::write(current.join("rule.yml"), "test: true").unwrap();
+        assert!(!has_yml_files(tmp.path(), 0));
+    }
+
+    #[test]
+    fn test_has_yml_files_case_insensitive() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("test.YML"), "test: value").unwrap();
+        assert!(has_yml_files(tmp.path(), 0));
+        let tmp2 = tempfile::tempdir().unwrap();
+        fs::write(tmp2.path().join("test.YAML"), "test: value").unwrap();
+        assert!(has_yml_files(tmp2.path(), 0));
+    }
+
+    #[test]
+    fn test_has_yml_files_nested_yaml_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join("subdir")).unwrap();
+        fs::write(tmp.path().join("subdir").join("rule.yml"), "test: true").unwrap();
+        assert!(has_yml_files(tmp.path(), 0));
+    }
+
+    #[test]
+    fn test_is_repo_complete_with_packed_refs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = tmp.path().join(".git");
+        fs::create_dir(&git_dir).unwrap();
+        fs::write(git_dir.join("packed-refs"), "test").unwrap();
+        assert!(is_repo_complete(&git_dir));
+    }
+
+    #[test]
+    fn test_is_repo_complete_with_objects() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = tmp.path().join(".git");
+        fs::create_dir_all(git_dir.join("objects/pack")).unwrap();
+        fs::write(git_dir.join("objects/pack/pack.idx"), "test").unwrap();
+        assert!(is_repo_complete(&git_dir));
+    }
+
+    #[test]
+    fn test_is_repo_complete_with_refs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = tmp.path().join(".git");
+        fs::create_dir_all(git_dir.join("refs/heads")).unwrap();
+        fs::write(git_dir.join("refs/heads/main"), "abc123").unwrap();
+        assert!(is_repo_complete(&git_dir));
+    }
+
+    #[test]
+    fn test_is_repo_complete_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = tmp.path().join(".git");
+        fs::create_dir(&git_dir).unwrap();
+        assert!(!is_repo_complete(&git_dir));
+    }
+}
