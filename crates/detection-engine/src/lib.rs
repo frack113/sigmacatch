@@ -11,7 +11,7 @@ use rsigma_eval::pipeline::parse_pipeline;
 use rsigma_eval::Engine;
 use rsigma_parser::{parse_sigma_yaml, LogSource, SigmaCollection};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -36,15 +36,16 @@ pub const FLATTEN_WINEVT_PIPELINE: &str = include_str!("../pipelines/flatten_win
 /// Default Windows pipeline YAML for SigmaHQ rule transformation (logsource → Sysmon EventID conditions).
 pub const WINDOWS_PIPELINE: &str = include_str!("../pipelines/windows.yml");
 
-/// Bare evaluation engine — no tracking, no filtering, just pipelines + rules + evaluate.
+/// Detection engine — pipelines + rules + evaluate.
 ///
 /// For real-time event processing, use `start()` to spawn an async task that receives
 /// `Event` objects on a channel and sends `Alert` objects back.
-pub struct BareEngine {
+pub struct DetectionEngine {
     engine: Arc<tokio::sync::Mutex<Engine>>,
+    rule_ids: std::sync::RwLock<HashSet<String>>,
 }
 
-impl BareEngine {
+impl DetectionEngine {
     /// Create a new engine with embedded pipelines loaded automatically.
     pub fn new() -> Self {
         let mut engine = Engine::new();
@@ -58,24 +59,42 @@ impl BareEngine {
 
         Self {
             engine: Arc::new(tokio::sync::Mutex::new(engine)),
+            rule_ids: std::sync::RwLock::new(HashSet::new()),
         }
     }
 
     /// Create a new engine and load rules from a directory in one call.
     pub fn from_rules_dir(dir: &Path) -> Result<Self> {
-        let mut be = Self::new();
-        be.load_rules_recursive(dir, 0)?;
-        Ok(be)
+        let mut de = Self::new();
+        de.load_rules_recursive(dir, 0)?;
+        Ok(de)
     }
 
     /// Create a new engine and load rules from multiple directories.
     /// Non-existent directories are silently skipped.
     pub fn from_rules_dirs(dirs: &[&Path]) -> Result<Self> {
-        let mut be = Self::new();
+        let mut de = Self::new();
         for dir in dirs {
-            be.load_rules_recursive(dir, 0)?;
+            de.load_rules_recursive(dir, 0)?;
         }
-        Ok(be)
+        Ok(de)
+    }
+
+    /// Load a pre-built `SigmaCollection` into this engine.
+    /// Rules are parsed by the embedded pipelines during loading.
+    pub fn load_collection(&mut self, collection: SigmaCollection) -> Result<()> {
+        for rule in &collection.rules {
+            if let Some(ref id) = rule.id {
+                self.rule_ids.write().unwrap().insert(id.clone());
+            }
+        }
+        let rt =
+            tokio::runtime::Handle::try_current().unwrap_or_else(|_| SYNC_RUNTIME.handle().clone());
+        rt.block_on(async {
+            let mut eng = self.engine.lock().await;
+            eng.add_collection(&collection)
+                .map_err(|e| anyhow!("Engine add_collection failed: {e}"))
+        })
     }
 
     /// Start the async detection task.
@@ -141,6 +160,11 @@ impl BareEngine {
         })
     }
 
+    /// Return the IDs of all rules currently loaded in the engine.
+    pub fn loaded_rule_ids(&self) -> Vec<String> {
+        self.rule_ids.read().unwrap().iter().cloned().collect()
+    }
+
     // ─── private helpers ─────────────────────────────────────────────────
 
     fn load_rules_recursive(&mut self, dir: &Path, depth: u32) -> Result<()> {
@@ -149,6 +173,7 @@ impl BareEngine {
         }
 
         if !dir.exists() {
+            warn!("Rules directory does not exist: {:?}", dir);
             return Ok(());
         }
 
@@ -188,6 +213,11 @@ impl BareEngine {
         }
 
         if !collection.rules.is_empty() {
+            for rule in &collection.rules {
+                if let Some(ref id) = rule.id {
+                    self.rule_ids.write().unwrap().insert(id.clone());
+                }
+            }
             let rt = tokio::runtime::Handle::try_current()
                 .unwrap_or_else(|_| SYNC_RUNTIME.handle().clone());
             rt.block_on(async {
@@ -206,7 +236,7 @@ impl BareEngine {
     }
 }
 
-impl Default for BareEngine {
+impl Default for DetectionEngine {
     fn default() -> Self {
         Self::new()
     }
@@ -224,11 +254,6 @@ fn extract_logsource(event: &Event) -> LogSource {
 
     resolve_logsource(channel, provider, event_id, &HashMap::new())
 }
-
-/// Re-export renamed type for backward compatibility.
-#[allow(deprecated)]
-#[deprecated(since = "0.3.0", note = "renamed to BareEngine")]
-pub type DetectionEngine = BareEngine;
 
 #[cfg(test)]
 mod tests {
@@ -258,7 +283,7 @@ detection:
     fn test_new_engine_has_pipelines() {
         let dir = tempfile::tempdir().unwrap();
         write_rule_to_dir(&dir, "pipeline_test.yml", MINIMAL_RULE_YAML);
-        let engine = BareEngine::from_rules_dir(dir.path()).unwrap();
+        let engine = DetectionEngine::from_rules_dir(dir.path()).unwrap();
         let count = engine.rule_count();
         assert_eq!(
             count, 1,
@@ -269,7 +294,7 @@ detection:
 
     #[test]
     fn test_from_rules_dir_nonexistent() {
-        let result = BareEngine::from_rules_dir(Path::new("/nonexistent"));
+        let result = DetectionEngine::from_rules_dir(Path::new("/nonexistent"));
         assert!(
             result.is_ok(),
             "from_rules_dir should succeed for nonexistent dir"
@@ -284,7 +309,7 @@ detection:
 
     #[test]
     fn test_evaluate_no_rules() {
-        let engine = BareEngine::from_rules_dir(Path::new("/nonexistent")).unwrap();
+        let engine = DetectionEngine::from_rules_dir(Path::new("/nonexistent")).unwrap();
         assert_eq!(engine.rule_count(), 0);
 
         let logsource = LogSource {
@@ -309,7 +334,7 @@ detection:
         let dir = tempfile::tempdir().unwrap();
         write_rule_to_dir(&dir, "test_rule.yml", MINIMAL_RULE_YAML);
 
-        let engine = BareEngine::from_rules_dir(dir.path()).unwrap();
+        let engine = DetectionEngine::from_rules_dir(dir.path()).unwrap();
         let count = engine.rule_count();
         assert_eq!(
             count, 1,
@@ -329,7 +354,7 @@ detection:
         let rule_content = MINIMAL_RULE_YAML.replace("test-rule", "deep-rule");
         std::fs::write(current.join("deep.yml"), rule_content).unwrap();
 
-        let engine = BareEngine::from_rules_dir(tmp.path()).unwrap();
+        let engine = DetectionEngine::from_rules_dir(tmp.path()).unwrap();
         assert_eq!(
             engine.rule_count(),
             0,
@@ -348,7 +373,7 @@ detection:
         let rule_content = MINIMAL_RULE_YAML.replace("test-rule", "edge-rule");
         std::fs::write(current.join("edge.yml"), rule_content).unwrap();
 
-        let engine = BareEngine::from_rules_dir(tmp.path()).unwrap();
+        let engine = DetectionEngine::from_rules_dir(tmp.path()).unwrap();
         assert_eq!(engine.rule_count(), 1, "rules at depth 16 should be loaded");
     }
 }
