@@ -4,14 +4,16 @@ Headless tool that captures real Windows events via the **Windows Event Log API*
 
 ## Workspace
 
-The project is a cargo workspace of 4 crates:
+The project is a cargo workspace of 6 crates:
 
 | Crate | Purpose |
 |---|---|
 | `sigmacatch` | Binary + pipeline, all orchestration |
-| `winevt-xml` | `WinevtEvent` struct + XML/JSON parsing |
+| `detection-engine` | BareEngine wrapper + embedded pipelines (windows.yml, flatten_winevt.yml) |
 | `sigma-mapping` | LogSource resolution, taxonomy tables, custom mappings |
 | `sigma-regression` | SigmaHQ regression data format (InfoYml, SkipSet, triplet) |
+| `sigmacatch-types` | Shared types: Event, Alert, RegressionHeader |
+| `winevt-xml` | WinevtEvent struct + XML/JSON parsing |
 
 ## Quick start
 

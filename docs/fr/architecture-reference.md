@@ -24,30 +24,34 @@ Outil headless qui capture des événements Windows réels via **Windows Event L
 ## 2. Arborescence
 
 ```
-src/
-├── git.rs               # wrapper grit-lib : clone/fetch/push/branch/commit/checkout (Rust pur, pas de git CLI)
-├── main.rs              # Pipeline + Stats + AggregatedRule
-├── config.rs            # Config YAML (serde, Default) + LogConfig
-├── contrib/             # Workflow de contribution SigmaHQ
-│   ├── mod.rs           # pub mod branch, commit, fork
-│   ├── branch.rs        # create_branch_name, create_branch, push_branch (fetch + push normal)
-│   ├── commit.rs        # commit_all_rules avec author env + fallback
-│   └── fork.rs          # ForkConfig, check_fork_exists, detect_fork
-├── logger.rs            # Two-layer tracing (stderr info + rolling file debug)
-├── sigma/
-│   ├── loader.rs        # SigmaRepo (grit-lib) + remote URL update + find_rules_dirs()
-│   └── engine.rs        # SigmaEngine + évaluation des règles (resolve_logsource depuis mapping)
-├── collector/
-│   ├── mod.rs           # pub mod winevt
-│   └── winevt.rs        # WinevtCollector (EvtQueryW, EvtNext, EvtRender)
-├── evtx/
-│   └── writer.rs        # write_evtx() via EvtExportLog API + .xml fallback
-├── parser/
-│   └── mod.rs           # XmlParser (Winevt XML → JSON plat)
-└── regression/
-    ├── mod.rs           # SkipSet, build_skip_set(), validate_rule_id(), triplet validation
-    ├── generator.rs     # RegressionData, MatchEvent
-    └── info_yml.rs      # InfoYml, RuleMetadata, RegressionTestInfo
+sigmacatch/
+├── Cargo.toml                     # Racine workspace (6 crates)
+├── sigmacatch/                    # Crate binaire
+│   └── src/
+│       ├── main.rs                # Pipeline + Stats + AggregatedRule
+│       ├── lib.rs                 # Déclarations pub mod
+│       ├── config.rs              # Config, SigmaFilterConfig, MinStatus, MinLevel
+│       ├── repo.rs                # wrapper grit-lib (clone/fetch/push/commit/branch)
+│       ├── detection/mod.rs       # SigmaDetectionEngine
+│       ├── collectors/
+│       │   └── event_log.rs       # WinevtCollector (EvtQueryW, EvtNext, EvtRender)
+│       ├── evtx/writer.rs         # write_evtx() via EvtExportLog API + .xml fallback
+│       ├── parser/winevt.rs       # re-export depuis winevt-xml
+│       ├── sigma/
+│       │   ├── engine.rs          # SigmaEngine + évaluation des règles
+│       │   ├── loader.rs          # SigmaRepo (grit-lib) + find_rules_dirs()
+│       │   └── mapping/mod.rs     # re-export depuis sigma-mapping
+│       ├── regression/mod.rs      # re-export depuis sigma-regression
+│       ├── github/
+│       │   ├── commit.rs          # commit_all_rules avec author env + fallback
+│       │   └── fork.rs            # ForkConfig, check_fork_exists, detect_fork
+│       └── bin/evtx_check.rs      # Outil de validation batch
+├── crates/
+│   ├── detection-engine/          # BareEngine + pipelines embarquées (windows.yml, flatten_winevt.yml)
+│   ├── sigma-mapping/             # LogSource, taxonomie (phf + channel_mapping.yml), mappings custom
+│   ├── sigma-regression/          # SkipSet, RegressionData, InfoYml, validation triplet
+│   ├── sigmacatch-types/          # Types partagés : Event, Alert, RegressionHeader
+│   └── winevt-xml/                # WinevtEvent + parsing XML/JSON (roxmltree)
 ```
 
 ---
@@ -126,7 +130,10 @@ Règles avec régression existante (complète ou incomplète) → **exclu du mot
 find_rules_dirs("sigma/")
     → Vec<PathBuf> (rules, rules-*, exclut rules-compliance)
     ↓
-Pour chaque .yml / .yaml :
+Walk séquentiel : collecte tous les chemins .yml / .yaml (rapide, pas de parse)
+    ↓
+Parse + filter parallèle (rayon::par_iter, pas d'état partagé) :
+    Pour chaque fichier :
     ├── parse_sigma_yaml() → règles Sigma
     ├── post-parse filter: rule.logsource.product == "windows" (ou absent)
     ├── filter status/level: rule.status >= min_status ET rule.level >= min_level (config.sigma)
@@ -156,7 +163,7 @@ SigmaEngine in-memory (règles chargées + rule_paths)
 WinevtCollector (channels résolus depuis les règles via resolve_channels_from_rules)
     ├── [Windows] EvtQueryW(channel="*") → EvtNext() → EvtRender() → XML
     │     ├── Un task par channel (tokio::spawn)
-    │     ├── XML → parse_event_xml() → WinevtEvent (porte event_json pré-parsé)
+    │     ├── XML → parse_winevt_xml() → WinevtEvent (porte event_json pré-parsé)
     │     └── mpsc::channel → main loop
     └── [non-Windows] Stub → Ok(vec![])
     ↓
@@ -233,7 +240,6 @@ WinevtEvent {
 ### InfoYml
 
 ```yaml
-type: evtx
 id: <uuid v4>
 description: "N/A"
 date: YYYY-MM-DD
@@ -242,31 +248,24 @@ rule_metadata:
   - id: <rule_id>
     title: <rule_title>
 regression_tests_info:
-  name: "Positive Detection Test"
-  test_type: evtx
-  channel: "Microsoft-Windows-Sysmon/Operational"
-  match_count: 1
-  path: <rule_rel_path>/<rule_id>.evtx
+  - name: "Positive Detection Test"
+    type: evtx
+    provider: "Microsoft-Windows-Sysmon"
+    match_count: 1
+    path: <rule_rel_path>/<rule_id>.evtx
 ```
 
 ### RegressionData
 
 ```rust
 RegressionData {
-    header: RuleHeader,       // rule_id, title, etc.
-    events: Vec<MatchEvent>,  // (event_json, raw_xml, channel, record_id, provider)
+    header: RegressionHeader,    // rule_id, title, etc.
+    alerts: Vec<Alert>,          // events correspondants
     output_path: PathBuf,
     rule_rel_path: Option<PathBuf>,
     author: Option<String>,
     description: Option<String>,
-}
-
-MatchEvent {
-    event: Value,             // JSON plat de l'événement
-    raw_xml: String,          // XML Winevt complet (pour EVTX)
-    channel: String,          // nom du channel Event Log
-    record_id: Option<u64>,   // EventRecordID
-    provider: String,         // ProviderName extrait de l'event (ex: Microsoft-Windows-Sysmon)
+    is_contrib: bool,
 }
 ```
 
@@ -332,6 +331,9 @@ MatchEvent {
 | `anyhow` | error handling |
 | `chrono` | dates |
 | `uuid` | UUID v4 pour info.yml |
+| `rayon` | parse parallèle des fichiers de règles |
+| `phf` | tables de hash statiques pour la taxonomie (dans sigma-mapping) |
+| `evtx` | parsing de fichiers EVTX (binaire evtx_check) |
 | `windows` | Winevt API (cfg-gated: windows only, features: Foundation, Com, Console, EventLog, Threading, Security) |
 
 **Retirés :** `ratatui`, `crossterm`, `quick-xml`, `winevt-writer`, `tdh`, `ntapi`
@@ -399,6 +401,7 @@ La config est auto-créée au premier run avec les valeurs par défaut. Éditez 
 │  Pour chaque .yml :                                                     │
 │    ├── parse_sigma_yaml() → règles Sigma                               │
 │    ├── post-parse filter: logsource.product == "windows" (ou absent)  │
+│    ├── filter status/level: rule.status >= min_status ET ...          │
 │    ├── skip si rule_id dans skip set                                  │
 │    └── engine.add_collection() → rsigma-eval                          │
 │  → SigmaEngine in-memory + rule_paths HashMap                          │
@@ -408,7 +411,7 @@ La config est auto-créée au premier run avec les valeurs par défaut. Éditez 
 │  CYCLE — COLLECTE (winevt)                                              │
 │  WinevtCollector (channels résolus depuis les règles)                   │
 │    ├── Windows: EvtQueryW → EvtNext → EvtRender → XML                │
-│    │     → parse_event_xml() → WinevtEvent                            │
+│    │     → parse_winevt_xml() → WinevtEvent                          │
 │    └── non-Windows: Stub → Ok(vec![])                                 │
 │  → Vec<WinevtEvent> { channel, event_id, raw_xml }                     │
 └──────────────────────┬──────────────────────────────────────────────────┘

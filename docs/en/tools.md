@@ -1,25 +1,25 @@
 # Tools
 
-Binaire en dehors du binaire principal (`sigmacatch`), chacun avec sa propre fonction.
+Binaries outside the main binary (`sigmacatch`), each with its own purpose.
 
 ## evtx_check
 
-**Fichier :** `sigmacatch/src/bin/evtx_check.rs`
+**File:** `sigmacatch/src/bin/evtx_check.rs`
 
-**Usage :** `cargo run --release --bin evtx_check <sigmahq_dir>`
+**Usage:** `cargo run --release --bin evtx_check <sigmahq_dir>`
 
-**Fonction :** Batch validation du moteur de détection Sigma contre les données de régression SigmaHQ.
+**Purpose:** Batch validation of the Sigma detection engine against SigmaHQ regression data.
 
 ### Pipeline
 
-1. Scanne `<sigmahq_dir>/regression_data` pour les fichiers `info.yml`
-2. Pour chaque triplet : `rule.yml` + `.evtx` + `info.yml`
-3. Parse le fichier EVTX → JSON imbriqué → format plat Winevt-compatible
-4. Évalue l'événement contre la règle Sigma
-5. Valide : la règle DOIT matcher (test de détection positive)
-6. Rapport pass/fail par règle + résumé
+1. Scans `<sigmahq_dir>/regression_data` for `info.yml` files
+2. For each triplet: `rule.yml` + `.evtx` + `info.yml`
+3. Parses the EVTX file → nested JSON → flat Winevt-compatible format
+4. Evaluates the event against the Sigma rule
+5. Validates: the rule MUST match (positive detection test)
+6. Reports pass/fail per rule + summary
 
-### Sortie
+### Output
 
 ```
   [1/100] proc_creation_win_bitsadmin_download ... [PASS] 1 match(es)
@@ -35,7 +35,7 @@ Binaire en dehors du binaire principal (`sigmacatch`), chacun avec sa propre fon
 ============================================================
 ```
 
-### Exemple
+### Example
 
 ```bash
 cargo run --release --bin evtx_check ./sigma
@@ -43,10 +43,10 @@ cargo run --release --bin evtx_check ./sigma
 
 ---
 
-## Comment ajouter un outil
+## How to add a tool
 
-1. Créer `sigmacatch/src/bin/<name>.rs` avec un docstring en tête
-2. Ajouter l'entrée dans `sigmacatch/Cargo.toml` :
+1. Create `sigmacatch/src/bin/<name>.rs` with a docstring at the top
+2. Add the entry to `sigmacatch/Cargo.toml`:
 
 ```toml
 [[bin]]
@@ -54,4 +54,4 @@ name = "<name>"
 path = "src/bin/<name>.rs"
 ```
 
-3. Documenter ici avec usage et pipeline
+3. Document here with usage and pipeline

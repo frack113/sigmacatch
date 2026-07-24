@@ -36,7 +36,7 @@ Fonctionnalités identifiées comme utiles mais hors périmètre actuel. Pas de 
 **Ce qui manque :**
 - Collecteur d'événements Linux : `journald` (systemd), `syslog`, ou `auditd`
 - Mapping logsource Sigma → canaux Linux (les règles SigmaHQ ont des `logsource.product: linux`)
-- Le moteur Sigma évalue déjà les rules Linux, mais sans events它们 ne matchent jamais
+- Le moteur Sigma évalue déjà les rules Linux, mais sans events elles ne matchent jamais
 - Corrélation possible avec des outils comme `osquery`, `auditd`, ou `falco`
 
 **Cas d'usage :** serveurs Linux, conteneurs, environnements cloud.

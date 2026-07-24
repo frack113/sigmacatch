@@ -47,7 +47,7 @@ Profil appliqué :
 
 ## Workspace
 
-Le projet est un cargo workspace de 4 crates :
+Le projet est un cargo workspace de 6 crates :
 
 ```bash
 # Tout builder
@@ -55,9 +55,11 @@ cargo build --workspace
 
 # Builder un crate spécifique
 cargo build -p sigmacatch
-cargo build -p winevt-xml
+cargo build -p detection-engine
 cargo build -p sigma-mapping
 cargo build -p sigma-regression
+cargo build -p sigmacatch-types
+cargo build -p winevt-xml
 ```
 
 ## Binaires
