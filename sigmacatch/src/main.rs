@@ -40,6 +40,16 @@ struct AggregatedRule {
     description: Option<String>,
 }
 
+struct WorkContext {
+    retired: HashSet<String>,
+    aggregated: HashMap<String, AggregatedRule>,
+    stats: Stats,
+    author: String,
+    email: String,
+    sigma_repo_path: std::path::PathBuf,
+    custom_map: HashMap<String, String>,
+}
+
 struct WinEvtxWriter;
 
 impl EvtxWriter for WinEvtxWriter {
@@ -54,228 +64,313 @@ impl EvtxWriter for WinEvtxWriter {
     }
 }
 
+struct DryRunConfig {
+    token_source: String,
+    token_len: usize,
+    token_prefix: String,
+    fork_exists: Option<bool>,
+    api_auth_login: Option<String>,
+    api_auth_valid: bool,
+    refs_found: usize,
+    repo_complete: bool,
+}
+
+impl DryRunConfig {
+    fn new() -> Self {
+        Self {
+            token_source: String::new(),
+            token_len: 0,
+            token_prefix: String::new(),
+            fork_exists: None,
+            api_auth_login: None,
+            api_auth_valid: false,
+            refs_found: 0,
+            repo_complete: false,
+        }
+    }
+
+    fn resolve_tokens(config: &Config) -> (Option<String>, String) {
+        let config_token = if !config.github_token.trim().is_empty() {
+            Some(config.github_token.trim())
+        } else {
+            None
+        };
+        let env_token = std::env::var("GITHUB_TOKEN").ok();
+        let has_config = config_token.is_some();
+        let has_env = env_token.is_some();
+
+        println!("\n1. Token resolution");
+        println!(
+            "   config.yaml github_token: {}",
+            if has_config { "SET" } else { "missing" }
+        );
+        println!(
+            "   GITHUB_TOKEN env var:     {}",
+            if has_env { "SET" } else { "missing" }
+        );
+
+        let effective_token = config_token.map(|t| t.to_string()).or(env_token.clone());
+        let source = if has_config {
+            "config"
+        } else if has_env {
+            "env"
+        } else {
+            "none"
+        };
+        match &effective_token {
+            Some(t) => {
+                println!(
+                    "   effective token:          {} chars, prefix={}",
+                    t.len(),
+                    &t[..t.len().min(4)]
+                );
+            }
+            None => {
+                println!(
+                    "   effective token:          NONE — all git operations will be unauthenticated"
+                );
+                println!("\n   ⚠  No token configured. Set github_token in config.yaml or GITHUB_TOKEN env var.");
+                println!("      Create a token at https://github.com/settings/tokens");
+            }
+        }
+        (effective_token, source.to_string())
+    }
+
+    async fn check_fork(&mut self, config: &Config, client: &reqwest::Client) -> Result<()> {
+        let username = &config.author;
+        let fork_url = format!("https://github.com/{}/sigma", username);
+
+        println!("\n2. Fork detection (HTTP HEAD)");
+        println!("   URL: {}", fork_url);
+        match client.head(&fork_url).send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                println!(
+                    "   HTTP {} {}",
+                    status.as_u16(),
+                    status.canonical_reason().unwrap_or("?")
+                );
+                if status.is_success() {
+                    println!("   → Fork exists");
+                    self.fork_exists = Some(true);
+                } else if status == reqwest::StatusCode::NOT_FOUND {
+                    println!(
+                        "   → Fork NOT found. Create one at: https://github.com/SigmaHQ/sigma/fork"
+                    );
+                    self.fork_exists = Some(false);
+                } else if status == reqwest::StatusCode::FORBIDDEN
+                    || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                {
+                    println!("   → Rate-limited or forbidden — cannot determine fork status");
+                } else {
+                    println!("   → Unexpected status");
+                }
+            }
+            Err(e) => {
+                println!("   → Network error: {}", e);
+            }
+        }
+        Ok(())
+    }
+
+    async fn check_api_auth(&mut self, token: &str, client: &reqwest::Client) -> Result<()> {
+        println!("\n3. GitHub API auth check (/user)");
+        let api_url = "https://api.github.com/user";
+        let api_req = client
+            .get(api_url)
+            .header("User-Agent", "sigmacatch/0.2.0")
+            .header("Authorization", format!("Bearer {}", token));
+        match api_req.send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                println!(
+                    "   HTTP {} {}",
+                    status.as_u16(),
+                    status.canonical_reason().unwrap_or("?")
+                );
+                if status.is_success() {
+                    let text = resp.text().await.unwrap_or_default();
+                    if let Ok(body) = serde_json::from_str::<serde_json::Value>(&text) {
+                        let login = body.get("login").and_then(|v| v.as_str()).unwrap_or("?");
+                        println!("   → Authenticated as: {}", login);
+                        self.api_auth_login = Some(login.to_string());
+                        self.api_auth_valid = true;
+                    }
+                } else if status == reqwest::StatusCode::UNAUTHORIZED {
+                    println!("   → Token INVALID or expired. Generate a new one at https://github.com/settings/tokens");
+                } else if status == reqwest::StatusCode::FORBIDDEN {
+                    println!("   → Token lacks required scopes (need 'repo' scope)");
+                } else {
+                    let _ = resp.text().await;
+                    println!("   → Unexpected response");
+                }
+            }
+            Err(e) => {
+                println!("   → Network error: {}", e);
+            }
+        }
+        Ok(())
+    }
+
+    async fn check_git_info_refs(
+        &mut self,
+        clone_url: &str,
+        token: &str,
+        client: &reqwest::Client,
+    ) -> Result<()> {
+        println!("\n4. Git smart HTTP info/refs (no protocol version header)");
+        let info_refs_url = format!("{}/info/refs?service=git-upload-pack", clone_url);
+        println!("   URL: {}", info_refs_url);
+        let git_req = client
+            .get(&info_refs_url)
+            .header("User-Agent", "sigmacatch/0.2.0")
+            .header("Authorization", format!("Bearer {}", token));
+        match git_req.send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                println!(
+                    "   HTTP {} {}",
+                    status.as_u16(),
+                    status.canonical_reason().unwrap_or("?")
+                );
+                if status.is_success() {
+                    let bytes = resp.bytes().await.unwrap_or_default();
+                    let text = String::from_utf8_lossy(&bytes);
+                    let refs: Vec<&str> = text.lines().filter(|l| l.contains("refs/")).collect();
+                    self.refs_found = refs.len();
+                    println!(
+                        "   → {} refs advertised (showing up to 10):",
+                        self.refs_found
+                    );
+                    for r in refs.iter().take(10) {
+                        println!("     {}", r);
+                    }
+                    if refs.is_empty() {
+                        println!("   → No refs found via line parsing.");
+                        let raw_refs: Vec<&str> =
+                            text.split('\0').filter(|s| s.contains("refs/")).collect();
+                        if !raw_refs.is_empty() {
+                            println!("   → Found {} refs via null-byte parsing:", raw_refs.len());
+                            for r in raw_refs.iter().take(10) {
+                                println!(
+                                    "     {}",
+                                    r.trim_start_matches(|c: char| !c.is_alphanumeric())
+                                );
+                            }
+                        } else {
+                            println!("   → Raw response (first 500 bytes):");
+                            let snippet = String::from_utf8_lossy(&bytes[..bytes.len().min(500)]);
+                            for line in snippet.lines() {
+                                println!("     {:?}", line);
+                            }
+                            if bytes.len() > 500 {
+                                println!("     ... ({} total bytes)", bytes.len());
+                            }
+                        }
+                    }
+                } else if status == reqwest::StatusCode::UNAUTHORIZED
+                    || status == reqwest::StatusCode::FORBIDDEN
+                {
+                    println!(
+                        "   → Access denied. Token needed for private fork, or fork doesn't exist."
+                    );
+                    println!("     For a private fork, ensure token has 'repo' scope.");
+                } else if status == reqwest::StatusCode::NOT_FOUND {
+                    println!("   → Repository not found at this URL");
+                } else {
+                    let body = resp.text().await.unwrap_or_default();
+                    println!(
+                        "   → Unexpected: {}",
+                        body.chars().take(200).collect::<String>()
+                    );
+                }
+            }
+            Err(e) => {
+                println!("   → Network error: {}", e);
+            }
+        }
+        Ok(())
+    }
+
+    fn check_repo_state(&mut self) -> bool {
+        println!("\n5. Repo directory state");
+        let sigma_dir = std::path::Path::new("sigma");
+        let git_dir = sigma_dir.join(".git");
+        if git_dir.exists() {
+            let packed_refs = git_dir.join("packed-refs").exists();
+            let has_pack = git_dir
+                .join("objects")
+                .join("pack")
+                .read_dir()
+                .map(|mut d| d.next().is_some())
+                .unwrap_or(false);
+            let has_refs = git_dir
+                .join("refs")
+                .join("heads")
+                .read_dir()
+                .map(|mut d| d.next().is_some())
+                .unwrap_or(false);
+            println!("   sigma/.git exists:         yes");
+            println!(
+                "   packed-refs:               {}",
+                if packed_refs { "yes" } else { "no" }
+            );
+            println!(
+                "   objects/pack:              {}",
+                if has_pack { "yes" } else { "no" }
+            );
+            println!(
+                "   refs/heads:                {}",
+                if has_refs { "yes" } else { "no" }
+            );
+            if !packed_refs && !has_pack && !has_refs {
+                println!("   → INCOMPLETE repo — delete sigma/.git and re-run");
+                self.repo_complete = false;
+            } else {
+                self.repo_complete = true;
+            }
+        } else {
+            println!("   sigma/.git:                not present (will clone)");
+            self.repo_complete = false;
+        }
+        self.repo_complete
+    }
+}
+
 async fn dry_run_git(config: &Config) -> Result<()> {
     let sep = "─".repeat(60);
     println!("{}", sep);
     println!("  DRY-RUN: git diagnostics");
     println!("{}", sep);
 
-    let config_token = if !config.github_token.trim().is_empty() {
-        Some(config.github_token.trim())
-    } else {
-        None
-    };
-    let env_token = std::env::var("GITHUB_TOKEN").ok();
-    let has_config = config_token.is_some();
-    let has_env = env_token.is_some();
+    let mut dry_run = DryRunConfig::new();
+    let (effective_token, source) = DryRunConfig::resolve_tokens(config);
+    dry_run.token_source = source;
 
-    println!("\n1. Token resolution");
-    println!(
-        "   config.yaml github_token: {}",
-        if has_config { "SET" } else { "missing" }
-    );
-    println!(
-        "   GITHUB_TOKEN env var:     {}",
-        if has_env { "SET" } else { "missing" }
-    );
-    let effective_token = config_token.map(|t| t.to_string()).or(env_token.clone());
-    match &effective_token {
-        Some(t) => println!(
-            "   effective token:          {} chars, prefix={}",
-            t.len(),
-            &t[..t.len().min(4)]
-        ),
-        None => {
-            println!(
-                "   effective token:          NONE — all git operations will be unauthenticated"
-            );
-            println!("\n   ⚠  No token configured. Set github_token in config.yaml or GITHUB_TOKEN env var.");
-            println!("      Create a token at https://github.com/settings/tokens");
-        }
+    if let Some(ref t) = effective_token {
+        dry_run.token_len = t.len();
+        dry_run.token_prefix = t[..t.len().min(4)].to_string();
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+
+    dry_run.check_fork(config, &client).await?;
+
+    if let Some(ref t) = effective_token {
+        dry_run.check_api_auth(t, &client).await?;
     }
 
     let username = &config.author;
     let fork_url = format!("https://github.com/{}/sigma", username);
     let clone_url = format!("{}.git", fork_url);
 
-    println!("\n2. Fork detection (HTTP HEAD)");
-    println!("   URL: {}", fork_url);
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()?;
-    match client.head(&fork_url).send().await {
-        Ok(resp) => {
-            let status = resp.status();
-            println!(
-                "   HTTP {} {}",
-                status.as_u16(),
-                status.canonical_reason().unwrap_or("?")
-            );
-            if status.is_success() {
-                println!("   → Fork exists");
-            } else if status == reqwest::StatusCode::NOT_FOUND {
-                println!(
-                    "   → Fork NOT found. Create one at: https://github.com/SigmaHQ/sigma/fork"
-                );
-            } else if status == reqwest::StatusCode::FORBIDDEN
-                || status == reqwest::StatusCode::TOO_MANY_REQUESTS
-            {
-                println!("   → Rate-limited or forbidden — cannot determine fork status");
-            } else {
-                println!("   → Unexpected status");
-            }
-        }
-        Err(e) => {
-            println!("   → Network error: {}", e);
-        }
-    }
-
-    println!("\n3. GitHub API auth check (/user)");
-    let api_url = "https://api.github.com/user";
-    let mut api_req = client.get(api_url).header("User-Agent", "sigmacatch/0.2.0");
     if let Some(ref t) = effective_token {
-        api_req = api_req.header("Authorization", format!("Bearer {}", t));
-    }
-    match api_req.send().await {
-        Ok(resp) => {
-            let status = resp.status();
-            println!(
-                "   HTTP {} {}",
-                status.as_u16(),
-                status.canonical_reason().unwrap_or("?")
-            );
-            if status.is_success() {
-                let text = resp.text().await.unwrap_or_default();
-                if let Ok(body) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let login = body.get("login").and_then(|v| v.as_str()).unwrap_or("?");
-                    println!("   → Authenticated as: {}", login);
-                }
-            } else if status == reqwest::StatusCode::UNAUTHORIZED {
-                println!("   → Token INVALID or expired. Generate a new one at https://github.com/settings/tokens");
-            } else if status == reqwest::StatusCode::FORBIDDEN {
-                println!("   → Token lacks required scopes (need 'repo' scope)");
-            } else {
-                let _ = resp.text().await;
-                println!("   → Unexpected response");
-            }
-        }
-        Err(e) => {
-            println!("   → Network error: {}", e);
-        }
+        dry_run.check_git_info_refs(&clone_url, t, &client).await?;
     }
 
-    println!("\n4. Git smart HTTP info/refs (no protocol version header)");
-    let info_refs_url = format!("{}/info/refs?service=git-upload-pack", clone_url);
-    println!("   URL: {}", info_refs_url);
-    let auth_info_refs_url = if let Some(ref t) = effective_token {
-        if let Some(rest) = info_refs_url.strip_prefix("https://") {
-            format!("https://x-access-token:{}@{}", t, rest)
-        } else {
-            info_refs_url.clone()
-        }
-    } else {
-        info_refs_url.clone()
-    };
-    let git_req = client
-        .get(&auth_info_refs_url)
-        .header("User-Agent", "sigmacatch/0.2.0");
-    match git_req.send().await {
-        Ok(resp) => {
-            let status = resp.status();
-            println!(
-                "   HTTP {} {}",
-                status.as_u16(),
-                status.canonical_reason().unwrap_or("?")
-            );
-            if status.is_success() {
-                let bytes = resp.bytes().await.unwrap_or_default();
-                let text = String::from_utf8_lossy(&bytes);
-                let refs: Vec<&str> = text.lines().filter(|l| l.contains("refs/")).collect();
-                println!("   → {} refs advertised (showing up to 10):", refs.len());
-                for r in refs.iter().take(10) {
-                    println!("     {}", r);
-                }
-                if refs.is_empty() {
-                    println!("   → No refs found via line parsing.");
-                    let raw_refs: Vec<&str> =
-                        text.split('\0').filter(|s| s.contains("refs/")).collect();
-                    if !raw_refs.is_empty() {
-                        println!("   → Found {} refs via null-byte parsing:", raw_refs.len());
-                        for r in raw_refs.iter().take(10) {
-                            println!(
-                                "     {}",
-                                r.trim_start_matches(|c: char| !c.is_alphanumeric())
-                            );
-                        }
-                    } else {
-                        println!("   → Raw response (first 500 bytes):");
-                        let snippet = String::from_utf8_lossy(&bytes[..bytes.len().min(500)]);
-                        for line in snippet.lines() {
-                            println!("     {:?}", line);
-                        }
-                        if bytes.len() > 500 {
-                            println!("     ... ({} total bytes)", bytes.len());
-                        }
-                    }
-                }
-            } else if status == reqwest::StatusCode::UNAUTHORIZED
-                || status == reqwest::StatusCode::FORBIDDEN
-            {
-                println!(
-                    "   → Access denied. Token needed for private fork, or fork doesn't exist."
-                );
-                println!("     For a private fork, ensure token has 'repo' scope.");
-            } else if status == reqwest::StatusCode::NOT_FOUND {
-                println!("   → Repository not found at this URL");
-            } else {
-                let body = resp.text().await.unwrap_or_default();
-                println!(
-                    "   → Unexpected: {}",
-                    body.chars().take(200).collect::<String>()
-                );
-            }
-        }
-        Err(e) => {
-            println!("   → Network error: {}", e);
-        }
-    }
-
-    println!("\n5. Repo directory state");
-    let sigma_dir = std::path::Path::new("sigma");
-    let git_dir = sigma_dir.join(".git");
-    if git_dir.exists() {
-        let packed_refs = git_dir.join("packed-refs").exists();
-        let has_pack = git_dir
-            .join("objects")
-            .join("pack")
-            .read_dir()
-            .map(|mut d| d.next().is_some())
-            .unwrap_or(false);
-        let has_refs = git_dir
-            .join("refs")
-            .join("heads")
-            .read_dir()
-            .map(|mut d| d.next().is_some())
-            .unwrap_or(false);
-        println!("   sigma/.git exists:         yes");
-        println!(
-            "   packed-refs:               {}",
-            if packed_refs { "yes" } else { "no" }
-        );
-        println!(
-            "   objects/pack:              {}",
-            if has_pack { "yes" } else { "no" }
-        );
-        println!(
-            "   refs/heads:                {}",
-            if has_refs { "yes" } else { "no" }
-        );
-        if !packed_refs && !has_pack && !has_refs {
-            println!("   → INCOMPLETE repo — delete sigma/.git and re-run");
-        }
-    } else {
-        println!("   sigma/.git:                not present (will clone)");
-    }
+    dry_run.check_repo_state();
 
     println!("\n{}", sep);
     println!("  Done. Review output above to identify the failure point.");
@@ -417,19 +512,16 @@ fn clean_partial_regressions(base: &std::path::Path) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn stage_4_work_winevt(
     channels: Vec<String>,
     engine: &SigmaEngine,
-    retired: &mut HashSet<String>,
-    aggregated: &mut HashMap<String, AggregatedRule>,
-    stats: &mut Stats,
-    custom_map: &HashMap<String, String>,
-    author: &str,
-    email: &str,
-    sigma_repo_path: &std::path::Path,
-) -> Result<()> {
-    let output_base = sigma_repo_path.join("regression_data");
+    mut ctx: WorkContext,
+) -> Result<(
+    HashSet<String>,
+    Stats,
+    Vec<(String, String, Option<String>)>,
+)> {
+    let output_base = ctx.sigma_repo_path.join("regression_data");
 
     // Remove partial regression artifacts left by a crashed/aborted prior run
     // (a directory tree under regression_data/ that has generated files but no
@@ -458,47 +550,40 @@ async fn stage_4_work_winevt(
     drop(tx); // Drop original sender so rx will close when all tasks are done
 
     // Create detection engine once before the event loop
-    let det_engine = SigmaDetectionEngine::new(engine, custom_map);
+    let det_engine = SigmaDetectionEngine::new(engine, &ctx.custom_map);
 
     // Process events from all channels
     while let Some(event) = rx.recv().await {
         let _event_span =
             info_span!("event", event_id = event.event_id(), channel = %event.channel()).entered();
-        stats.events_processed += 1;
+        ctx.stats.events_processed += 1;
 
         // Evaluate via SigmaDetectionEngine
         let alerts = det_engine.evaluate(&event);
 
-        for alert in &alerts {
+        for alert in alerts {
             let rule_id = &alert.rule_id;
 
-            if retired.contains(rule_id) {
+            if ctx.retired.contains(rule_id) {
                 continue;
             }
 
             debug!("Rule {} matched", rule_id);
-            stats.matches_found += 1;
+            ctx.stats.matches_found += 1;
 
-            if !aggregated.contains_key(rule_id) {
-                let header = sigmacatch_types::RegressionHeader::new(
-                    rule_id.clone(),
-                    alert.rule_title.clone(),
-                );
-                aggregated.insert(
-                    rule_id.clone(),
-                    AggregatedRule {
-                        header,
-                        alerts: Vec::new(),
-                        rule_path: engine.rule_path(rule_id).cloned(),
-                        description: engine.rule_description(rule_id).map(|s| s.to_string()),
-                    },
-                );
-            }
-            aggregated
-                .get_mut(rule_id)
-                .expect("just inserted")
+            ctx.aggregated
+                .entry(rule_id.clone())
+                .or_insert_with(|| AggregatedRule {
+                    header: sigmacatch_types::RegressionHeader::new(
+                        rule_id.clone(),
+                        alert.rule_title.clone(),
+                    ),
+                    alerts: Vec::new(),
+                    rule_path: engine.rule_path(rule_id).cloned(),
+                    description: engine.rule_description(rule_id).map(|s| s.to_string()),
+                })
                 .alerts
-                .push(alert.clone());
+                .push(alert);
         }
     }
 
@@ -511,7 +596,7 @@ async fn stage_4_work_winevt(
 
     info!(
         "{} events processed, {} rule matches",
-        stats.events_processed, stats.matches_found
+        ctx.stats.events_processed, ctx.stats.matches_found
     );
 
     // Generate regression data
@@ -520,7 +605,7 @@ async fn stage_4_work_winevt(
         Option<PathBuf>,
         String,
     )> = Vec::new();
-    for agg in aggregated.values_mut() {
+    for agg in ctx.aggregated.values_mut() {
         let rule_rel_path = agg.rule_path.as_ref().and_then(|p| {
             p.strip_prefix("sigma")
                 .ok()
@@ -531,9 +616,11 @@ async fn stage_4_work_winevt(
             agg.header.clone(),
             &output_base,
             rule_rel_path.as_deref(),
-            Some(author),
+            Some(&ctx.author),
             agg.description.as_deref(),
-            sigma_repo_path.display().to_string().starts_with("sigma"),
+            ctx.sigma_repo_path
+                .file_name()
+                .is_some_and(|n| n == "sigma"),
         );
         if reg.exists() {
             continue;
@@ -546,6 +633,8 @@ async fn stage_4_work_winevt(
         to_generate.push((reg, agg.rule_path.clone(), rule_id));
     }
 
+    let mut committed_rules: Vec<(String, String, Option<String>)> = Vec::new();
+
     if to_generate.is_empty() {
         info!("No new regression data to generate");
     } else {
@@ -553,20 +642,23 @@ async fn stage_4_work_winevt(
             "Generating regression data for {} rules…",
             to_generate.len()
         );
-        let mut committed_rules: Vec<(String, String, Option<String>)> = Vec::new();
         for (reg, rule_path_opt, rule_id) in &to_generate {
             let _gen_span = info_span!("generate", rule_id = %rule_id).entered();
             match reg.generate(&WinEvtxWriter) {
                 Ok(_) => {
-                    stats.regression_data_generated += 1;
-                    retired.insert(rule_id.clone());
+                    ctx.stats.regression_data_generated += 1;
+                    ctx.retired.insert(rule_id.clone());
                     info!("Rule {} retired from detection engine", rule_id);
-                    let rel_dir = reg
-                        .sigma_rel_dir()
-                        .unwrap_or_else(|| format!("regression_data/rules/{}", rule_id));
+                    let rel_dir = reg.sigma_rel_dir().unwrap_or_else(|| {
+                        if reg.is_contrib {
+                            format!("sigma/regression_data/rules/{}", rule_id)
+                        } else {
+                            format!("regression_data/rules/{}", rule_id)
+                        }
+                    });
                     let rule_yaml_rel = rule_path_opt
                         .as_ref()
-                        .and_then(|p| p.strip_prefix(sigma_repo_path).ok())
+                        .and_then(|p| p.strip_prefix(&ctx.sigma_repo_path).ok())
                         .and_then(|p| p.to_str())
                         .map(|s| s.to_string().replace('\\', "/"));
                     committed_rules.push((rule_id.clone(), rel_dir.clone(), rule_yaml_rel));
@@ -610,15 +702,18 @@ async fn stage_4_work_winevt(
 
         // Commit regression data
         if !committed_rules.is_empty() {
-            if let Err(e) =
-                github::commit::commit_all_rules(sigma_repo_path, &committed_rules, author, email)
-            {
+            if let Err(e) = github::commit::commit_all_rules(
+                &ctx.sigma_repo_path,
+                &committed_rules,
+                &ctx.author,
+                &ctx.email,
+            ) {
                 warn!("Failed to commit regression data: {}", e);
             }
         }
     }
 
-    Ok(())
+    Ok((ctx.retired, ctx.stats, committed_rules))
 }
 
 fn resolve_channels_from_rules(
@@ -740,37 +835,37 @@ fn setup_console() {
 async fn run_cycle(
     channels: Vec<String>,
     engine: &SigmaEngine,
-    retired: &mut HashSet<String>,
-    custom_map: &HashMap<String, String>,
-    author: &str,
-    email: &str,
-) -> Result<Stats> {
-    let mut stats = Stats {
-        events_processed: 0,
-        matches_found: 0,
-        regression_data_generated: 0,
+    mut retired: HashSet<String>,
+    custom_map: HashMap<String, String>,
+    author: String,
+    email: String,
+) -> Result<(
+    HashSet<String>,
+    Stats,
+    Vec<(String, String, Option<String>)>,
+)> {
+    let ctx = WorkContext {
+        retired: std::mem::take(&mut retired),
+        aggregated: HashMap::new(),
+        stats: Stats {
+            events_processed: 0,
+            matches_found: 0,
+            regression_data_generated: 0,
+        },
+        author,
+        email,
+        sigma_repo_path: std::path::PathBuf::from("sigma"),
+        custom_map,
     };
 
     if channels.is_empty() {
-        return Ok(stats);
+        return Ok((retired, ctx.stats, Vec::new()));
     }
 
-    let mut aggregated: HashMap<String, AggregatedRule> = HashMap::new();
-    {
+    let (retired, stats, committed_rules) = {
         let _span = info_span!("collect").entered();
-        stage_4_work_winevt(
-            channels,
-            engine,
-            retired,
-            &mut aggregated,
-            &mut stats,
-            custom_map,
-            author,
-            email,
-            std::path::Path::new("sigma"),
-        )
-        .await?;
-    }
+        stage_4_work_winevt(channels, engine, ctx).await?
+    };
 
     info!(
         events_processed = stats.events_processed,
@@ -779,7 +874,7 @@ async fn run_cycle(
         "cycle complete"
     );
 
-    Ok(stats)
+    Ok((retired, stats, committed_rules))
 }
 
 #[tokio::main]
@@ -1009,15 +1104,22 @@ async fn main() -> Result<()> {
             info!("collecting…");
 
             let channels = cycle_channels.clone();
-            run_cycle(
+            let (mut retired, stats, committed_rules) = run_cycle(
                 channels,
                 &engine,
-                &mut retired,
-                &custom_map,
-                &config.author,
-                &config.email,
+                std::mem::take(&mut retired),
+                custom_map.clone(),
+                config.author.clone(),
+                config.email.clone(),
             )
             .await?;
+            retired.extend(committed_rules.into_iter().map(|(rule_id, _, _)| rule_id));
+            info!(
+                events_processed = stats.events_processed,
+                matches_found = stats.matches_found,
+                regression_data_generated = stats.regression_data_generated,
+                "cycle complete"
+            );
         }
 
         if let Err(e) = repo::git_push(
