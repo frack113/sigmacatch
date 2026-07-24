@@ -3,11 +3,13 @@
 
 pub mod collectors;
 pub mod config;
+
 pub mod evtx;
 pub mod github;
 pub mod logger;
 pub mod parser;
-pub mod pipeline;
 pub mod regression;
 pub mod repo;
 pub mod sigma;
+
+pub use detection_engine;

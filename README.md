@@ -54,6 +54,9 @@ Rules missing a `status` or `level` field are always accepted.
 | Flag | Description |
 |------|-------------|
 | `--author <name>` | Override detected username |
+| `--dry-run` | Git diagnostics only (no collection) |
+| `--channels-only` | Resolve channels without collecting |
+| `--all-rules` | Load all rules (for channels-only mode, skip set disabled) |
 
 ## Requirements
 
@@ -86,14 +89,16 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 
 ## Workspace
 
-The project is a cargo workspace of 4 crates:
+The project is a cargo workspace of 6 crates:
 
 | Crate | Purpose |
 |---|---|
 | `sigmacatch` | Binary + pipeline, all orchestration |
-| `winevt-xml` | `WinevtEvent` struct + XML/JSON parsing |
+| `detection-engine` | BareEngine wrapper + embedded pipelines (windows.yml, flatten_winevt.yml) |
 | `sigma-mapping` | LogSource resolution, taxonomy tables, custom channel mappings |
 | `sigma-regression` | SigmaHQ regression data format (`InfoYml`, `SkipSet`, triplet) |
+| `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader` |
+| `winevt-xml` | `WinevtEvent` struct + XML/JSON parsing |
 
 ## Built with
 

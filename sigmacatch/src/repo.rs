@@ -1033,3 +1033,165 @@ fn fast_forward_branch(git_dir: &Path) -> Result<()> {
     );
     Ok(())
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_url_with_at() {
+        let url = "https://user:token@github.com/foo/bar.git";
+        let result = sanitize_url(url);
+        assert_eq!(result, "https://<redacted>@github.com/foo/bar.git");
+    }
+
+    #[test]
+    fn test_sanitize_url_without_at() {
+        let url = "https://github.com/foo/bar.git";
+        let result = sanitize_url(url);
+        assert_eq!(result, url);
+    }
+
+    #[test]
+    fn test_sanitize_url_empty() {
+        let result = sanitize_url("");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_git_config_escape_simple_value() {
+        let result = git_config_escape("sigmacatch");
+        assert_eq!(result, "sigmacatch");
+    }
+
+    #[test]
+    fn test_git_config_escape_value_with_quotes() {
+        let result = git_config_escape("hello \"world\"");
+        assert_eq!(result, "\"hello \\\"world\\\"\"");
+    }
+
+    #[test]
+    fn test_git_config_escape_value_with_backslashes() {
+        let result = git_config_escape(r"C:\Users\foo");
+        assert_eq!(result, "\"C:\\\\Users\\\\foo\"");
+    }
+
+    #[test]
+    fn test_git_config_escape_value_with_newlines() {
+        let result = git_config_escape("line1\nline2");
+        assert_eq!(result, "\"line1\\nline2\"");
+    }
+
+    #[test]
+    fn test_git_config_escape_value_with_spaces() {
+        let result = git_config_escape("hello world");
+        assert_eq!(result, "\"hello world\"");
+    }
+
+    #[test]
+    fn test_validate_branch_name_valid() {
+        assert!(validate_branch_name("sigmacatch-contrib/20250701").is_ok());
+        assert!(validate_branch_name("feature/test").is_ok());
+        assert!(validate_branch_name("a").is_ok());
+    }
+
+    #[test]
+    fn test_validate_branch_name_empty() {
+        let err = validate_branch_name("").unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("empty"));
+    }
+
+    #[test]
+    fn test_validate_branch_name_null_char() {
+        let err = validate_branch_name("foo\x00bar").unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("invalid character"));
+    }
+
+    #[test]
+    fn test_validate_branch_name_newline() {
+        let err = validate_branch_name("foo\nbar").unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("invalid character"));
+    }
+
+    #[test]
+    fn test_validate_branch_name_backslash() {
+        let err = validate_branch_name("foo\\bar").unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("invalid character"));
+    }
+
+    #[test]
+    fn test_validate_branch_name_tilde() {
+        let err = validate_branch_name("foo^bar").unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("invalid character"));
+    }
+
+    #[test]
+    fn test_validate_branch_name_colon() {
+        let err = validate_branch_name("foo:bar").unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("invalid character"));
+    }
+
+    #[test]
+    fn test_validate_branch_name_question_mark() {
+        let err = validate_branch_name("foo?bar").unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("invalid character"));
+    }
+
+    #[test]
+    fn test_validate_branch_name_star() {
+        let err = validate_branch_name("foo*bar").unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("invalid character"));
+    }
+
+    #[test]
+    fn test_validate_branch_name_brackets() {
+        let err = validate_branch_name("foo[bar").unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("invalid character"));
+    }
+
+    #[test]
+    fn test_validate_branch_name_empty_components() {
+        assert!(validate_branch_name("foo//bar").is_err());
+    }
+
+    #[test]
+    fn test_validate_branch_name_dot_components() {
+        assert!(validate_branch_name("foo/bar/.").is_err());
+        assert!(validate_branch_name("foo/../bar").is_err());
+    }
+
+    #[test]
+    fn test_validate_branch_name_lock_suffix() {
+        let err = validate_branch_name("foo/bar.lock").unwrap_err();
+        assert!(err.to_string().to_lowercase().contains(".lock"));
+    }
+
+    #[test]
+    fn test_validate_branch_name_leading_slash() {
+        let err = validate_branch_name("/foo/bar").unwrap_err();
+        assert!(err
+            .to_string()
+            .to_lowercase()
+            .contains("invalid '/' placement"));
+    }
+
+    #[test]
+    fn test_validate_branch_name_trailing_slash() {
+        let err = validate_branch_name("foo/bar/").unwrap_err();
+        assert!(err
+            .to_string()
+            .to_lowercase()
+            .contains("invalid '/' placement"));
+    }
+
+    #[test]
+    fn test_create_branch_name_is_valid() {
+        let name = create_branch_name();
+        assert!(!name.is_empty());
+        assert!(name.starts_with("sigmacatch-contrib/"));
+    }
+}

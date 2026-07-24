@@ -2,15 +2,17 @@
 
 ## Cargo workspace
 
-The project is a cargo workspace of 4 crates:
+The project is a cargo workspace of 6 crates:
 
 ```
 sigmacatch/
 ├── Cargo.toml           # Workspace root
 ├── crates/
-│   ├── winevt-xml/      # WinevtEvent struct + XML parser
-│   ├── sigma-mapping/   # LogSource resolution, custom mappings, taxonomy tables
-│   └── sigma-regression/ # InfoYml, SkipSet, triplet validation (SigmaHQ regression format)
+│   ├── detection-engine/   # BareEngine wrapper + embedded pipelines
+│   ├── sigma-mapping/      # LogSource resolution, custom mappings, taxonomy tables
+│   ├── sigma-regression/   # InfoYml, SkipSet, triplet validation (SigmaHQ regression format)
+│   ├── sigmacatch-types/   # Shared types: Event, Alert, RegressionHeader
+│   └── winevt-xml/         # WinevtEvent struct + XML parser (roxmltree)
 └── sigmacatch/          # Binary + pipeline
     └── src/
         ├── main.rs
@@ -23,28 +25,29 @@ sigmacatch/
 ```
 sigmacatch/src/
 ├── main.rs              # Binary + pipeline (run_pipeline, Stats, AggregatedRule)
-├── config.rs            # YAML config (serde, Default) with LogConfig
+├── lib.rs               # pub mod declarations
+├── config.rs            # YAML config (Config, SigmaFilterConfig, MinStatus, MinLevel)
 ├── logger.rs            # Two-layer tracing subscriber (stderr info + daily rolling file debug)
-├── sigma/
-│   ├── loader.rs        # grit-lib clone/fetch + remote URL update + find_rules_dirs()
-│   └── engine.rs        # SigmaEngine: load rules (post-parse filter), evaluate events, rule evaluation
-├── collector/
-│   ├── mod.rs           # pub mod winevt
-│   └── winevt.rs        # WinevtCollector (EvtQueryW, EvtNext, EvtRender)
+├── repo.rs              # grit-lib wrapper: clone/fetch/push/commit/branch (pure Rust, no git CLI)
+├── detection/
+│   └── mod.rs           # SigmaDetectionEngine (extract channel/provider, resolve logsource)
+├── collectors/
+│   ├── mod.rs           # pub mod event_log
+│   └── event_log.rs     # WinevtCollector (EvtQueryW, EvtNext, EvtRender)
 ├── evtx/
 │   └── writer.rs        # write_evtx() via EvtExportLog API (→ valid EVTX or .xml fallback)
 ├── parser/
-│   └── mod.rs           # XmlParser (Winevt XML → flat JSON)
+│   └── winevt.rs        # re-export from winevt-xml crate
+├── sigma/
+│   ├── mod.rs           # pub mod engine, loader, mapping
+│   ├── loader.rs        # SigmaRepo (grit-lib) + find_rules_dirs()
+│   └── engine.rs        # SigmaEngine: load rules, evaluate events
 ├── regression/
-│   ├── mod.rs           # Re-exports from sigma-regression + generator
-│   └── generator.rs     # RegressionData: aggregate + write output
+│   └── mod.rs           # re-exports from sigma-regression crate
 ├── github/
-│   ├── mod.rs           # pub mod branch, commit, fork
-│   ├── branch.rs        # Branch management (create, push)
+│   ├── mod.rs           # pub mod commit, fork
 │   ├── commit.rs        # Commit workflow with author/email validation
 │   └── fork.rs          # Fork detection via GitHub API
-├── pipelines/
-│   └── windows.yml      # Embedded Sigma rule transformation pipeline
 └── bin/
     └── evtx_check.rs    # Batch validation tool
 ```
@@ -52,12 +55,14 @@ sigmacatch/src/
 ## Crate dependency graph
 
 ```
-sigmacatch ──┬── winevt-xml      (WinevtEvent, XML → JSON parser)
+sigmacatch ──┬── detection-engine (BareEngine + embedded pipelines)
+             ├── winevt-xml      (WinevtEvent, XML → JSON parser)
              ├── sigma-mapping   (LogSource resolution, taxonomy)
+             ├── sigmacatch-types (Event, Alert, RegressionHeader)
              └── sigma-regression (InfoYml, SkipSet, triplet)
 ```
 
-All 3 crates are independent (no cross-dependency between them). `sigmacatch` depends on all 3, plus external crates (`rsigma-eval`, `grit-lib`, `tokio`, `windows`, etc.).
+All 5 library crates are independent (no cross-dependency between them). `sigmacatch` depends on all 5, plus external crates (`rsigma-eval`, `grit-lib`, `tokio`, `windows`, etc.).
 
 ## Pipeline (single run, sequential)
 

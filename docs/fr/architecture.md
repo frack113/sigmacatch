@@ -2,15 +2,17 @@
 
 ## Cargo workspace
 
-Le projet est un cargo workspace de 4 crates :
+Le projet est un cargo workspace de 6 crates :
 
 ```
 sigmacatch/
 ├── Cargo.toml           # Racine workspace
 ├── crates/
-│   ├── winevt-xml/      # WinevtEvent + parser XML
-│   ├── sigma-mapping/   # Résolution LogSource, mappings personnalisés, tables de taxonomie
-│   └── sigma-regression/ # InfoYml, SkipSet, validation triplet (format régression SigmaHQ)
+│   ├── detection-engine/   # Wrapper BareEngine + pipelines embarquées
+│   ├── sigma-mapping/      # Résolution LogSource, mappings personnalisés, tables de taxonomie
+│   ├── sigma-regression/   # InfoYml, SkipSet, validation triplet (format régression SigmaHQ)
+│   ├── sigmacatch-types/   # Types partagés : Event, Alert, RegressionHeader
+│   └── winevt-xml/         # Struct WinevtEvent + parser XML (roxmltree)
 └── sigmacatch/          # Binaire + pipeline
     └── src/
         ├── main.rs
@@ -23,28 +25,29 @@ sigmacatch/
 ```
 sigmacatch/src/
 ├── main.rs              # Binaire + pipeline (run_pipeline, Stats, AggregatedRule)
-├── config.rs            # Config YAML (serde, Default) avec LogConfig
+├── lib.rs               # Déclarations pub mod
+├── config.rs            # Config YAML (Config, SigmaFilterConfig, MinStatus, MinLevel)
 ├── logger.rs            # Abonnement tracing à deux couches (stderr info + fichier debug)
-├── sigma/
-│   ├── loader.rs        # grit-lib clone/fetch + remote URL update + find_rules_dirs()
-│   └── engine.rs        # SigmaEngine: load rules (post-parse filter), evaluate events, evaluation des règles
-├── collector/
-│   ├── mod.rs           # pub mod winevt
-│   └── winevt.rs        # WinevtCollector (EvtQueryW, EvtNext, EvtRender)
+├── repo.rs              # wrapper grit-lib : clone/fetch/push/commit/branch (Rust pur, pas de git CLI)
+├── detection/
+│   └── mod.rs           # SigmaDetectionEngine (extrait channel/provider, résout logsource)
+├── collectors/
+│   ├── mod.rs           # pub mod event_log
+│   └── event_log.rs     # WinevtCollector (EvtQueryW, EvtNext, EvtRender)
 ├── evtx/
 │   └── writer.rs        # write_evtx() via EvtExportLog API (→ EVTX valide ou .xml fallback)
 ├── parser/
-│   └── mod.rs           # XmlParser (Winevt XML → JSON plat)
+│   └── winevt.rs        # re-export depuis le crate winevt-xml
+├── sigma/
+│   ├── mod.rs           # pub mod engine, loader, mapping
+│   ├── loader.rs        # SigmaRepo (grit-lib) + find_rules_dirs()
+│   └── engine.rs        # SigmaEngine: load rules, evaluate events
 ├── regression/
-│   ├── mod.rs           # Ré-export depuis sigma-regression + generator
-│   └── generator.rs     # RegressionData: aggregate + write output
+│   └── mod.rs           # re-exports depuis le crate sigma-regression
 ├── github/
-│   ├── mod.rs           # pub mod branch, commit, fork
-│   ├── branch.rs        # Gestion de branches (création, push)
+│   ├── mod.rs           # pub mod commit, fork
 │   ├── commit.rs        # Workflow de commit avec validation author/email
 │   └── fork.rs          # Détection de fork via API GitHub
-├── pipelines/
-│   └── windows.yml      # Pipeline de transformation de règles Sigma embarqué
 └── bin/
     └── evtx_check.rs    # Outil de validation batch
 ```
@@ -52,12 +55,14 @@ sigmacatch/src/
 ## Graphe de dépendances
 
 ```
-sigmacatch ──┬── winevt-xml      (WinevtEvent, parseur XML → JSON)
+sigmacatch ──┬── detection-engine (BareEngine + pipelines embarquées)
+             ├── winevt-xml      (WinevtEvent, parseur XML → JSON)
              ├── sigma-mapping   (résolution LogSource, taxonomie)
+             ├── sigmacatch-types (Event, Alert, RegressionHeader)
              └── sigma-regression (InfoYml, SkipSet, triplet)
 ```
 
-Les 3 crates sont indépendants (aucune dépendance croisée entre eux). `sigmacatch` dépend des 3, ainsi que de crates externes (`rsigma-eval`, `grit-lib`, `tokio`, `windows`, etc.).
+Les 5 crates sont indépendants (aucune dépendance croisée entre eux). `sigmacatch` dépend des 5, ainsi que de crates externes (`rsigma-eval`, `grit-lib`, `tokio`, `windows`, etc.).
 
 ## Pipeline (single run, sequential)
 

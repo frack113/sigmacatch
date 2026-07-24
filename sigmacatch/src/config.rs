@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 fn default_author() -> String {
@@ -279,6 +281,21 @@ impl Default for Config {
 impl Config {
     pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
         if path.exists() {
+            #[cfg(unix)]
+            if let Ok(metadata) = std::fs::metadata(path) {
+                let mode = metadata.permissions().mode() & 0o777;
+                if mode != 0o600 {
+                    eprintln!(
+                        "⚠️  config.yaml has open permissions (0{:o}), fixing to 0600",
+                        mode
+                    );
+                    if let Err(e) = std::fs::set_permissions(path, PermissionsExt::from_mode(0o600))
+                    {
+                        eprintln!("⚠️  Failed to fix config.yaml permissions: {}", e);
+                    }
+                }
+            }
+
             let content = std::fs::read_to_string(path)?;
 
             let has_sigma = serde_yaml::from_str::<serde_yaml::Value>(&content)
@@ -300,9 +317,16 @@ impl Config {
                             map.insert(serde_yaml::Value::String("sigma".to_string()), sigma_val);
                             if let Ok(new_yaml) = serde_yaml::to_string(&doc) {
                                 match std::fs::write(path, &new_yaml) {
-                                    Ok(()) => eprintln!(
-                                        "   ✓ Fixed: added default sigma section to config.yaml — next run will be clean"
-                                    ),
+                                    Ok(()) => {
+                                        #[cfg(unix)]
+                                        let _ = std::fs::set_permissions(
+                                            path,
+                                            PermissionsExt::from_mode(0o600),
+                                        );
+                                        eprintln!(
+                                            "   ✓ Fixed: added default sigma section to config.yaml — next run will be clean"
+                                        );
+                                    }
                                     Err(e) => eprintln!(
                                         "   ⚠️  Could not write config.yaml auto-fix: {}",
                                         e
@@ -320,6 +344,13 @@ impl Config {
             let config = Self::default();
             let yaml = serde_yaml::to_string(&config)?;
             std::fs::write(path, &yaml)?;
+            #[cfg(unix)]
+            if let Err(e) = std::fs::set_permissions(path, PermissionsExt::from_mode(0o600)) {
+                eprintln!(
+                    "⚠️  Failed to set restrictive permissions on config.yaml: {}",
+                    e
+                );
+            }
             tracing::info!("Created default config file at {:?}", path);
             Ok(config)
         }

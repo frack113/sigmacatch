@@ -17,14 +17,20 @@ name = "evtx_check"
 path = "src/bin/evtx_check.rs"
 
 [dependencies]
-# Crate workspace — mapping + engine
+# Crate workspace — detection engine
+detection-engine = { path = "../crates/detection-engine" }
+
+# Crate workspace — mapping
 sigma-mapping = { path = "../crates/sigma-mapping" }
 
-# Crate workspace — Event Log XML parser
-winevt-xml = { path = "../crates/winevt-xml" }
+# Crate workspace — shared types
+sigmacatch-types = { path = "../crates/sigmacatch-types" }
 
 # Crate workspace — SigmaHQ regression data format
 sigma-regression = { path = "../crates/sigma-regression" }
+
+# Crate workspace — EVTX parsing
+input-evtx = { path = "../crates/input-evtx" }
 
 # Git (100% Rust, no git binary required)
 grit-lib = "0.5"
