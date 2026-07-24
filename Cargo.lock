@@ -477,6 +477,7 @@ dependencies = [
  "rsigma-parser",
  "serde_json",
  "sigmacatch-types",
+ "tempfile",
  "tracing",
 ]
 
