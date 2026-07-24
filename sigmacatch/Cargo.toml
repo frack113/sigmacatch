@@ -29,6 +29,9 @@ sigmacatch-types = { path = "../crates/sigmacatch-types" }
 # Crate workspace — SigmaHQ regression data format
 sigma-regression = { path = "../crates/sigma-regression" }
 
+# Crate workspace — EVTX parsing
+input-evtx = { path = "../crates/input-evtx" }
+
 # Git (100% Rust, no git binary required)
 grit-lib = "0.5"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }

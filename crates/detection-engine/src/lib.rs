@@ -11,12 +11,24 @@ use rsigma_eval::pipeline::parse_pipeline;
 use rsigma_eval::Engine;
 use rsigma_parser::{parse_sigma_yaml, LogSource, SigmaCollection};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::Path;
-use tracing::info;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use tracing::{info, warn};
 
-use sigmacatch_types::validate_event_id;
+use std::sync::LazyLock;
 
-pub use sigmacatch_types::Alert;
+/// Shared single-threaded runtime for non-async contexts (tests, sync entry points).
+static SYNC_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("failed to create sync runtime")
+});
+
+use sigma_mapping::mapping::resolve_logsource;
+use sigmacatch_types::{validate_event_id, Alert, Event};
 
 /// Default flatten-winevt pipeline YAML used to prep processing of raw Winevt XML events.
 pub const FLATTEN_WINEVT_PIPELINE: &str = include_str!("../pipelines/flatten_winevt.yml");
@@ -25,8 +37,11 @@ pub const FLATTEN_WINEVT_PIPELINE: &str = include_str!("../pipelines/flatten_win
 pub const WINDOWS_PIPELINE: &str = include_str!("../pipelines/windows.yml");
 
 /// Bare evaluation engine — no tracking, no filtering, just pipelines + rules + evaluate.
+///
+/// For real-time event processing, use `start()` to spawn an async task that receives
+/// `Event` objects on a channel and sends `Alert` objects back.
 pub struct BareEngine {
-    engine: Engine,
+    engine: Arc<tokio::sync::Mutex<Engine>>,
 }
 
 impl BareEngine {
@@ -34,9 +49,16 @@ impl BareEngine {
     pub fn new() -> Self {
         let mut engine = Engine::new();
         engine.set_include_event(true);
-        let mut be = Self { engine };
-        be.load_pipelines();
-        be
+        let flatten_pipeline =
+            parse_pipeline(FLATTEN_WINEVT_PIPELINE).expect("flatten_winevt pipeline YAML is valid");
+        engine.add_pipeline(flatten_pipeline);
+        let windows_pipeline =
+            parse_pipeline(WINDOWS_PIPELINE).expect("windows pipeline YAML is valid");
+        engine.add_pipeline(windows_pipeline);
+
+        Self {
+            engine: Arc::new(tokio::sync::Mutex::new(engine)),
+        }
     }
 
     /// Create a new engine and load rules from a directory in one call.
@@ -56,6 +78,42 @@ impl BareEngine {
         Ok(be)
     }
 
+    /// Start the async detection task.
+    ///
+    /// Returns `(event_tx, alert_rx)` where:
+    /// - `event_tx` is the sender for pushing `Event` objects into the engine
+    /// - `alert_rx` is the receiver for pulling `Alert` objects from the engine
+    ///
+    /// Dropping `self` (the engine) will stop the internal task.
+    pub fn start(self) -> (mpsc::Sender<Event>, mpsc::Receiver<Alert>) {
+        let (event_tx, mut event_rx) = mpsc::channel(1024);
+        let (alert_tx, alert_rx) = mpsc::channel(1024);
+        let engine = self.engine.clone();
+
+        tokio::spawn(async move {
+            while let Some(event) = event_rx.recv().await {
+                let logsource = extract_logsource(&event);
+                let matches = {
+                    let eng = engine.lock().await;
+                    let validated = validate_event_id(&event.event_json);
+                    let json_event = JsonEvent::borrow(&validated);
+                    eng.evaluate_with_logsource(&json_event, &logsource)
+                };
+
+                for result in matches {
+                    let rule_id = result.header.rule_id.clone();
+                    let alert = Alert::from_evaluation_result(result, &event);
+                    if alert_tx.send(alert).await.is_err() {
+                        let rid = rule_id.as_deref().unwrap_or("<unknown>");
+                        warn!("alert channel closed, dropping alert for rule {}", rid);
+                    }
+                }
+            }
+        });
+
+        (event_tx, alert_rx)
+    }
+
     /// Evaluate a JSON event against loaded rules with an explicit logsource.
     pub fn evaluate(
         &self,
@@ -64,25 +122,26 @@ impl BareEngine {
     ) -> Vec<rsigma_eval::EvaluationResult> {
         let validated = validate_event_id(event);
         let json_event = JsonEvent::borrow(&validated);
-        self.engine.evaluate_with_logsource(&json_event, logsource)
+
+        let rt =
+            tokio::runtime::Handle::try_current().unwrap_or_else(|_| SYNC_RUNTIME.handle().clone());
+        rt.block_on(async {
+            let eng = self.engine.lock().await;
+            eng.evaluate_with_logsource(&json_event, logsource)
+        })
     }
 
     /// Number of rules currently loaded in the engine.
     pub fn rule_count(&self) -> usize {
-        self.engine.rule_count()
+        let rt =
+            tokio::runtime::Handle::try_current().unwrap_or_else(|_| SYNC_RUNTIME.handle().clone());
+        rt.block_on(async {
+            let eng = self.engine.lock().await;
+            eng.rule_count()
+        })
     }
 
     // ─── private helpers ─────────────────────────────────────────────────
-
-    fn load_pipelines(&mut self) {
-        let flatten_pipeline =
-            parse_pipeline(FLATTEN_WINEVT_PIPELINE).expect("flatten_winevt pipeline YAML is valid");
-        self.engine.add_pipeline(flatten_pipeline);
-
-        let windows_pipeline =
-            parse_pipeline(WINDOWS_PIPELINE).expect("windows pipeline YAML is valid");
-        self.engine.add_pipeline(windows_pipeline);
-    }
 
     fn load_rules_recursive(&mut self, dir: &Path, depth: u32) -> Result<()> {
         if depth > 16 {
@@ -129,12 +188,17 @@ impl BareEngine {
         }
 
         if !collection.rules.is_empty() {
-            self.engine.add_collection(&collection).map_err(|e| {
-                anyhow!(
-                    "Engine add_collection failed for {:?}: {}",
-                    dir.display(),
-                    e
-                )
+            let rt = tokio::runtime::Handle::try_current()
+                .unwrap_or_else(|_| SYNC_RUNTIME.handle().clone());
+            rt.block_on(async {
+                let mut eng = self.engine.lock().await;
+                eng.add_collection(&collection).map_err(|e| {
+                    anyhow!(
+                        "Engine add_collection failed for {:?}: {}",
+                        dir.display(),
+                        e
+                    )
+                })
             })?;
         }
 
@@ -148,6 +212,19 @@ impl Default for BareEngine {
     }
 }
 
+fn extract_logsource(event: &Event) -> LogSource {
+    let channel = event
+        .channel
+        .as_deref()
+        .or_else(|| Some(event.channel()))
+        .unwrap_or("");
+
+    let provider = event.provider();
+    let event_id = event.event_id();
+
+    resolve_logsource(channel, provider, event_id, &HashMap::new())
+}
+
 /// Re-export renamed type for backward compatibility.
 #[allow(deprecated)]
 #[deprecated(since = "0.3.0", note = "renamed to BareEngine")]
@@ -156,7 +233,6 @@ pub type DetectionEngine = BareEngine;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use tempfile::TempDir;
 
     const MINIMAL_RULE_YAML: &str = r#"title: Test Rule
@@ -208,7 +284,6 @@ detection:
 
     #[test]
     fn test_evaluate_no_rules() {
-        // Build engine with an empty rules dir (nonexistent, so 0 rules loaded)
         let engine = BareEngine::from_rules_dir(Path::new("/nonexistent")).unwrap();
         assert_eq!(engine.rule_count(), 0);
 
@@ -245,14 +320,12 @@ detection:
 
     #[test]
     fn test_load_rules_depth_limit() {
-        // Create a deeply nested directory structure (beyond depth limit)
         let tmp = tempfile::tempdir().unwrap();
         let mut current = tmp.path().to_path_buf();
         for i in 0..20 {
             current = current.join(format!("level_{}", i));
             std::fs::create_dir(&current).unwrap();
         }
-        // The rule is at depth 20 (beyond the 16 limit)
         let rule_content = MINIMAL_RULE_YAML.replace("test-rule", "deep-rule");
         std::fs::write(current.join("deep.yml"), rule_content).unwrap();
 
@@ -266,7 +339,6 @@ detection:
 
     #[test]
     fn test_load_rules_at_depth_limit() {
-        // Create a directory structure at exactly depth 16
         let tmp = tempfile::tempdir().unwrap();
         let mut current = tmp.path().to_path_buf();
         for i in 0..15 {

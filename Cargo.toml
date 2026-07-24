@@ -9,6 +9,7 @@ members = [
     "crates/sigma-regression",
     "crates/detection-engine",
     "crates/sigmacatch-types",
+    "crates/input-evtx",
 ]
 
 [profile.release]

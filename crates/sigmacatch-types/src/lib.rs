@@ -11,12 +11,22 @@ use roxmltree::Node;
 use serde_json::{Map, Value};
 use std::fmt;
 
+/// Input source type for an event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputSource {
+    Winevt,
+    EvtxFile,
+    File(String),
+}
+
 /// A generic event for the detection engine: parsed JSON + raw source bytes.
 /// Evolutive — the raw source can be XML, EVTX binary, etc.
 #[derive(Debug, Clone)]
 pub struct Event {
     pub event_json: Value,
     pub event_raw: Vec<u8>,
+    pub input_source: InputSource,
+    pub channel: Option<String>,
 }
 
 impl Event {
@@ -24,6 +34,8 @@ impl Event {
         Self {
             event_json,
             event_raw,
+            input_source: InputSource::Winevt,
+            channel: None,
         }
     }
 
@@ -34,6 +46,8 @@ impl Event {
         Ok(Self {
             event_json: json,
             event_raw: raw,
+            input_source: InputSource::Winevt,
+            channel: None,
         })
     }
 

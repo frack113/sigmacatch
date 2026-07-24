@@ -19,6 +19,7 @@ use std::fs;
 use std::path::Path;
 
 use detection_engine::BareEngine;
+use input_evtx::parse_evtx_file;
 use sigma_mapping::mapping::resolve_logsource;
 use sigmacatch::regression::loader::{load_all, RegressionInfo};
 use sigmacatch::sigma::loader::find_rules_dirs;
@@ -108,21 +109,19 @@ fn validate_regression(
         ));
     }
 
-    // Parse EVTX → XML → Event
-    let mut parser = evtx::EvtxParser::from_path(data_path)
-        .map_err(|e| anyhow!("Failed to open EVTX: {}", e))?;
-
-    let record = parser
-        .records()
-        .next()
+    // Parse EVTX → Event
+    let events = parse_evtx_file(data_path).map_err(|e| anyhow!("EVTX parse error: {}", e))?;
+    let event = events
+        .first()
         .ok_or_else(|| anyhow!("No records in EVTX: {}", data_path.display()))?
-        .map_err(|e| anyhow!("EVTX record error: {}", e))?;
+        .clone();
 
-    let event =
-        Event::from_xml(&record.data).map_err(|e| anyhow!("XML parse error: {}", e.message))?;
-
+    let channel_str = event
+        .channel
+        .clone()
+        .unwrap_or_else(|| event.channel().to_string());
     let logsource = resolve_logsource(
-        event.channel(),
+        &channel_str,
         &extract_provider(&event),
         event.event_id(),
         &HashMap::new(),

@@ -15,6 +15,8 @@ rsigma-parser = "0.20"
 serde_json = "1.0"
 tracing = "0.1"
 sigmacatch-types = { path = "../sigmacatch-types" }
+sigma-mapping = { path = "../sigma-mapping" }
+tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]
 tempfile = "3"
