@@ -42,7 +42,7 @@ impl BareEngine {
     /// Create a new engine and load rules from a directory in one call.
     pub fn from_rules_dir(dir: &Path) -> Result<Self> {
         let mut be = Self::new();
-        be.load_rules_recursive(dir)?;
+        be.load_rules_recursive(dir, 0)?;
         Ok(be)
     }
 
@@ -51,7 +51,7 @@ impl BareEngine {
     pub fn from_rules_dirs(dirs: &[&Path]) -> Result<Self> {
         let mut be = Self::new();
         for dir in dirs {
-            be.load_rules_recursive(dir)?;
+            be.load_rules_recursive(dir, 0)?;
         }
         Ok(be)
     }
@@ -84,7 +84,11 @@ impl BareEngine {
         self.engine.add_pipeline(windows_pipeline);
     }
 
-    fn load_rules_recursive(&mut self, dir: &Path) -> Result<()> {
+    fn load_rules_recursive(&mut self, dir: &Path, depth: u32) -> Result<()> {
+        if depth > 16 {
+            return Ok(());
+        }
+
         if !dir.exists() {
             return Ok(());
         }
@@ -120,7 +124,7 @@ impl BareEngine {
                     }
                 }
             } else if ep.is_dir() {
-                self.load_rules_recursive(&ep)?;
+                self.load_rules_recursive(&ep, depth + 1)?;
             }
         }
 
@@ -148,3 +152,131 @@ impl Default for BareEngine {
 #[allow(deprecated)]
 #[deprecated(since = "0.3.0", note = "renamed to BareEngine")]
 pub type DetectionEngine = BareEngine;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use tempfile::TempDir;
+
+    const MINIMAL_RULE_YAML: &str = r#"title: Test Rule
+id: test-rule-001
+status: test
+description: A minimal test rule
+author: Test Author
+logsource:
+  product: test
+detection:
+  selection:
+    event_id: 1
+  condition: selection
+"#;
+
+    fn write_rule_to_dir(dir: &TempDir, name: &str, yaml: &str) -> std::path::PathBuf {
+        let path = dir.path().join(name);
+        std::fs::write(&path, yaml).expect("write rule file");
+        path
+    }
+
+    #[test]
+    fn test_new_engine_has_pipelines() {
+        let dir = tempfile::tempdir().unwrap();
+        write_rule_to_dir(&dir, "pipeline_test.yml", MINIMAL_RULE_YAML);
+        let engine = BareEngine::from_rules_dir(dir.path()).unwrap();
+        let count = engine.rule_count();
+        assert_eq!(
+            count, 1,
+            "engine should have 1 rule after loading with pipelines, got {}",
+            count
+        );
+    }
+
+    #[test]
+    fn test_from_rules_dir_nonexistent() {
+        let result = BareEngine::from_rules_dir(Path::new("/nonexistent"));
+        assert!(
+            result.is_ok(),
+            "from_rules_dir should succeed for nonexistent dir"
+        );
+        let engine = result.unwrap();
+        assert_eq!(
+            engine.rule_count(),
+            0,
+            "engine should have 0 rules when loaded from nonexistent directory"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_no_rules() {
+        // Build engine with an empty rules dir (nonexistent, so 0 rules loaded)
+        let engine = BareEngine::from_rules_dir(Path::new("/nonexistent")).unwrap();
+        assert_eq!(engine.rule_count(), 0);
+
+        let logsource = LogSource {
+            product: Some("test".to_string()),
+            category: None,
+            service: None,
+            definition: None,
+            custom: HashMap::new(),
+        };
+        let event = serde_json::json!({ "EventID": 1 });
+
+        let results = engine.evaluate(&event, &logsource);
+        assert!(
+            results.is_empty(),
+            "evaluate with no rules should return empty vec, got {} results",
+            results.len()
+        );
+    }
+
+    #[test]
+    fn test_rule_count() {
+        let dir = tempfile::tempdir().unwrap();
+        write_rule_to_dir(&dir, "test_rule.yml", MINIMAL_RULE_YAML);
+
+        let engine = BareEngine::from_rules_dir(dir.path()).unwrap();
+        let count = engine.rule_count();
+        assert_eq!(
+            count, 1,
+            "engine should have exactly 1 rule loaded, got {}",
+            count
+        );
+    }
+
+    #[test]
+    fn test_load_rules_depth_limit() {
+        // Create a deeply nested directory structure (beyond depth limit)
+        let tmp = tempfile::tempdir().unwrap();
+        let mut current = tmp.path().to_path_buf();
+        for i in 0..20 {
+            current = current.join(format!("level_{}", i));
+            std::fs::create_dir(&current).unwrap();
+        }
+        // The rule is at depth 20 (beyond the 16 limit)
+        let rule_content = MINIMAL_RULE_YAML.replace("test-rule", "deep-rule");
+        std::fs::write(current.join("deep.yml"), rule_content).unwrap();
+
+        let engine = BareEngine::from_rules_dir(tmp.path()).unwrap();
+        assert_eq!(
+            engine.rule_count(),
+            0,
+            "rules beyond depth 16 should not be loaded"
+        );
+    }
+
+    #[test]
+    fn test_load_rules_at_depth_limit() {
+        // Create a directory structure at exactly depth 16
+        let tmp = tempfile::tempdir().unwrap();
+        let mut current = tmp.path().to_path_buf();
+        for i in 0..15 {
+            current = current.join(format!("level_{}", i));
+            std::fs::create_dir(&current).unwrap();
+        }
+        let rule_content = MINIMAL_RULE_YAML.replace("test-rule", "edge-rule");
+        std::fs::write(current.join("edge.yml"), rule_content).unwrap();
+
+        let engine = BareEngine::from_rules_dir(tmp.path()).unwrap();
+        assert_eq!(engine.rule_count(), 1, "rules at depth 16 should be loaded");
+    }
+}
