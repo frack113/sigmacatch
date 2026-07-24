@@ -57,12 +57,40 @@ impl Event {
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32
     }
+
+    /// Provider extracted from the parsed JSON (System.Provider.Name).
+    pub fn provider(&self) -> &str {
+        self.event_json
+            .get("Event")
+            .and_then(|v| v.get("System"))
+            .and_then(|v| v.get("Provider"))
+            .and_then(|v| v.get("#attributes"))
+            .and_then(|v| v.get("Name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+    }
 }
 
 // ─── XML parsing (moved from winevt-xml crate) ─────────────────────────────
 
+/// Maximum allowed size for a Winevt XML event (1 MB).
+///
+/// Winevt events are typically well under this limit. This prevents
+/// memory exhaustion from malformed or excessively large input.
+const MAX_XML_SIZE: usize = 1024 * 1024;
+
 /// Parse a Winevt XML string into nested JSON.
 pub fn parse_winevt_xml(xml: &str) -> Result<Value, ParseError> {
+    if xml.len() > MAX_XML_SIZE {
+        return Err(ParseError {
+            message: format!(
+                "XML input too large: {} bytes (max {} bytes)",
+                xml.len(),
+                MAX_XML_SIZE
+            ),
+        });
+    }
+
     let doc = roxmltree::Document::parse(xml).map_err(|e| ParseError {
         message: format!("XML parse error: {}", e),
     })?;
@@ -200,17 +228,18 @@ pub fn validate_event_id(event: &Value) -> Value {
 
     let mut result = obj.clone();
 
-    if let Some(Value::Object(event_inner)) = result.get("Event").cloned() {
-        if let Some(Value::Object(system)) = event_inner.get("System").cloned() {
-            if let Some(Value::String(s)) = system.get("EventID") {
-                if let Ok(n) = s.parse::<u64>() {
-                    let mut new_system = system;
-                    new_system.insert("EventID".into(), Value::Number(n.into()));
-                    let mut new_event_inner = event_inner;
-                    new_event_inner.insert("System".into(), Value::Object(new_system));
-                    result.insert("Event".into(), Value::Object(new_event_inner));
-                }
-            }
+    let needs_fix = result
+        .get("Event")
+        .and_then(|e| e.get("System"))
+        .and_then(|s| s.get("EventID"))
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<u64>().ok());
+
+    if let Some(n) = needs_fix {
+        if let Some(Value::Object(system)) =
+            result.get_mut("Event").and_then(|e| e.get_mut("System"))
+        {
+            system.insert("EventID".into(), Value::Number(n.into()));
         }
     }
 
@@ -230,10 +259,10 @@ pub struct Alert {
 }
 
 impl Alert {
-    pub fn new(rule_id: String, severity: String, event: &Event) -> Self {
+    pub fn new(rule_id: String, rule_title: String, severity: String, event: &Event) -> Self {
         Self {
-            rule_id: rule_id.clone(),
-            rule_title: rule_id,
+            rule_id,
+            rule_title,
             severity,
             event_json: event.event_json.clone(),
             event_raw: event.event_raw.clone(),
@@ -436,5 +465,167 @@ mod tests {
         let event = Event::from_xml(xml).unwrap();
         assert_eq!(event.event_json["_source"].as_str().unwrap(), "winevt");
         assert_eq!(event.event_raw, xml.as_bytes());
+    }
+
+    #[test]
+    fn test_parse_malformed_xml() {
+        let xml = r#"<Event><System><EventID>1</EventID></System"#;
+        let result = parse_winevt_xml(xml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_no_event_element() {
+        let xml = r#"<System><EventID>1</EventID></System>"#;
+        let result = parse_winevt_xml(xml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_empty_event_data() {
+        let xml = r#"<Event>
+            <System><EventID>1</EventID></System>
+            <EventData></EventData>
+        </Event>"#;
+        let result = parse_winevt_xml(xml).unwrap();
+        let event_data = result["Event"]["EventData"].as_object().unwrap();
+        assert!(event_data.is_empty());
+    }
+
+    #[test]
+    fn test_parse_event_data_no_name_attribute() {
+        let xml = r#"<Event>
+            <System><EventID>1</EventID></System>
+            <EventData><Data>NoName</Data></EventData>
+        </Event>"#;
+        let result = parse_winevt_xml(xml).unwrap();
+        let event_data = result["Event"]["EventData"].as_object().unwrap();
+        assert!(!event_data.contains_key(""));
+    }
+
+    #[test]
+    fn test_parse_unicode_event_data() {
+        let xml = r#"<Event>
+            <System><EventID>1</EventID></System>
+            <EventData>
+                <Data Name="Message">Hello world: 世界 🌍</Data>
+            </EventData>
+        </Event>"#;
+        let result = parse_winevt_xml(xml).unwrap();
+        let event_data = result["Event"]["EventData"].as_object().unwrap();
+        assert_eq!(
+            event_data["Message"].as_str().unwrap(),
+            "Hello world: 世界 🌍"
+        );
+    }
+
+    #[test]
+    fn test_parse_event_id_non_numeric_string() {
+        let xml = r#"<Event>
+            <System><EventID>abc</EventID></System>
+            <EventData></EventData>
+        </Event>"#;
+        let result = parse_winevt_xml(xml).unwrap();
+        let system = result["Event"]["System"].as_object().unwrap();
+        assert_eq!(system["EventID"].as_str().unwrap(), "abc");
+    }
+
+    #[test]
+    fn test_parse_event_with_attributes_only() {
+        let xml = r#"<Event>
+            <System>
+                <Provider Name="Test" Guid="{guid}"/>
+                <EventID>1</EventID>
+            </System>
+        </Event>"#;
+        let result = parse_winevt_xml(xml).unwrap();
+        let provider = result["Event"]["System"]["Provider"].as_object().unwrap();
+        assert!(provider.contains_key("#attributes"));
+        let attrs = provider["#attributes"].as_object().unwrap();
+        assert_eq!(attrs["Name"].as_str().unwrap(), "Test");
+    }
+
+    #[test]
+    fn test_parse_event_without_eventdata() {
+        let xml = r#"<Event>
+            <System><EventID>1</EventID></System>
+        </Event>"#;
+        let result = parse_winevt_xml(xml).unwrap();
+        assert!(!result["Event"]
+            .as_object()
+            .unwrap()
+            .contains_key("EventData"));
+    }
+
+    #[test]
+    fn test_validate_event_id_non_object() {
+        let json = serde_json::json!("string");
+        let result = validate_event_id(&json);
+        assert_eq!(result, serde_json::json!("string"));
+    }
+
+    #[test]
+    fn test_validate_event_id_no_system() {
+        let json = serde_json::json!({
+            "Event": {
+                "EventID": "13"
+            }
+        });
+        let result = validate_event_id(&json);
+        assert_eq!(result["Event"]["EventID"].as_str().unwrap(), "13");
+    }
+
+    #[test]
+    fn test_parse_multiple_data_same_name() {
+        let xml = r#"<Event>
+            <System><EventID>1</EventID></System>
+            <EventData>
+                <Data Name="Image">first.exe</Data>
+                <Data Name="Image">second.exe</Data>
+            </EventData>
+        </Event>"#;
+        let result = parse_winevt_xml(xml).unwrap();
+        let event_data = result["Event"]["EventData"].as_object().unwrap();
+        // Last value wins when duplicate names exist
+        assert_eq!(event_data["Image"].as_str().unwrap(), "second.exe");
+    }
+
+    #[test]
+    fn test_parse_nested_system_elements() {
+        let xml = r#"<Event>
+            <System>
+                <Provider Name="Test"/>
+                <EventID>1</EventID>
+                <Version>0</Version>
+                <TimeCreated SystemTime="2024-01-01T00:00:00.0000000Z"/>
+            </System>
+        </Event>"#;
+        let result = parse_winevt_xml(xml).unwrap();
+        let system = result["Event"]["System"].as_object().unwrap();
+        assert_eq!(system["EventID"].as_u64().unwrap(), 1);
+        assert_eq!(system["Version"].as_u64().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_parse_xml_too_large() {
+        let large = "A".repeat(MAX_XML_SIZE + 1);
+        let xml = format!(
+            "<Event><System><EventID>1</EventID></System><Data>{}</Data></Event>",
+            large
+        );
+        let result = parse_winevt_xml(&xml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("too large"));
+    }
+
+    #[test]
+    fn test_parse_xml_at_max_size() {
+        let at_limit = "A".repeat(MAX_XML_SIZE);
+        let xml = format!(
+            "<Event><System><EventID>1</EventID></System><Data>{}</Data></Event>",
+            at_limit
+        );
+        let result = parse_winevt_xml(&xml);
+        assert!(result.is_err());
     }
 }
