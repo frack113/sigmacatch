@@ -65,6 +65,37 @@ impl Alert {
             event_raw: event.event_raw.clone(),
         }
     }
+
+    pub fn channel(&self) -> &str {
+        self.event_json
+            .get("Event")
+            .and_then(|v| v.get("System"))
+            .and_then(|v| v.get("Channel"))
+            .and_then(|v| v.as_str())
+            .or_else(|| self.event_json.get("Channel").and_then(|v| v.as_str()))
+            .unwrap_or("")
+    }
+
+    pub fn record_id(&self) -> Option<u64> {
+        self.event_json
+            .get("EventRecordID_num")
+            .and_then(|v| v.as_u64())
+    }
+
+    pub fn provider(&self) -> &str {
+        self.event_json
+            .get("Event")
+            .and_then(|v| v.get("System"))
+            .and_then(|v| v.get("Provider"))
+            .and_then(|v| v.get("#attributes"))
+            .and_then(|v| v.get("Name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+    }
+
+    pub fn raw_xml(&self) -> &str {
+        std::str::from_utf8(&self.event_raw).unwrap_or("")
+    }
 }
 
 /// Minimal rule metadata required for regression data generation.

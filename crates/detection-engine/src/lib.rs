@@ -18,6 +18,12 @@ use winevt_xml::xml_parser::validate_event_id;
 
 pub use sigmacatch_types::Alert;
 
+/// Default flatten-winevt pipeline YAML used to prep processing of raw Winevt XML events.
+pub const FLATTEN_WINEVT_PIPELINE: &str = include_str!("../pipelines/flatten_winevt.yml");
+
+/// Default Windows pipeline YAML for SigmaHQ rule transformation (logsource → Sysmon EventID conditions).
+pub const WINDOWS_PIPELINE: &str = include_str!("../pipelines/windows.yml");
+
 /// Bare evaluation engine — no tracking, no filtering, just pipelines + rules + evaluate.
 pub struct BareEngine {
     engine: Engine,
@@ -69,14 +75,12 @@ impl BareEngine {
     // ─── private helpers ─────────────────────────────────────────────────
 
     fn load_pipelines(&mut self) {
-        let flatten_yaml = include_str!("../pipelines/flatten_winevt.yml");
         let flatten_pipeline =
-            parse_pipeline(flatten_yaml).expect("flatten_winevt pipeline YAML is valid");
+            parse_pipeline(FLATTEN_WINEVT_PIPELINE).expect("flatten_winevt pipeline YAML is valid");
         self.engine.add_pipeline(flatten_pipeline);
 
-        let windows_yaml = include_str!("../pipelines/windows.yml");
         let windows_pipeline =
-            parse_pipeline(windows_yaml).expect("windows pipeline YAML is valid");
+            parse_pipeline(WINDOWS_PIPELINE).expect("windows pipeline YAML is valid");
         self.engine.add_pipeline(windows_pipeline);
     }
 

@@ -2191,6 +2191,8 @@ dependencies = [
  "anyhow",
  "chrono",
  "serde",
+ "serde_json",
+ "sigmacatch-types",
  "tempfile",
  "tracing",
  "uuid",

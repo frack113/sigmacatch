@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 use anyhow::Result;
+use detection_engine::{FLATTEN_WINEVT_PIPELINE, WINDOWS_PIPELINE};
 use rayon::prelude::*;
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::pipeline::parse_pipeline;
@@ -45,14 +46,12 @@ impl Default for SigmaEngine {
         let mut engine = Engine::new();
         engine.set_include_event(true);
 
-        let flatten_yaml = include_str!("../pipelines/flatten_winevt.yml");
         let flatten_pipeline =
-            parse_pipeline(flatten_yaml).expect("flatten_winevt pipeline YAML is valid");
+            parse_pipeline(FLATTEN_WINEVT_PIPELINE).expect("flatten_winevt pipeline YAML is valid");
         engine.add_pipeline(flatten_pipeline);
 
-        let windows_yaml = include_str!("../pipelines/windows.yml");
         let windows_pipeline =
-            parse_pipeline(windows_yaml).expect("windows pipeline YAML is valid");
+            parse_pipeline(WINDOWS_PIPELINE).expect("windows pipeline YAML is valid");
         engine.add_pipeline(windows_pipeline);
         Self {
             engine,

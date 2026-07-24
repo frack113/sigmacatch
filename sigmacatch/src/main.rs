@@ -17,8 +17,10 @@ use sigma::engine::SigmaEngine;
 use sigma::loader::{find_rules_dirs, SigmaRepo};
 use sigma::mapping::build_logsource_to_channels;
 use sigma::mapping::custom::load_custom_mapping;
-use sigmacatch_types::Event;
+use sigma_regression::generator::EvtxWriter;
+use sigmacatch_types::{Alert, Event};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -34,9 +36,23 @@ struct Stats {
 
 struct AggregatedRule {
     header: sigmacatch_types::RegressionHeader,
-    events: Vec<(serde_json::Value, String)>,
+    alerts: Vec<Alert>,
     rule_path: Option<PathBuf>,
     description: Option<String>,
+}
+
+struct WinEvtxWriter;
+
+impl EvtxWriter for WinEvtxWriter {
+    fn write_evtx(
+        &self,
+        xml: &str,
+        channel: &str,
+        record_id: Option<u64>,
+        path: &Path,
+    ) -> Result<()> {
+        sigmacatch::evtx::writer::write_evtx(xml, channel, record_id, path)
+    }
 }
 
 async fn dry_run_git(config: &Config) -> Result<()> {
@@ -490,7 +506,7 @@ async fn stage_4_work_winevt(
                     rule_id.clone(),
                     AggregatedRule {
                         header,
-                        events: Vec::new(),
+                        alerts: Vec::new(),
                         rule_path: engine.rule_path(rule_id).cloned(),
                         description: engine.rule_description(rule_id).map(|s| s.to_string()),
                     },
@@ -499,8 +515,8 @@ async fn stage_4_work_winevt(
             aggregated
                 .get_mut(rule_id)
                 .expect("just inserted")
-                .events
-                .push((event_json.clone(), event.raw_xml.clone()));
+                .alerts
+                .push(alert.clone());
         }
     }
 
@@ -541,29 +557,8 @@ async fn stage_4_work_winevt(
             continue;
         }
 
-        for (event_json, raw_xml) in &agg.events {
-            let channel = event_json
-                .get("Channel")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let record_id = event_json.get("EventRecordID_num").and_then(|v| v.as_u64());
-            let provider = event_json
-                .get("Event")
-                .and_then(|v| v.get("System"))
-                .and_then(|v| v.get("Provider"))
-                .and_then(|v| v.get("#attributes"))
-                .and_then(|v| v.get("Name"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            reg.add_event(
-                event_json.clone(),
-                raw_xml.clone(),
-                channel,
-                record_id,
-                provider,
-            );
+        for alert in &agg.alerts {
+            reg.add_alert(alert.clone());
         }
         let rule_id = agg.header.rule_id.clone();
         to_generate.push((reg, agg.rule_path.clone(), rule_id));
@@ -579,7 +574,7 @@ async fn stage_4_work_winevt(
         let mut committed_rules: Vec<(String, String, Option<String>)> = Vec::new();
         for (reg, rule_path_opt, rule_id) in &to_generate {
             let _gen_span = info_span!("generate", rule_id = %rule_id).entered();
-            match reg.generate() {
+            match reg.generate(&WinEvtxWriter) {
                 Ok(_) => {
                     stats.regression_data_generated += 1;
                     retired.insert(rule_id.clone());
