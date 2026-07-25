@@ -17,7 +17,7 @@ use anyhow::{anyhow, Result};
 use detection_engine::find_rules_dirs;
 use detection_engine::DetectionEngine;
 use input_evtx::EventCollector;
-use sigma_mapping::mapping::resolve_logsource;
+use input_windows_channels::mapping::resolve_logsource;
 use sigma_regression::{load_all, RegressionInfo};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

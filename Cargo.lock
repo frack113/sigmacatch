@@ -474,10 +474,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dunce",
+ "input-windows-channels",
  "rsigma-eval",
  "rsigma-parser",
+ "serde",
  "serde_json",
- "sigma-mapping",
  "sigmacatch-types",
  "tempfile",
  "tokio",
@@ -1199,6 +1200,8 @@ dependencies = [
 name = "input-windows-channels"
 version = "0.1.0"
 dependencies = [
+ "phf",
+ "rsigma-parser",
  "sigmacatch-types",
  "tokio",
  "tracing",
@@ -2250,18 +2253,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
-name = "sigma-mapping"
-version = "0.1.0"
-dependencies = [
- "phf",
- "rsigma-parser",
- "serde",
- "tempfile",
- "tracing",
- "yaml_serde",
-]
-
-[[package]]
 name = "sigma-regression"
 version = "0.1.0"
 dependencies = [
@@ -2295,7 +2286,6 @@ dependencies = [
  "rsigma-parser",
  "serde",
  "serde_json",
- "sigma-mapping",
  "sigma-regression",
  "sigmacatch-types",
  "tempfile",

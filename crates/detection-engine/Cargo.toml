@@ -13,9 +13,10 @@ anyhow = "1.0"
 rsigma-eval = "0.20"
 rsigma-parser = "0.20"
 serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
 tracing = "0.1"
 sigmacatch-types = { path = "../sigmacatch-types" }
-sigma-mapping = { path = "../sigma-mapping" }
+input-windows-channels = { path = "../input-windows-channels" }
 tokio = { version = "1", features = ["full"] }
 
 [target.'cfg(not(unix))'.dependencies]

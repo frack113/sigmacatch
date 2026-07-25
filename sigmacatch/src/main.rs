@@ -12,10 +12,11 @@ use sigmacatch::sigma;
 
 use anyhow::{Context, Result};
 use config::Config;
+use input_windows_channels::mapping::resolve_logsource;
 use sigma::loader::{find_rules_dirs, SigmaRepo};
 use sigma::mapping::build_logsource_to_channels;
-use sigma::mapping::custom::load_custom_mapping;
 use sigma_regression::generator::EvtxWriter;
+use sigmacatch::sigma::mapping::load_custom_mapping;
 use sigmacatch_types::Alert;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -550,7 +551,7 @@ async fn stage_4_work_winevt(
             info_span!("event", event_id = event.event_id(), channel = %event.channel()).entered();
         ctx.stats.events_processed += 1;
 
-        let logsource = sigma_mapping::mapping::resolve_logsource(
+        let logsource = resolve_logsource(
             event.channel(),
             event.provider(),
             event.event_id(),

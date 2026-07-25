@@ -10,6 +10,8 @@ license = "MIT"
 
 [dependencies]
 sigmacatch-types = { path = "../sigmacatch-types" }
+rsigma-parser = "0.20"
+phf = { version = "0.14", features = ["macros"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "signal"] }
 tracing = "0.1"
 

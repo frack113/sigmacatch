@@ -29,7 +29,7 @@ static SYNC_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
         .expect("failed to create sync runtime")
 });
 
-use sigma_mapping::mapping::resolve_logsource;
+use input_windows_channels::mapping::resolve_logsource;
 use sigmacatch_types::{validate_event_id, Alert, Event};
 
 /// Default flatten-winevt pipeline YAML used to prep processing of raw Winevt XML events.
