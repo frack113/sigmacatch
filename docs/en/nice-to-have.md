@@ -54,3 +54,19 @@ Features identified as useful but out of current scope. No timeline — document
 - Time window (`timespan`) and threshold (`field` count) management
 
 **Use case:** multi-step attack detection, brute force, behavioral anomalies.
+
+---
+
+## 5. Optimize DetectionEngine
+
+**Status:** current engine loads all rules into `rsigma-eval` `Engine`, then evaluates each event against the full rule set in a single loop.
+
+**What's missing:**
+- Index rules by `logsource` (product, service, category) to avoid loading non-relevant rules
+- Per-event: only push events whose logsource matches at least one loaded rule's `logsource` — skip evaluation entirely for irrelevant rules
+- Rule pre-filtering: build a fast lookup table from rule metadata → logsource keys before engine creation
+- `rsigma-eval` V2 pipeline: `rsigma-eval 0.30` supports `set_pipeline` to switch pipelines dynamically — could route events to specialized engines (e.g. Sysmon-only, network-only)
+- Parallel evaluation: `rayon` or `crossbeam` to spread events across multiple engine instances during `process_events`
+- Rule compilation caching: avoid recompiling the same rule for every event — use `rsigma-eval`'s internal caching
+
+**Use case:** faster evaluation cycles with hundreds of Sigma rules, reduced memory footprint by avoiding unnecessary rule loading.
