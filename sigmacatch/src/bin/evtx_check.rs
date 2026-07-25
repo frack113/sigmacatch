@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! evtx_check: batch validation of the Sigma detection engine against SigmaHQ regression data.
+//! evtx_check: validate SigmaHQ regression data against the detection engine.
 //!
 //! Pipeline:
 //!   1. Scan <sigmahq_dir>/regression_data for info.yml entries via load_all()
-//!   2. Load all Sigma rules from the sigma dir into a single engine
-//!   3. For each regression entry: parse data file, evaluate against the engine
-//!   4. Validate: expected rule matches + hit count matches
-//!   5. Report per-rule pass/fail + summary
+//!   2. Load all Sigma rules into a single DetectionEngine
+//!   3. For each entry: load its evtx data, push events into the engine, check alerts
+//!   4. Report per-rule pass/fail + summary
 //!
 //! Usage:
 //!   cargo run --release --bin evtx_check <sigmahq_dir>
@@ -17,12 +16,11 @@ use anyhow::{anyhow, Result};
 use detection_engine::find_rules_dirs;
 use detection_engine::DetectionEngine;
 use input_evtx::EventCollector;
-use input_windows_channels::mapping::resolve_logsource;
 use sigma_regression::{load_all, RegressionInfo};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-// ─── Validation ───────────────────────────────────────────────────────────────
+// ─── Stats ────────────────────────────────────────────────────────────────────
 
 struct ValidationStats {
     total: usize,
@@ -73,9 +71,9 @@ impl ValidationStats {
     }
 }
 
-fn validate_regression(
+fn check_regression(
     regression: &RegressionInfo,
-    rules_dirs: &[&Path],
+    engine: &mut DetectionEngine,
 ) -> Result<(String, bool, String)> {
     let rule_name = regression
         .info_path
@@ -85,17 +83,18 @@ fn validate_regression(
         .unwrap_or("unknown")
         .to_string();
 
-    let rule_title = regression
+    let rule_id = regression.rule_id.clone();
+    let expected_count = regression
         .info
-        .rule_metadata
+        .regression_tests_info
         .first()
-        .map(|r| r.title.clone())
-        .unwrap_or_else(|| "<no title>".to_string());
+        .map(|t| t.match_count)
+        .unwrap_or(1);
 
     let data_path = regression
         .data_path
         .as_ref()
-        .ok_or_else(|| anyhow!("No data file for rule '{}'", regression.rule_id))?;
+        .ok_or_else(|| anyhow!("No data file for rule '{}'", rule_id))?;
 
     let mut collector = EventCollector::new();
     collector.load_evtx(data_path)?;
@@ -105,34 +104,34 @@ fn validate_regression(
         return Err(anyhow!("EMPTY — evtx produced no events"));
     }
 
-    let event = events.first().unwrap();
-    let channel = event.channel().to_string();
-    let provider = event.provider().to_string();
-    let event_id = event.event_id();
-    let _logsource = resolve_logsource(&channel, &provider, event_id, &HashMap::new());
-
-    // Build a temporary engine for single-event evaluation
-    let mut eval_engine = DetectionEngine::from_rules_dirs(rules_dirs)?;
-
-    let events_for_eval = vec![event.clone()];
-    eval_engine.put_events(events_for_eval);
-    eval_engine.process_events();
-    let alerts = eval_engine.get_alerts();
+    engine.put_events(events);
+    engine.process_events();
+    let alerts = engine.get_alerts();
 
     let matched_ids: HashSet<&str> = alerts.iter().map(|a| a.rule_id.as_str()).collect();
 
-    if !matched_ids.contains(&regression.rule_id.as_str()) {
+    if !matched_ids.contains(&rule_id.as_str()) {
+        let matched: Vec<String> = matched_ids.iter().map(|s| s.to_string()).collect();
         return Err(anyhow!(
-            "RULE NOT MATCHED — expected '{}' ({} match(es))",
-            regression.rule_id,
+            "RULE NOT MATCHED — expected '{}' ({} alert(s), matched: {})",
+            rule_id,
+            alerts.len(),
+            matched.join(", ")
+        ));
+    }
+
+    if alerts.len() != expected_count {
+        return Err(anyhow!(
+            "MATCH COUNT MISMATCH — expected {} (got {})",
+            expected_count,
             alerts.len()
         ));
     }
 
     Ok((
-        format!("{} ({})", rule_name, rule_title),
+        rule_name,
         true,
-        format!("{} match(es), rule matched", alerts.len()),
+        format!("{} alert(s), rule matched", alerts.len()),
     ))
 }
 
@@ -145,8 +144,8 @@ fn main() {
         eprintln!("Usage: evtx_check <sigmahq_dir>");
         eprintln!();
         eprintln!("Scans <sigmahq_dir>/regression_data/ for info.yml entries,");
-        eprintln!("evaluates each data file against all loaded Sigma rules, and");
-        eprintln!("validates that expected rules match with correct hit counts.");
+        eprintln!("pushes each evtx's events into the detection engine, and");
+        eprintln!("checks that expected rules match with correct hit counts.");
         eprintln!();
         eprintln!("Example:");
         eprintln!("  cargo run --release --bin evtx_check ./sigma");
@@ -188,7 +187,7 @@ fn main() {
         }
     };
     let refs: Vec<&Path> = dirs.iter().map(|d| d.as_path()).collect();
-    let engine = match DetectionEngine::from_rules_dirs(&refs) {
+    let mut engine = match DetectionEngine::from_rules_dirs(&refs) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("Failed to build engine: {}", e);
@@ -226,20 +225,20 @@ fn main() {
             continue;
         }
 
-        match validate_regression(regression, &refs) {
-            Ok((display_name, is_pass, detail)) => {
+        match check_regression(regression, &mut engine) {
+            Ok((_display_name, is_pass, detail)) => {
                 if is_pass {
                     stats.add_pass();
                     println!("[PASS] {}", detail);
                 } else {
                     let msg = detail.clone();
-                    stats.add_fail(display_name.clone(), msg);
+                    stats.add_fail(name.clone(), msg);
                     println!("[FAIL] {}", detail);
                 }
             }
             Err(e) => {
                 let msg = e.to_string();
-                stats.add_fail(name.clone(), msg.clone());
+                stats.add_fail(name.clone(), msg);
                 println!("[FAIL] {}", e);
             }
         }
@@ -285,7 +284,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_regression_no_data_file() {
+    fn test_check_regression_no_data_file() {
         let tmp = tempfile::tempdir().unwrap();
         let rule_dir = tmp.path().join("bare-rule");
         fs::create_dir(&rule_dir).unwrap();
@@ -299,8 +298,8 @@ mod tests {
         assert_eq!(regressions.len(), 1);
 
         let entry = &regressions[0];
-        let empty_dirs: Vec<&Path> = Vec::new();
-        let result = validate_regression(entry, &empty_dirs);
+        let mut engine = DetectionEngine::default();
+        let result = check_regression(entry, &mut engine);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -315,7 +314,6 @@ mod tests {
         stats.add_pass();
         stats.add_fail("test-rule".to_string(), "some error".to_string());
         stats.total = 3;
-        // Just verify it doesn't panic
         stats.print_summary();
     }
 }
