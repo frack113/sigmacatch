@@ -24,10 +24,6 @@ const EVT_NEXT_TIMEOUT_MS: u32 = 5000;
 #[allow(dead_code)]
 const CHANNEL_IDLE_TIMEOUT_MS: u32 = 10_000;
 
-/// Winevt event query handle type.
-#[cfg(windows)]
-type EvtHandle = *mut std::ffi::c_void;
-
 /// Multi-channel Windows Event Log collector.
 ///
 /// On `start()`, spawns one task per channel (95 tasks). Each task
@@ -114,10 +110,11 @@ impl EventCollector {
     async fn collect_channel(
         channel: String,
         fifo: Arc<Mutex<VecDeque<Event>>>,
-        tx: mpsc::Sender<Event>,
+        _tx: mpsc::Sender<Event>,
     ) {
+        let channel_name = channel.clone();
         let result =
-            tokio::task::spawn_blocking(move || Self::collect_events_blocking(&channel)).await;
+            tokio::task::spawn_blocking(move || Self::collect_events_blocking(&channel_name)).await;
 
         match result {
             Ok(events) => {
@@ -125,7 +122,7 @@ impl EventCollector {
                 for event in events {
                     fifo.push_back(event);
                 }
-                info!("Collected {} events from channel '{}'", fifo.len(), channel);
+                info!("Collected {} events from channel '{channel}'", fifo.len());
             }
             Err(e) => {
                 tracing::warn!("Failed to collect from channel '{channel}': {e}");
@@ -136,11 +133,13 @@ impl EventCollector {
     /// Collect events from a single channel via Winevt API (blocking).
     #[cfg(windows)]
     fn collect_events_blocking(channel: &str) -> Vec<Event> {
+        use windows::Win32::System::EventLog::{EvtClose, EVT_HANDLE};
+
         // Initialize COM for the thread
-        let com_guard = match Self::init_com() {
+        let _com_guard = match Self::init_com() {
             Ok(g) => g,
             Err(e) => {
-                tracing::warn!("CoInitializeEx failed for channel '{channel}': {e:#x}");
+                tracing::warn!("CoInitializeEx failed for channel '{channel}': {e}");
                 return Vec::new();
             }
         };
@@ -152,21 +151,20 @@ impl EventCollector {
         let query_handle = match Self::evt_query(&channel_wide) {
             Ok(h) => h,
             Err(e) => {
-                tracing::warn!("EvtQueryW failed for channel '{channel}': {e:#x}");
+                tracing::warn!("EvtQuery failed for channel '{channel}': {e}");
                 return Vec::new();
             }
         };
 
         let mut events = Vec::new();
-        let mut event_handles: [EvtHandle; 32] = std::array::from_fn(|_| std::ptr::null_mut());
+        let mut event_handles: Vec<isize> = vec![0; 32];
         let mut idle_count: u32 = 0;
 
         while events.len() < MAX_EVENTS {
-            let events_fetched = match Self::evt_next(&query_handle, &mut event_handles) {
+            let events_fetched = match Self::evt_next(query_handle, &mut event_handles) {
                 Ok(n) => n,
-                Err(windows::Win32::Foundation::ERROR_EVT_EVENT_DOES_NOT_EXIST) => break,
                 Err(e) => {
-                    tracing::warn!("EvtNext failed for channel '{channel}': {e:#x}");
+                    tracing::warn!("EvtNext failed for channel '{channel}': {e}");
                     break;
                 }
             };
@@ -183,28 +181,29 @@ impl EventCollector {
             idle_count = 0;
 
             for i in 0..events_fetched {
-                let event_handle = event_handles[i as usize];
-                if event_handle.is_null() {
+                let handle_value = event_handles[i as usize];
+                if handle_value == 0 {
                     continue;
                 }
 
+                let event_handle = EVT_HANDLE(handle_value);
                 Self::render_and_push(event_handle, channel, &mut events);
 
                 // Close event handle
                 unsafe {
-                    windows::Win32::Foundation::EvtClose(event_handle);
+                    let _ = EvtClose(event_handle);
                 }
             }
 
             // Reset event handles for next batch
             for handle in event_handles.iter_mut() {
-                *handle = std::ptr::null_mut();
+                *handle = 0;
             }
         }
 
         // Close query handle
         unsafe {
-            windows::Win32::Foundation::EvtClose(query_handle);
+            let _ = EvtClose(query_handle);
         }
 
         // COM guard drops here, calling CoUninitialize
@@ -213,106 +212,111 @@ impl EventCollector {
 
     /// Initialize COM apartment for the current thread.
     #[cfg(windows)]
-    fn init_com() -> Result<ComGuard, u32> {
-        let hr = unsafe {
-            windows::Win32::Foundation::CoInitializeEx(
-                None,
-                windows::Win32::System::Threading::COINIT_APARTMENTTHREADED,
-            )
-        };
+    fn init_com() -> Result<ComGuard, String> {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+
+        let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
 
         if hr.is_ok() {
             Ok(ComGuard)
         } else {
-            Err(unsafe { windows::Win32::Foundation::GetLastError() })
+            Err(format!("CoInitializeEx failed: {hr}"))
         }
     }
 
     /// Query events from a channel.
     #[cfg(windows)]
-    fn evt_query(channel_wide: &[u16]) -> Result<EvtHandle, u32> {
-        let query_handle = unsafe {
-            windows::Win32::System::EventLog::EvtQueryW(
-                None,
-                channel_wide,
-                b"*\0".as_ptr(),
-                0x00000001, // EvtQueryDirectionForward
-            )
-        };
+    fn evt_query(
+        channel_wide: &[u16],
+    ) -> Result<windows::Win32::System::EventLog::EVT_HANDLE, String> {
+        use windows::core::PCWSTR;
+        use windows::Win32::System::EventLog::{EvtQuery, EvtQueryChannelPath};
 
-        if query_handle.is_null() {
-            Err(unsafe { windows::Win32::Foundation::GetLastError() })
-        } else {
-            Ok(query_handle)
+        let path = PCWSTR::from_raw(channel_wide.as_ptr());
+        let query = PCWSTR::from_raw(b"*\0".as_ptr() as *const u16);
+
+        let handle = unsafe { EvtQuery(None, path, query, EvtQueryChannelPath.0) };
+
+        match handle {
+            Ok(h) => Ok(h),
+            Err(e) => Err(format!("EvtQuery failed: {e}")),
         }
     }
 
     /// Fetch the next batch of events.
     #[cfg(windows)]
     fn evt_next(
-        query_handle: &mut EvtHandle,
-        event_handles: &mut [EvtHandle; 32],
-    ) -> Result<u32, u32> {
+        query_handle: windows::Win32::System::EventLog::EVT_HANDLE,
+        event_handles: &mut [isize],
+    ) -> Result<u32, String> {
+        use windows::Win32::System::EventLog::EvtNext;
+
         let mut events_fetched: u32 = 0;
-        let hr = unsafe {
-            windows::Win32::System::EventLog::EvtNext(
-                *query_handle,
-                event_handles.as_mut_ptr(),
-                event_handles.len() as i32,
+
+        let result = unsafe {
+            EvtNext(
+                query_handle,
+                event_handles,
                 EVT_NEXT_TIMEOUT_MS,
                 0,
                 &mut events_fetched,
             )
         };
 
-        if hr.is_ok() {
-            Ok(events_fetched)
-        } else {
-            Err(unsafe { windows::Win32::Foundation::GetLastError() })
+        match result {
+            Ok(()) => Ok(events_fetched),
+            Err(e) => Err(format!("EvtNext failed: {e}")),
         }
     }
 
     /// Render event handle to XML and parse into Event.
     #[cfg(windows)]
-    fn render_and_push(event_handle: EvtHandle, channel: &str, events: &mut Vec<Event>) {
-        // First call to get buffer size
+    fn render_and_push(
+        event_handle: windows::Win32::System::EventLog::EVT_HANDLE,
+        channel: &str,
+        events: &mut Vec<Event>,
+    ) {
+        use windows::Win32::System::EventLog::{EvtRender, EvtRenderEventXml};
+
+        // First call to get required buffer size
         let mut buffer_size: u32 = 0;
-        let hr = unsafe {
-            windows::Win32::System::EventLog::EvtRender(
+        let result = unsafe {
+            EvtRender(
                 None,
                 event_handle,
-                windows::Win32::System::EventLog::EVT_RENDER_FORMAT_EvtRenderEventXml,
+                EvtRenderEventXml.0,
                 0,
-                std::ptr::null_mut(),
+                Some(std::ptr::null_mut()),
                 &mut buffer_size,
-                0,
+                std::ptr::null_mut(),
             )
         };
 
-        if !hr.is_ok() || buffer_size == 0 {
+        if result.is_err() || buffer_size == 0 {
             return;
         }
 
         // Allocate and render
         let mut buffer: Vec<u8> = vec![0u8; buffer_size as usize];
-        let bytes_written = unsafe {
-            windows::Win32::System::EventLog::EvtRender(
+        let mut bytes_used: u32 = 0;
+        let result = unsafe {
+            EvtRender(
                 None,
                 event_handle,
-                windows::Win32::System::EventLog::EVT_RENDER_FORMAT_EvtRenderEventXml,
+                EvtRenderEventXml.0,
                 buffer_size,
-                buffer.as_mut_ptr().cast(),
-                &mut buffer_size,
-                0,
+                Some(buffer.as_mut_ptr().cast()),
+                &mut bytes_used,
+                std::ptr::null_mut(),
             )
         };
 
-        if bytes_written == 0 {
+        if result.is_err() || bytes_used == 0 {
             return;
         }
 
         // Parse XML to Event
-        let xml_str = match String::from_utf8(buffer[..buffer_size as usize].to_vec()) {
+        let xml_str = match String::from_utf8(buffer[..bytes_used as usize].to_vec()) {
             Ok(s) => s,
             Err(_) => return,
         };
@@ -347,7 +351,8 @@ struct ComGuard;
 #[cfg(windows)]
 impl Drop for ComGuard {
     fn drop(&mut self) {
-        let _ = unsafe { windows::Win32::Foundation::CoUninitialize() };
+        use windows::Win32::System::Com::CoUninitialize;
+        unsafe { CoUninitialize() };
     }
 }
 
