@@ -75,7 +75,7 @@ impl ValidationStats {
 
 fn validate_regression(
     regression: &RegressionInfo,
-    engine: &DetectionEngine,
+    rules_dirs: &[&Path],
 ) -> Result<(String, bool, String)> {
     let rule_name = regression
         .info_path
@@ -109,26 +109,30 @@ fn validate_regression(
     let channel = event.channel().to_string();
     let provider = event.provider().to_string();
     let event_id = event.event_id();
-    let logsource = resolve_logsource(&channel, &provider, event_id, &HashMap::new());
-    let matches = engine.evaluate(&event.event_json, &logsource);
+    let _logsource = resolve_logsource(&channel, &provider, event_id, &HashMap::new());
 
-    let matched_rule_ids: HashSet<&str> = matches
-        .iter()
-        .filter_map(|m| m.header.rule_id.as_deref())
-        .collect();
+    // Build a temporary engine for single-event evaluation
+    let mut eval_engine = DetectionEngine::from_rules_dirs(rules_dirs)?;
 
-    if !matched_rule_ids.contains(&regression.rule_id.as_str()) {
+    let events_for_eval = vec![event.clone()];
+    eval_engine.put_events(events_for_eval);
+    eval_engine.process_events();
+    let alerts = eval_engine.get_alerts();
+
+    let matched_ids: HashSet<&str> = alerts.iter().map(|a| a.rule_id.as_str()).collect();
+
+    if !matched_ids.contains(&regression.rule_id.as_str()) {
         return Err(anyhow!(
-            "RULE NOT MATCHED — expected '{}' ({} matches)",
+            "RULE NOT MATCHED — expected '{}' ({} match(es))",
             regression.rule_id,
-            matches.len()
+            alerts.len()
         ));
     }
 
     Ok((
         format!("{} ({})", rule_name, rule_title),
         true,
-        format!("{} match(es), rule matched", matches.len()),
+        format!("{} match(es), rule matched", alerts.len()),
     ))
 }
 
@@ -222,7 +226,7 @@ fn main() {
             continue;
         }
 
-        match validate_regression(regression, &engine) {
+        match validate_regression(regression, &refs) {
             Ok((display_name, is_pass, detail)) => {
                 if is_pass {
                     stats.add_pass();
@@ -295,7 +299,8 @@ mod tests {
         assert_eq!(regressions.len(), 1);
 
         let entry = &regressions[0];
-        let result = validate_regression(entry, &DetectionEngine::default());
+        let empty_dirs: Vec<&Path> = Vec::new();
+        let result = validate_regression(entry, &empty_dirs);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()

@@ -9,28 +9,12 @@ use anyhow::{anyhow, Result};
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::pipeline::parse_pipeline;
 use rsigma_eval::Engine;
-use rsigma_parser::{parse_sigma_yaml, LogSource, SigmaCollection};
-use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use rsigma_parser::{parse_sigma_yaml, SigmaCollection};
+use sigmacatch_types::{Alert, Event};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use tokio::sync::mpsc;
 use tracing::{info, warn};
-
-use std::sync::LazyLock;
-
-/// Shared single-threaded runtime for non-async contexts (tests, sync entry points).
-static SYNC_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("failed to create sync runtime")
-});
-
-use input_windows_channels::mapping::resolve_logsource;
-use sigmacatch_types::{validate_event_id, Alert, Event};
 
 /// Default flatten-winevt pipeline YAML used to prep processing of raw Winevt XML events.
 pub const FLATTEN_WINEVT_PIPELINE: &str = include_str!("../pipelines/flatten_winevt.yml");
@@ -38,13 +22,11 @@ pub const FLATTEN_WINEVT_PIPELINE: &str = include_str!("../pipelines/flatten_win
 /// Default Windows pipeline YAML for SigmaHQ rule transformation (logsource → Sysmon EventID conditions).
 pub const WINDOWS_PIPELINE: &str = include_str!("../pipelines/windows.yml");
 
-/// Detection engine — pipelines + rules + evaluate.
-///
-/// For real-time event processing, use `start()` to spawn an async task that receives
-/// `Event` objects on a channel and sends `Alert` objects back.
+/// Detection engine — pipelines + rules + FIFO piles d'events et alerts.
 pub struct DetectionEngine {
-    engine: Arc<tokio::sync::Mutex<Engine>>,
-    rule_ids: std::sync::RwLock<HashSet<String>>,
+    engine: Engine,
+    events: Vec<Event>,
+    alerts: Vec<Alert>,
 }
 
 impl DetectionEngine {
@@ -60,8 +42,9 @@ impl DetectionEngine {
         engine.add_pipeline(windows_pipeline);
 
         Self {
-            engine: Arc::new(tokio::sync::Mutex::new(engine)),
-            rule_ids: std::sync::RwLock::new(HashSet::new()),
+            engine,
+            events: Vec::new(),
+            alerts: Vec::new(),
         }
     }
 
@@ -85,86 +68,43 @@ impl DetectionEngine {
     /// Load a pre-built `SigmaCollection` into this engine.
     /// Rules are parsed by the embedded pipelines during loading.
     pub fn load_collection(&mut self, collection: SigmaCollection) -> Result<()> {
-        for rule in &collection.rules {
-            if let Some(ref id) = rule.id {
-                self.rule_ids.write().unwrap().insert(id.clone());
-            }
-        }
-        let rt =
-            tokio::runtime::Handle::try_current().unwrap_or_else(|_| SYNC_RUNTIME.handle().clone());
-        rt.block_on(async {
-            let mut eng = self.engine.lock().await;
-            eng.add_collection(&collection)
-                .map_err(|e| anyhow!("Engine add_collection failed: {e}"))
-        })
-    }
-
-    /// Start the async detection task.
-    ///
-    /// Returns `(event_tx, alert_rx)` where:
-    /// - `event_tx` is the sender for pushing `Event` objects into the engine
-    /// - `alert_rx` is the receiver for pulling `Alert` objects from the engine
-    ///
-    /// Dropping `self` (the engine) will stop the internal task.
-    pub fn start(self) -> (mpsc::Sender<Event>, mpsc::Receiver<Alert>) {
-        let (event_tx, mut event_rx) = mpsc::channel(1024);
-        let (alert_tx, alert_rx) = mpsc::channel(1024);
-        let engine = self.engine.clone();
-
-        tokio::spawn(async move {
-            while let Some(event) = event_rx.recv().await {
-                let logsource = extract_logsource(&event);
-                let matches = {
-                    let eng = engine.lock().await;
-                    let validated = validate_event_id(&event.event_json);
-                    let json_event = JsonEvent::borrow(&validated);
-                    eng.evaluate_with_logsource(&json_event, &logsource)
-                };
-
-                for result in matches {
-                    let rule_id = result.header.rule_id.clone();
-                    let alert = Alert::from_evaluation_result(result, &event);
-                    if alert_tx.send(alert).await.is_err() {
-                        let rid = rule_id.as_deref().unwrap_or("<unknown>");
-                        warn!("alert channel closed, dropping alert for rule {}", rid);
-                    }
-                }
-            }
-        });
-
-        (event_tx, alert_rx)
-    }
-
-    /// Evaluate a JSON event against loaded rules with an explicit logsource.
-    pub fn evaluate(
-        &self,
-        event: &Value,
-        logsource: &LogSource,
-    ) -> Vec<rsigma_eval::EvaluationResult> {
-        let validated = validate_event_id(event);
-        let json_event = JsonEvent::borrow(&validated);
-
-        let rt =
-            tokio::runtime::Handle::try_current().unwrap_or_else(|_| SYNC_RUNTIME.handle().clone());
-        rt.block_on(async {
-            let eng = self.engine.lock().await;
-            eng.evaluate_with_logsource(&json_event, logsource)
-        })
+        self.engine
+            .add_collection(&collection)
+            .map_err(|e| anyhow!("Engine add_collection failed: {e}"))
     }
 
     /// Number of rules currently loaded in the engine.
     pub fn rule_count(&self) -> usize {
-        let rt =
-            tokio::runtime::Handle::try_current().unwrap_or_else(|_| SYNC_RUNTIME.handle().clone());
-        rt.block_on(async {
-            let eng = self.engine.lock().await;
-            eng.rule_count()
-        })
+        self.engine.rule_count()
     }
 
-    /// Return the IDs of all rules currently loaded in the engine.
-    pub fn loaded_rule_ids(&self) -> Vec<String> {
-        self.rule_ids.read().unwrap().iter().cloned().collect()
+    // ─── FIFO API ─────────────────────────────────────────────────────────
+
+    /// Push events into the internal event pile.
+    pub fn put_events(&mut self, events: Vec<Event>) {
+        self.events.extend(events);
+    }
+
+    /// Pop and return all events from the pile.
+    pub fn get_events(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.events)
+    }
+
+    /// Evaluate all events in the pile against loaded rules.
+    pub fn process_events(&mut self) {
+        for event in std::mem::take(&mut self.events) {
+            let json_event = JsonEvent::borrow(&event.event_json);
+            let matches = self.engine.evaluate(&json_event);
+            for result in matches {
+                let alert = Alert::from_evaluation_result(result, &event);
+                self.alerts.push(alert);
+            }
+        }
+    }
+
+    /// Pop and return all accumulated alerts.
+    pub fn get_alerts(&mut self) -> Vec<Alert> {
+        std::mem::take(&mut self.alerts)
     }
 
     // ─── private helpers ─────────────────────────────────────────────────
@@ -215,22 +155,12 @@ impl DetectionEngine {
         }
 
         if !collection.rules.is_empty() {
-            for rule in &collection.rules {
-                if let Some(ref id) = rule.id {
-                    self.rule_ids.write().unwrap().insert(id.clone());
-                }
-            }
-            let rt = tokio::runtime::Handle::try_current()
-                .unwrap_or_else(|_| SYNC_RUNTIME.handle().clone());
-            rt.block_on(async {
-                let mut eng = self.engine.lock().await;
-                eng.add_collection(&collection).map_err(|e| {
-                    anyhow!(
-                        "Engine add_collection failed for {:?}: {}",
-                        dir.display(),
-                        e
-                    )
-                })
+            self.engine.add_collection(&collection).map_err(|e| {
+                anyhow!(
+                    "Engine add_collection failed for {:?}: {}",
+                    dir.display(),
+                    e
+                )
             })?;
         }
 
@@ -354,19 +284,6 @@ fn has_yml_files(dir: &Path, depth: u32) -> bool {
     false
 }
 
-fn extract_logsource(event: &Event) -> LogSource {
-    let channel = event
-        .channel
-        .as_deref()
-        .or_else(|| Some(event.channel()))
-        .unwrap_or("");
-
-    let provider = event.provider();
-    let event_id = event.event_id();
-
-    resolve_logsource(channel, provider, event_id, &HashMap::new())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,28 +333,6 @@ detection:
             engine.rule_count(),
             0,
             "engine should have 0 rules when loaded from nonexistent directory"
-        );
-    }
-
-    #[test]
-    fn test_evaluate_no_rules() {
-        let engine = DetectionEngine::from_rules_dir(Path::new("/nonexistent")).unwrap();
-        assert_eq!(engine.rule_count(), 0);
-
-        let logsource = LogSource {
-            product: Some("test".to_string()),
-            category: None,
-            service: None,
-            definition: None,
-            custom: HashMap::new(),
-        };
-        let event = serde_json::json!({ "EventID": 1 });
-
-        let results = engine.evaluate(&event, &logsource);
-        assert!(
-            results.is_empty(),
-            "evaluate with no rules should return empty vec, got {} results",
-            results.len()
         );
     }
 

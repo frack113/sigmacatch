@@ -105,10 +105,6 @@ fn is_repo_complete(git_dir: &Path) -> bool {
         .unwrap_or(false);
     has_packed_refs || has_objects || has_refs
 }
-/// Delegate to [`detection_engine::find_rules_dirs`] (single source of truth).
-pub fn find_rules_dirs(root: &Path) -> Result<Vec<PathBuf>> {
-    detection_engine::find_rules_dirs(root)
-}
 
 /// Load all Sigma rules from the given directories, skipping rules in the skip set.
 pub fn load_all_rules(dirs: &[&Path], skip_ids: &HashSet<String>) -> Result<SigmaCollection> {
@@ -163,6 +159,7 @@ pub fn load_all_rules(dirs: &[&Path], skip_ids: &HashSet<String>) -> Result<Sigm
 #[cfg(test)]
 mod tests {
     use super::*;
+    use detection_engine::find_rules_dirs;
     use std::fs;
 
     #[test]

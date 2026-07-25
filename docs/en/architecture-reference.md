@@ -170,7 +170,7 @@ For each SensorEvent:
     ├── channel → LogSource { product: "windows", service, category }
     │     (mapping::resolve_logsource + channel/service priority)
     ├── event.event_json → flat serde_json::Value (pre-parsed, parse_winevt_xml fallback)
-    ├── engine.evaluate(event_json, logsource)
+     ├── engine.put_events(events) → engine.process_events() → engine.get_alerts()
     │     → Vec<EvaluationResult> (rsigma-eval)
     └── For each match:
          ├── rule_id = match.header.rule_id
@@ -436,7 +436,7 @@ Config is auto-created on first run with defaults. Edit `config.yaml` before run
 │  For each Event:                                                        │
 │    ├── event.event_json → flat JSON (pre-parsed, parse_winevt_xml)     │
 │    ├── channel → LogSource via resolve_logsource()                    │
-│    └── engine.evaluate(event_json, logsource)                          │
+ │    └── engine.put_events() → process_events() → get_alerts()          │
 │         → Vec<EvaluationResult>                                        │
 │  For each match:                                                        │
 │    └── aggregated[rule_id].alerts.push(alert)                         │

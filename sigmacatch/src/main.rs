@@ -12,8 +12,7 @@ use sigmacatch::sigma;
 
 use anyhow::{Context, Result};
 use config::Config;
-use input_windows_channels::mapping::resolve_logsource;
-use sigma::loader::{find_rules_dirs, SigmaRepo};
+use sigma::loader::SigmaRepo;
 use sigma::mapping::build_logsource_to_channels;
 use sigma_regression::generator::EvtxWriter;
 use sigmacatch::sigma::mapping::load_custom_mapping;
@@ -46,6 +45,7 @@ struct WorkContext {
     author: String,
     email: String,
     sigma_repo_path: std::path::PathBuf,
+    #[allow(dead_code)]
     custom_map: HashMap<String, String>,
 }
 
@@ -458,7 +458,7 @@ fn stage_3_load_rules(
     _config: &Config,
     existing_rules: &HashSet<String>,
 ) -> Result<(DetectionEngine, u64)> {
-    let rules_dirs = find_rules_dirs(std::path::Path::new("sigma"))?;
+    let rules_dirs = detection_engine::find_rules_dirs(std::path::Path::new("sigma"))?;
     if rules_dirs.is_empty() {
         anyhow::bail!(
             "Scanned \"sigma\" — found 0 rules directories. \
@@ -519,7 +519,7 @@ fn clean_partial_regressions(base: &std::path::Path) {
 
 async fn stage_4_work_winevt(
     channels: Vec<String>,
-    engine: &DetectionEngine,
+    mut engine: DetectionEngine,
     mut ctx: WorkContext,
 ) -> Result<(
     HashSet<String>,
@@ -545,48 +545,38 @@ async fn stage_4_work_winevt(
     let events = collector.get_events().await;
     info!("Got {} events from collector", events.len());
 
-    // Process events from all channels
-    for event in events {
-        let _event_span =
-            info_span!("event", event_id = event.event_id(), channel = %event.channel()).entered();
-        ctx.stats.events_processed += 1;
+    let event_count = events.len();
 
-        let logsource = resolve_logsource(
-            event.channel(),
-            event.provider(),
-            event.event_id(),
-            &ctx.custom_map,
-        );
-        let results = engine.evaluate(&event.event_json, &logsource);
-        let alerts: Vec<Alert> = results
-            .into_iter()
-            .map(|r| Alert::from_evaluation_result(r, &event))
-            .collect();
+    // Use the DetectionEngine FIFO API: push events → process → pull alerts
+    engine.put_events(events);
+    engine.process_events();
+    let alerts = engine.get_alerts();
 
-        for alert in alerts {
-            let rule_id = &alert.rule_id;
+    ctx.stats.events_processed = event_count as u64;
 
-            if ctx.retired.contains(rule_id) {
-                continue;
-            }
+    for alert in alerts {
+        let rule_id = &alert.rule_id;
 
-            debug!("Rule {} matched", rule_id);
-            ctx.stats.matches_found += 1;
-
-            ctx.aggregated
-                .entry(rule_id.clone())
-                .or_insert_with(|| AggregatedRule {
-                    header: sigmacatch_types::RegressionHeader::new(
-                        rule_id.clone(),
-                        alert.rule_title.clone(),
-                    ),
-                    alerts: Vec::new(),
-                    rule_path: None,
-                    description: None,
-                })
-                .alerts
-                .push(alert);
+        if ctx.retired.contains(rule_id) {
+            continue;
         }
+
+        debug!("Rule {} matched", rule_id);
+        ctx.stats.matches_found += 1;
+
+        ctx.aggregated
+            .entry(rule_id.clone())
+            .or_insert_with(|| AggregatedRule {
+                header: sigmacatch_types::RegressionHeader::new(
+                    rule_id.clone(),
+                    alert.rule_title.clone(),
+                ),
+                alerts: Vec::new(),
+                rule_path: None,
+                description: None,
+            })
+            .alerts
+            .push(alert);
     }
 
     info!(
@@ -736,10 +726,13 @@ fn resolve_channels_from_rules(
     channels
 }
 
+type EngineFactory = Box<dyn Fn() -> DetectionEngine + Send + Sync>;
+
 async fn setup_pipeline(
     config: &Config,
     fork_config: Option<&github::fork::ForkConfig>,
-) -> Result<(DetectionEngine, Vec<String>, HashMap<String, String>)> {
+) -> Result<(EngineFactory, Vec<String>, HashMap<String, String>)> {
+    let rules_dirs = detection_engine::find_rules_dirs(std::path::Path::new("sigma"))?;
     stage_0_init().await?;
     stage_1_update_repo(config, fork_config).await?;
 
@@ -763,7 +756,13 @@ async fn setup_pipeline(
         warn!("0 channels resolved — nothing to collect");
     }
 
-    Ok((engine, channels, custom_map))
+    let dirs = rules_dirs.clone();
+    let factory: EngineFactory = Box::new(move || {
+        let dirs_ref: Vec<std::path::PathBuf> = dirs.to_vec();
+        let refs: Vec<&std::path::Path> = dirs_ref.iter().map(|p| p.as_path()).collect();
+        DetectionEngine::from_rules_dirs(&refs).unwrap()
+    });
+    Ok((factory, channels, custom_map))
 }
 
 /// Configure Windows console for UTF-8 output and ANSI escape sequences.
@@ -785,7 +784,7 @@ fn setup_console() {
 
 async fn run_cycle(
     channels: Vec<String>,
-    engine: &DetectionEngine,
+    engine: DetectionEngine,
     mut retired: HashSet<String>,
     custom_map: HashMap<String, String>,
     author: String,
@@ -900,7 +899,8 @@ async fn main() -> Result<()> {
     info!("Branch name: {}", branch_name);
     let fork_config = github::fork::detect_fork(&config.author, &branch_name).await?;
 
-    let (engine, cycle_channels, custom_map) = setup_pipeline(&config, Some(&fork_config)).await?;
+    let (engine_factory, cycle_channels, custom_map) =
+        setup_pipeline(&config, Some(&fork_config)).await?;
 
     if cycle_channels.is_empty() {
         info!("No channels resolved — exiting cleanly");
@@ -950,9 +950,10 @@ async fn main() -> Result<()> {
             info!("collecting…");
 
             let channels = cycle_channels.clone();
+            let engine = engine_factory();
             let (mut retired, stats, committed_rules) = run_cycle(
                 channels,
-                &engine,
+                engine,
                 std::mem::take(&mut retired),
                 custom_map.clone(),
                 config.author.clone(),

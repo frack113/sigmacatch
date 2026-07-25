@@ -10,8 +10,7 @@ sigmacatch/
 ├── crates/
 │   ├── detection-engine/      # Thin wrapper around rsigma-eval for pipelines and rules
 │   ├── input-evtx/            # Parse EVTX files into Event objects
-│   ├── input-windows-channels/ # Multi-channel Windows Event Log collector
-│   ├── input-windows-channels/ # LogSource resolution, custom mappings, taxonomy tables
+│   ├── input-windows-channels/ # Winevt collector + LogSource resolution, taxonomy
 │   ├── sigma-regression/      # InfoYml, SkipSet, triplet validation (SigmaHQ regression format)
 │   └── sigmacatch-types/      # Shared types: Event, Alert, RegressionHeader + XML parsing
 └── sigmacatch/          # Binary + pipeline
@@ -33,7 +32,7 @@ sigmacatch/src/
 ├── evtx/
 │   └── writer.rs        # write_evtx() via EvtExportLog API (→ valid EVTX or .xml fallback)
 ├── sigma/
-│   ├── mod.rs           # pub mod engine, loader, mapping
+│   ├── mod.rs           # pub mod loader, mapping
 │   ├── loader.rs        # SigmaRepo (grit-lib) + find_rules_dirs()
 │   └── mapping/
 │       └── mod.rs       # re-export from input_windows_channels::mapping
@@ -53,7 +52,7 @@ sigmacatch/src/
 sigmacatch ──┬── detection-engine      (rsigma-eval wrapper + embedded pipelines)
              ├── input-windows-channels (Winevt collector, multi-channel FIFO)
              ├── input-evtx            (EVTX file parser → Event)
-             ├── input-windows-channels (LogSource resolution, taxonomy)
+              ├── input-windows-channels (LogSource resolution, taxonomy, Winevt collector)
              ├── sigmacatch-types      (Event, Alert, RegressionHeader, XML parsing)
              └── sigma-regression      (InfoYml, SkipSet, triplet)
 ```
@@ -71,7 +70,7 @@ All 6 library crates are independent (no cross-dependency between them). `sigmac
 7. Collect events via `EventCollector` (all Windows channels) → `Vec<Event>`:
    - Each event carries `event_json: Value` (pre-parsed by collector, `parse_winevt_xml` fallback)
    - Each event's `LogSource` is derived from the **channel** via `resolve_logsource` (channel → service > provider → service > default)
-   - Evaluate against **all loaded rules** via `engine.evaluate(event_json, logsource)` — **no event lost**
+    - Evaluate against **all loaded rules** via FIFO API: `engine.put_events(events) → engine.process_events() → engine.get_alerts()` — **no event lost**
    - Aggregate matches by `rule_id` in `HashMap<String, AggregatedRule>`
 8. Generate regression for rules without existing `info.yml` (skip at generate time too)
 9. Write: `<output>/<rule_rel_path>/<rule_id>.json` (first matched event) + `<rule_id>.evtx` + `info.yml`; append `regression_tests_path` line to the source rule YAML

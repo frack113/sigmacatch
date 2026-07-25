@@ -321,8 +321,7 @@ impl EventCollector {
             Err(_) => return,
         };
 
-        if let Ok(mut event) = Event::from_xml(&xml_str) {
-            event.channel = Some(channel.to_string());
+        if let Ok(event) = Event::from_xml(&xml_str) {
             events.push(event);
         }
     }

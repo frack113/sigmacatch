@@ -8,3 +8,4 @@
 mod collector;
 
 pub use collector::{parse_evtx_file, EventCollector};
+pub use sigmacatch_types::parse_winevt_xml;

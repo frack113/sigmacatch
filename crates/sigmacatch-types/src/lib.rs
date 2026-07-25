@@ -11,22 +11,11 @@ use roxmltree::Node;
 use serde_json::{Map, Value};
 use std::fmt;
 
-/// Input source type for an event.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InputSource {
-    Winevt,
-    EvtxFile,
-    File(String),
-}
-
 /// A generic event for the detection engine: parsed JSON + raw source bytes.
-/// Evolutive — the raw source can be XML, EVTX binary, etc.
 #[derive(Debug, Clone)]
 pub struct Event {
     pub event_json: Value,
     pub event_raw: Vec<u8>,
-    pub input_source: InputSource,
-    pub channel: Option<String>,
 }
 
 impl Event {
@@ -34,8 +23,6 @@ impl Event {
         Self {
             event_json,
             event_raw,
-            input_source: InputSource::Winevt,
-            channel: None,
         }
     }
 
@@ -46,20 +33,7 @@ impl Event {
         Ok(Self {
             event_json: json,
             event_raw: raw,
-            input_source: InputSource::Winevt,
-            channel: None,
         })
-    }
-
-    /// Channel extracted from the parsed JSON (System.Channel or top-level Channel).
-    pub fn channel(&self) -> &str {
-        self.event_json
-            .get("Event")
-            .and_then(|v| v.get("System"))
-            .and_then(|v| v.get("Channel"))
-            .and_then(|v| v.as_str())
-            .or_else(|| self.event_json.get("Channel").and_then(|v| v.as_str()))
-            .unwrap_or("")
     }
 
     /// EventID extracted from the parsed JSON.
@@ -83,9 +57,23 @@ impl Event {
             .and_then(|v| v.as_str())
             .unwrap_or("")
     }
+
+    /// Channel extracted from the parsed JSON.
+    ///
+    /// Checks `Event.System.Channel` first (Winevt XML), then `Channel` at the
+    /// top level (evtx crate output).
+    pub fn channel(&self) -> &str {
+        self.event_json
+            .get("Event")
+            .and_then(|v| v.get("System"))
+            .and_then(|v| v.get("Channel"))
+            .and_then(|v| v.as_str())
+            .or_else(|| self.event_json.get("Channel").and_then(|v| v.as_str()))
+            .unwrap_or("")
+    }
 }
 
-// ─── XML parsing (moved from winevt-xml crate) ─────────────────────────────
+// ─── XML parsing ────────────────────────────────────────────────────────────
 
 /// Maximum allowed size for a Winevt XML event (1 MB).
 ///

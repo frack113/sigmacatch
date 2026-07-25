@@ -171,7 +171,7 @@ Pour chaque Event :
     ├── channel → LogSource { product: "windows", service, category }
     │     (mapping::resolve_logsource + priorité channel/service)
     ├── event.event_json → flat serde_json::Value (pré-parsé, fallback parse_winevt_xml)
-    ├── engine.evaluate(event_json, logsource)
+     ├── engine.put_events(events) → engine.process_events() → engine.get_alerts()
     │     → Vec<EvaluationResult> (rsigma-eval)
     └── Pour chaque match :
          ├── rule_id = match.header.rule_id
@@ -437,7 +437,7 @@ La config est auto-créée au premier run avec les valeurs par défaut. Éditez 
 │  Pour chaque Event :                                                    │
 │    ├── event.event_json → JSON plat (pré-parsé, parse_winevt_xml)     │
 │    ├── channel → LogSource via resolve_logsource()                   │
-│    └── engine.evaluate(event_json, logsource)                          │
+ │    └── engine.put_events() → process_events() → get_alerts()          │
 │         → Vec<EvaluationResult>                                        │
 │  Pour chaque match :                                                    │
 │    └── aggregated[rule_id].alerts.push(alert)                         │
