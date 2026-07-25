@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 use detection_engine::DetectionEngine;
-use sigmacatch::collectors;
+use input_windows_channels::EventCollector;
 use sigmacatch::config;
 use sigmacatch::github;
 use sigmacatch::logger;
@@ -16,14 +16,13 @@ use sigma::loader::{find_rules_dirs, SigmaRepo};
 use sigma::mapping::build_logsource_to_channels;
 use sigma::mapping::custom::load_custom_mapping;
 use sigma_regression::generator::EvtxWriter;
-use sigmacatch_types::{Alert, Event};
+use sigmacatch_types::Alert;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::signal;
-use tokio::sync::mpsc;
 use tracing::{debug, error, info, info_span, warn};
 
 struct Stats {
@@ -536,26 +535,17 @@ async fn stage_4_work_winevt(
 
     info!("Starting winevt collection on channels: {:?}", channels);
 
-    let (tx, mut rx) = mpsc::channel::<Event>(1024);
+    let mut collector = EventCollector::start();
 
-    // Spawn one task per channel
-    let mut collector_tasks = Vec::new();
-    for channel in channels {
-        let tx = tx.clone();
-        let task = tokio::spawn(async move {
-            let channel_name = channel.clone();
-            let collector = collectors::event_log::WinevtCollector::new(channel);
-            if let Err(e) = collector.stream(tx).await {
-                error!("WinevtCollector error on channel '{}': {}", channel_name, e);
-            }
-        });
-        collector_tasks.push(task);
-    }
+    // Wait for all channel tasks to complete (no magic sleep)
+    collector.stop().await;
 
-    drop(tx); // Drop original sender so rx will close when all tasks are done
+    // Get all collected events
+    let events = collector.get_events().await;
+    info!("Got {} events from collector", events.len());
 
     // Process events from all channels
-    while let Some(event) = rx.recv().await {
+    for event in events {
         let _event_span =
             info_span!("event", event_id = event.event_id(), channel = %event.channel()).entered();
         ctx.stats.events_processed += 1;
@@ -595,13 +585,6 @@ async fn stage_4_work_winevt(
                 })
                 .alerts
                 .push(alert);
-        }
-    }
-
-    // Wait for all collector tasks to complete
-    for task in collector_tasks {
-        if let Err(e) = task.await {
-            error!("Collector task error: {}", e);
         }
     }
 

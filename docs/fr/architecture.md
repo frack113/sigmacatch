@@ -2,17 +2,18 @@
 
 ## Cargo workspace
 
-Le projet est un cargo workspace de 6 crates :
+Le projet est un cargo workspace de 7 crates :
 
 ```
 sigmacatch/
 ├── Cargo.toml           # Racine workspace
 ├── crates/
-│   ├── detection-engine/   # Wrapper BareEngine + pipelines embarquées
-│   ├── sigma-mapping/      # Résolution LogSource, mappings personnalisés, tables de taxonomie
-│   ├── sigma-regression/   # InfoYml, SkipSet, validation triplet (format régression SigmaHQ)
-│   ├── sigmacatch-types/   # Types partagés : Event, Alert, RegressionHeader
-│   └── winevt-xml/         # Struct WinevtEvent + parser XML (roxmltree)
+│   ├── detection-engine/      # Wrapper fin autour de rsigma-eval pour pipelines et règles
+│   ├── input-evtx/            # Parse les fichiers EVTX en objets Event
+│   ├── input-windows-channels/ # Collecteur multi-channels Windows Event Log
+│   ├── sigma-mapping/         # Résolution LogSource, mappings personnalisés, tables de taxonomie
+│   ├── sigma-regression/      # InfoYml, SkipSet, validation triplet (format régression SigmaHQ)
+│   └── sigmacatch-types/      # Types partagés : Event, Alert, RegressionHeader + parsing XML
 └── sigmacatch/          # Binaire + pipeline
     └── src/
         ├── main.rs
@@ -29,19 +30,13 @@ sigmacatch/src/
 ├── config.rs            # Config YAML (Config, SigmaFilterConfig, MinStatus, MinLevel)
 ├── logger.rs            # Abonnement tracing à deux couches (stderr info + fichier debug)
 ├── repo.rs              # wrapper grit-lib : clone/fetch/push/commit/branch (Rust pur, pas de git CLI)
-├── detection/
-│   └── mod.rs           # SigmaDetectionEngine (extrait channel/provider, résout logsource)
-├── collectors/
-│   ├── mod.rs           # pub mod event_log
-│   └── event_log.rs     # WinevtCollector (EvtQueryW, EvtNext, EvtRender)
 ├── evtx/
 │   └── writer.rs        # write_evtx() via EvtExportLog API (→ EVTX valide ou .xml fallback)
-├── parser/
-│   └── winevt.rs        # re-export depuis le crate winevt-xml
 ├── sigma/
 │   ├── mod.rs           # pub mod engine, loader, mapping
 │   ├── loader.rs        # SigmaRepo (grit-lib) + find_rules_dirs()
-│   └── engine.rs        # SigmaEngine: load rules, evaluate events
+│   └── mapping/
+│       └── mod.rs       # re-export depuis le crate sigma-mapping
 ├── regression/
 │   └── mod.rs           # re-exports depuis le crate sigma-regression
 ├── github/
@@ -55,14 +50,15 @@ sigmacatch/src/
 ## Graphe de dépendances
 
 ```
-sigmacatch ──┬── detection-engine (BareEngine + pipelines embarquées)
-             ├── winevt-xml      (WinevtEvent, parseur XML → JSON)
-             ├── sigma-mapping   (résolution LogSource, taxonomie)
-             ├── sigmacatch-types (Event, Alert, RegressionHeader)
-             └── sigma-regression (InfoYml, SkipSet, triplet)
+sigmacatch ──┬── detection-engine       (wrapper rsigma-eval + pipelines embarquées)
+             ├── input-windows-channels  (collecteur Winevt, FIFO multi-channels)
+             ├── input-evtx             (parser fichiers EVTX → Event)
+             ├── sigma-mapping          (résolution LogSource, taxonomie)
+             ├── sigmacatch-types       (Event, Alert, RegressionHeader, parsing XML)
+             └── sigma-regression       (InfoYml, SkipSet, triplet)
 ```
 
-Les 5 crates sont indépendants (aucune dépendance croisée entre eux). `sigmacatch` dépend des 5, ainsi que de crates externes (`rsigma-eval`, `grit-lib`, `tokio`, `windows`, etc.).
+Les 6 crates sont indépendants (aucune dépendance croisée entre eux). `sigmacatch` dépend des 6, ainsi que de crates externes (`rsigma-eval`, `grit-lib`, `tokio`, `windows`, etc.).
 
 ## Pipeline (single run, sequential)
 
@@ -72,10 +68,10 @@ Les 5 crates sont indépendants (aucune dépendance croisée entre eux). `sigmac
 4. `find_rules_dirs()` scans `sigma/` for `rules` / `rules-*` dirs (excludes `rules-compliance`)
 5. Build skip set by scanning `regression_data/rules/` + `sigma/regression_data/` for existing `info.yml` → `HashSet<String>` of rule IDs
 6. Load Sigma rules from all `rules*` dirs, **excluding skipped rule IDs**; post-parse filter via `rule.logsource.product` filters non-Windows rules; status/level filter via `config.sigma.min_status`/`min_level` (seule optimisation autorisée) — une table de règles est affichée au démarrage (chargées / skipées / services actifs)
-7. Collect events via `WinevtCollector` (channels from config) → `Vec<WinevtEvent>`:
-   - Chaque event porte `event_json: Option<Value>` (pré-parsé par le collector, fallback XmlParser si None)
+7. Collect events via `EventCollector` (all Windows channels) → `Vec<Event>`:
+   - Chaque event porte `event_json: Value` (pré-parsé par le collector, fallback `parse_winevt_xml`)
    - Each event's `LogSource` est dérivé du **channel** via `resolve_logsource` (channel → service > provider → service > default)
-   - Evaluate against **all loaded rules** via `evaluate_event_with_logsource(event, logsource)` — **aucun event perdu**
+   - Evaluate against **all loaded rules** via `engine.evaluate(event_json, logsource)` — **aucun event perdu**
    - Aggregate matches by `rule_id` in `HashMap<String, AggregatedRule>`
 8. Generate regression for rules without existing `info.yml` (skip at generate time too)
 9. Write: `<output>/<rule_rel_path>/<rule_id>.json` (first matched event) + `<rule_id>.evtx` + `info.yml`; append `regression_tests_path` line to the source rule YAML
@@ -90,7 +86,7 @@ Les 5 crates sont indépendants (aucune dépendance croisée entre eux). `sigmac
 - **Moteur temps réel** : `rsigma-eval` chargé une fois avec toutes les règles non skipées ; chaque event est évalué contre toutes les règles chargées. Aucun event perdu. Le skip-at-load est l'unique optimisation.
 - **LogSource dérivée du channel ETW** (`resolve_logsource`), avec provider comme fallback.
   - Priority: channel → service > provider → service > default
-  - Voir `# INVARIANT:` comment in `src/sigma/mapping/mod.rs`
+  - Voir `# INVARIANT:` comment in `crates/sigma-mapping/src/mapping/mod.rs`
 - **EVTX via `EvtExportLog`** : re-queries l'event par RecordID depuis le live log. Si succès → `.evtx` binaire valide. Si échec (event purgé) ou non-Windows → fallback `.xml` (raw XML, pas de binaire invalide).
   - **Known limitation** : race condition avec la rétention du log — si l'event a été purgé entre la collecte et l'export, `EvtExportLog` échoue silencieusement (`ERROR_EVT_QUERY_RESULT_STALE`).
 

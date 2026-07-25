@@ -89,16 +89,17 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 
 ## Workspace
 
-The project is a cargo workspace of 6 crates:
+The project is a cargo workspace of 7 crates:
 
 | Crate | Purpose |
 |---|---|
 | `sigmacatch` | Binary + pipeline, all orchestration |
-| `detection-engine` | BareEngine wrapper + embedded pipelines (windows.yml, flatten_winevt.yml) |
+| `detection-engine` | Thin wrapper around rsigma-eval for loading pipelines and rules, then evaluating events |
+| `input-windows-channels` | Multi-channel Windows Event Log collector (EvtQueryW, EvtNext, EvtRender) |
+| `input-evtx` | Parse EVTX files into `Event` objects for the detection engine |
 | `sigma-mapping` | LogSource resolution, taxonomy tables, custom channel mappings |
 | `sigma-regression` | SigmaHQ regression data format (`InfoYml`, `SkipSet`, triplet) |
-| `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader` |
-| `winevt-xml` | `WinevtEvent` struct + XML/JSON parsing |
+| `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML/JSON parsing |
 
 ## Built with
 
@@ -107,6 +108,8 @@ The project is a cargo workspace of 6 crates:
 - [tokio](https://crates.io/crates/tokio) — async runtime
 - [windows](https://crates.io/crates/windows) — Windows Event Log API, cfg-gated
 - [serde](https://crates.io/crates/serde) / [serde_json](https://crates.io/crates/serde_json) / [serde_yaml](https://crates.io/crates/yaml_serde) — serialization
+- [roxmltree](https://crates.io/crates/roxmltree) — XML parsing for Winevt events
+- [evtx](https://crates.io/crates/evtx) — EVTX file parsing
 
 ## License
 
