@@ -25,20 +25,15 @@ Outil headless qui capture des événements Windows réels via **Windows Event L
 
 ```
 sigmacatch/
-├── Cargo.toml                     # Racine workspace (6 crates)
+├── Cargo.toml                     # Racine workspace (7 crates)
 ├── sigmacatch/                    # Crate binaire
 │   └── src/
 │       ├── main.rs                # Pipeline + Stats + AggregatedRule
 │       ├── lib.rs                 # Déclarations pub mod
 │       ├── config.rs              # Config, SigmaFilterConfig, MinStatus, MinLevel
 │       ├── repo.rs                # wrapper grit-lib (clone/fetch/push/commit/branch)
-│       ├── detection/mod.rs       # SigmaDetectionEngine
-│       ├── collectors/
-│       │   └── event_log.rs       # WinevtCollector (EvtQueryW, EvtNext, EvtRender)
 │       ├── evtx/writer.rs         # write_evtx() via EvtExportLog API + .xml fallback
-│       ├── parser/winevt.rs       # re-export depuis winevt-xml
 │       ├── sigma/
-│       │   ├── engine.rs          # SigmaEngine + évaluation des règles
 │       │   ├── loader.rs          # SigmaRepo (grit-lib) + find_rules_dirs()
 │       │   └── mapping/mod.rs     # re-export depuis sigma-mapping
 │       ├── regression/mod.rs      # re-export depuis sigma-regression
@@ -47,11 +42,12 @@ sigmacatch/
 │       │   └── fork.rs            # ForkConfig, check_fork_exists, detect_fork
 │       └── bin/evtx_check.rs      # Outil de validation batch
 ├── crates/
-│   ├── detection-engine/          # BareEngine + pipelines embarquées (windows.yml, flatten_winevt.yml)
+│   ├── detection-engine/          # Wrapper rsigma-eval + pipelines embarquées (windows.yml, flatten_winevt.yml)
+│   ├── input-evtx/                # Parse EVTX files → Event objects
+│   ├── input-windows-channels/    # Collecteur multi-channels Windows Event Log (EvtQueryW, EvtNext, EvtRender)
 │   ├── sigma-mapping/             # LogSource, taxonomie (phf + channel_mapping.yml), mappings custom
 │   ├── sigma-regression/          # SkipSet, RegressionData, InfoYml, validation triplet
-│   ├── sigmacatch-types/          # Types partagés : Event, Alert, RegressionHeader
-│   └── winevt-xml/                # WinevtEvent + parsing XML/JSON (roxmltree)
+│   └── sigmacatch-types/          # Types partagés : Event, Alert, RegressionHeader + parsing XML
 ```
 
 ---
@@ -160,30 +156,28 @@ SigmaEngine in-memory (règles chargées + rule_paths)
 ### Cycle — Collecte
 
 ```
-WinevtCollector (channels résolus depuis les règles via resolve_channels_from_rules)
+EventCollector (channels résolus depuis les règles via resolve_channels_from_rules)
     ├── [Windows] EvtQueryW(channel="*") → EvtNext() → EvtRender() → XML
-    │     ├── Un task par channel (tokio::spawn)
-    │     ├── XML → parse_winevt_xml() → WinevtEvent (porte event_json pré-parsé)
-    │     └── mpsc::channel → main loop
+    │     → parse_winevt_xml() → Event (porte event_json + event_raw)
     └── [non-Windows] Stub → Ok(vec![])
     ↓
-Vec<WinevtEvent> { channel, event_id, raw_xml, event_json }
+Vec<Event> { event_json, event_raw, input_source, channel }
 ```
 
 ### Cycle — Évaluation
 
 ```
-Pour chaque SensorEvent :
+Pour chaque Event :
     ├── channel → LogSource { product: "windows", service, category }
     │     (mapping::resolve_logsource + priorité channel/service)
-    ├── event.event_json → serde_json::Value plat (pré-parsé par collector, fallback XmlParser si None)
-    ├── engine.evaluate_event_with_logsource(event_value, logsource)
+    ├── event.event_json → flat serde_json::Value (pré-parsé, fallback parse_winevt_xml)
+    ├── engine.evaluate(event_json, logsource)
     │     → Vec<EvaluationResult> (rsigma-eval)
     └── Pour chaque match :
          ├── rule_id = match.header.rule_id
          ├── skip si rule_id dans retired (déjà généré ce cycle)
          ├── stats.matches_found++
-         └── aggregated[rule_id].events.push((event_value, raw_xml, provider))
+         └── aggregated[rule_id].alerts.push(alert)
 ```
 
 ### Cycle — Génération
@@ -192,7 +186,7 @@ Pour chaque SensorEvent :
 Pour chaque AggregatedRule dans aggregated :
     ├── RegressionData::new(header, output_path, rule_rel_path, author)
     ├── exists() → skip si info.yml existe déjà
-    ├── Pour chaque event : reg.add_event(event_json, raw_xml)
+    ├── Pour chaque alert : reg.add_alert(alert)
     ├── reg.generate()
     │     ├── Write <rule_id>.json (premier event, JSON pretty-printed)
     │     ├── Write <rule_id>.evtx (EvtExportLog API, ou .xml fallback)
@@ -226,14 +220,28 @@ push_branch() → fetch + comparaison + push normal vers le fork (skip si diverg
 
 ## 5. Structures de données clés
 
-### WinevtEvent
+### Event
 
 ```rust
-WinevtEvent {
-    channel: String,            // nom du channel Event Log
-    event_id: u32,              // EventID
-    raw_xml: String,            // XML complet de l'événement (Winevt format)
-    event_json: Option<serde_json::Value>,  // JSON pré-parsé par le collector (XmlParser)
+Event {
+    event_json: serde_json::Value,    // JSON parsé de l'event (imbriqué)
+    event_raw: Vec<u8>,               // octets bruts source (XML)
+    input_source: InputSource,        // Winevt, EvtxFile, ou File
+    channel: Option<String>,          // nom du channel Event Log
+}
+```
+
+Méthodes : `channel()`, `event_id()`, `provider()`, `from_xml()`
+
+### Alert
+
+```rust
+Alert {
+    rule_id: String,
+    rule_title: String,
+    severity: String,
+    event_json: serde_json::Value,
+    event_raw: Vec<u8>,
 }
 ```
 
@@ -273,16 +281,22 @@ RegressionData {
 
 ## 6. Modules clés
 
-### SigmaEngine (`sigma/engine.rs`)
+### DetectionEngine (`detection-engine/src/lib.rs`)
 
-- Charge règles depuis `rules*` dirs
-- Walk séquentiel collecte les chemins ; parse + post-parse filter en parallèle (`rayon::par_iter`)
-- Post-parse filter: `rule.logsource.product` filtre les règles non-Windows après `parse_sigma_yaml`
-- Filtre status/level appliqué par fichier pendant le parse parallèle
-- Skip-at-load = seule optimisation (règles avec `info.yml` existant)
-- Toutes les règles survivantes mergées dans une seule `SigmaCollection`, compilées en **un seul** `add_collection()` (évite les rebuilds d'index O(N²))
-- `LogSource` dérivé du channel Event Log + provider (resolve_logsource)
-- `evaluate_event_with_logsource()` → `Vec<EvaluationResult>` via rsigma-eval
+- Charge les pipelines (flatten_winevt.yml + windows.yml) et les règles via rsigma-eval
+- `start()` retourne une paire de channels async : `mpsc::Sender<Event>` → `mpsc::Receiver<Alert>`
+- `evaluate(event, logsource)` pour l'évaluation synchrone
+- `load_collection()` pour charger en bulk une SigmaCollection
+- `from_rules_dirs()` / `from_rules_dirs()` pour un setup rapide depuis le filesystem
+
+### EventCollector (`input-windows-channels/src/collector.rs`)
+
+- Collecteur multi-channels Windows Event Log avec FIFO interne
+- `start()` → lance la collecte sur tous les channels
+- `stop()` → signale l'arrêt et attend les tasks
+- `get_events()` → récupère tous les events de la FIFO
+- Windows : EvtQueryW → EvtNext → EvtRender → XML → parse_winevt_xml → Event
+- Non-Windows : stub (vecteur vide)
 
 ### EVTX Writer (`evtx/writer.rs`)
 
@@ -333,10 +347,11 @@ RegressionData {
 | `uuid` | UUID v4 pour info.yml |
 | `rayon` | parse parallèle des fichiers de règles |
 | `phf` | tables de hash statiques pour la taxonomie (dans sigma-mapping) |
-| `evtx` | parsing de fichiers EVTX (binaire evtx_check) |
+| `evtx` | parsing de fichiers EVTX (binaire evtx_check + crate input-evtx) |
+| `roxmltree` | parsing XML pour les events Winevt (dans sigmacatch-types) |
 | `windows` | Winevt API (cfg-gated: windows only, features: Foundation, Com, Console, EventLog, Threading, Security) |
 
-**Retirés :** `ratatui`, `crossterm`, `quick-xml`, `winevt-writer`, `tdh`, `ntapi`
+**Retirés :** `ratatui`, `crossterm`, `quick-xml`, `winevt-writer`, `tdh`, `ntapi`, `ferrisetw`
 
 ---
 
@@ -355,6 +370,7 @@ cargo xwin build --release --target x86_64-pc-windows-msvc   # cross-compile Win
 ```
 sigmacatch
     [--author <name>]      # override username
+    [--dry-run]            # diagnostic git uniquement (pas de collecte)
 ```
 
 La config est auto-créée au premier run avec les valeurs par défaut. Éditez `config.yaml` avant de lancer.
@@ -409,22 +425,22 @@ La config est auto-créée au premier run avec les valeurs par défaut. Éditez 
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  CYCLE — COLLECTE (winevt)                                              │
-│  WinevtCollector (channels résolus depuis les règles)                   │
+│  EventCollector (tous les channels Windows)                             │
 │    ├── Windows: EvtQueryW → EvtNext → EvtRender → XML                │
-│    │     → parse_winevt_xml() → WinevtEvent                          │
+│    │     → parse_winevt_xml() → Event                                  │
 │    └── non-Windows: Stub → Ok(vec![])                                 │
-│  → Vec<WinevtEvent> { channel, event_id, raw_xml }                     │
+│  → Vec<Event> { event_json, event_raw, channel }                       │
 └──────────────────────┬──────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  CYCLE — ÉVALUATION                                                     │
-│  Pour chaque WinevtEvent :                                              │
-│    ├── event.event_json → JSON plat (pré-parsé, fallback XmlParser si None)
+│  Pour chaque Event :                                                    │
+│    ├── event.event_json → JSON plat (pré-parsé, parse_winevt_xml)     │
 │    ├── channel → LogSource via resolve_logsource()                   │
-│    └── engine.evaluate_event_with_logsource()                         │
+│    └── engine.evaluate(event_json, logsource)                          │
 │         → Vec<EvaluationResult>                                        │
 │  Pour chaque match :                                                    │
-│    └── aggregated[rule_id].events.push((json, raw_xml, provider))     │
+│    └── aggregated[rule_id].alerts.push(alert)                         │
 └──────────────────────┬──────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
