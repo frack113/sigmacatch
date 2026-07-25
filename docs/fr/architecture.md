@@ -11,7 +11,7 @@ sigmacatch/
 │   ├── detection-engine/      # Wrapper fin autour de rsigma-eval pour pipelines et règles
 │   ├── input-evtx/            # Parse les fichiers EVTX en objets Event
 │   ├── input-windows-channels/ # Collecteur multi-channels Windows Event Log
-│   ├── sigma-mapping/         # Résolution LogSource, mappings personnalisés, tables de taxonomie
+│   ├── input-windows-channels/ # Résolution LogSource, mappings personnalisés, tables de taxonomie
 │   ├── sigma-regression/      # InfoYml, SkipSet, validation triplet (format régression SigmaHQ)
 │   └── sigmacatch-types/      # Types partagés : Event, Alert, RegressionHeader + parsing XML
 └── sigmacatch/          # Binaire + pipeline
@@ -36,7 +36,7 @@ sigmacatch/src/
 │   ├── mod.rs           # pub mod engine, loader, mapping
 │   ├── loader.rs        # SigmaRepo (grit-lib) + find_rules_dirs()
 │   └── mapping/
-│       └── mod.rs       # re-export depuis le crate sigma-mapping
+│       └── mod.rs       # re-export depuis input_windows_channels::mapping
 ├── regression/
 │   └── mod.rs           # re-exports depuis le crate sigma-regression
 ├── github/
@@ -53,7 +53,7 @@ sigmacatch/src/
 sigmacatch ──┬── detection-engine       (wrapper rsigma-eval + pipelines embarquées)
              ├── input-windows-channels  (collecteur Winevt, FIFO multi-channels)
              ├── input-evtx             (parser fichiers EVTX → Event)
-             ├── sigma-mapping          (résolution LogSource, taxonomie)
+             ├── input-windows-channels (résolution LogSource, taxonomie)
              ├── sigmacatch-types       (Event, Alert, RegressionHeader, parsing XML)
              └── sigma-regression       (InfoYml, SkipSet, triplet)
 ```
@@ -86,7 +86,7 @@ Les 6 crates sont indépendants (aucune dépendance croisée entre eux). `sigmac
 - **Moteur temps réel** : `rsigma-eval` chargé une fois avec toutes les règles non skipées ; chaque event est évalué contre toutes les règles chargées. Aucun event perdu. Le skip-at-load est l'unique optimisation.
 - **LogSource dérivée du channel ETW** (`resolve_logsource`), avec provider comme fallback.
   - Priority: channel → service > provider → service > default
-  - Voir `# INVARIANT:` comment in `crates/sigma-mapping/src/mapping/mod.rs`
+  - Voir `# INVARIANT:` comment in `crates/input-windows-channels/src/mapping/mod.rs`
 - **EVTX via `EvtExportLog`** : re-queries l'event par RecordID depuis le live log. Si succès → `.evtx` binaire valide. Si échec (event purgé) ou non-Windows → fallback `.xml` (raw XML, pas de binaire invalide).
   - **Known limitation** : race condition avec la rétention du log — si l'event a été purgé entre la collecte et l'export, `EvtExportLog` échoue silencieusement (`ERROR_EVT_QUERY_RESULT_STALE`).
 

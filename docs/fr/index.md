@@ -12,7 +12,7 @@ Le projet est un cargo workspace de 7 crates :
 | `detection-engine` | Wrapper fin autour de rsigma-eval pour charger pipelines et règles, puis évaluer les events |
 | `input-windows-channels` | Collecteur multi-channels Windows Event Log (EvtQueryW, EvtNext, EvtRender) |
 | `input-evtx` | Parse les fichiers EVTX en objets `Event` pour le moteur de détection |
-| `sigma-mapping` | Résolution LogSource, tables de taxonomie, mappings custom |
+| `input-windows-channels` | Résolution LogSource, tables de taxonomie, mappings custom |
 | `sigma-regression` | Format de régression SigmaHQ (InfoYml, SkipSet, triplet) |
 | `sigmacatch-types` | Types partagés : Event, Alert, RegressionHeader, parsing XML/JSON |
 

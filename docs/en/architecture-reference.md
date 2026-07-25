@@ -35,7 +35,7 @@ sigmacatch/
 │       ├── evtx/writer.rs         # write_evtx() via EvtExportLog API + .xml fallback
 │       ├── sigma/
 │       │   ├── loader.rs          # SigmaRepo (grit-lib) + find_rules_dirs()
-│       │   └── mapping/mod.rs     # re-export depuis sigma-mapping
+│       │   └── mapping/mod.rs     # re-export from input_windows_channels::mapping
 │       ├── regression/mod.rs      # re-export depuis sigma-regression
 │       ├── github/
 │       │   ├── commit.rs          # commit_all_rules avec author env + fallback
@@ -45,7 +45,7 @@ sigmacatch/
 │   ├── detection-engine/          # Wrapper rsigma-eval + pipelines embarquées (windows.yml, flatten_winevt.yml)
 │   ├── input-evtx/                # Parse EVTX files → Event objects
 │   ├── input-windows-channels/    # Collecteur multi-channels Windows Event Log (EvtQueryW, EvtNext, EvtRender)
-│   ├── sigma-mapping/             # LogSource, taxonomie (phf + channel_mapping.yml), mappings custom
+│   ├── input-windows-channels/    # LogSource, taxonomie (phf + channel_mapping.yml), mappings custom
 │   ├── sigma-regression/          # SkipSet, RegressionData, InfoYml, validation triplet
 │   └── sigmacatch-types/          # Types partagés : Event, Alert, RegressionHeader + parsing XML
 ```
@@ -345,7 +345,7 @@ RegressionData {
 | `chrono` | dates |
 | `uuid` | UUID v4 for info.yml |
 | `rayon` | parallel rule file parsing |
-| `phf` | static hash maps for taxonomy tables (in sigma-mapping) |
+| `phf` | static hash maps for taxonomy tables (in input-windows-channels) |
 | `evtx` | EVTX file parsing (evtx_check binary + input-evtx crate) |
 | `roxmltree` | XML parsing for Winevt events (in sigmacatch-types) |
 | `windows` | Winevt API (cfg-gated: windows only, features: Foundation, Com, Console, EventLog, Threading, Security) |
