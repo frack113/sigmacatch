@@ -14,11 +14,11 @@
 //!   cargo run --release --bin evtx_check <sigmahq_dir>
 
 use anyhow::{anyhow, Result};
+use detection_engine::find_rules_dirs;
 use detection_engine::DetectionEngine;
 use input_evtx::EventCollector;
 use sigma_mapping::mapping::resolve_logsource;
-use sigmacatch::regression::loader::{load_all, RegressionInfo};
-use sigmacatch::sigma::loader::find_rules_dirs;
+use sigma_regression::{load_all, RegressionInfo};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -101,7 +101,7 @@ fn validate_regression(
 
     if regression.logtype != "evtx" {
         return Err(anyhow!(
-            "Unsupported logtype '{}' for rule '{}'",
+            "Unsupported logtype '{}' for rule '{}' (only EVTX supported)",
             regression.logtype,
             regression.rule_id
         ));
@@ -269,7 +269,11 @@ fn main() {
             continue;
         }
 
-        if data_size < 0x1000 {
+        let min_size = match regression.logtype.as_str() {
+            "evtx" => 0x1000,
+            _ => 0x400,
+        };
+        if data_size < min_size {
             skipped.push((
                 name.clone(),
                 format!("data file too small ({} bytes)", data_size),
@@ -308,5 +312,104 @@ fn main() {
 
     if !stats.failed.is_empty() {
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sigma_regression::load_all;
+    use std::fs;
+
+    fn valid_info_yml(rule_id: &str, test_type: &str) -> String {
+        format!(
+            "id: 00000000-0000-0000-0000-000000000000\n\
+             description: N/A\n\
+             date: 2024-01-01\n\
+             author: test\n\
+             rule_metadata:\n\
+             \x20 - id: {}\n\
+             \x20   title: Test Rule\n\
+             regression_tests_info:\n\
+             \x20 - name: test\n\
+             \x20   type: {}\n\
+             \x20   provider: test\n\
+             \x20   match_count: 1\n\
+             \x20   path: test.evtx\n",
+            rule_id, test_type
+        )
+    }
+
+    #[test]
+    fn test_validate_regression_skip_json_logtype() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rule_dir = tmp.path().join("test-rule");
+        fs::create_dir(&rule_dir).unwrap();
+        let info_yml = rule_dir.join("info.yml");
+        fs::write(&info_yml, valid_info_yml("test-rule", "json")).unwrap();
+        fs::write(rule_dir.join("test-rule.evtx"), vec![0u8; 0x2000]).unwrap();
+
+        let regressions = load_all(tmp.path()).unwrap();
+        assert_eq!(regressions.len(), 1);
+
+        let entry = &regressions[0];
+        let result = validate_regression(entry, &DetectionEngine::default(), 1);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unsupported logtype 'json'"));
+    }
+
+    #[test]
+    fn test_validate_regression_skip_small_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rule_dir = tmp.path().join("small-rule");
+        fs::create_dir(&rule_dir).unwrap();
+        let info_yml = rule_dir.join("info.yml");
+        fs::write(&info_yml, valid_info_yml("small-rule", "evtx")).unwrap();
+        fs::write(rule_dir.join("small-rule.evtx"), vec![0u8; 0x100]).unwrap();
+
+        let regressions = load_all(tmp.path()).unwrap();
+        assert_eq!(regressions.len(), 1);
+
+        let entry = &regressions[0];
+        let result = validate_regression(entry, &DetectionEngine::default(), 1);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("EVTX parse error"));
+    }
+
+    #[test]
+    fn test_validate_regression_no_data_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rule_dir = tmp.path().join("bare-rule");
+        fs::create_dir(&rule_dir).unwrap();
+        fs::write(
+            rule_dir.join("info.yml"),
+            valid_info_yml("bare-rule", "evtx"),
+        )
+        .unwrap();
+
+        let regressions = load_all(tmp.path()).unwrap();
+        assert_eq!(regressions.len(), 1);
+
+        let entry = &regressions[0];
+        let result = validate_regression(entry, &DetectionEngine::default(), 1);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No data file for rule"));
+    }
+
+    #[test]
+    fn test_validation_stats_print() {
+        let mut stats = ValidationStats::new();
+        stats.add_pass();
+        stats.add_pass();
+        stats.add_fail("test-rule".to_string(), "some error".to_string());
+        stats.total = 3;
+        // Just verify it doesn't panic
+        stats.print_summary();
     }
 }

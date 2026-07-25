@@ -4,8 +4,6 @@
 use anyhow::Result;
 use rsigma_parser::{parse_sigma_yaml, SigmaCollection};
 use std::collections::HashSet;
-#[cfg(unix)]
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
@@ -107,75 +105,9 @@ fn is_repo_complete(git_dir: &Path) -> bool {
         .unwrap_or(false);
     has_packed_refs || has_objects || has_refs
 }
+/// Delegate to [`detection_engine::find_rules_dirs`] (single source of truth).
 pub fn find_rules_dirs(root: &Path) -> Result<Vec<PathBuf>> {
-    let mut dirs = Vec::new();
-    let mut excluded = Vec::new();
-    #[cfg(unix)]
-    let mut visited_inodes = std::collections::HashSet::new();
-    #[cfg(not(unix))]
-    let mut visited_paths = std::collections::HashSet::new();
-    if !root.exists() {
-        warn!("Root directory does not exist: {:?}", root);
-        return Ok(dirs);
-    }
-
-    let entries = std::fs::read_dir(root)?;
-    for entry_result in entries {
-        match entry_result {
-            Ok(entry) => {
-                let path = entry.path();
-                if path.is_dir() {
-                    #[cfg(unix)]
-                    {
-                        let inode = path.metadata().ok().map(|m| m.ino());
-                        if let Some(id) = inode {
-                            if !visited_inodes.insert(id) {
-                                warn!("Skipping symlink cycle detected at: {:?}", path);
-                                continue;
-                            }
-                        }
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        let abs_path = dunce::canonicalize(&path).ok();
-                        if let Some(abs) = abs_path {
-                            if !visited_paths.insert(abs) {
-                                warn!("Skipping symlink cycle detected at: {:?}", path);
-                                continue;
-                            }
-                        }
-                    }
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        if name == "rules" || name.starts_with("rules-") {
-                            if name.starts_with("rules-compliance") {
-                                excluded.push(name.to_string());
-                                continue;
-                            }
-                            if name.starts_with("rules-") && !has_yml_files(&path, 0) {
-                                continue;
-                            }
-                            info!("Found rules directory: {:?}", path);
-                            dirs.push(path);
-                        }
-                    } else {
-                        warn!("Skipping non-UTF8 directory name: {:?}", path);
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("Skipping entry due to error: {}", e);
-            }
-        }
-    }
-
-    if dirs.is_empty() {
-        warn!("No 'rules*' directories found in {:?}", root);
-    }
-    if !excluded.is_empty() {
-        info!("Excluded non-detection directories: {:?}", excluded);
-    }
-
-    Ok(dirs)
+    detection_engine::find_rules_dirs(root)
 }
 
 /// Load all Sigma rules from the given directories, skipping rules in the skip set.
@@ -226,39 +158,6 @@ pub fn load_all_rules(dirs: &[&Path], skip_ids: &HashSet<String>) -> Result<Sigm
     }
 
     Ok(collection)
-}
-
-fn has_yml_files(dir: &Path, depth: u32) -> bool {
-    if depth > 8 {
-        return false;
-    }
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(e) => {
-            warn!(
-                "Cannot read directory {:?} while scanning for rules: {}",
-                dir, e
-            );
-            return false;
-        }
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if has_yml_files(&path, depth + 1) {
-                return true;
-            }
-        } else if let Some(ext) = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_ascii_lowercase())
-        {
-            if ext == "yml" || ext == "yaml" {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 #[cfg(test)]
@@ -352,69 +251,6 @@ mod tests {
         // Only the top-level `rules` dir is discovered, not `rules/nested`
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].file_name().unwrap(), "rules");
-    }
-
-    #[test]
-    fn test_has_yml_files_with_yaml() {
-        let tmp = tempfile::tempdir().unwrap();
-        fs::write(tmp.path().join("test.yaml"), "test: value").unwrap();
-        assert!(has_yml_files(tmp.path(), 0));
-    }
-
-    #[test]
-    fn test_has_yml_files_with_yml() {
-        let tmp = tempfile::tempdir().unwrap();
-        fs::write(tmp.path().join("test.yml"), "test: value").unwrap();
-        assert!(has_yml_files(tmp.path(), 0));
-    }
-
-    #[test]
-    fn test_has_yml_files_no_yaml() {
-        let tmp = tempfile::tempdir().unwrap();
-        fs::write(tmp.path().join("test.txt"), "test").unwrap();
-        assert!(!has_yml_files(tmp.path(), 0));
-    }
-
-    #[test]
-    fn test_has_yml_files_deeply_nested() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut current = tmp.path().to_path_buf();
-        for i in 0..5 {
-            current = current.join(format!("level_{}", i));
-            fs::create_dir(&current).unwrap();
-        }
-        fs::write(current.join("rule.yml"), "test: true").unwrap();
-        assert!(has_yml_files(tmp.path(), 0));
-    }
-
-    #[test]
-    fn test_has_yml_files_deeper_than_depth_limit() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut current = tmp.path().to_path_buf();
-        for i in 0..10 {
-            current = current.join(format!("level_{}", i));
-            fs::create_dir(&current).unwrap();
-        }
-        fs::write(current.join("rule.yml"), "test: true").unwrap();
-        assert!(!has_yml_files(tmp.path(), 0));
-    }
-
-    #[test]
-    fn test_has_yml_files_case_insensitive() {
-        let tmp = tempfile::tempdir().unwrap();
-        fs::write(tmp.path().join("test.YML"), "test: value").unwrap();
-        assert!(has_yml_files(tmp.path(), 0));
-        let tmp2 = tempfile::tempdir().unwrap();
-        fs::write(tmp2.path().join("test.YAML"), "test: value").unwrap();
-        assert!(has_yml_files(tmp2.path(), 0));
-    }
-
-    #[test]
-    fn test_has_yml_files_nested_yaml_found() {
-        let tmp = tempfile::tempdir().unwrap();
-        fs::create_dir(tmp.path().join("subdir")).unwrap();
-        fs::write(tmp.path().join("subdir").join("rule.yml"), "test: true").unwrap();
-        assert!(has_yml_files(tmp.path(), 0));
     }
 
     #[test]

@@ -18,5 +18,8 @@ sigmacatch-types = { path = "../sigmacatch-types" }
 sigma-mapping = { path = "../sigma-mapping" }
 tokio = { version = "1", features = ["full"] }
 
+[target.'cfg(not(unix))'.dependencies]
+dunce = "1.0"
+
 [dev-dependencies]
 tempfile = "3"

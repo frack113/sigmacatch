@@ -473,6 +473,7 @@ name = "detection-engine"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dunce",
  "rsigma-eval",
  "rsigma-parser",
  "serde_json",
