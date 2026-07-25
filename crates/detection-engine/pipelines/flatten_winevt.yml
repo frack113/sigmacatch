@@ -13,109 +13,130 @@ priority: 0
 
 transformations:
   # System fields
-  - id: sys_system_fields
+  - id: windows_fields
     type: field_name_mapping
     mapping:
+      Channel: Event.System.Channel
+      Computer: Event.System.Computer
       EventID: Event.System.EventID
       ProviderName: Event.System.Provider.#attributes.Name
-      Channel: Event.System.Channel
-      TimeCreated: Event.System.TimeCreated.#attributes.SystemTime
-      EventRecordID: Event.System.EventRecordID
-      Computer: Event.System.Computer
-      UserID: Event.System.Security.#attributes.UserID
-    rule_conditions:
-      - type: logsource
-        product: windows
-
-  # Execution fields
-  - id: sys_execution_fields
-    type: field_name_mapping
-    mapping:
-      ProcessID: Event.System.Execution.#attributes.ProcessID
-      ThreadID: Event.System.Execution.#attributes.ThreadID
-    rule_conditions:
-      - type: logsource
-        product: windows
-
-  # Common EventData fields — individual mapping for bare field names
-  - id: common_eventdata_fields
-    type: field_name_mapping
-    mapping:
-      CommandLine: Event.EventData.CommandLine
-      Image: Event.EventData.Image
-      ParentImage: Event.EventData.ParentImage
-      TargetImage: Event.EventData.TargetImage
-      SourceImage: Event.EventData.SourceImage
-      OriginalFileName: Event.EventData.OriginalFileName
-      Description: Event.EventData.Description
-      PackageSourceUri: Event.EventData.PackageSourceUri
-      HasFullTrust: Event.EventData.HasFullTrust
-      Provider: Event.EventData.Provider
-      Query: Event.EventData.Query
-      User: Event.EventData.User
-      PossibleCause: Event.EventData.PossibleCause
-      SourceProcessId: Event.EventData.SourceProcessId
-      TargetProcessId: Event.EventData.TargetProcessId
-      PipeName: Event.EventData.PipeName
-      DestinationIp: Event.EventData.DestinationIp
-      SourceIp: Event.EventData.SourceIp
-      DestinationPort: Event.EventData.DestinationPort
-      SourcePort: Event.EventData.SourcePort
-      DestinationHostname: Event.EventData.DestinationHostname
-      Protocol: Event.EventData.Protocol
-      UserAgent: Event.EventData.UserAgent
-      NewProcessName: Event.EventData.NewProcessName
-      NewProcessId: Event.EventData.NewProcessId
-      ParentProcessId: Event.EventData.ParentProcessId
-      SubjectUserSid: Event.EventData.SubjectUserSid
-      SubjectUserName: Event.EventData.SubjectUserName
-      SubjectDomainName: Event.EventData.SubjectDomainName
-      SubjectLogonId: Event.EventData.SubjectLogonId
-      TargetUserName: Event.EventData.TargetUserName
-      TargetDomainName: Event.EventData.TargetDomainName
-      TargetLogonId: Event.EventData.TargetLogonId
-      LogonType: Event.EventData.LogonType
-      WorkstationName: Event.EventData.WorkstationName
-      IpAddress: Event.EventData.IpAddress
-      IpPort: Event.EventData.IpPort
-      ServiceName: Event.EventData.ServiceName
-      ServiceType: Event.EventData.ServiceType
-      ImagePath: Event.EventData.ImagePath
-      FileVersion: Event.EventData.FileVersion
-      Product: Event.EventData.Product
-      Company: Event.EventData.Company
-      Hash: Event.EventData.Hash
-      Hashes: Event.EventData.Hashes
-      Imphash: Event.EventData.Imphash
-      IntegrityLevel: Event.EventData.IntegrityLevel
-      CurrentDirectory: Event.EventData.CurrentDirectory
-      ParentCommandLine: Event.EventData.ParentCommandLine
-      RuleName: Event.EventData.RuleName
-      UtcTime: Event.EventData.UtcTime
-      ProcessGuid: Event.EventData.ProcessGuid
-      ProcessId: Event.EventData.ProcessId
-      SourceUser: Event.EventData.SourceUser
-      TargetUser: Event.EventData.TargetUser
-      SourceHostname: Event.EventData.SourceHostname
-      TargetHostname: Event.EventData.TargetHostname
+      SourceName: Event.System.SourceName
       CallTrace: Event.EventData.CallTrace
-      GrantedAccess: Event.EventData.GrantedAccess
       CallerProcessId: Event.EventData.CallerProcessId
       CallerProcessName: Event.EventData.CallerProcessName
-      Initiated: Event.EventData.Initiated
+      CommandLine: Event.EventData.CommandLine
+      Company: Event.EventData.Company
+      CurrentDirectory: Event.EventData.CurrentDirectory
+      Description: Event.EventData.Description
+      DestinationHostname: Event.EventData.DestinationHostname
+      DestinationIp: Event.EventData.DestinationIp
+      DestinationPort: Event.EventData.DestinationPort
+      Details: Event.EventData.Details
       EventType: Event.EventData.EventType
+      FileVersion: Event.EventData.FileVersion
+      GrantedAccess: Event.EventData.GrantedAccess
+      Hash: Event.EventData.Hash
+      Hashes: Event.EventData.Hashes
+      HasFullTrust: Event.EventData.HasFullTrust
+      Image: Event.EventData.Image
+      ImageLoaded: Event.EventData.ImageLoaded
+      ImagePath: Event.EventData.ImagePath
+      Imphash: Event.EventData.Imphash
+      IntegrityLevel: Event.EventData.IntegrityLevel
+      Initiated: Event.EventData.Initiated
+      IpAddress: Event.EventData.IpAddress
+      IpPort: Event.EventData.IpPort
+      LogonType: Event.EventData.LogonType
+      NewName: Event.EventData.NewName
+      NewProcessId: Event.EventData.NewProcessId
+      NewProcessName: Event.EventData.NewProcessName
       ObjectValueName: Event.EventData.ObjectValueName
       ObjectType: Event.EventData.ObjectType
-      TargetFilename: Event.EventData.TargetFilename
-      TargetObject: Event.EventData.TargetObject
-      Details: Event.EventData.Details
-      NewName: Event.EventData.NewName
-      ImageLoaded: Event.EventData.ImageLoaded
+      OriginalFileName: Event.EventData.OriginalFileName
+      ParentCommandLine: Event.EventData.ParentCommandLine
+      ParentImage: Event.EventData.ParentImage
+      ParentProcessId: Event.EventData.ParentProcessId
+      PipeName: Event.EventData.PipeName
+      PossibleCause: Event.EventData.PossibleCause
+      Product: Event.EventData.Product
+      Provider: Event.EventData.Provider
+      Protocol: Event.EventData.Protocol
+      Query: Event.EventData.Query
+      RuleName: Event.EventData.RuleName
       Signature: Event.EventData.Signature
       SignatureStatus: Event.EventData.SignatureStatus
       Signed: Event.EventData.Signed
+      SourceHostname: Event.EventData.SourceHostname
+      SourceImage: Event.EventData.SourceImage
+      SourceIp: Event.EventData.SourceIp
+      SourcePort: Event.EventData.SourcePort
+      SourceProcessId: Event.EventData.SourceProcessId
+      SourceUser: Event.EventData.SourceUser
+      SubjectDomainName: Event.EventData.SubjectDomainName
+      SubjectLogonId: Event.EventData.SubjectLogonId
+      SubjectUserSid: Event.EventData.SubjectUserSid
+      SubjectUserName: Event.EventData.SubjectUserName
+      TargetDomainName: Event.EventData.TargetDomainName
+      TargetFilename: Event.EventData.TargetFilename
+      TargetHostname: Event.EventData.TargetHostname
+      TargetImage: Event.EventData.TargetImage
+      TargetLogonId: Event.EventData.TargetLogonId
+      TargetObject: Event.EventData.TargetObject
+      TargetProcessId: Event.EventData.TargetProcessId
+      TargetUserName: Event.EventData.TargetUserName
+      TargetUser: Event.EventData.TargetUser
+      UtcTime: Event.EventData.UtcTime
+      User: Event.EventData.User
+      UserAgent: Event.EventData.UserAgent
+      WorkstationName: Event.EventData.WorkstationName
+      TaskName: Event.EventData.TaskName
+      Operation: Event.EventData.Operation
     rule_conditions:
       - type: logsource
+        product: windows
+
+  # ─── WinDefend-specific field name mapping ───
+  # WinDefend EventData fields use spaces in keys (e.g. "Source Name", "Product Name")
+  # Sigma rules use SourceName/ProductName without spaces — map them.
+  - id: windefend_eventdata_fields
+    type: field_name_mapping
+    mapping:
+      SourceName: Event.EventData."Source Name"
+      ProductName: Event.EventData."Product Name"
+      ProductVersion: Event.EventData."Product Version"
+      DetectionID: Event.EventData."Detection ID"
+      DetectionTime: Event.EventData."Detection Time"
+      ThreatID: Event.EventData."Threat ID"
+      ThreatName: Event.EventData."Threat Name"
+      SeverityID: Event.EventData."Severity ID"
+      SeverityName: Event.EventData."Severity Name"
+      CategoryID: Event.EventData."Category ID"
+      CategoryName: Event.EventData."Category Name"
+      StatusCode: Event.EventData."Status Code"
+      StatusDescription: Event.EventData."Status Description"
+      SourceID: Event.EventData."Source ID"
+      ProcessName: Event.EventData."Process Name"
+      DetectionUser: Event.EventData."Detection User"
+      OriginID: Event.EventData."Origin ID"
+      OriginName: Event.EventData."Origin Name"
+      ExecutionID: Event.EventData."Execution ID"
+      ExecutionName: Event.EventData."Execution Name"
+      TypeID: Event.EventData."Type ID"
+      TypeName: Event.EventData."Type Name"
+      PreExecutionStatus: Event.EventData."Pre Execution Status"
+      ActionID: Event.EventData."Action ID"
+      ActionName: Event.EventData."Action Name"
+      ErrorCode: Event.EventData."Error Code"
+      ErrorDescription: Event.EventData."Error Description"
+      PostCleanStatus: Event.EventData."Post Clean Status"
+      AdditionalActionsID: Event.EventData."Additional Actions ID"
+      AdditionalActionsString: Event.EventData."Additional Actions String"
+      RemediationUser: Event.EventData."Remediation User"
+      SecurityIntelligenceVersion: Event.EventData."Security intelligence Version"
+      EngineVersion: Event.EventData."Engine Version"
+    rule_conditions:
+      - type: logsource
+        service: windefend
         product: windows
 
   # EventData fields — bulk prefix mapping for EventData.* convention
@@ -123,15 +144,6 @@ transformations:
     type: field_name_prefix_mapping
     mapping:
       EventData.: Event.EventData.
-    rule_conditions:
-      - type: logsource
-        product: windows
-
-  # UserData fields — 1-level nesting
-  - id: sys_userdata_fields
-    type: field_name_prefix_mapping
-    mapping:
-      UserData.: Event.UserData.
     rule_conditions:
       - type: logsource
         product: windows

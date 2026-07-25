@@ -70,8 +70,13 @@ impl InfoYml {
 
     /// Load from YAML file.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
-        let content =
+        let mut content =
             std::fs::read_to_string(path).map_err(|e| anyhow!("Failed to read info.yml: {}", e))?;
+        if content.starts_with('\u{feff}') {
+            let mut chars = content.chars();
+            chars.next();
+            content = chars.as_str().to_string();
+        }
         serde_yaml::from_str(&content).map_err(|e| anyhow!("Failed to parse info.yml: {}", e))
     }
 }

@@ -134,6 +134,10 @@ pub fn load_all_rules(dirs: &[&Path], skip_ids: &HashSet<String>) -> Result<Sigm
                                     Ok(parsed) => {
                                         for rule in parsed.rules {
                                             let rule_id = rule.id.clone().unwrap_or_default();
+                                            if rule.logsource.product.as_deref() != Some("windows")
+                                            {
+                                                continue;
+                                            }
                                             if !skip_set.contains(&rule_id) {
                                                 collection.rules.push(rule);
                                             }

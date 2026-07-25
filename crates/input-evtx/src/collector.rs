@@ -69,6 +69,35 @@ impl EventCollector {
     pub fn get_events(&mut self) -> Vec<Event> {
         self.fifo.drain(..).collect()
     }
+
+    /// Load EVTX data from raw bytes into the FIFO.
+    ///
+    /// Parses binary EVTX records directly from the provided slice.
+    /// All events are parsed first into a local buffer. Only on complete
+    /// success are they moved into the FIFO — a partial failure never
+    /// leaves the collector in a partially-loaded state.
+    pub fn from_bytes(&mut self, data: &[u8]) -> Result<()> {
+        let mut parser = evtx::EvtxParser::from_read_seek(std::io::Cursor::new(data))
+            .context("Failed to create EVTX parser from raw bytes")?;
+
+        let mut buffer = Vec::new();
+
+        for record in parser.records() {
+            let record = record.with_context(|| "EVTX record error in raw data")?;
+            let xml = std::str::from_utf8(record.data.as_bytes())
+                .context("Invalid UTF-8 in EVTX record")?;
+            let event_json = parse_winevt_xml(xml)?;
+            let event_raw = record.data.as_bytes().to_vec();
+
+            buffer.push(Event {
+                event_json,
+                event_raw,
+            });
+        }
+
+        self.fifo.extend(buffer);
+        Ok(())
+    }
 }
 
 impl Default for EventCollector {

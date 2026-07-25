@@ -5,7 +5,7 @@ use anyhow::Result;
 use std::path::Path;
 use tracing::{info, warn};
 
-use crate::regression::triplet::validate_rule_id;
+use sigma_regression::validate_rule_id;
 
 fn commit_identity(author: &str, email: &str) -> (String, String) {
     let name = if author.trim().is_empty() {

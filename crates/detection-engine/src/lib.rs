@@ -138,7 +138,13 @@ impl DetectionEngine {
                         }
                         match std::fs::read_to_string(&ep) {
                             Ok(content) => match parse_sigma_yaml(&content) {
-                                Ok(c) => collection.rules.extend(c.rules),
+                                Ok(c) => {
+                                    for rule in c.rules {
+                                        if rule.logsource.product.as_deref() == Some("windows") {
+                                            collection.rules.push(rule);
+                                        }
+                                    }
+                                }
                                 Err(e) => {
                                     info!("Failed to parse {:?}: {}", ep, e);
                                 }
@@ -295,7 +301,7 @@ status: test
 description: A minimal test rule
 author: Test Author
 logsource:
-  product: test
+  product: windows
 detection:
   selection:
     event_id: 1

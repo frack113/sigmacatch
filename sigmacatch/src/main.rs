@@ -6,7 +6,6 @@ use input_windows_channels::EventCollector;
 use sigmacatch::config;
 use sigmacatch::github;
 use sigmacatch::logger;
-use sigmacatch::regression;
 use sigmacatch::repo;
 use sigmacatch::sigma;
 
@@ -14,11 +13,10 @@ use anyhow::{Context, Result};
 use config::Config;
 use sigma::loader::SigmaRepo;
 use sigma::mapping::build_logsource_to_channels;
-use sigma_regression::generator::EvtxWriter;
+
 use sigmacatch::sigma::mapping::load_custom_mapping;
 use sigmacatch_types::Alert;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -47,20 +45,6 @@ struct WorkContext {
     sigma_repo_path: std::path::PathBuf,
     #[allow(dead_code)]
     custom_map: HashMap<String, String>,
-}
-
-struct WinEvtxWriter;
-
-impl EvtxWriter for WinEvtxWriter {
-    fn write_evtx(
-        &self,
-        xml: &str,
-        channel: &str,
-        record_id: Option<u64>,
-        path: &Path,
-    ) -> Result<()> {
-        sigmacatch::evtx::writer::write_evtx(xml, channel, record_id, path)
-    }
 }
 
 struct DryRunConfig {
@@ -439,10 +423,8 @@ async fn stage_1_update_repo(
 fn stage_2_existing_rules(_config: &Config) -> HashSet<String> {
     let sigma_regression_dir = PathBuf::from("sigma").join("regression_data");
 
-    let skip_set =
-        regression::build_skip_set(&[("sigma/regression_data", &sigma_regression_dir)], 64);
-
-    let existing_rules = skip_set.into_rule_ids();
+    let existing_rules =
+        sigma_regression::build_skip_set(&[("sigma/regression_data", &sigma_regression_dir)], 64);
 
     if !existing_rules.is_empty() {
         info!(
@@ -585,11 +567,8 @@ async fn stage_4_work_winevt(
     );
 
     // Generate regression data
-    let mut to_generate: Vec<(
-        regression::generator::RegressionData,
-        Option<PathBuf>,
-        String,
-    )> = Vec::new();
+    let mut to_generate: Vec<(sigma_regression::RegressionData, Option<PathBuf>, String)> =
+        Vec::new();
     for agg in ctx.aggregated.values_mut() {
         let rule_rel_path = agg.rule_path.as_ref().and_then(|p| {
             p.strip_prefix("sigma")
@@ -597,7 +576,7 @@ async fn stage_4_work_winevt(
                 .map(|rel| rel.with_extension(""))
         });
 
-        let mut reg = regression::generator::RegressionData::new(
+        let mut reg = sigma_regression::RegressionData::new(
             agg.header.clone(),
             &output_base,
             rule_rel_path.as_deref(),
@@ -629,13 +608,15 @@ async fn stage_4_work_winevt(
         );
         for (reg, rule_path_opt, rule_id) in &to_generate {
             let _gen_span = info_span!("generate", rule_id = %rule_id).entered();
-            match reg.generate(&WinEvtxWriter) {
+            match reg.generate(|xml, channel, record_id, path| {
+                sigma_regression::write_evtx(xml, channel, record_id, path)
+            }) {
                 Ok(_) => {
                     ctx.stats.regression_data_generated += 1;
                     ctx.retired.insert(rule_id.clone());
                     info!("Rule {} retired from detection engine", rule_id);
                     let rel_dir = reg.sigma_rel_dir().unwrap_or_else(|| {
-                        if reg.is_contrib {
+                        if reg.is_contrib() {
                             format!("sigma/regression_data/rules/{}", rule_id)
                         } else {
                             format!("regression_data/rules/{}", rule_id)
@@ -679,7 +660,7 @@ async fn stage_4_work_winevt(
                     }
                 }
                 Err(e) => {
-                    let rid = &reg.header.rule_id;
+                    let rid = reg.rule_id();
                     error!("Failed to generate regression for {}: {}", rid, e);
                 }
             }

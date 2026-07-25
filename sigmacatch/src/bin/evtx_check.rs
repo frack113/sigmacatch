@@ -4,7 +4,7 @@
 //! evtx_check: validate SigmaHQ regression data against the detection engine.
 //!
 //! Pipeline:
-//!   1. Scan <sigmahq_dir>/regression_data for info.yml entries via load_all()
+//!   1. Scan <sigmahq_dir>/regression_data for info.yml entries via list_all()
 //!   2. Load all Sigma rules into a single DetectionEngine
 //!   3. For each entry: load its evtx data, push events into the engine, check alerts
 //!   4. Report per-rule pass/fail + summary
@@ -12,11 +12,10 @@
 //! Usage:
 //!   cargo run --release --bin evtx_check <sigmahq_dir>
 
-use anyhow::{anyhow, Result};
 use detection_engine::find_rules_dirs;
 use detection_engine::DetectionEngine;
 use input_evtx::EventCollector;
-use sigma_regression::{load_all, RegressionInfo};
+use sigma_regression::{list_all, LogType, RegressionData};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -71,70 +70,6 @@ impl ValidationStats {
     }
 }
 
-fn check_regression(
-    regression: &RegressionInfo,
-    engine: &mut DetectionEngine,
-) -> Result<(String, bool, String)> {
-    let rule_name = regression
-        .info_path
-        .parent()
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string();
-
-    let rule_id = regression.rule_id.clone();
-    let expected_count = regression
-        .info
-        .regression_tests_info
-        .first()
-        .map(|t| t.match_count)
-        .unwrap_or(1);
-
-    let data_path = regression
-        .data_path
-        .as_ref()
-        .ok_or_else(|| anyhow!("No data file for rule '{}'", rule_id))?;
-
-    let mut collector = EventCollector::new();
-    collector.load_evtx(data_path)?;
-    let events = collector.get_events();
-
-    if events.is_empty() {
-        return Err(anyhow!("EMPTY — evtx produced no events"));
-    }
-
-    engine.put_events(events);
-    engine.process_events();
-    let alerts = engine.get_alerts();
-
-    let matched_ids: HashSet<&str> = alerts.iter().map(|a| a.rule_id.as_str()).collect();
-
-    if !matched_ids.contains(&rule_id.as_str()) {
-        let matched: Vec<String> = matched_ids.iter().map(|s| s.to_string()).collect();
-        return Err(anyhow!(
-            "RULE NOT MATCHED — expected '{}' ({} alert(s), matched: {})",
-            rule_id,
-            alerts.len(),
-            matched.join(", ")
-        ));
-    }
-
-    if alerts.len() != expected_count {
-        return Err(anyhow!(
-            "MATCH COUNT MISMATCH — expected {} (got {})",
-            expected_count,
-            alerts.len()
-        ));
-    }
-
-    Ok((
-        rule_name,
-        true,
-        format!("{} alert(s), rule matched", alerts.len()),
-    ))
-}
-
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 fn main() {
@@ -159,15 +94,9 @@ fn main() {
     println!("Scanning regression data: {}", regression_dir.display());
     println!();
 
-    let regressions = match load_all(&regression_dir) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Failed to scan regression data: {}", e);
-            std::process::exit(1);
-        }
-    };
+    let info_paths = list_all(&regression_dir);
 
-    if regressions.is_empty() {
+    if info_paths.is_empty() {
         eprintln!(
             "No regression entries found in {}",
             regression_dir.display()
@@ -175,7 +104,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    println!("Found {} regression entry(ies)", regressions.len());
+    println!("Found {} regression entry(ies)", info_paths.len());
     println!();
 
     println!("Loading Sigma rules into engine...");
@@ -200,12 +129,10 @@ fn main() {
     println!();
 
     let mut stats = ValidationStats::new();
-    let mut skipped: Vec<(String, String)> = Vec::new();
 
-    for regression in &regressions {
+    for info_path in &info_paths {
         stats.total += 1;
-        let name = regression
-            .info_path
+        let name = info_path
             .parent()
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str())
@@ -219,36 +146,99 @@ fn main() {
             name
         );
 
-        if regression.data_path.is_none() {
-            skipped.push((name.clone(), "no data file found".to_string()));
-            println!("[SKIP] no data file found");
+        let data = match RegressionData::from_info(info_path) {
+            Ok(d) => d,
+            Err(e) => {
+                stats.total -= 1; // don't count as a real entry
+                stats.add_fail(name, format!("Failed to load: {}", e));
+                println!("[FAIL] {}", e);
+                continue;
+            }
+        };
+
+        let rule_id = data.rule_id();
+        let expected_count = data.expected_match_count();
+
+        let raw = match data.get_raw_data() {
+            Some(r) => r,
+            None => {
+                stats.add_fail(name.clone(), "No raw data".to_string());
+                println!("[FAIL] No raw data");
+                continue;
+            }
+        };
+        let logtype = data.get_logtype();
+
+        let events = match logtype {
+            LogType::Evtx => {
+                let mut collector = EventCollector::new();
+                if let Err(e) = collector.from_bytes(raw) {
+                    stats.add_fail(name.clone(), format!("Failed to load EVTX: {}", e));
+                    println!("[FAIL] Failed to load EVTX: {}", e);
+                    continue;
+                }
+                collector.get_events()
+            }
+            _ => {
+                stats.add_fail(
+                    name.clone(),
+                    format!("Skipped ({} — EVTX check only)", logtype.as_str()),
+                );
+                println!("[SKIP] {} (EVTX check only)", logtype.as_str());
+                continue;
+            }
+        };
+
+        if events.is_empty() {
+            stats.add_fail(name.clone(), "EMPTY — evtx produced no events".to_string());
+            println!("[FAIL] EMPTY — evtx produced no events");
             continue;
         }
 
-        match check_regression(regression, &mut engine) {
-            Ok((_display_name, is_pass, detail)) => {
-                if is_pass {
-                    stats.add_pass();
-                    println!("[PASS] {}", detail);
-                } else {
-                    let msg = detail.clone();
-                    stats.add_fail(name.clone(), msg);
-                    println!("[FAIL] {}", detail);
-                }
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                stats.add_fail(name.clone(), msg);
-                println!("[FAIL] {}", e);
-            }
-        }
-    }
+        engine.put_events(events);
+        engine.process_events();
+        let alerts = engine.get_alerts();
 
-    if !skipped.is_empty() {
-        println!("\n[SKIPPED] {} entry(ies) (missing data):", skipped.len());
-        for (name, reason) in &skipped {
-            println!("  - {} — {}", name, reason);
+        let matched_ids: HashSet<&str> = alerts.iter().map(|a| a.rule_id.as_str()).collect();
+
+        if !matched_ids.contains(rule_id) {
+            let matched: Vec<String> = matched_ids.iter().map(|s| s.to_string()).collect();
+            stats.add_fail(
+                name.clone(),
+                format!(
+                    "RULE NOT MATCHED — expected '{}' ({} alert(s), matched: {})",
+                    rule_id,
+                    alerts.len(),
+                    matched.join(", ")
+                ),
+            );
+            println!(
+                "[FAIL] RULE NOT MATCHED — expected '{}' ({} alert(s), matched: {})",
+                rule_id,
+                alerts.len(),
+                matched.join(", ")
+            );
+            continue;
         }
+
+        let rule_alert_count: u64 = alerts.iter().filter(|a| a.rule_id == rule_id).count() as u64;
+        if rule_alert_count != expected_count as u64 {
+            stats.add_fail(
+                name.clone(),
+                format!(
+                    "MATCH COUNT MISMATCH — expected {} (got {})",
+                    expected_count, rule_alert_count
+                ),
+            );
+            println!(
+                "[FAIL] MATCH COUNT MISMATCH — expected {} (got {})",
+                expected_count, rule_alert_count
+            );
+            continue;
+        }
+
+        stats.add_pass();
+        println!("[PASS] {} alert(s), rule matched", rule_alert_count);
     }
 
     stats.print_summary();
@@ -261,51 +251,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sigma_regression::load_all;
-    use std::fs;
-
-    fn valid_info_yml(rule_id: &str, test_type: &str) -> String {
-        format!(
-            "id: 00000000-0000-0000-0000-000000000000\n\
-             description: N/A\n\
-             date: 2024-01-01\n\
-             author: test\n\
-             rule_metadata:\n\
-             \x20 - id: {}\n\
-             \x20   title: Test Rule\n\
-             regression_tests_info:\n\
-             \x20 - name: test\n\
-             \x20   type: {}\n\
-             \x20   provider: test\n\
-             \x20   match_count: 1\n\
-             \x20   path: test.evtx\n",
-            rule_id, test_type
-        )
-    }
-
-    #[test]
-    fn test_check_regression_no_data_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let rule_dir = tmp.path().join("bare-rule");
-        fs::create_dir(&rule_dir).unwrap();
-        fs::write(
-            rule_dir.join("info.yml"),
-            valid_info_yml("bare-rule", "evtx"),
-        )
-        .unwrap();
-
-        let regressions = load_all(tmp.path()).unwrap();
-        assert_eq!(regressions.len(), 1);
-
-        let entry = &regressions[0];
-        let mut engine = DetectionEngine::default();
-        let result = check_regression(entry, &mut engine);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("No data file for rule"));
-    }
 
     #[test]
     fn test_validation_stats_print() {
