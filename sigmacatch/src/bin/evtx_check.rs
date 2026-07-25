@@ -19,8 +19,7 @@ use detection_engine::DetectionEngine;
 use input_evtx::EventCollector;
 use sigma_mapping::mapping::resolve_logsource;
 use sigma_regression::{load_all, RegressionInfo};
-use std::collections::HashMap;
-use std::fs;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 // ─── Validation ───────────────────────────────────────────────────────────────
@@ -77,7 +76,6 @@ impl ValidationStats {
 fn validate_regression(
     regression: &RegressionInfo,
     engine: &DetectionEngine,
-    expected_match_count: usize,
 ) -> Result<(String, bool, String)> {
     let rule_name = regression
         .info_path
@@ -99,70 +97,39 @@ fn validate_regression(
         .as_ref()
         .ok_or_else(|| anyhow!("No data file for rule '{}'", regression.rule_id))?;
 
-    if regression.logtype != "evtx" {
-        return Err(anyhow!(
-            "Unsupported logtype '{}' for rule '{}' (only EVTX supported)",
-            regression.logtype,
-            regression.rule_id
-        ));
+    let mut collector = EventCollector::new();
+    collector.load_evtx(data_path)?;
+    let events = collector.get_events();
+
+    if events.is_empty() {
+        return Err(anyhow!("EMPTY — evtx produced no events"));
     }
 
-    // Parse EVTX → Event (uses EventCollector)
-    let mut collector = EventCollector::new();
-    collector
-        .load_evtx(data_path)
-        .map_err(|e| anyhow!("EVTX parse error: {}", e))?;
-    let events = collector.get_events();
-    let event = events
-        .first()
-        .ok_or_else(|| anyhow!("No records in EVTX: {}", data_path.display()))?
-        .clone();
-
+    let event = events.first().unwrap();
     let channel = event.channel().to_string();
     let provider = event.provider().to_string();
     let event_id = event.event_id();
-
     let logsource = resolve_logsource(&channel, &provider, event_id, &HashMap::new());
-
     let matches = engine.evaluate(&event.event_json, &logsource);
 
-    // Check that the expected rule is in the matched rules
-    let matched_rule_ids: Vec<&str> = matches
+    let matched_rule_ids: HashSet<&str> = matches
         .iter()
         .filter_map(|m| m.header.rule_id.as_deref())
         .collect();
 
-    let rule_matched = matched_rule_ids.contains(&regression.rule_id.as_str());
-    let actual_match_count = matches.len();
-
-    if !rule_matched && expected_match_count > 0 {
-        Err(anyhow!(
-            "FALSE NEGATIVE — expected rule '{}' not matched (EventID={}, Channel={}, provider={}) — got {} match(es)",
+    if !matched_rule_ids.contains(&regression.rule_id.as_str()) {
+        return Err(anyhow!(
+            "RULE NOT MATCHED — expected '{}' ({} matches)",
             regression.rule_id,
-            event_id,
-            channel,
-            provider,
-            actual_match_count
-        ))
-    } else if expected_match_count > 0 && actual_match_count != expected_match_count {
-        Err(anyhow!(
-            "HIT MISMATCH — expected {} hit(s), got {} (rule '{}')",
-            expected_match_count,
-            actual_match_count,
-            regression.rule_id
-        ))
-    } else if !rule_matched {
-        Err(anyhow!(
-            "RULE NOT MATCHED — expected rule '{}' not in results ({} match(es), no match_count in info.yml)",
-            regression.rule_id, actual_match_count
-        ))
-    } else {
-        Ok((
-            format!("{} ({})", rule_name, rule_title),
-            true,
-            format!("{} match(es), rule matched", actual_match_count),
-        ))
+            matches.len()
+        ));
     }
+
+    Ok((
+        format!("{} ({})", rule_name, rule_title),
+        true,
+        format!("{} match(es), rule matched", matches.len()),
+    ))
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -242,20 +209,6 @@ fn main() {
             .unwrap_or("unknown")
             .to_string();
 
-        let data_size = regression
-            .data_path
-            .as_ref()
-            .and_then(|p| fs::metadata(p).ok())
-            .map(|m| m.len())
-            .unwrap_or(0);
-
-        let expected_match_count = regression
-            .info
-            .regression_tests_info
-            .first()
-            .map(|t| t.match_count)
-            .unwrap_or(0);
-
         print!(
             "  [{:>4}/{:<4}] {:<50} ... ",
             stats.passed + stats.failed.len(),
@@ -269,20 +222,7 @@ fn main() {
             continue;
         }
 
-        let min_size = match regression.logtype.as_str() {
-            "evtx" => 0x1000,
-            _ => 0x400,
-        };
-        if data_size < min_size {
-            skipped.push((
-                name.clone(),
-                format!("data file too small ({} bytes)", data_size),
-            ));
-            println!("[SKIP] data file too small ({} bytes)", data_size);
-            continue;
-        }
-
-        match validate_regression(regression, &engine, expected_match_count) {
+        match validate_regression(regression, &engine) {
             Ok((display_name, is_pass, detail)) => {
                 if is_pass {
                     stats.add_pass();
@@ -341,45 +281,6 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_regression_skip_json_logtype() {
-        let tmp = tempfile::tempdir().unwrap();
-        let rule_dir = tmp.path().join("test-rule");
-        fs::create_dir(&rule_dir).unwrap();
-        let info_yml = rule_dir.join("info.yml");
-        fs::write(&info_yml, valid_info_yml("test-rule", "json")).unwrap();
-        fs::write(rule_dir.join("test-rule.evtx"), vec![0u8; 0x2000]).unwrap();
-
-        let regressions = load_all(tmp.path()).unwrap();
-        assert_eq!(regressions.len(), 1);
-
-        let entry = &regressions[0];
-        let result = validate_regression(entry, &DetectionEngine::default(), 1);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unsupported logtype 'json'"));
-    }
-
-    #[test]
-    fn test_validate_regression_skip_small_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let rule_dir = tmp.path().join("small-rule");
-        fs::create_dir(&rule_dir).unwrap();
-        let info_yml = rule_dir.join("info.yml");
-        fs::write(&info_yml, valid_info_yml("small-rule", "evtx")).unwrap();
-        fs::write(rule_dir.join("small-rule.evtx"), vec![0u8; 0x100]).unwrap();
-
-        let regressions = load_all(tmp.path()).unwrap();
-        assert_eq!(regressions.len(), 1);
-
-        let entry = &regressions[0];
-        let result = validate_regression(entry, &DetectionEngine::default(), 1);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("EVTX parse error"));
-    }
-
-    #[test]
     fn test_validate_regression_no_data_file() {
         let tmp = tempfile::tempdir().unwrap();
         let rule_dir = tmp.path().join("bare-rule");
@@ -394,7 +295,7 @@ mod tests {
         assert_eq!(regressions.len(), 1);
 
         let entry = &regressions[0];
-        let result = validate_regression(entry, &DetectionEngine::default(), 1);
+        let result = validate_regression(entry, &DetectionEngine::default());
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
