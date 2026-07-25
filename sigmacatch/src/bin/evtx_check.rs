@@ -15,7 +15,7 @@
 
 use anyhow::{anyhow, Result};
 use detection_engine::DetectionEngine;
-use input_evtx::parse_evtx_file;
+use input_evtx::EventCollector;
 use sigma_mapping::mapping::resolve_logsource;
 use sigmacatch::regression::loader::{load_all, RegressionInfo};
 use sigmacatch::sigma::loader::find_rules_dirs;
@@ -107,8 +107,12 @@ fn validate_regression(
         ));
     }
 
-    // Parse EVTX → Event (uses sigmacatch_types::Event)
-    let events = parse_evtx_file(data_path).map_err(|e| anyhow!("EVTX parse error: {}", e))?;
+    // Parse EVTX → Event (uses EventCollector)
+    let mut collector = EventCollector::new();
+    collector
+        .load_evtx(data_path)
+        .map_err(|e| anyhow!("EVTX parse error: {}", e))?;
+    let events = collector.get_events();
     let event = events
         .first()
         .ok_or_else(|| anyhow!("No records in EVTX: {}", data_path.display()))?
