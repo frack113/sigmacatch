@@ -49,7 +49,13 @@ pub fn https_to_ssh_url(url: &str) -> Option<String> {
     }
     let repo = rest.strip_suffix(".git").unwrap_or(rest);
     // Reject if the repo name contains shell-special characters
-    if repo.chars().any(|c| ['\'', '"', '$', '`', '\\', '!', '&', '|', ';', '(', ')', '{', '}', '[', ']', '<', '>', '#'].contains(&c)) {
+    if repo.chars().any(|c| {
+        [
+            '\'', '"', '$', '`', '\\', '!', '&', '|', ';', '(', ')', '{', '}', '[', ']', '<', '>',
+            '#',
+        ]
+        .contains(&c)
+    }) {
         return None;
     }
     Some(format!("git@github.com:{}.git", repo))
@@ -335,7 +341,8 @@ fn describe_push_rejection(status: &grit_lib::push_report::PushRefStatus) -> Str
             "remote has new commits not in your local branch — run `git pull` first".to_string()
         }
         grit_lib::push_report::PushRefStatus::RejectNeedsForce => {
-            "remote requires `--force` (non-fast-forward) — update the remote branch first".to_string()
+            "remote requires `--force` (non-fast-forward) — update the remote branch first"
+                .to_string()
         }
         grit_lib::push_report::PushRefStatus::RejectStale => {
             "force-with-lease stale — the remote ref changed unexpectedly".to_string()

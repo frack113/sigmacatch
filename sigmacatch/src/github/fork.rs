@@ -55,7 +55,8 @@ pub fn check_fork_exists_ssh(username: &str) -> ForkSshResult {
                 let stderr = String::from_utf8_lossy(&out.stderr);
                 warn!(
                     "SSH fork check failed for '{}': {} — fork likely does not exist.",
-                    username, stderr.trim()
+                    username,
+                    stderr.trim()
                 );
                 ForkSshResult::NotFound
             }
@@ -66,8 +67,7 @@ pub fn check_fork_exists_ssh(username: &str) -> ForkSshResult {
                 username, e
             );
             ForkSshResult::SshError(
-                "Cannot execute `git ls-remote` (ensure git is installed and on PATH)."
-                    .to_string(),
+                "Cannot execute `git ls-remote` (ensure git is installed and on PATH).".to_string(),
             )
         }
     }

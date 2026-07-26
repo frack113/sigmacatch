@@ -389,17 +389,10 @@ impl Config {
         if let Some(ref key_path) = self.git.ssh_key_path {
             if !key_path.is_empty() {
                 let meta = std::fs::metadata(key_path).map_err(|e| {
-                    anyhow::anyhow!(
-                        "config: SSH key path '{}' does not exist: {}",
-                        key_path,
-                        e
-                    )
+                    anyhow::anyhow!("config: SSH key path '{}' does not exist: {}", key_path, e)
                 })?;
                 if !meta.is_file() {
-                    anyhow::bail!(
-                        "config: SSH key path '{}' is not a file",
-                        key_path
-                    );
+                    anyhow::bail!("config: SSH key path '{}' is not a file", key_path);
                 }
                 #[cfg(unix)]
                 {
