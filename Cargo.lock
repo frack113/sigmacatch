@@ -474,7 +474,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dunce",
- "input-windows-channels",
  "rsigma-eval",
  "rsigma-parser",
  "serde",

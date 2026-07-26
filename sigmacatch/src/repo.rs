@@ -14,6 +14,7 @@ use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
 use grit_lib::transfer::{FetchOptions, PushOptions, PushRefSpec};
 use grit_lib::transport::http::{http_fetch, HttpClient};
+use grit_lib::transport::{SshTransport, Transport};
 use grit_lib::write_tree::write_tree_from_index;
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -33,6 +34,40 @@ fn sanitize_url(url: &str) -> String {
         }
     }
     url.to_string()
+}
+
+/// Convert an HTTPS GitHub URL to SSH format.
+/// e.g. `https://github.com/user/repo.git` → `git@github.com:user/repo.git`
+pub fn https_to_ssh_url(url: &str) -> Option<String> {
+    if let Some(rest) = url.strip_prefix("https://github.com/") {
+        let repo = rest.strip_suffix(".git").unwrap_or(rest);
+        return Some(format!("git@github.com:{}.git", repo));
+    }
+    None
+}
+
+/// Get the SSH shell command string from config or environment.
+/// Priority: ssh_key_path in config > GIT_SSH_COMMAND env > GIT_SSH env > default ssh
+fn get_ssh_shell_command(ssh_key_path: Option<&str>) -> Option<String> {
+    // Check environment first
+    if let Ok(cmd) = std::env::var("GIT_SSH_COMMAND") {
+        if !cmd.is_empty() {
+            return Some(cmd);
+        }
+    }
+    if let Ok(cmd) = std::env::var("GIT_SSH") {
+        if !cmd.is_empty() {
+            return Some(cmd);
+        }
+    }
+    // Use key path from config if provided
+    if let Some(key_path) = ssh_key_path {
+        if !key_path.is_empty() {
+            return Some(format!("ssh -i {}", key_path));
+        }
+    }
+    // Default: return None to use auto-resolve
+    None
 }
 
 pub struct AuthHttpClient {
@@ -224,6 +259,93 @@ pub fn fetch_remote(
         outcome.default_branch.as_deref().unwrap_or("unknown")
     );
     Ok((count, outcome.default_branch))
+}
+
+/// Fetch from remote via SSH.
+pub fn fetch_remote_ssh(
+    git_dir: &Path,
+    repo_url: &str,
+    ssh_shell_cmd: Option<&str>,
+) -> Result<(usize, Option<String>)> {
+    info!("Fetching via SSH from {}", repo_url);
+    let transport = match ssh_shell_cmd {
+        Some(cmd) => SshTransport::with_shell_command(cmd),
+        None => SshTransport::new(),
+    };
+    let mut conn = transport.connect(
+        repo_url,
+        grit_lib::transport::Service::UploadPack,
+        &grit_lib::transport::ConnectOptions::default(),
+    )?;
+    let opts = FetchOptions {
+        refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_string()],
+        tags: grit_lib::transfer::TagMode::None,
+        depth: Some(1),
+        ..Default::default()
+    };
+    let outcome = grit_lib::fetch::fetch_remote(git_dir, &mut *conn, &opts, &mut NoProgress)?;
+    let count = outcome.updates.len();
+    info!(
+        "Fetched {} ref updates via SSH (default branch: {})",
+        count,
+        outcome.default_branch.as_deref().unwrap_or("unknown")
+    );
+    Ok((count, outcome.default_branch))
+}
+
+/// Push via SSH.
+pub fn push_branch_ssh(
+    git_dir: &Path,
+    remote_url: &str,
+    branch_name: &str,
+    ssh_shell_cmd: Option<&str>,
+) -> Result<()> {
+    let ref_name = format!("refs/heads/{}", branch_name);
+    let oid_str = read_loose_or_packed_ref(git_dir, &ref_name)
+        .ok_or_else(|| anyhow::anyhow!("Branch '{}' not found locally", branch_name))?;
+    let head_oid = ObjectId::from_hex(&oid_str)
+        .map_err(|e| anyhow::anyhow!("Invalid OID for branch '{}': {}", branch_name, e))?;
+    let spec = PushRefSpec {
+        src: Some(head_oid),
+        dst: format!("refs/heads/{}", branch_name),
+        force: false,
+        delete: false,
+        expected_old: None,
+        expect_absent: false,
+    };
+    let opts = PushOptions {
+        atomic: false,
+        dry_run: false,
+        push_options: Vec::new(),
+    };
+    let transport = match ssh_shell_cmd {
+        Some(cmd) => SshTransport::with_shell_command(cmd),
+        None => SshTransport::new(),
+    };
+    let mut conn = transport.connect(
+        remote_url,
+        grit_lib::transport::Service::ReceivePack,
+        &grit_lib::transport::ConnectOptions::default(),
+    )?;
+    let outcome =
+        grit_lib::push::push_remote(git_dir, &mut *conn, &[spec], &opts, &mut NoProgress)?;
+    if outcome.results.is_empty() {
+        warn!("No refs were pushed via SSH");
+    } else {
+        for result in &outcome.results {
+            if result.status.is_error() {
+                anyhow::bail!(
+                    "Push of '{}' rejected by remote via SSH: {:?}. \
+                     The remote branch has diverged (likely another machine or a prior \
+                     partial push). Delete the branch on GitHub and re-run, or rename it.",
+                    branch_name,
+                    result.status
+                );
+            }
+        }
+        info!("Pushed branch '{}' via SSH", branch_name);
+    }
+    Ok(())
 }
 
 /// Full clone: init + fetch + set HEAD + checkout worktree.
@@ -812,12 +934,103 @@ pub fn git_clone(url: &str, dest: &Path, token: Option<&str>) -> Result<()> {
     clone_repo(&http_client, url, dest)
 }
 
+/// Clone a repository using SSH transport.
+pub fn git_clone_ssh(url: &str, dest: &Path, ssh_key_path: Option<&str>) -> Result<()> {
+    let git_dir = dest.join(".git");
+    if git_dir.exists() {
+        info!("Repository already exists at {:?}, skipping clone", dest);
+        return Ok(());
+    }
+
+    info!("Cloning via SSH into {:?}", dest);
+    init_repo(&git_dir, dest, url)?;
+    let (count, default_branch) = match fetch_remote_ssh(
+        &git_dir,
+        url,
+        get_ssh_shell_command(ssh_key_path).as_deref(),
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&git_dir);
+            return Err(e);
+        }
+    };
+    if count == 0 {
+        let _ = std::fs::remove_dir_all(&git_dir);
+        anyhow::bail!("No refs fetched from remote via SSH — empty or unreachable repository");
+    }
+
+    if let Some(branch_name) = &default_branch {
+        let remote_ref = format!("refs/remotes/origin/{}", branch_name);
+        let local_ref = format!("refs/heads/{}", branch_name);
+        if let Some(oid_str) = read_loose_or_packed_ref(&git_dir, &remote_ref) {
+            let head_content = format!("ref: {}\n", local_ref);
+            std::fs::write(git_dir.join("HEAD"), &head_content)?;
+            let loose_path = git_dir.join(&local_ref);
+            if let Some(parent) = loose_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&loose_path, format!("{}\n", oid_str))?;
+            info!(
+                "HEAD set to {} (→ {})",
+                local_ref,
+                &oid_str[..12.min(oid_str.len())]
+            );
+        } else {
+            warn!(
+                "Default branch '{}' not found in remote tracking refs",
+                branch_name
+            );
+        }
+    } else {
+        let head_file = git_dir.join("HEAD");
+        if !head_file.exists() {
+            if let Some(oid_str) = read_loose_or_packed_ref(&git_dir, "refs/remotes/origin/main") {
+                std::fs::write(&head_file, format!("{}\n", oid_str))?;
+                info!(
+                    "HEAD set to detached {} (fallback)",
+                    &oid_str[..12.min(oid_str.len())]
+                );
+            } else if let Some(oid_str) =
+                read_loose_or_packed_ref(&git_dir, "refs/remotes/origin/master")
+            {
+                std::fs::write(&head_file, format!("{}\n", oid_str))?;
+                info!(
+                    "HEAD set to detached {} (fallback master)",
+                    &oid_str[..12.min(oid_str.len())]
+                );
+            } else {
+                warn!("No default branch found — HEAD not set");
+            }
+        }
+    }
+
+    checkout_main_branch(&git_dir, dest)?;
+    Ok(())
+}
+
 /// Fetch from origin and fast-forward the current branch.
 pub fn git_pull(git_dir: &Path, token: Option<&str>) -> Result<()> {
     let http_client = AuthHttpClient::new(token.map(String::from))?;
     let remote_url = read_remote_url_from_config(git_dir, "origin")?;
 
     fetch_remote(&http_client, git_dir, &remote_url)?;
+    fast_forward_branch(git_dir)?;
+
+    // Re-checkout worktree to reflect any changes from fast-forward
+    let work_tree = git_dir
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Cannot determine worktree from git_dir"))?;
+    checkout_main_branch(git_dir, work_tree)?;
+    Ok(())
+}
+
+/// Fetch from origin via SSH and fast-forward the current branch.
+pub fn git_pull_ssh(git_dir: &Path, ssh_key_path: Option<&str>) -> Result<()> {
+    let remote_url = read_remote_url_from_config(git_dir, "origin")?;
+    let ssh_cmd = get_ssh_shell_command(ssh_key_path);
+
+    fetch_remote_ssh(git_dir, &remote_url, ssh_cmd.as_deref())?;
     fast_forward_branch(git_dir)?;
 
     // Re-checkout worktree to reflect any changes from fast-forward
@@ -846,6 +1059,31 @@ pub fn git_push(repo_path: &Path, remote: &str, branch: &str, token: Option<&str
     let http_client = AuthHttpClient::new(token.map(String::from))?;
     let remote_url = read_remote_url_from_config(&git_dir, remote)?;
     push_branch(&http_client, &git_dir, &remote_url, branch)
+}
+
+/// Push a local branch to the named remote via SSH.
+/// Verifies HEAD is on the expected branch before pushing.
+pub fn git_push_ssh(
+    repo_path: &Path,
+    remote: &str,
+    branch: &str,
+    ssh_key_path: Option<&str>,
+) -> Result<()> {
+    let git_dir = repo_path.join(".git");
+
+    let head_content = std::fs::read_to_string(git_dir.join("HEAD"))?;
+    let expected_ref = format!("ref: refs/heads/{}\n", branch);
+    if head_content != expected_ref {
+        anyhow::bail!(
+            "HEAD is not on branch '{}' (HEAD: {}). Refusing to push.",
+            branch,
+            head_content.trim()
+        );
+    }
+
+    let remote_url = read_remote_url_from_config(&git_dir, remote)?;
+    let ssh_cmd = get_ssh_shell_command(ssh_key_path);
+    push_branch_ssh(&git_dir, &remote_url, branch, ssh_cmd.as_deref())
 }
 
 /// Stage files under `paths` (relative to `work_tree`) into the git index.

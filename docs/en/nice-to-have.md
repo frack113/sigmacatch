@@ -75,16 +75,33 @@ Features identified as useful but out of current scope. No timeline — document
 
 ## 6. Git SSH Transport
 
-**Status:** all git operations (clone, fetch, push) use HTTP(S) exclusively via `grit-lib` + `reqwest`. Authentication is injected as `x-access-token` in HTTPS URLs. There is no SSH support.
+**Status:** ✅ implemented. Configurable via `config.yaml` → `git.transport` (`http` or `ssh`).
 
-**What's missing:**
-- SSH transport layer for clone/fetch/push (requires SSH key handling, agent forwarding, or key-based auth)
-- Config option to choose between HTTP+token and SSH transport
-- `grit-lib` would need an SSH transport backend (currently HTTP-only)
-- SSH host key verification and known_hosts management
-- Fork URL resolution for SSH (`git@github.com:user/sigma.git` instead of `https://github.com/user/sigma.git`)
+**Implementation:**
+- `GitTransport` enum: `Http` (default) or `Ssh`
+- `GitConfig` struct: `transport` + `ssh_key_path: Option<String>`
+- `get_ssh_shell_command()` resolves SSH command with priority: `GIT_SSH_COMMAND` env > `GIT_SSH` env > `ssh_key_path` config > default `ssh`
+- `get_ssh_command()` builds `ssh -i <key>` when a key path is provided
+- `fetch_remote_ssh()`: creates `SshTransport::with_shell_command()`, fetches via `grit_lib::fetch::fetch_remote()`
+- `push_branch_ssh()`: pushes via `SshTransport::with_shell_command()` with `grit_lib::push::push_remote()`
+- `https_to_ssh_url()`: converts `https://github.com/user/sigma.git` → `git@github.com:user/sigma.git`
+- `git_clone_ssh()`, `git_pull_ssh()`, `git_push_ssh()` in `repo.rs` dispatch SSH operations
+- `SigmaRepo` carries `git_config` and dispatches clone/fetch/push based on `GitTransport`
+- `github_token` is **optional** when `transport: ssh` — validation skipped in `Config::validate()`
+- `~/.ssh/config` should have `IdentityFile` for `github.com` for seamless key resolution
 
-**Use case:** environments where SSH keys are preferred over tokens (CI/CD with deploy keys, corporate environments with SSH-only access, no token management overhead).
+**Limitations:**
+- `push_remote` via SSH is limited to protocol v0/v1 (GitHub supports this for forks)
+- No `known_hosts` management — relies on `ssh -o StrictHostKeyChecking` or default SSH behavior
+- `git config --global user.name` and `user.email` must be set for commits
+- Fork detection still uses HTTP HEAD to check fork existence
+
+**Example config:**
+```yaml
+git:
+  transport: ssh
+  ssh_key_path: "/home/user/.ssh/id_sigmacatch"
+```
 
 ---
 

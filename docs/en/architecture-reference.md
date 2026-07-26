@@ -54,14 +54,18 @@ sigmacatch/
 `config.yaml` (auto-créé au premier run, complété automatiquement si la section `sigma` manque) :
 
 ```yaml
-author: "sigmacatch"        # nom GitHub pour contrib workflow (doit être changé)
-email: "you@example.com"    # requis pour les commits git
-github_token: ""            # token GitHub (ou var env GITHUB_TOKEN) — requis pour le push du fork
+git:
+  git:
+  author: "sigmacatch"
+    email: "you@example.com"
+    github_token: ""
+  transport: http             # http or ssh
+  ssh_key_path: ""            # path to SSH private key (optional, only needed for SSH)
 log:
-  level_file: "debug"       # niveau fichier tracing
+  level_file: "debug"
 sigma:
-  min_status: "stable"      # seuil de statut minimal (inclus) : unsupported < deprecated < experimental < test < stable
-  min_level: "critical"     # seuil de niveau minimal (inclus) : informational < low < medium < high < critical
+  min_status: "stable"      # minimum rule status (inclusive): unsupported < deprecated < experimental < test < stable
+  min_level: "critical"     # minimum rule level (inclusive): informational < low < medium < high < critical
 ```
 
 **Filtrage des règles :** `min_status` et `min_level` sont appliqués au chargement. Les règles dont `status`/`level` est inférieur au seuil sont exclues du moteur. Les règles sans champ `status` ou `level` sont toujours acceptées.
@@ -331,8 +335,8 @@ RegressionData {
 
 | Dependency | Usage |
 |---|---|---|
-| `grit-lib` | all git operations (clone, fetch, push, branch, commit, checkout) via HTTP, pure Rust |
-| `reqwest` (blocking) | HTTP client for git transport + fork detection (GitHub API) |
+| `grit-lib` | all git operations (clone, fetch, push, branch, commit, checkout) via HTTP + SSH, pure Rust |
+| `reqwest` (blocking) | HTTP client for fork detection + API calls (not used for git transport) |
 | `rsigma-eval` + `rsigma-parser` | Sigma rule loading/evaluation |
 | `tokio` | async runtime |
 | `tracing` + `tracing-subscriber` | logging |

@@ -7,6 +7,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
+use crate::config::GitConfig;
+
 pub(crate) const SIGMA_REPO_URL: &str = "https://github.com/SigmaHQ/sigma.git";
 
 #[derive(Debug, Clone)]
@@ -14,6 +16,7 @@ pub struct SigmaRepo {
     pub path: PathBuf,
     remote_url: Option<String>,
     token: Option<String>,
+    git_config: GitConfig,
 }
 
 impl SigmaRepo {
@@ -22,6 +25,7 @@ impl SigmaRepo {
             path: path.to_path_buf(),
             remote_url: None,
             token: None,
+            git_config: GitConfig::default(),
         }
     }
 
@@ -32,6 +36,11 @@ impl SigmaRepo {
 
     pub fn with_token(mut self, token: String) -> Self {
         self.token = Some(token);
+        self
+    }
+
+    pub fn with_git_config(mut self, git_config: GitConfig) -> Self {
+        self.git_config = git_config;
         self
     }
 
@@ -51,13 +60,26 @@ impl SigmaRepo {
         if repo_exists {
             info!("Sigma repository exists, pulling latest...");
             let git_dir_clone = git_dir.clone();
-            let token = self.token.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                crate::repo::git_pull(&git_dir_clone, token.as_deref())
-            })
-            .await
-            .map_err(|e| anyhow::anyhow!("Pull task panicked: {}", e))?;
-            if let Err(e) = result {
+            let git_config = self.git_config.clone();
+            let result = match git_config.transport {
+                crate::config::GitTransport::Http => {
+                    let token = self.token.clone();
+                    tokio::task::spawn_blocking(move || {
+                        crate::repo::git_pull(&git_dir_clone, token.as_deref())
+                    })
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Pull task panicked: {}", e))
+                }
+                crate::config::GitTransport::Ssh => {
+                    let key_path = git_config.ssh_key_path.clone();
+                    tokio::task::spawn_blocking(move || {
+                        crate::repo::git_pull_ssh(&git_dir_clone, key_path.as_deref())
+                    })
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Pull task panicked: {}", e))
+                }
+            };
+            if let Err(e) = result? {
                 warn!(
                     "Failed to pull Sigma repository: {}. Removing incomplete repo.",
                     e
@@ -78,11 +100,28 @@ impl SigmaRepo {
             .unwrap_or_else(|| SIGMA_REPO_URL.to_string());
         info!("Cloning Sigma repository from {}...", url);
         let path = self.path.clone();
+        let git_config = self.git_config.clone();
         let token = self.token.clone();
 
-        tokio::task::spawn_blocking(move || crate::repo::git_clone(&url, &path, token.as_deref()))
-            .await
-            .map_err(|e| anyhow::anyhow!("Clone task panicked: {}", e))??;
+        match git_config.transport {
+            crate::config::GitTransport::Http => {
+                tokio::task::spawn_blocking(move || {
+                    crate::repo::git_clone(&url, &path, token.as_deref())
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("Clone task panicked: {}", e))??;
+            }
+            crate::config::GitTransport::Ssh => {
+                let ssh_url = crate::repo::https_to_ssh_url(&url)
+                    .ok_or_else(|| anyhow::anyhow!("Cannot convert URL to SSH format: {}", url))?;
+                let key_path = git_config.ssh_key_path.clone();
+                tokio::task::spawn_blocking(move || {
+                    crate::repo::git_clone_ssh(&ssh_url, &path, key_path.as_deref())
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("Clone task panicked: {}", e))??;
+            }
+        }
 
         info!("Sigma repository cloned to {:?}", self.path);
         Ok(())

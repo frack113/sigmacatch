@@ -10,7 +10,7 @@ use sigmacatch::repo;
 use sigmacatch::sigma;
 
 use anyhow::{Context, Result};
-use config::Config;
+use config::{Config, GitTransport};
 use sigma::loader::SigmaRepo;
 use sigma::mapping::build_logsource_to_channels;
 
@@ -73,8 +73,8 @@ impl DryRunConfig {
     }
 
     fn resolve_tokens(config: &Config) -> (Option<String>, String) {
-        let config_token = if !config.github_token.trim().is_empty() {
-            Some(config.github_token.trim())
+        let config_token = if !config.git.github_token.trim().is_empty() {
+            Some(config.git.github_token.trim())
         } else {
             None
         };
@@ -120,7 +120,7 @@ impl DryRunConfig {
     }
 
     async fn check_fork(&mut self, config: &Config, client: &reqwest::Client) -> Result<()> {
-        let username = &config.author;
+        let username = &config.git.author;
         let fork_url = format!("https://github.com/{}/sigma", username);
 
         println!("\n2. Fork detection (HTTP HEAD)");
@@ -351,7 +351,7 @@ async fn dry_run_git(config: &Config) -> Result<()> {
         dry_run.check_api_auth(t, &client).await?;
     }
 
-    let username = &config.author;
+    let username = &config.git.author;
     let fork_url = format!("https://github.com/{}/sigma", username);
     let clone_url = format!("{}.git", fork_url);
 
@@ -386,10 +386,12 @@ async fn stage_1_update_repo(
         sigma_repo = sigma_repo.with_remote_url(clone_url);
     }
 
-    let has_config_token = !config.github_token.trim().is_empty();
+    let has_config_token = !config.git.github_token.trim().is_empty();
     if has_config_token {
-        sigma_repo = sigma_repo.with_token(config.github_token.trim().to_string());
+        sigma_repo = sigma_repo.with_token(config.git.github_token.trim().to_string());
     }
+
+    sigma_repo = sigma_repo.with_git_config(config.git.clone());
 
     // Switch to master/main before pulling, so the contrib branch is created
     // from the latest tracking branch, not from a stale contrib branch.
@@ -835,20 +837,21 @@ async fn main() -> Result<()> {
     }
 
     if let Some(author) = flag_value("--author") {
-        config.author = author;
+        config.git.author = author;
         if !config
+            .git
             .author
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-')
         {
             anyhow::bail!(
                 "--author must be a valid GitHub username (alphanumeric + hyphens), got {:?}",
-                config.author
+                config.git.author
             );
         }
     }
 
-    if config.author == "sigmacatch" {
+    if config.git.author == "sigmacatch" {
         eprintln!("── config.yaml not configured ──────────────");
         eprintln!("  Update the 'author' field in config.yaml");
         eprintln!("  before running.");
@@ -874,11 +877,11 @@ async fn main() -> Result<()> {
 
     info!(
         "Sigmacatch started for {} <{}>",
-        config.author, config.email
+        config.git.author, config.git.email
     );
     let branch_name = repo::create_branch_name();
     info!("Branch name: {}", branch_name);
-    let fork_config = github::fork::detect_fork(&config.author, &branch_name).await?;
+    let fork_config = github::fork::detect_fork(&config.git.author, &branch_name).await?;
 
     let (engine_factory, cycle_channels, custom_map) =
         setup_pipeline(&config, Some(&fork_config)).await?;
@@ -905,16 +908,26 @@ async fn main() -> Result<()> {
     loop {
         if !running.load(Ordering::Relaxed) {
             info!("Interrupted, shutting down");
-            if let Err(e) = repo::git_push(
-                std::path::Path::new("sigma"),
-                "origin",
-                &fork_config.branch_name,
-                if !config.github_token.trim().is_empty() {
-                    Some(config.github_token.trim())
-                } else {
-                    None
-                },
-            ) {
+            let sigma_path = std::path::Path::new("sigma");
+            let push_result = match config.git.transport {
+                GitTransport::Http => repo::git_push(
+                    sigma_path,
+                    "origin",
+                    &fork_config.branch_name,
+                    if !config.git.github_token.trim().is_empty() {
+                        Some(config.git.github_token.trim())
+                    } else {
+                        None
+                    },
+                ),
+                GitTransport::Ssh => repo::git_push_ssh(
+                    sigma_path,
+                    "origin",
+                    &fork_config.branch_name,
+                    config.git.ssh_key_path.as_deref(),
+                ),
+            };
+            if let Err(e) = push_result {
                 warn!("Failed to push branch: {}", e);
             } else {
                 info!(
@@ -937,8 +950,8 @@ async fn main() -> Result<()> {
                 engine,
                 std::mem::take(&mut retired),
                 custom_map.clone(),
-                config.author.clone(),
-                config.email.clone(),
+                config.git.author.clone(),
+                config.git.email.clone(),
             )
             .await?;
             retired.extend(committed_rules.into_iter().map(|(rule_id, _, _)| rule_id));
@@ -954,8 +967,8 @@ async fn main() -> Result<()> {
             std::path::Path::new("sigma"),
             "origin",
             &fork_config.branch_name,
-            if !config.github_token.trim().is_empty() {
-                Some(config.github_token.trim())
+            if !config.git.github_token.trim().is_empty() {
+                Some(config.git.github_token.trim())
             } else {
                 None
             },

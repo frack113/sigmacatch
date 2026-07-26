@@ -54,11 +54,14 @@ sigmacatch/
 `config.yaml` (auto-créé au premier run, complété automatiquement si la section `sigma` manque) :
 
 ```yaml
-author: "sigmacatch"        # nom GitHub pour contrib workflow (doit être changé)
-email: "you@example.com"    # requis pour les commits git
-github_token: ""            # token GitHub (ou var env GITHUB_TOKEN) — requis pour le push du fork
+git:
+  author: "sigmacatch"        # nom GitHub pour contrib workflow (doit être changé)
+  email: "you@example.com"    # requis pour les commits git
+  github_token: ""            # token GitHub (ou var env GITHUB_TOKEN) — requis pour le transport HTTP
+  transport: http             # http ou ssh
+  ssh_key_path: ""            # chemin vers la clé privée SSH (optionnel, uniquement pour SSH)
 log:
-  level_file: "debug"       # niveau fichier tracing
+  level_file: "debug"
 sigma:
   min_status: "stable"      # seuil de statut minimal (inclus) : unsupported < deprecated < experimental < test < stable
   min_level: "critical"     # seuil de niveau minimal (inclus) : informational < low < medium < high < critical
@@ -332,8 +335,8 @@ RegressionData {
 
 | Dépendance | Usage |
 |---|---|---|
-| `grit-lib` | toutes les ops git (clone, fetch, push, branch, commit, checkout) via HTTP, Rust pur |
-| `reqwest` (blocking) | client HTTP pour transport git + détection de fork (API GitHub) |
+| `grit-lib` | toutes les ops git (clone, fetch, push, branch, commit, checkout) via HTTP + SSH, Rust pur |
+| `reqwest` (blocking) | client HTTP pour détection de fork + API GitHub (pas utilisé pour le transport git) |
 | `rsigma-eval` + `rsigma-parser` | Sigma rule loading/evaluation |
 | `tokio` | async runtime |
 | `tracing` + `tracing-subscriber` | logging |
