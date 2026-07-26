@@ -71,36 +71,4 @@ Fonctionnalités identifiées comme utiles mais hors périmètre actuel. Pas de 
 
 **Cas d'usage :** cycles d'évaluation plus rapides avec des centaines de règles Sigma, empreinte mémoire réduite par évitement du chargement de rules inutiles.
 
----
-
-## 6. Transport Git SSH
-
-**État :** ✅ implémenté. Configurable via `config.yaml` → `git.transport` (`http` ou `ssh`).
-
-**Implémentation :**
-- Enum `GitTransport` : `Http` (défaut) ou `Ssh`
-- Struct `GitConfig` : `transport` + `ssh_key_path: Option<String>`
-- `get_ssh_shell_command()` résout la commande SSH par priorité : `GIT_SSH_COMMAND` env > `GIT_SSH` env > `ssh_key_path` config > `ssh` par défaut
-- `get_ssh_command()` construit `ssh -i <key>` quand un chemin de clé est fourni
-- `fetch_remote_ssh()` : crée `SshTransport::with_shell_command()`, fetch via `grit_lib::fetch::fetch_remote()`
-- `push_branch_ssh()` : push via `SshTransport::with_shell_command()` avec `grit_lib::push::push_remote()`
-- `https_to_ssh_url()` : convertit `https://github.com/user/sigma.git` → `git@github.com:user/sigma.git`
-- `git_clone_ssh()`, `git_pull_ssh()`, `git_push_ssh()` dans `repo.rs` dispatch les opérations SSH
-- `SigmaRepo` porte `git_config` et dispatch clone/fetch/push selon `GitTransport`
-- `github_token` est **optionnel** quand `transport: ssh` — validation skipée dans `Config::validate()`
-- `~/.ssh/config` doit avoir `IdentityFile` pour `github.com` pour la résolution automatique de clés
-
-**Limitations :**
-- `push_remote` via SSH est limité au protocole v0/v1 (GitHub supporte ça pour les forks)
-- Pas de gestion `known_hosts` — repose sur `ssh -o StrictHostKeyChecking` ou comportement SSH par défaut
-- `git config --global user.name` et `user.email` doivent être configurés pour les commits
-- La détection de fork utilise toujours HTTP HEAD
-
-**Exemple de config :**
-```yaml
-git:
-  transport: ssh
-  ssh_key_path: "/home/user/.ssh/id_sigmacatch"
-```
-
 
