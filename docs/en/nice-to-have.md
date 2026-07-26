@@ -103,16 +103,4 @@ git:
   ssh_key_path: "/home/user/.ssh/id_sigmacatch"
 ```
 
----
 
-## 7. Rule Loading Filter (status/level)
-
-**Status:** `SigmaFilterConfig` defines `min_status` (default: stable) and `min_level` (default: critical) thresholds in `config.rs`, but these are **never applied** during rule loading in `load_all_rules()`. The current filter only checks: Windows product + skip set. The docs previously described this as implemented — corrected to reflect actual behavior.
-
-**What's missing:**
-- Apply `min_status` and `min_level` filters in `load_all_rules()` after parsing each rule
-- Rules missing a status or level field should be accepted (pass-through)
-- Display filtered-out rules count in the startup rule table
-- Configurable via `config.yaml` → `sigma.min_status` and `sigma.min_level`
-
-**Use case:** load only production-ready rules (stable + critical/high) for faster evaluation, skip experimental/deprecated/informational rules in CI pipelines.

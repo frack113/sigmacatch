@@ -103,23 +103,4 @@ git:
   ssh_key_path: "/home/user/.ssh/id_sigmacatch"
 ```
 
----
 
-## 7. Filtre de chargement des règles (status/level)
-
-**État :** ✅ implémenté. Les filtres `min_status` et `min_level` sont appliqués dans `load_all_rules()` après le parsing de chaque règle.
-
-**Implémentation :**
-- `SigmaFilterConfig` (dans `config.rs`) porte `min_status: MinStatus` (défaut: stable) et `min_level: MinLevel` (défaut: critical)
-- `MinStatus::accepts()` et `MinLevel::accepts()` comparent l'ordinal de la règle contre le seuil minimum
-- `load_all_rules()` (dans `sigma/loader.rs`) retourne `LoadResult` contenant `SigmaCollection` + `LoadStats`
-- `LoadStats` porte `rules_loaded`, `rules_filtered_status`, `rules_filtered_level`, `rules_total_candidate`
-- Les règles sans champ `status` ou `level` sont acceptées (pass-through)
-- `stage_3_load_rules()` passe `&config.sigma` à `load_all_rules()` et logue les compteurs
-- `Config` dérive désormais `Default` au lieu d'avoir un `impl Default` manuel (clippy `derivable_impls`)
-- `SigmaFilterConfig` dérive `Copy` (tous les champs sont `Copy`)
-- Affichage dans le log : `"Loaded {} rules from {} directories ({} skipped by existing regression data, {} filtered by status, {} filtered by level)"`
-- `stage_3_load_rules()` vérifie `stats.rules_loaded == 0` et retourne une erreur explicite indiquant que les seuils sont trop restrictifs
-- 8 tests unitaires couvrant toutes les combinaisons de filtrage + cas 0 règle
-
-**Cas d'usage :** charger uniquement les règles de production (stable + critical/high) pour un évaluation plus rapide, ignorer les règles expérimentales/dépréciées/informationnelles dans les pipelines CI.
