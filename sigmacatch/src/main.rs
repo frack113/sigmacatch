@@ -11,7 +11,7 @@ use sigmacatch::sigma;
 
 use anyhow::{Context, Result};
 use config::{Config, GitTransport};
-use sigma::loader::SigmaRepo;
+use sigma::loader::{LoadStats, SigmaRepo};
 use sigma::mapping::build_logsource_to_channels;
 
 use sigmacatch::sigma::mapping::load_custom_mapping;
@@ -439,9 +439,9 @@ fn stage_2_existing_rules(_config: &Config) -> HashSet<String> {
 }
 
 fn stage_3_load_rules(
-    _config: &Config,
+    config: &Config,
     existing_rules: &HashSet<String>,
-) -> Result<(DetectionEngine, u64)> {
+) -> Result<(DetectionEngine, LoadStats)> {
     let rules_dirs = detection_engine::find_rules_dirs(std::path::Path::new("sigma"))?;
     if rules_dirs.is_empty() {
         anyhow::bail!(
@@ -451,20 +451,33 @@ fn stage_3_load_rules(
     }
 
     let rules_dirs_refs: Vec<&std::path::Path> = rules_dirs.iter().map(|d| d.as_path()).collect();
-    let collection = sigma::loader::load_all_rules(&rules_dirs_refs, existing_rules)?;
+    let load_result =
+        sigma::loader::load_all_rules(&rules_dirs_refs, existing_rules, &config.sigma)?;
+    let stats = load_result.stats;
+    let collection = load_result.collection;
 
     let mut engine = DetectionEngine::new();
     engine.load_collection(collection)?;
 
-    let rules_count = engine.rule_count() as u64;
-
     info!(
-        "Loaded {} rules from {} directories ({} skipped by existing regression data)",
-        rules_count,
+        "Loaded {} rules from {} directories ({} skipped by existing regression data, {} filtered by status, {} filtered by level)",
+        stats.rules_loaded,
         rules_dirs.len(),
         existing_rules.len(),
+        stats.rules_filtered_status,
+        stats.rules_filtered_level,
     );
-    Ok((engine, rules_count))
+
+    if stats.rules_loaded == 0 {
+        anyhow::bail!(
+            "0 rules loaded — the filter config (min_status={}, min_level={}) is too restrictive. \
+             Adjust sigma.min_status and sigma.min_level in config.yaml or load rules with matching metadata.",
+            config.sigma.min_status,
+            config.sigma.min_level,
+        );
+    }
+
+    Ok((engine, stats))
 }
 
 /// Delete regression directories under `base` that contain generated files
@@ -721,7 +734,8 @@ async fn setup_pipeline(
 
     let existing_rules = stage_2_existing_rules(config);
 
-    let (engine, rules_count) = stage_3_load_rules(config, &existing_rules)?;
+    let (engine, stats) = stage_3_load_rules(config, &existing_rules)?;
+    let rules_count = stats.rules_loaded;
     let skipped = existing_rules.len();
     if skipped > 0 {
         info!(

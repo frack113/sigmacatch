@@ -257,7 +257,7 @@ impl std::str::FromStr for MinLevel {
 }
 
 /// Configuration for rule loading filters.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SigmaFilterConfig {
     /// Minimum rule status (inclusive): unsupported < deprecated < experimental < test < stable.
@@ -307,7 +307,7 @@ impl Default for LogConfig {
 }
 
 /// Main application configuration.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub log: LogConfig,
@@ -315,16 +315,6 @@ pub struct Config {
     pub sigma: SigmaFilterConfig,
     #[serde(default)]
     pub git: GitConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            log: LogConfig::default(),
-            sigma: SigmaFilterConfig::default(),
-            git: GitConfig::default(),
-        }
-    }
 }
 
 impl Config {

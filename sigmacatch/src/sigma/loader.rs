@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
-use crate::config::GitConfig;
+use crate::config::{GitConfig, SigmaFilterConfig};
 
 pub(crate) const SIGMA_REPO_URL: &str = "https://github.com/SigmaHQ/sigma.git";
 
@@ -145,12 +145,47 @@ fn is_repo_complete(git_dir: &Path) -> bool {
     has_packed_refs || has_objects || has_refs
 }
 
-/// Load all Sigma rules from the given directories, skipping rules in the skip set.
-pub fn load_all_rules(dirs: &[&Path], skip_ids: &HashSet<String>) -> Result<SigmaCollection> {
-    let mut collection = SigmaCollection::default();
+/// Statistics returned by `load_all_rules`.
+///
+/// Invariant: `rules_loaded + rules_filtered_status + rules_filtered_level == rules_total_candidate`.
+/// Each candidate rule is counted in exactly one bucket. Cascade filtering means a rule with both
+/// bad status AND bad level is counted only in `rules_filtered_status` (level check never fires).
+///
+/// `rules_total_candidate` = Windows rules that passed the skip set check (before status/level filtering).
+/// `rules_filtered_status` = rules rejected because their status is below `min_status`.
+/// `rules_filtered_level` = rules that passed status check but were rejected because their level is below `min_level`.
+/// `rules_loaded` = rules that passed all filters and were added to the collection.
+pub struct LoadStats {
+    /// Rules added to the collection (passed all filters).
+    pub rules_loaded: u64,
+    /// Rules filtered out because their `status` is below the configured threshold.
+    pub rules_filtered_status: u64,
+    /// Rules filtered out because their `level` is below the configured threshold (passed status check).
+    pub rules_filtered_level: u64,
+    /// Total Windows rules that passed the skip set check (before status/level filtering).
+    pub rules_total_candidate: u64,
+}
 
+/// Result of loading rules: the SigmaCollection and associated load statistics.
+pub struct LoadResult {
+    pub collection: SigmaCollection,
+    pub stats: LoadStats,
+}
+
+/// Load all Sigma rules from the given directories, applying status/level filters
+/// and skipping rules in the skip set.
+pub fn load_all_rules(
+    dirs: &[&Path],
+    skip_ids: &HashSet<String>,
+    filter: &SigmaFilterConfig,
+) -> Result<LoadResult> {
+    let mut collection = SigmaCollection::default();
+    let mut rules_total_candidate: u64 = 0;
+    let mut rules_filtered_status: u64 = 0;
+    let mut rules_filtered_level: u64 = 0;
+
+    let skip_set = skip_ids.clone();
     for dir in dirs {
-        let skip_set = skip_ids.clone();
         let mut pending = vec![dir.to_path_buf()];
 
         while let Some(current) = pending.pop() {
@@ -177,9 +212,28 @@ pub fn load_all_rules(dirs: &[&Path], skip_ids: &HashSet<String>) -> Result<Sigm
                                             {
                                                 continue;
                                             }
-                                            if !skip_set.contains(&rule_id) {
-                                                collection.rules.push(rule);
+                                            if skip_set.contains(&rule_id) {
+                                                continue;
                                             }
+                                            rules_total_candidate += 1;
+
+                                            // Apply min_status filter
+                                            if let Some(ref status) = rule.status {
+                                                if !filter.min_status.accepts(status) {
+                                                    rules_filtered_status += 1;
+                                                    continue;
+                                                }
+                                            }
+
+                                            // Apply min_level filter
+                                            if let Some(ref level) = rule.level {
+                                                if !filter.min_level.accepts(level) {
+                                                    rules_filtered_level += 1;
+                                                    continue;
+                                                }
+                                            }
+
+                                            collection.rules.push(rule);
                                         }
                                     }
                                     Err(e) => {
@@ -196,12 +250,23 @@ pub fn load_all_rules(dirs: &[&Path], skip_ids: &HashSet<String>) -> Result<Sigm
         }
     }
 
-    Ok(collection)
+    let rules_loaded = collection.rules.len() as u64;
+
+    Ok(LoadResult {
+        collection,
+        stats: LoadStats {
+            rules_loaded,
+            rules_filtered_status,
+            rules_filtered_level,
+            rules_total_candidate,
+        },
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{MinLevel, MinStatus};
     use detection_engine::find_rules_dirs;
     use std::fs;
 
@@ -326,5 +391,208 @@ mod tests {
         let git_dir = tmp.path().join(".git");
         fs::create_dir(&git_dir).unwrap();
         assert!(!is_repo_complete(&git_dir));
+    }
+
+    fn make_rule_yaml(
+        title: &str,
+        status: Option<&str>,
+        level: Option<&str>,
+        event_id: Option<u16>,
+    ) -> String {
+        let mut yaml = format!(
+            "id: test_uuid\ntitle: {title}\nlogsource:\n  product: windows\ndetection:\n  sel:\n    EventID: {eid}\n  condition:\n    - sel\n",
+            eid = event_id.map(|v| v.to_string()).unwrap_or_default()
+        );
+        if let Some(s) = status {
+            yaml.push_str(&format!("status: {s}\n"));
+        }
+        if let Some(l) = level {
+            yaml.push_str(&format!("level: {l}\n"));
+        }
+        yaml
+    }
+
+    #[test]
+    fn test_filter_status_experimental_below_stable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("test_rule.yml"),
+            make_rule_yaml("test rule", Some("experimental"), Some("high"), Some(1)),
+        )
+        .unwrap();
+
+        let dirs = vec![rules_dir.as_path()];
+        let filter = SigmaFilterConfig {
+            min_status: MinStatus::Stable,
+            min_level: MinLevel::Critical,
+        };
+        let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
+
+        assert_eq!(result.stats.rules_loaded, 0);
+        assert_eq!(result.stats.rules_filtered_status, 1);
+        assert_eq!(result.stats.rules_filtered_level, 0);
+        assert_eq!(result.stats.rules_total_candidate, 1);
+        assert!(result.collection.rules.is_empty());
+    }
+
+    #[test]
+    fn test_filter_level_informational_below_critical() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("test_rule.yml"),
+            make_rule_yaml("test rule", Some("stable"), Some("informational"), Some(1)),
+        )
+        .unwrap();
+
+        let dirs = vec![rules_dir.as_path()];
+        let filter = SigmaFilterConfig {
+            min_status: MinStatus::Stable,
+            min_level: MinLevel::Critical,
+        };
+        let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
+
+        assert_eq!(result.stats.rules_loaded, 0);
+        assert_eq!(result.stats.rules_filtered_status, 0);
+        assert_eq!(result.stats.rules_filtered_level, 1);
+        assert_eq!(result.stats.rules_total_candidate, 1);
+        assert!(result.collection.rules.is_empty());
+    }
+
+    #[test]
+    fn test_pass_through_no_status_no_level() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("test_rule.yml"),
+            make_rule_yaml("test rule", None, None, Some(1)),
+        )
+        .unwrap();
+
+        let dirs = vec![rules_dir.as_path()];
+        let filter = SigmaFilterConfig {
+            min_status: MinStatus::Stable,
+            min_level: MinLevel::Critical,
+        };
+        let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
+
+        assert_eq!(result.stats.rules_loaded, 1);
+        assert_eq!(result.stats.rules_filtered_status, 0);
+        assert_eq!(result.stats.rules_filtered_level, 0);
+        assert_eq!(result.stats.rules_total_candidate, 1);
+        assert_eq!(result.collection.rules.len(), 1);
+    }
+
+    #[test]
+    fn test_cascade_status_then_level() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("test_rule.yml"),
+            make_rule_yaml(
+                "test rule",
+                Some("experimental"),
+                Some("informational"),
+                Some(1),
+            ),
+        )
+        .unwrap();
+
+        let dirs = vec![rules_dir.as_path()];
+        let filter = SigmaFilterConfig {
+            min_status: MinStatus::Stable,
+            min_level: MinLevel::Critical,
+        };
+        let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
+
+        assert_eq!(result.stats.rules_loaded, 0);
+        assert_eq!(result.stats.rules_filtered_status, 1);
+        assert_eq!(result.stats.rules_filtered_level, 0);
+        assert_eq!(result.stats.rules_total_candidate, 1);
+    }
+
+    #[test]
+    fn test_pass_stable_high() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("test_rule.yml"),
+            make_rule_yaml("test rule", Some("stable"), Some("high"), Some(1)),
+        )
+        .unwrap();
+
+        let dirs = vec![rules_dir.as_path()];
+        let filter = SigmaFilterConfig {
+            min_status: MinStatus::Stable,
+            min_level: MinLevel::High,
+        };
+        let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
+
+        assert_eq!(result.stats.rules_loaded, 1);
+        assert_eq!(result.stats.rules_filtered_status, 0);
+        assert_eq!(result.stats.rules_filtered_level, 0);
+        assert_eq!(result.stats.rules_total_candidate, 1);
+    }
+
+    #[test]
+    fn test_skip_set_prevents_counting() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("test_rule.yml"),
+            make_rule_yaml("test rule", Some("stable"), Some("critical"), Some(1)),
+        )
+        .unwrap();
+
+        let dirs = vec![rules_dir.as_path()];
+        let mut skip = HashSet::new();
+        skip.insert("test_uuid".to_string());
+        let filter = SigmaFilterConfig::default();
+        let result = load_all_rules(&dirs, &skip, &filter).unwrap();
+
+        assert_eq!(result.stats.rules_loaded, 0);
+        assert_eq!(result.stats.rules_total_candidate, 0);
+    }
+
+    #[test]
+    fn test_all_candidates_filtered_to_zero() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("rule_a.yml"),
+            make_rule_yaml(
+                "rule a",
+                Some("experimental"),
+                Some("informational"),
+                Some(1),
+            ),
+        )
+        .unwrap();
+        fs::write(
+            rules_dir.join("rule_b.yml"),
+            make_rule_yaml("rule b", Some("deprecated"), Some("low"), Some(2)),
+        )
+        .unwrap();
+
+        let dirs = vec![rules_dir.as_path()];
+        let filter = SigmaFilterConfig {
+            min_status: MinStatus::Stable,
+            min_level: MinLevel::Critical,
+        };
+        let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
+
+        assert_eq!(result.stats.rules_loaded, 0);
+        assert_eq!(result.stats.rules_filtered_status, 2);
+        assert_eq!(result.stats.rules_filtered_level, 0);
+        assert_eq!(result.stats.rules_total_candidate, 2);
+        assert!(result.collection.rules.is_empty());
     }
 }
