@@ -55,10 +55,9 @@ sigmacatch/
 
 ```yaml
 git:
-  git:
-  author: "sigmacatch"
-    email: "you@example.com"
-    github_token: ""
+  author: "sigmacatch"        # GitHub username for contrib workflow
+  email: "you@example.com"    # required for git commits
+  github_token: ""            # GitHub token (or GITHUB_TOKEN env var) — required for HTTP transport
   transport: http             # http or ssh
   ssh_key_path: ""            # path to SSH private key (optional, only needed for SSH)
 log:
@@ -129,10 +128,11 @@ find_rules_dirs("sigma/")
     ↓
 Sequential walk: collect all .yml / .yaml paths (cheap, no parse)
     ↓
-Sequential parse + filter:
+Parallel parse + filter (rayon):
     For each file:
     ├── parse_sigma_yaml() → Sigma rules
     ├── post-parse filter: rule.logsource.product == "windows" (or absent)
+    ├── status/level filter: rule.status >= min_status AND rule.level >= min_level
     ├── skip if rule_id in skip set
     └── cross-file dedupe (first occurrence, walk order, wins)
     ↓

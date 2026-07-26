@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 use reqwest::{Client, StatusCode};
+use std::process::Command;
 use tracing::{info, warn};
 
 #[derive(Debug, Clone)]
@@ -16,6 +17,58 @@ impl ForkConfig {
         Self {
             fork_url,
             branch_name,
+        }
+    }
+}
+
+/// Possible outcomes of an SSH fork check.
+#[derive(Debug, Clone)]
+pub enum ForkSshResult {
+    /// The fork exists (ls-remote returned a valid response).
+    Exists,
+    /// The fork does not exist (ls-remote returned an error from GitHub).
+    NotFound,
+    /// SSH/git command failed (network error, key issue, git not installed, etc.).
+    SshError(String),
+}
+
+/// Check if a GitHub fork exists via SSH `git ls-remote`.
+///
+/// Distinguishes three outcomes:
+/// - `Exists` — fork responds to ls-remote
+/// - `NotFound` — GitHub reports the repo does not exist
+/// - `SshError` — SSH/git command failed (network, key, or git not installed)
+pub fn check_fork_exists_ssh(username: &str) -> ForkSshResult {
+    let ssh_remote = format!("git@github.com:{}/sigma.git", username);
+    let output = Command::new("git")
+        .arg("ls-remote")
+        .arg(&ssh_remote)
+        .arg("HEAD")
+        .output();
+    match output {
+        Ok(out) => {
+            if out.status.success() && !out.stdout.is_empty() {
+                ForkSshResult::Exists
+            } else {
+                // GitHub returns non-zero exit code when the repo doesn't exist.
+                // Typical stderr: "fatal: Repository not found."
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                warn!(
+                    "SSH fork check failed for '{}': {} — fork likely does not exist.",
+                    username, stderr.trim()
+                );
+                ForkSshResult::NotFound
+            }
+        }
+        Err(e) => {
+            warn!(
+                "SSH fork check failed for '{}': cannot execute `git ls-remote` — {}",
+                username, e
+            );
+            ForkSshResult::SshError(
+                "Cannot execute `git ls-remote` (ensure git is installed and on PATH)."
+                    .to_string(),
+            )
         }
     }
 }
@@ -60,7 +113,9 @@ pub async fn check_fork_exists(username: &str) -> Result<bool> {
     }
 }
 
-/// Detect fork for a given username.
+/// Detect fork for a given username, with SSH fallback.
+/// First tries HTTP HEAD to `https://github.com/{username}/sigma`.
+/// If HTTP fails, falls back to SSH `git ls-remote git@github.com:{username}/sigma.git`.
 /// Returns ForkConfig with fork_url if fork exists, errors otherwise.
 pub async fn detect_fork(username: &str, branch_name: &str) -> Result<ForkConfig> {
     if username.is_empty() {
@@ -68,17 +123,41 @@ pub async fn detect_fork(username: &str, branch_name: &str) -> Result<ForkConfig
     }
 
     let fork_url = format!("https://github.com/{}/sigma", username);
-    let exists = check_fork_exists(username).await?;
 
-    if exists {
-        info!("Fork detected: {}", fork_url);
-        Ok(ForkConfig::new(fork_url, branch_name.to_string()))
-    } else {
-        anyhow::bail!(
-            "Fork {} not found. Create a fork at: https://github.com/SigmaHQ/sigma/fork",
-            fork_url
-        );
+    // Try HTTP first (faster, no SSH overhead)
+    match check_fork_exists(username).await {
+        Ok(exists) => {
+            if exists {
+                info!("Fork detected via HTTP: {}", fork_url);
+                return Ok(ForkConfig::new(fork_url, branch_name.to_string()));
+            }
+        }
+        Err(_) => {
+            warn!("HTTP fork check failed, falling back to SSH detection");
+        }
     }
+
+    // SSH fallback
+    match check_fork_exists_ssh(username) {
+        ForkSshResult::Exists => {
+            info!("Fork detected via SSH: {}", fork_url);
+            return Ok(ForkConfig::new(fork_url, branch_name.to_string()));
+        }
+        ForkSshResult::NotFound => {
+            warn!("SSH fork check: fork '{}' not found on GitHub.", username);
+        }
+        ForkSshResult::SshError(reason) => {
+            warn!(
+                "SSH fork check failed for '{}': {} — cannot determine if fork exists.",
+                username, reason
+            );
+        }
+    }
+
+    anyhow::bail!(
+        "Fork {} not found. Create a fork at: https://github.com/SigmaHQ/sigma/fork",
+        fork_url
+    );
 }
 
 #[cfg(test)]

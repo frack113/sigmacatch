@@ -38,35 +38,64 @@ fn sanitize_url(url: &str) -> String {
 
 /// Convert an HTTPS GitHub URL to SSH format.
 /// e.g. `https://github.com/user/repo.git` → `git@github.com:user/repo.git`
+///
+/// Returns `None` if the URL is not a valid GitHub HTTPS URL, contains path traversal,
+/// or contains characters that would allow SSH command injection.
 pub fn https_to_ssh_url(url: &str) -> Option<String> {
-    if let Some(rest) = url.strip_prefix("https://github.com/") {
-        let repo = rest.strip_suffix(".git").unwrap_or(rest);
-        return Some(format!("git@github.com:{}.git", repo));
+    let rest = url.strip_prefix("https://github.com/")?;
+    // Reject path traversal and suspicious characters
+    if rest.contains("..") || rest.contains('/') || rest.contains([' ', '\t', '\n', '\r']) {
+        return None;
     }
-    None
+    let repo = rest.strip_suffix(".git").unwrap_or(rest);
+    // Reject if the repo name contains shell-special characters
+    if repo.chars().any(|c| ['\'', '"', '$', '`', '\\', '!', '&', '|', ';', '(', ')', '{', '}', '[', ']', '<', '>', '#'].contains(&c)) {
+        return None;
+    }
+    Some(format!("git@github.com:{}.git", repo))
+}
+
+/// Escape a string for safe use as an argument inside a shell-quoted segment.
+fn shell_quote_arg(arg: &str) -> String {
+    if arg.is_empty() {
+        return String::new();
+    }
+    if !arg
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ':' | ',' | '~'))
+    {
+        let escaped = arg.replace('\'', "'\\''");
+        return format!("'{}'", escaped);
+    }
+    arg.to_string()
 }
 
 /// Get the SSH shell command string from config or environment.
-/// Priority: ssh_key_path in config > GIT_SSH_COMMAND env > GIT_SSH env > default ssh
+///
+/// Priority: `GIT_SSH_COMMAND` env > `GIT_SSH` env > `ssh_key_path` in config > default `ssh`.
+/// Environment variables take precedence so the user can override config at runtime without
+/// modifying `config.yaml` (e.g. for testing different keys or proxies).
 fn get_ssh_shell_command(ssh_key_path: Option<&str>) -> Option<String> {
-    // Check environment first
     if let Ok(cmd) = std::env::var("GIT_SSH_COMMAND") {
         if !cmd.is_empty() {
+            debug!("Using GIT_SSH_COMMAND from environment");
             return Some(cmd);
         }
     }
     if let Ok(cmd) = std::env::var("GIT_SSH") {
         if !cmd.is_empty() {
+            debug!("Using GIT_SSH from environment");
             return Some(cmd);
         }
     }
-    // Use key path from config if provided
     if let Some(key_path) = ssh_key_path {
         if !key_path.is_empty() {
-            return Some(format!("ssh -i {}", key_path));
+            let quoted = shell_quote_arg(key_path);
+            let cmd = format!("ssh -i {}", quoted);
+            debug!("Constructed SSH command with key path: {}", cmd);
+            return Some(cmd);
         }
     }
-    // Default: return None to use auto-resolve
     None
 }
 
@@ -293,6 +322,34 @@ pub fn fetch_remote_ssh(
     Ok((count, outcome.default_branch))
 }
 
+/// Describe a rejection reason in user-friendly text.
+fn describe_push_rejection(status: &grit_lib::push_report::PushRefStatus) -> String {
+    match status {
+        grit_lib::push_report::PushRefStatus::RejectNonFastForward => {
+            "local branch has diverged — run `git pull` first or use `--force`".to_string()
+        }
+        grit_lib::push_report::PushRefStatus::RejectAlreadyExists => {
+            "remote ref already exists — rename your branch or delete the remote ref".to_string()
+        }
+        grit_lib::push_report::PushRefStatus::RejectFetchFirst => {
+            "remote has new commits not in your local branch — run `git pull` first".to_string()
+        }
+        grit_lib::push_report::PushRefStatus::RejectNeedsForce => {
+            "remote requires `--force` (non-fast-forward) — update the remote branch first".to_string()
+        }
+        grit_lib::push_report::PushRefStatus::RejectStale => {
+            "force-with-lease stale — the remote ref changed unexpectedly".to_string()
+        }
+        grit_lib::push_report::PushRefStatus::RemoteRejected => {
+            "remote rejected the update (hook or policy)".to_string()
+        }
+        grit_lib::push_report::PushRefStatus::AtomicPushFailed => {
+            "atomic push failed — another ref in this push was rejected".to_string()
+        }
+        _ => format!("{:?}", status),
+    }
+}
+
 /// Push via SSH.
 pub fn push_branch_ssh(
     git_dir: &Path,
@@ -334,18 +391,73 @@ pub fn push_branch_ssh(
     } else {
         for result in &outcome.results {
             if result.status.is_error() {
+                let reason = describe_push_rejection(&result.status);
+                let remote_msg = result
+                    .message
+                    .as_deref()
+                    .map(|m| format!(" ({})", m))
+                    .unwrap_or_default();
+                let action_hint = if matches!(
+                    result.status,
+                    grit_lib::push_report::PushRefStatus::RejectFetchFirst
+                        | grit_lib::push_report::PushRefStatus::RejectNonFastForward
+                ) {
+                    "Delete the branch on GitHub and re-run, or rename it."
+                } else {
+                    &reason
+                };
                 anyhow::bail!(
-                    "Push of '{}' rejected by remote via SSH: {:?}. \
-                     The remote branch has diverged (likely another machine or a prior \
-                     partial push). Delete the branch on GitHub and re-run, or rename it.",
+                    "Push of '{}' rejected by remote via SSH: {:?}{}.\n    \
+                     Fix: {}",
                     branch_name,
-                    result.status
+                    result.status,
+                    remote_msg,
+                    action_hint
                 );
             }
         }
         info!("Pushed branch '{}' via SSH", branch_name);
     }
     Ok(())
+}
+
+/// Resolve a default branch name from remote tracking refs.
+/// Tries `origin/<branch_name>` first, then falls back to `origin/main` / `origin/master`.
+fn resolve_default_head(git_dir: &Path, default_branch: Option<&str>) -> Option<(String, String)> {
+    if let Some(branch_name) = default_branch {
+        let remote_ref = format!("refs/remotes/origin/{}", branch_name);
+        if let Some(oid_str) = read_loose_or_packed_ref(git_dir, &remote_ref) {
+            return Some((format!("refs/heads/{}", branch_name), oid_str));
+        }
+    }
+    for fallback in &["main", "master"] {
+        let remote_ref = format!("refs/remotes/origin/{}", fallback);
+        if let Some(oid_str) = read_loose_or_packed_ref(git_dir, &remote_ref) {
+            return Some((format!("refs/heads/{}", fallback), oid_str));
+        }
+    }
+    None
+}
+
+/// Configure HEAD and create local tracking ref after a fetch (both HTTP and SSH).
+fn set_head_after_fetch(git_dir: &Path, default_branch: Option<&str>) {
+    let head_file = git_dir.join("HEAD");
+    if let Some((local_ref, oid_str)) = resolve_default_head(git_dir, default_branch) {
+        let head_content = format!("ref: {}\n", local_ref);
+        std::fs::write(git_dir.join("HEAD"), &head_content).ok();
+        let loose_path = git_dir.join(&local_ref);
+        if let Some(parent) = loose_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&loose_path, format!("{}\n", oid_str));
+        info!(
+            "HEAD set to {} (→ {})",
+            local_ref,
+            &oid_str[..12.min(oid_str.len())]
+        );
+    } else if !head_file.exists() {
+        warn!("No default branch found — HEAD not set");
+    }
 }
 
 /// Full clone: init + fetch + set HEAD + checkout worktree.
@@ -370,50 +482,7 @@ pub fn clone_repo(http_client: &dyn HttpClient, url: &str, dest: &Path) -> Resul
         anyhow::bail!("No refs fetched from remote — empty or unreachable repository");
     }
 
-    if let Some(branch_name) = &default_branch {
-        let remote_ref = format!("refs/remotes/origin/{}", branch_name);
-        let local_ref = format!("refs/heads/{}", branch_name);
-        if let Some(oid_str) = read_loose_or_packed_ref(&git_dir, &remote_ref) {
-            let head_content = format!("ref: {}\n", local_ref);
-            std::fs::write(git_dir.join("HEAD"), &head_content)?;
-            let loose_path = git_dir.join(&local_ref);
-            if let Some(parent) = loose_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(&loose_path, format!("{}\n", oid_str))?;
-            info!(
-                "HEAD set to {} (→ {})",
-                local_ref,
-                &oid_str[..12.min(oid_str.len())]
-            );
-        } else {
-            warn!(
-                "Default branch '{}' not found in remote tracking refs",
-                branch_name
-            );
-        }
-    } else {
-        let head_file = git_dir.join("HEAD");
-        if !head_file.exists() {
-            if let Some(oid_str) = read_loose_or_packed_ref(&git_dir, "refs/remotes/origin/main") {
-                std::fs::write(&head_file, format!("{}\n", oid_str))?;
-                info!(
-                    "HEAD set to detached {} (fallback)",
-                    &oid_str[..12.min(oid_str.len())]
-                );
-            } else if let Some(oid_str) =
-                read_loose_or_packed_ref(&git_dir, "refs/remotes/origin/master")
-            {
-                std::fs::write(&head_file, format!("{}\n", oid_str))?;
-                info!(
-                    "HEAD set to detached {} (fallback master)",
-                    &oid_str[..12.min(oid_str.len())]
-                );
-            } else {
-                warn!("No default branch found — HEAD not set");
-            }
-        }
-    }
+    set_head_after_fetch(&git_dir, default_branch.as_deref());
 
     checkout_main_branch(&git_dir, dest)?;
     Ok(())
@@ -960,50 +1029,7 @@ pub fn git_clone_ssh(url: &str, dest: &Path, ssh_key_path: Option<&str>) -> Resu
         anyhow::bail!("No refs fetched from remote via SSH — empty or unreachable repository");
     }
 
-    if let Some(branch_name) = &default_branch {
-        let remote_ref = format!("refs/remotes/origin/{}", branch_name);
-        let local_ref = format!("refs/heads/{}", branch_name);
-        if let Some(oid_str) = read_loose_or_packed_ref(&git_dir, &remote_ref) {
-            let head_content = format!("ref: {}\n", local_ref);
-            std::fs::write(git_dir.join("HEAD"), &head_content)?;
-            let loose_path = git_dir.join(&local_ref);
-            if let Some(parent) = loose_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(&loose_path, format!("{}\n", oid_str))?;
-            info!(
-                "HEAD set to {} (→ {})",
-                local_ref,
-                &oid_str[..12.min(oid_str.len())]
-            );
-        } else {
-            warn!(
-                "Default branch '{}' not found in remote tracking refs",
-                branch_name
-            );
-        }
-    } else {
-        let head_file = git_dir.join("HEAD");
-        if !head_file.exists() {
-            if let Some(oid_str) = read_loose_or_packed_ref(&git_dir, "refs/remotes/origin/main") {
-                std::fs::write(&head_file, format!("{}\n", oid_str))?;
-                info!(
-                    "HEAD set to detached {} (fallback)",
-                    &oid_str[..12.min(oid_str.len())]
-                );
-            } else if let Some(oid_str) =
-                read_loose_or_packed_ref(&git_dir, "refs/remotes/origin/master")
-            {
-                std::fs::write(&head_file, format!("{}\n", oid_str))?;
-                info!(
-                    "HEAD set to detached {} (fallback master)",
-                    &oid_str[..12.min(oid_str.len())]
-                );
-            } else {
-                warn!("No default branch found — HEAD not set");
-            }
-        }
-    }
+    set_head_after_fetch(&git_dir, default_branch.as_deref());
 
     checkout_main_branch(&git_dir, dest)?;
     Ok(())

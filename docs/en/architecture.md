@@ -63,7 +63,7 @@ All 5 library crates are independent (no cross-dependency between them). `sigmac
 3. Acquire SigmaHQ rules via `grit-lib` (clone); exit error if no rules found
 4. `find_rules_dirs()` scans `sigma/` for `rules` / `rules-*` dirs (excludes `rules-compliance`)
 5. Build skip set by scanning `regression_data/rules/` + `sigma/regression_data/` for existing `info.yml` → `HashSet<String>` of rule IDs
-6. Load Sigma rules from all `rules*` dirs, **excluding skipped rule IDs**; post-parse filter via `rule.logsource.product` filters non-Windows rules (sole allowed optimization) — a startup rule table is displayed (loaded / skipped / active services)
+6. Load Sigma rules from all `rules*` dirs, **excluding skipped rule IDs**; post-parse filter via `rule.logsource.product` filters non-Windows rules; status/level filter via `config.sigma.min_status`/`min_level` (sole allowed optimization) — a startup rule table is displayed (loaded / skipped / active services)
 7. Collect events via `EventCollector` (all Windows channels) → `Vec<Event>`:
    - Each event carries `event_json: Value` (pre-parsed by collector, `parse_winevt_xml` fallback)
    - Each event's `LogSource` is derived from the **channel** via `resolve_logsource` (channel → service > provider → service > default)

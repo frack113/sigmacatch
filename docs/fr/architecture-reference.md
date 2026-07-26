@@ -128,10 +128,11 @@ find_rules_dirs("sigma/")
     ↓
 Walk séquentiel : collecte tous les chemins .yml / .yaml (rapide, pas de parse)
     ↓
-Parse + filter séquentiel :
+Parse + filter parallèle (rayon) :
     Pour chaque fichier :
     ├── parse_sigma_yaml() → règles Sigma
     ├── post-parse filter: rule.logsource.product == "windows" (ou absent)
+    ├── status/level filter: rule.status >= min_status ET rule.level >= min_level
     ├── skip si rule_id dans skip set
     └── dédoublonnage cross-fichier (1re occurrence, ordre du walk, gagne)
     ↓

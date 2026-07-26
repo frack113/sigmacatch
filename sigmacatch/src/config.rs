@@ -385,6 +385,48 @@ impl Config {
                 self.git.email
             );
         }
+        // Validate SSH key path if configured
+        if let Some(ref key_path) = self.git.ssh_key_path {
+            if !key_path.is_empty() {
+                let meta = std::fs::metadata(key_path).map_err(|e| {
+                    anyhow::anyhow!(
+                        "config: SSH key path '{}' does not exist: {}",
+                        key_path,
+                        e
+                    )
+                })?;
+                if !meta.is_file() {
+                    anyhow::bail!(
+                        "config: SSH key path '{}' is not a file",
+                        key_path
+                    );
+                }
+                #[cfg(unix)]
+                {
+                    let mode = meta.permissions().mode() & 0o777;
+                    if mode & 0o077 != 0 {
+                        tracing::warn!(
+                            "config: SSH key '{}' has overly permissive mode 0{:o} — should be 0600. \
+                             SSH may refuse to use it. Run: chmod 600 {}",
+                            key_path,
+                            mode,
+                            key_path
+                        );
+                    }
+                    // Also check that the key is readable by the current user
+                    if mode & 0o400 == 0 {
+                        tracing::warn!(
+                            "config: SSH key '{}' is not readable by the owner (mode 0{:o}). \
+                             SSH will reject it. Run: chmod 400 {}",
+                            key_path,
+                            mode,
+                            key_path
+                        );
+                    }
+                }
+            }
+        }
+
         // Token is only required for HTTP transport
         if self.git.transport == GitTransport::Http {
             let has_config_token = !self.git.github_token.trim().is_empty();
