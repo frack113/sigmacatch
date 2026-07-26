@@ -192,11 +192,14 @@ fn handle_event_data(node: Node) -> Value {
         if child.is_element() && child.tag_name().name() == "Data" {
             let name = child.attribute("Name").unwrap_or("");
             if !name.is_empty() {
+                // Strip spaces from key names so field paths like
+                // `Event.EventData.SourceName` resolve without quoted notation.
+                let key: String = name.chars().filter(|c| *c != ' ').collect();
                 let value = child
                     .text()
                     .map(|t| t.trim().to_string())
                     .unwrap_or_default();
-                map.insert(name.to_string(), Value::String(value));
+                map.insert(key, Value::String(value));
             }
         }
     }

@@ -20,7 +20,6 @@ transformations:
       Computer: Event.System.Computer
       EventID: Event.System.EventID
       ProviderName: Event.System.Provider.#attributes.Name
-      SourceName: Event.System.SourceName
       CallTrace: Event.EventData.CallTrace
       CallerProcessId: Event.EventData.CallerProcessId
       CallerProcessName: Event.EventData.CallerProcessName
@@ -90,60 +89,64 @@ transformations:
       UserAgent: Event.EventData.UserAgent
       WorkstationName: Event.EventData.WorkstationName
       TaskName: Event.EventData.TaskName
-      Operation: Event.EventData.Operation
     rule_conditions:
       - type: logsource
         product: windows
 
   # ─── WinDefend-specific field name mapping ───
-  # WinDefend EventData fields use spaces in keys (e.g. "Source Name", "Product Name")
-  # Sigma rules use SourceName/ProductName without spaces — map them.
+  # WinDefend EventData keys have spaces (e.g. "Source Name", "Product Name").
+  # handle_event_data strips spaces → "SourceName", "ProductName", etc.
+  # Sigma rules use the same names — map them to Event.EventData.*
   - id: windefend_eventdata_fields
     type: field_name_mapping
     mapping:
-      SourceName: Event.EventData."Source Name"
-      ProductName: Event.EventData."Product Name"
-      ProductVersion: Event.EventData."Product Version"
-      DetectionID: Event.EventData."Detection ID"
-      DetectionTime: Event.EventData."Detection Time"
-      ThreatID: Event.EventData."Threat ID"
-      ThreatName: Event.EventData."Threat Name"
-      SeverityID: Event.EventData."Severity ID"
-      SeverityName: Event.EventData."Severity Name"
-      CategoryID: Event.EventData."Category ID"
-      CategoryName: Event.EventData."Category Name"
-      StatusCode: Event.EventData."Status Code"
-      StatusDescription: Event.EventData."Status Description"
-      SourceID: Event.EventData."Source ID"
-      ProcessName: Event.EventData."Process Name"
-      DetectionUser: Event.EventData."Detection User"
-      OriginID: Event.EventData."Origin ID"
-      OriginName: Event.EventData."Origin Name"
-      ExecutionID: Event.EventData."Execution ID"
-      ExecutionName: Event.EventData."Execution Name"
-      TypeID: Event.EventData."Type ID"
-      TypeName: Event.EventData."Type Name"
-      PreExecutionStatus: Event.EventData."Pre Execution Status"
-      ActionID: Event.EventData."Action ID"
-      ActionName: Event.EventData."Action Name"
-      ErrorCode: Event.EventData."Error Code"
-      ErrorDescription: Event.EventData."Error Description"
-      PostCleanStatus: Event.EventData."Post Clean Status"
-      AdditionalActionsID: Event.EventData."Additional Actions ID"
-      AdditionalActionsString: Event.EventData."Additional Actions String"
-      RemediationUser: Event.EventData."Remediation User"
-      SecurityIntelligenceVersion: Event.EventData."Security intelligence Version"
-      EngineVersion: Event.EventData."Engine Version"
+      SourceName: Event.EventData.SourceName
+      ProductName: Event.EventData.ProductName
+      ProductVersion: Event.EventData.ProductVersion
+      DetectionID: Event.EventData.DetectionID
+      DetectionTime: Event.EventData.DetectionTime
+      ThreatID: Event.EventData.ThreatID
+      ThreatName: Event.EventData.ThreatName
+      SeverityID: Event.EventData.SeverityID
+      SeverityName: Event.EventData.SeverityName
+      CategoryID: Event.EventData.CategoryID
+      CategoryName: Event.EventData.CategoryName
+      StatusCode: Event.EventData.StatusCode
+      StatusDescription: Event.EventData.StatusDescription
+      SourceID: Event.EventData.SourceID
+      ProcessName: Event.EventData.ProcessName
+      Path: Event.EventData.Path
+      DetectionUser: Event.EventData.DetectionUser
+      OriginID: Event.EventData.OriginID
+      OriginName: Event.EventData.OriginName
+      ExecutionID: Event.EventData.ExecutionID
+      ExecutionName: Event.EventData.ExecutionName
+      TypeID: Event.EventData.TypeID
+      TypeName: Event.EventData.TypeName
+      PreExecutionStatus: Event.EventData.PreExecutionStatus
+      ActionID: Event.EventData.ActionID
+      ActionName: Event.EventData.ActionName
+      ErrorCode: Event.EventData.ErrorCode
+      ErrorDescription: Event.EventData.ErrorDescription
+      PostCleanStatus: Event.EventData.PostCleanStatus
+      AdditionalActionsID: Event.EventData.AdditionalActionsID
+      AdditionalActionsString: Event.EventData.AdditionalActionsString
+      RemediationUser: Event.EventData.RemediationUser
+      SecurityIntelligenceVersion: Event.EventData.SecurityIntelligenceVersion
+      EngineVersion: Event.EventData.EngineVersion
     rule_conditions:
       - type: logsource
         service: windefend
         product: windows
 
-  # EventData fields — bulk prefix mapping for EventData.* convention
-  - id: sys_eventdata_prefix
-    type: field_name_prefix_mapping
+  # ─── WMI-Activity-specific field name mapping ───
+  # WMI-Activity/Operational EID 5858 (ClientFailure) uses UserData.Operation_ClientFailure
+  # instead of EventData. Map Operation to the correct nested path.
+  - id: wmi_activity_fields
+    type: field_name_mapping
     mapping:
-      EventData.: Event.EventData.
+      Operation: Event.UserData.Operation_ClientFailure.Operation
     rule_conditions:
       - type: logsource
+        service: wmi
         product: windows

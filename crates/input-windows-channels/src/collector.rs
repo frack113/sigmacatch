@@ -273,7 +273,7 @@ impl EventCollector {
     #[cfg(windows)]
     fn render_and_push(
         event_handle: windows::Win32::System::EventLog::EVT_HANDLE,
-        channel: &str,
+        _channel: &str,
         events: &mut Vec<Event>,
     ) {
         use windows::Win32::System::EventLog::{EvtRender, EvtRenderEventXml};

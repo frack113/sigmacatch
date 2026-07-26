@@ -78,6 +78,11 @@ impl DetectionEngine {
         self.engine.rule_count()
     }
 
+    /// Access the inner rsigma-eval engine for introspection (compiled rules, etc.).
+    pub fn engine(&self) -> &Engine {
+        &self.engine
+    }
+
     // ─── FIFO API ─────────────────────────────────────────────────────────
 
     /// Push events into the internal event pile.

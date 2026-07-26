@@ -169,21 +169,13 @@ transformations:
         category: create_stream_hash
         product: windows
 
-  # EventID 17: pipe_created
-  - id: win_pipe_created_17
+  # EventID 17+18: pipe_created (OR — each event has exactly one EID)
+  - id: win_pipe_created
     type: add_condition
     conditions:
-      Event.System.EventID: 17
-    rule_conditions:
-      - type: logsource
-        category: pipe_created
-        product: windows
-
-  # EventID 18: pipe_created
-  - id: win_pipe_created_18
-    type: add_condition
-    conditions:
-      Event.System.EventID: 18
+      Event.System.EventID:
+        - 17
+        - 18
     rule_conditions:
       - type: logsource
         category: pipe_created
@@ -330,30 +322,16 @@ transformations:
         product: windows
 
   # ─── Parent category: registry_event ───
-  # Parent of registry_add (12), registry_set (13), registry_rename (14)
-
-  - id: win_registry_event_12
+  # Parent of registry_add (12), registry_set (13), registry_rename (14).
+  # Rules using category: registry_event need to match ANY of these EIDs.
+  # List values create OR semantics (multiple values = OR per Sigma spec).
+  - id: win_registry_event
     type: add_condition
     conditions:
-      Event.System.EventID: 12
-    rule_conditions:
-      - type: logsource
-        category: registry_event
-        product: windows
-
-  - id: win_registry_event_13
-    type: add_condition
-    conditions:
-      Event.System.EventID: 13
-    rule_conditions:
-      - type: logsource
-        category: registry_event
-        product: windows
-
-  - id: win_registry_event_14
-    type: add_condition
-    conditions:
-      Event.System.EventID: 14
+      Event.System.EventID:
+        - 12
+        - 13
+        - 14
     rule_conditions:
       - type: logsource
         category: registry_event
