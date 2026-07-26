@@ -29,15 +29,13 @@ sigmacatch/src/
 ├── config.rs            # Config YAML (Config, SigmaFilterConfig, MinStatus, MinLevel)
 ├── logger.rs            # Abonnement tracing à deux couches (stderr info + fichier debug)
 ├── repo.rs              # wrapper grit-lib : clone/fetch/push/commit/branch (Rust pur, pas de git CLI)
-├── evtx/
-│   └── writer.rs        # write_evtx() via EvtExportLog API (→ EVTX valide ou .xml fallback)
+├── parser/
+│   └── winevt.rs        # re-export depuis sigmacatch-types
 ├── sigma/
 │   ├── mod.rs           # pub mod loader, mapping
 │   ├── loader.rs        # SigmaRepo (grit-lib) + find_rules_dirs()
 │   └── mapping/
 │       └── mod.rs       # re-export depuis input_windows_channels::mapping
-├── regression/
-│   └── mod.rs           # re-exports depuis le crate sigma-regression
 ├── github/
 │   ├── mod.rs           # pub mod commit, fork
 │   ├── commit.rs        # Workflow de commit avec validation author/email
@@ -49,15 +47,14 @@ sigmacatch/src/
 ## Graphe de dépendances
 
 ```
-sigmacatch ──┬── detection-engine       (wrapper rsigma-eval + pipelines embarquées)
-             ├── input-windows-channels  (collecteur Winevt, FIFO multi-channels)
-             ├── input-evtx             (parser fichiers EVTX → Event)
-             ├── input-windows-channels (résolution LogSource, taxonomie)
-             ├── sigmacatch-types       (Event, Alert, RegressionHeader, parsing XML)
-             └── sigma-regression       (InfoYml, SkipSet, triplet)
+sigmacatch ──┬── detection-engine        (wrapper rsigma-eval + pipelines embarquées)
+             ├── input-windows-channels  (collecteur Winevt + résolution LogSource, taxonomie)
+             ├── input-evtx              (parser fichiers EVTX → Event)
+             ├── sigmacatch-types        (Event, Alert, RegressionHeader, parsing XML)
+             └── sigma-regression        (InfoYml, SkipSet, triplet)
 ```
 
-Les 6 crates sont indépendants (aucune dépendance croisée entre eux). `sigmacatch` dépend des 6, ainsi que de crates externes (`rsigma-eval`, `grit-lib`, `tokio`, `windows`, etc.).
+Les 5 crates sont indépendants (aucune dépendance croisée entre eux). `sigmacatch` dépend des 5, ainsi que de crates externes (`rsigma-eval`, `grit-lib`, `tokio`, `windows`, etc.).
 
 ## Pipeline (single run, sequential)
 
@@ -66,7 +63,7 @@ Les 6 crates sont indépendants (aucune dépendance croisée entre eux). `sigmac
 3. Acquire SigmaHQ rules via `grit-lib` (clone); exit error if no rules found
 4. `find_rules_dirs()` scans `sigma/` for `rules` / `rules-*` dirs (excludes `rules-compliance`)
 5. Build skip set by scanning `regression_data/rules/` + `sigma/regression_data/` for existing `info.yml` → `HashSet<String>` of rule IDs
-6. Load Sigma rules from all `rules*` dirs, **excluding skipped rule IDs**; post-parse filter via `rule.logsource.product` filters non-Windows rules; status/level filter via `config.sigma.min_status`/`min_level` (seule optimisation autorisée) — une table de règles est affichée au démarrage (chargées / skipées / services actifs)
+6. Load Sigma rules from all `rules*` dirs, **excluding skipped rule IDs**; post-parse filter via `rule.logsource.product` filters non-Windows rules (seule optimisation autorisée) — une table de règles est affichée au démarrage (chargées / skipées / services actifs)
 7. Collect events via `EventCollector` (all Windows channels) → `Vec<Event>`:
    - Chaque event porte `event_json: Value` (pré-parsé par le collector, fallback `parse_winevt_xml`)
    - Each event's `LogSource` est dérivé du **channel** via `resolve_logsource` (channel → service > provider → service > default)

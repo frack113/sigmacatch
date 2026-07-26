@@ -70,3 +70,32 @@ Fonctionnalités identifiées comme utiles mais hors périmètre actuel. Pas de 
 - Caching de compilation des rules : éviter de recompiler la même rule pour chaque event — utiliser le caching interne de `rsigma-eval`
 
 **Cas d'usage :** cycles d'évaluation plus rapides avec des centaines de règles Sigma, empreinte mémoire réduite par évitement du chargement de rules inutiles.
+
+---
+
+## 6. Transport Git SSH
+
+**État :** toutes les opérations git (clone, fetch, push) utilisent exclusivement HTTP(S) via `grit-lib` + `reqwest`. L'authentification est injectée en tant que `x-access-token` dans les URLs HTTPS. Pas de support SSH.
+
+**Ce qui manque :**
+- Couche de transport SSH pour clone/fetch/push (gestion des clés SSH, agent forwarding, ou auth basée sur clés)
+- Option de config pour choisir entre HTTP+token et SSH
+- `grit-lib` aurait besoin d'un backend transport SSH (actuellement HTTP-only)
+- Vérification des clés SSH hôtes et gestion du known_hosts
+- Résolution d'URL fork pour SSH (`git@github.com:user/sigma.git` au lieu de `https://github.com/user/sigma.git`)
+
+**Cas d'usage :** environnements où les clés SSH sont préférées aux tokens (CI/CD avec deploy keys, environnements corporate avec accès SSH-only, pas de gestion de tokens).
+
+---
+
+## 7. Filtre de chargement des règles (status/level)
+
+**État :** `SigmaFilterConfig` définit des seuils `min_status` (défaut : stable) et `min_level` (défaut : critical) dans `config.rs`, mais ceux-ci ne sont **jamais appliqués** lors du chargement dans `load_all_rules()`. Le filtre actuel ne vérifie que : produit Windows + skip set. Les docs décrivaient précédemment ceci comme implémenté — corrigé pour refléter le comportement réel.
+
+**Ce qui manque :**
+- Appliquer les filtres `min_status` et `min_level` dans `load_all_rules()` après le parsing de chaque règle
+- Les règles sans champ status ou level doivent être acceptées (pass-through)
+- Afficher le nombre de règles filtrées dans la table de démarrage
+- Configurable via `config.yaml` → `sigma.min_status` et `sigma.min_level`
+
+**Cas d'usage :** charger uniquement les règles de production (stable + critical/high) pour un évaluation plus rapide, ignorer les règles expérimentales/dépréciées/informationnelles dans les pipelines CI.

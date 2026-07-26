@@ -32,11 +32,9 @@ sigmacatch/
 │       ├── lib.rs                 # Déclarations pub mod
 │       ├── config.rs              # Config, SigmaFilterConfig, MinStatus, MinLevel
 │       ├── repo.rs                # wrapper grit-lib (clone/fetch/push/commit/branch)
-│       ├── evtx/writer.rs         # write_evtx() via EvtExportLog API + .xml fallback
 │       ├── sigma/
 │       │   ├── loader.rs          # SigmaRepo (grit-lib) + find_rules_dirs()
 │       │   └── mapping/mod.rs     # re-export depuis input_windows_channels::mapping
-│       ├── regression/mod.rs      # re-export depuis sigma-regression
 │       ├── github/
 │       │   ├── commit.rs          # commit_all_rules avec author env + fallback
 │       │   └── fork.rs            # ForkConfig, check_fork_exists, detect_fork
@@ -44,8 +42,7 @@ sigmacatch/
 ├── crates/
 │   ├── detection-engine/          # Wrapper rsigma-eval + pipelines embarquées (windows.yml, flatten_winevt.yml)
 │   ├── input-evtx/                # Parse EVTX files → Event objects
-│   ├── input-windows-channels/    # Collecteur multi-channels Windows Event Log (EvtQueryW, EvtNext, EvtRender)
-│   ├── input-windows-channels/    # LogSource, taxonomie (phf + channel_mapping.yml), mappings custom
+│   ├── input-windows-channels/    # Collecteur multi-channels Windows Event Log (EvtQueryW, EvtNext, EvtRender) + LogSource, taxonomie (phf + channel_mapping.yml), mappings custom
 │   ├── sigma-regression/          # SkipSet, RegressionData, InfoYml, validation triplet
 │   └── sigmacatch-types/          # Types partagés : Event, Alert, RegressionHeader + parsing XML
 ```
@@ -128,11 +125,10 @@ find_rules_dirs("sigma/")
     ↓
 Walk séquentiel : collecte tous les chemins .yml / .yaml (rapide, pas de parse)
     ↓
-Parse + filter parallèle (rayon::par_iter, pas d'état partagé) :
+Parse + filter séquentiel :
     Pour chaque fichier :
     ├── parse_sigma_yaml() → règles Sigma
     ├── post-parse filter: rule.logsource.product == "windows" (ou absent)
-    ├── filter status/level: rule.status >= min_status ET rule.level >= min_level (config.sigma)
     ├── skip si rule_id dans skip set
     └── dédoublonnage cross-fichier (1re occurrence, ordre du walk, gagne)
     ↓

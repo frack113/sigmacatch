@@ -70,3 +70,32 @@ Features identified as useful but out of current scope. No timeline — document
 - Rule compilation caching: avoid recompiling the same rule for every event — use `rsigma-eval`'s internal caching
 
 **Use case:** faster evaluation cycles with hundreds of Sigma rules, reduced memory footprint by avoiding unnecessary rule loading.
+
+---
+
+## 6. Git SSH Transport
+
+**Status:** all git operations (clone, fetch, push) use HTTP(S) exclusively via `grit-lib` + `reqwest`. Authentication is injected as `x-access-token` in HTTPS URLs. There is no SSH support.
+
+**What's missing:**
+- SSH transport layer for clone/fetch/push (requires SSH key handling, agent forwarding, or key-based auth)
+- Config option to choose between HTTP+token and SSH transport
+- `grit-lib` would need an SSH transport backend (currently HTTP-only)
+- SSH host key verification and known_hosts management
+- Fork URL resolution for SSH (`git@github.com:user/sigma.git` instead of `https://github.com/user/sigma.git`)
+
+**Use case:** environments where SSH keys are preferred over tokens (CI/CD with deploy keys, corporate environments with SSH-only access, no token management overhead).
+
+---
+
+## 7. Rule Loading Filter (status/level)
+
+**Status:** `SigmaFilterConfig` defines `min_status` (default: stable) and `min_level` (default: critical) thresholds in `config.rs`, but these are **never applied** during rule loading in `load_all_rules()`. The current filter only checks: Windows product + skip set. The docs previously described this as implemented — corrected to reflect actual behavior.
+
+**What's missing:**
+- Apply `min_status` and `min_level` filters in `load_all_rules()` after parsing each rule
+- Rules missing a status or level field should be accepted (pass-through)
+- Display filtered-out rules count in the startup rule table
+- Configurable via `config.yaml` → `sigma.min_status` and `sigma.min_level`
+
+**Use case:** load only production-ready rules (stable + critical/high) for faster evaluation, skip experimental/deprecated/informational rules in CI pipelines.

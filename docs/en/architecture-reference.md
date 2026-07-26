@@ -32,11 +32,9 @@ sigmacatch/
 │       ├── lib.rs                 # Déclarations pub mod
 │       ├── config.rs              # Config, SigmaFilterConfig, MinStatus, MinLevel
 │       ├── repo.rs                # wrapper grit-lib (clone/fetch/push/commit/branch)
-│       ├── evtx/writer.rs         # write_evtx() via EvtExportLog API + .xml fallback
 │       ├── sigma/
 │       │   ├── loader.rs          # SigmaRepo (grit-lib) + find_rules_dirs()
 │       │   └── mapping/mod.rs     # re-export from input_windows_channels::mapping
-│       ├── regression/mod.rs      # re-export depuis sigma-regression
 │       ├── github/
 │       │   ├── commit.rs          # commit_all_rules avec author env + fallback
 │       │   └── fork.rs            # ForkConfig, check_fork_exists, detect_fork
@@ -44,8 +42,7 @@ sigmacatch/
 ├── crates/
 │   ├── detection-engine/          # Wrapper rsigma-eval + pipelines embarquées (windows.yml, flatten_winevt.yml)
 │   ├── input-evtx/                # Parse EVTX files → Event objects
-│   ├── input-windows-channels/    # Collecteur multi-channels Windows Event Log (EvtQueryW, EvtNext, EvtRender)
-│   ├── input-windows-channels/    # LogSource, taxonomie (phf + channel_mapping.yml), mappings custom
+│   ├── input-windows-channels/    # Collecteur multi-channels Windows Event Log (EvtQueryW, EvtNext, EvtRender) + LogSource, taxonomie (phf + channel_mapping.yml), mappings custom
 │   ├── sigma-regression/          # SkipSet, RegressionData, InfoYml, validation triplet
 │   └── sigmacatch-types/          # Types partagés : Event, Alert, RegressionHeader + parsing XML
 ```
@@ -128,11 +125,10 @@ find_rules_dirs("sigma/")
     ↓
 Sequential walk: collect all .yml / .yaml paths (cheap, no parse)
     ↓
-Parallel parse + filter (rayon::par_iter, no shared state):
+Sequential parse + filter:
     For each file:
     ├── parse_sigma_yaml() → Sigma rules
     ├── post-parse filter: rule.logsource.product == "windows" (or absent)
-    ├── status/level filter: rule.status >= min_status AND rule.level >= min_level (config.sigma)
     ├── skip if rule_id in skip set
     └── cross-file dedupe (first occurrence, walk order, wins)
     ↓
