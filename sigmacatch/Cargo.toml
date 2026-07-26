@@ -20,18 +20,17 @@ path = "src/bin/evtx_check.rs"
 # Crate workspace — detection engine
 detection-engine = { path = "../crates/detection-engine" }
 
-# Crate workspace — mapping
-sigma-mapping = { path = "../crates/sigma-mapping" }
-
 # Crate workspace — shared types
 sigmacatch-types = { path = "../crates/sigmacatch-types" }
+
+# Crate workspace — Windows channel mappings (replaces sigma-mapping)
+input-windows-channels = { path = "../crates/input-windows-channels" }
 
 # Crate workspace — SigmaHQ regression data format
 sigma-regression = { path = "../crates/sigma-regression" }
 
 # Crate workspace — EVTX parsing
 input-evtx = { path = "../crates/input-evtx" }
-input-windows-channels = { path = "../crates/input-windows-channels" }
 
 # Git (100% Rust, no git binary required)
 grit-lib = "0.5"

@@ -58,7 +58,7 @@ cargo build -p sigmacatch
 cargo build -p detection-engine
 cargo build -p input-windows-channels
 cargo build -p input-evtx
-cargo build -p sigma-mapping
+cargo build -p input-windows-channels
 cargo build -p sigma-regression
 cargo build -p sigmacatch-types
 ```

@@ -273,7 +273,7 @@ impl EventCollector {
     #[cfg(windows)]
     fn render_and_push(
         event_handle: windows::Win32::System::EventLog::EVT_HANDLE,
-        channel: &str,
+        _channel: &str,
         events: &mut Vec<Event>,
     ) {
         use windows::Win32::System::EventLog::{EvtRender, EvtRenderEventXml};
@@ -321,8 +321,7 @@ impl EventCollector {
             Err(_) => return,
         };
 
-        if let Ok(mut event) = Event::from_xml(&xml_str) {
-            event.channel = Some(channel.to_string());
+        if let Ok(event) = Event::from_xml(&xml_str) {
             events.push(event);
         }
     }

@@ -35,7 +35,7 @@ sigmacatch/
 │       ├── evtx/writer.rs         # write_evtx() via EvtExportLog API + .xml fallback
 │       ├── sigma/
 │       │   ├── loader.rs          # SigmaRepo (grit-lib) + find_rules_dirs()
-│       │   └── mapping/mod.rs     # re-export depuis sigma-mapping
+│       │   └── mapping/mod.rs     # re-export from input_windows_channels::mapping
 │       ├── regression/mod.rs      # re-export depuis sigma-regression
 │       ├── github/
 │       │   ├── commit.rs          # commit_all_rules avec author env + fallback
@@ -45,7 +45,7 @@ sigmacatch/
 │   ├── detection-engine/          # Wrapper rsigma-eval + pipelines embarquées (windows.yml, flatten_winevt.yml)
 │   ├── input-evtx/                # Parse EVTX files → Event objects
 │   ├── input-windows-channels/    # Collecteur multi-channels Windows Event Log (EvtQueryW, EvtNext, EvtRender)
-│   ├── sigma-mapping/             # LogSource, taxonomie (phf + channel_mapping.yml), mappings custom
+│   ├── input-windows-channels/    # LogSource, taxonomie (phf + channel_mapping.yml), mappings custom
 │   ├── sigma-regression/          # SkipSet, RegressionData, InfoYml, validation triplet
 │   └── sigmacatch-types/          # Types partagés : Event, Alert, RegressionHeader + parsing XML
 ```
@@ -170,7 +170,7 @@ For each SensorEvent:
     ├── channel → LogSource { product: "windows", service, category }
     │     (mapping::resolve_logsource + channel/service priority)
     ├── event.event_json → flat serde_json::Value (pre-parsed, parse_winevt_xml fallback)
-    ├── engine.evaluate(event_json, logsource)
+     ├── engine.put_events(events) → engine.process_events() → engine.get_alerts()
     │     → Vec<EvaluationResult> (rsigma-eval)
     └── For each match:
          ├── rule_id = match.header.rule_id
@@ -345,7 +345,7 @@ RegressionData {
 | `chrono` | dates |
 | `uuid` | UUID v4 for info.yml |
 | `rayon` | parallel rule file parsing |
-| `phf` | static hash maps for taxonomy tables (in sigma-mapping) |
+| `phf` | static hash maps for taxonomy tables (in input-windows-channels) |
 | `evtx` | EVTX file parsing (evtx_check binary + input-evtx crate) |
 | `roxmltree` | XML parsing for Winevt events (in sigmacatch-types) |
 | `windows` | Winevt API (cfg-gated: windows only, features: Foundation, Com, Console, EventLog, Threading, Security) |
@@ -436,7 +436,7 @@ Config is auto-created on first run with defaults. Edit `config.yaml` before run
 │  For each Event:                                                        │
 │    ├── event.event_json → flat JSON (pre-parsed, parse_winevt_xml)     │
 │    ├── channel → LogSource via resolve_logsource()                    │
-│    └── engine.evaluate(event_json, logsource)                          │
+ │    └── engine.put_events() → process_events() → get_alerts()          │
 │         → Vec<EvaluationResult>                                        │
 │  For each match:                                                        │
 │    └── aggregated[rule_id].alerts.push(alert)                         │

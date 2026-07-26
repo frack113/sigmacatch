@@ -3,7 +3,7 @@
 
 //! All Windows Event Log channels to collect from.
 //!
-//! Extracted from `crates/sigma-mapping/src/mapping/channel_mapping.yml`.
+//! Extracted from `crates/input-windows-channels/src/mapping/channel_mapping.yml`.
 //! This is the source of truth for the Winevt channel list.
 
 /// All channels to collect from via Winevt API.

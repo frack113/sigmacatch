@@ -5,7 +5,6 @@
 resolver = "2"
 members = [
     "sigmacatch",
-    "crates/sigma-mapping",
     "crates/sigma-regression",
     "crates/detection-engine",
     "crates/sigmacatch-types",

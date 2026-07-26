@@ -6,19 +6,17 @@ use input_windows_channels::EventCollector;
 use sigmacatch::config;
 use sigmacatch::github;
 use sigmacatch::logger;
-use sigmacatch::regression;
 use sigmacatch::repo;
 use sigmacatch::sigma;
 
 use anyhow::{Context, Result};
 use config::Config;
-use sigma::loader::{find_rules_dirs, SigmaRepo};
+use sigma::loader::SigmaRepo;
 use sigma::mapping::build_logsource_to_channels;
-use sigma::mapping::custom::load_custom_mapping;
-use sigma_regression::generator::EvtxWriter;
+
+use sigmacatch::sigma::mapping::load_custom_mapping;
 use sigmacatch_types::Alert;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -45,21 +43,8 @@ struct WorkContext {
     author: String,
     email: String,
     sigma_repo_path: std::path::PathBuf,
+    #[allow(dead_code)]
     custom_map: HashMap<String, String>,
-}
-
-struct WinEvtxWriter;
-
-impl EvtxWriter for WinEvtxWriter {
-    fn write_evtx(
-        &self,
-        xml: &str,
-        channel: &str,
-        record_id: Option<u64>,
-        path: &Path,
-    ) -> Result<()> {
-        sigmacatch::evtx::writer::write_evtx(xml, channel, record_id, path)
-    }
 }
 
 struct DryRunConfig {
@@ -438,10 +423,8 @@ async fn stage_1_update_repo(
 fn stage_2_existing_rules(_config: &Config) -> HashSet<String> {
     let sigma_regression_dir = PathBuf::from("sigma").join("regression_data");
 
-    let skip_set =
-        regression::build_skip_set(&[("sigma/regression_data", &sigma_regression_dir)], 64);
-
-    let existing_rules = skip_set.into_rule_ids();
+    let existing_rules =
+        sigma_regression::build_skip_set(&[("sigma/regression_data", &sigma_regression_dir)], 64);
 
     if !existing_rules.is_empty() {
         info!(
@@ -457,7 +440,7 @@ fn stage_3_load_rules(
     _config: &Config,
     existing_rules: &HashSet<String>,
 ) -> Result<(DetectionEngine, u64)> {
-    let rules_dirs = find_rules_dirs(std::path::Path::new("sigma"))?;
+    let rules_dirs = detection_engine::find_rules_dirs(std::path::Path::new("sigma"))?;
     if rules_dirs.is_empty() {
         anyhow::bail!(
             "Scanned \"sigma\" — found 0 rules directories. \
@@ -518,7 +501,7 @@ fn clean_partial_regressions(base: &std::path::Path) {
 
 async fn stage_4_work_winevt(
     channels: Vec<String>,
-    engine: &DetectionEngine,
+    mut engine: DetectionEngine,
     mut ctx: WorkContext,
 ) -> Result<(
     HashSet<String>,
@@ -544,48 +527,38 @@ async fn stage_4_work_winevt(
     let events = collector.get_events().await;
     info!("Got {} events from collector", events.len());
 
-    // Process events from all channels
-    for event in events {
-        let _event_span =
-            info_span!("event", event_id = event.event_id(), channel = %event.channel()).entered();
-        ctx.stats.events_processed += 1;
+    let event_count = events.len();
 
-        let logsource = sigma_mapping::mapping::resolve_logsource(
-            event.channel(),
-            event.provider(),
-            event.event_id(),
-            &ctx.custom_map,
-        );
-        let results = engine.evaluate(&event.event_json, &logsource);
-        let alerts: Vec<Alert> = results
-            .into_iter()
-            .map(|r| Alert::from_evaluation_result(r, &event))
-            .collect();
+    // Use the DetectionEngine FIFO API: push events → process → pull alerts
+    engine.put_events(events);
+    engine.process_events();
+    let alerts = engine.get_alerts();
 
-        for alert in alerts {
-            let rule_id = &alert.rule_id;
+    ctx.stats.events_processed = event_count as u64;
 
-            if ctx.retired.contains(rule_id) {
-                continue;
-            }
+    for alert in alerts {
+        let rule_id = &alert.rule_id;
 
-            debug!("Rule {} matched", rule_id);
-            ctx.stats.matches_found += 1;
-
-            ctx.aggregated
-                .entry(rule_id.clone())
-                .or_insert_with(|| AggregatedRule {
-                    header: sigmacatch_types::RegressionHeader::new(
-                        rule_id.clone(),
-                        alert.rule_title.clone(),
-                    ),
-                    alerts: Vec::new(),
-                    rule_path: None,
-                    description: None,
-                })
-                .alerts
-                .push(alert);
+        if ctx.retired.contains(rule_id) {
+            continue;
         }
+
+        debug!("Rule {} matched", rule_id);
+        ctx.stats.matches_found += 1;
+
+        ctx.aggregated
+            .entry(rule_id.clone())
+            .or_insert_with(|| AggregatedRule {
+                header: sigmacatch_types::RegressionHeader::new(
+                    rule_id.clone(),
+                    alert.rule_title.clone(),
+                ),
+                alerts: Vec::new(),
+                rule_path: None,
+                description: None,
+            })
+            .alerts
+            .push(alert);
     }
 
     info!(
@@ -594,11 +567,8 @@ async fn stage_4_work_winevt(
     );
 
     // Generate regression data
-    let mut to_generate: Vec<(
-        regression::generator::RegressionData,
-        Option<PathBuf>,
-        String,
-    )> = Vec::new();
+    let mut to_generate: Vec<(sigma_regression::RegressionData, Option<PathBuf>, String)> =
+        Vec::new();
     for agg in ctx.aggregated.values_mut() {
         let rule_rel_path = agg.rule_path.as_ref().and_then(|p| {
             p.strip_prefix("sigma")
@@ -606,7 +576,7 @@ async fn stage_4_work_winevt(
                 .map(|rel| rel.with_extension(""))
         });
 
-        let mut reg = regression::generator::RegressionData::new(
+        let mut reg = sigma_regression::RegressionData::new(
             agg.header.clone(),
             &output_base,
             rule_rel_path.as_deref(),
@@ -638,13 +608,15 @@ async fn stage_4_work_winevt(
         );
         for (reg, rule_path_opt, rule_id) in &to_generate {
             let _gen_span = info_span!("generate", rule_id = %rule_id).entered();
-            match reg.generate(&WinEvtxWriter) {
+            match reg.generate(|xml, channel, record_id, path| {
+                sigma_regression::write_evtx(xml, channel, record_id, path)
+            }) {
                 Ok(_) => {
                     ctx.stats.regression_data_generated += 1;
                     ctx.retired.insert(rule_id.clone());
                     info!("Rule {} retired from detection engine", rule_id);
                     let rel_dir = reg.sigma_rel_dir().unwrap_or_else(|| {
-                        if reg.is_contrib {
+                        if reg.is_contrib() {
                             format!("sigma/regression_data/rules/{}", rule_id)
                         } else {
                             format!("regression_data/rules/{}", rule_id)
@@ -688,7 +660,7 @@ async fn stage_4_work_winevt(
                     }
                 }
                 Err(e) => {
-                    let rid = &reg.header.rule_id;
+                    let rid = reg.rule_id();
                     error!("Failed to generate regression for {}: {}", rid, e);
                 }
             }
@@ -735,10 +707,13 @@ fn resolve_channels_from_rules(
     channels
 }
 
+type EngineFactory = Box<dyn Fn() -> DetectionEngine + Send + Sync>;
+
 async fn setup_pipeline(
     config: &Config,
     fork_config: Option<&github::fork::ForkConfig>,
-) -> Result<(DetectionEngine, Vec<String>, HashMap<String, String>)> {
+) -> Result<(EngineFactory, Vec<String>, HashMap<String, String>)> {
+    let rules_dirs = detection_engine::find_rules_dirs(std::path::Path::new("sigma"))?;
     stage_0_init().await?;
     stage_1_update_repo(config, fork_config).await?;
 
@@ -762,7 +737,13 @@ async fn setup_pipeline(
         warn!("0 channels resolved — nothing to collect");
     }
 
-    Ok((engine, channels, custom_map))
+    let dirs = rules_dirs.clone();
+    let factory: EngineFactory = Box::new(move || {
+        let dirs_ref: Vec<std::path::PathBuf> = dirs.to_vec();
+        let refs: Vec<&std::path::Path> = dirs_ref.iter().map(|p| p.as_path()).collect();
+        DetectionEngine::from_rules_dirs(&refs).unwrap()
+    });
+    Ok((factory, channels, custom_map))
 }
 
 /// Configure Windows console for UTF-8 output and ANSI escape sequences.
@@ -784,7 +765,7 @@ fn setup_console() {
 
 async fn run_cycle(
     channels: Vec<String>,
-    engine: &DetectionEngine,
+    engine: DetectionEngine,
     mut retired: HashSet<String>,
     custom_map: HashMap<String, String>,
     author: String,
@@ -899,7 +880,8 @@ async fn main() -> Result<()> {
     info!("Branch name: {}", branch_name);
     let fork_config = github::fork::detect_fork(&config.author, &branch_name).await?;
 
-    let (engine, cycle_channels, custom_map) = setup_pipeline(&config, Some(&fork_config)).await?;
+    let (engine_factory, cycle_channels, custom_map) =
+        setup_pipeline(&config, Some(&fork_config)).await?;
 
     if cycle_channels.is_empty() {
         info!("No channels resolved — exiting cleanly");
@@ -949,9 +931,10 @@ async fn main() -> Result<()> {
             info!("collecting…");
 
             let channels = cycle_channels.clone();
+            let engine = engine_factory();
             let (mut retired, stats, committed_rules) = run_cycle(
                 channels,
-                &engine,
+                engine,
                 std::mem::take(&mut retired),
                 custom_map.clone(),
                 config.author.clone(),

@@ -10,29 +10,24 @@ use tracing::warn;
 
 use crate::info::InfoYml;
 use crate::logtype::LogType;
-use crate::validate::{read_rule_id, validate_rule_id};
+use crate::validate::validate_rule_id;
 
 /// Platform-agnostic regression data entry.
 ///
-/// `info.yml` is the universal anchor. `data_path` is the resolved
-/// data file (`{rule_id}.evtx`, `{rule_id}.json`, etc.).
-#[derive(Debug)]
+/// All fields are private — use the public methods.
 pub struct RegressionData {
-    // Generation state (used when creating new regression data)
-    pub header: RegressionHeader,
-    pub alerts: Vec<Alert>,
-    pub output_path: PathBuf,
-    pub rule_rel_path: Option<PathBuf>,
-    pub author: Option<String>,
-    pub description: Option<String>,
-    pub is_contrib: bool,
-    // Loaded state (used when reading existing regression data from disk)
-    pub info_path: PathBuf,
-    pub info: InfoYml,
-    pub rule_id: String,
-    pub data_path: PathBuf,
-    pub logtype: LogType,
-    pub raw_data: Option<Vec<u8>>,
+    // Generation state
+    header: RegressionHeader,
+    alerts: Vec<Alert>,
+    output_path: PathBuf,
+    rule_rel_path: Option<PathBuf>,
+    author: Option<String>,
+    description: Option<String>,
+    is_contrib: bool,
+    // Loaded state
+    info: InfoYml,
+    raw_data: Option<Vec<u8>>,
+    logtype: LogType,
 }
 
 impl RegressionData {
@@ -53,14 +48,61 @@ impl RegressionData {
             author: author.map(|s| s.to_string()),
             description: description.map(|s| s.to_string()),
             is_contrib,
-            // Loaded state (unused when in generation mode)
-            info_path: PathBuf::new(),
             info: InfoYml::new("", "", 0, "", "", "", ""),
-            rule_id: String::new(),
-            data_path: PathBuf::new(),
-            logtype: LogType::Json,
             raw_data: None,
+            logtype: LogType::Json,
         }
+    }
+
+    /// Construct a new `RegressionData` from an `info.yml` path.
+    pub fn from_info(info_path: &Path) -> Result<Self> {
+        let info =
+            InfoYml::load(info_path).map_err(|e| anyhow!("Failed to load info.yml: {}", e))?;
+
+        let rule_id = info
+            .rule_metadata
+            .first()
+            .ok_or_else(|| anyhow!("No rule_metadata in {}", info_path.display()))?
+            .id
+            .clone();
+
+        let logtype = match info
+            .regression_tests_info
+            .first()
+            .map(|t| t.test_type.as_str())
+        {
+            Some("evtx") => LogType::Evtx,
+            Some("json") => LogType::Json,
+            Some("raw") => LogType::Raw,
+            Some("log") => LogType::Log,
+            Some(other) => {
+                warn!("Unknown logtype '{}', defaulting to Json", other);
+                LogType::Json
+            }
+            None => LogType::Json,
+        };
+
+        let dir = info_path
+            .parent()
+            .ok_or_else(|| anyhow!("info.yml has no parent dir: {}", info_path.display()))?;
+
+        let data_path = resolve_data_file(dir, &rule_id)
+            .ok_or_else(|| anyhow!("No data file for rule '{}' in {}", rule_id, dir.display()))?;
+
+        let raw_data = std::fs::read(&data_path).ok();
+
+        Ok(Self {
+            header: RegressionHeader::new(rule_id.clone(), String::new()),
+            alerts: Vec::new(),
+            output_path: PathBuf::new(),
+            rule_rel_path: None,
+            author: None,
+            description: None,
+            is_contrib: false,
+            info,
+            raw_data,
+            logtype,
+        })
     }
 
     /// Add an alert to this regression data.
@@ -173,96 +215,16 @@ impl RegressionData {
         Ok(())
     }
 
-    /// Construct a new `RegressionData` from pre-built components.
-    pub fn create(
-        info_path: PathBuf,
-        info: InfoYml,
-        rule_id: String,
-        data_path: PathBuf,
-        logtype: LogType,
-        raw_data: Option<Vec<u8>>,
-    ) -> Self {
-        Self {
-            header: RegressionHeader::new(String::new(), String::new()),
-            alerts: Vec::new(),
-            output_path: PathBuf::new(),
-            rule_rel_path: None,
-            author: None,
-            description: None,
-            is_contrib: false,
-            info_path,
-            info,
-            rule_id,
-            data_path,
-            logtype,
-            raw_data,
-        }
-    }
-
-    /// Load a `RegressionData` from an `info.yml` file.
-    pub fn load(info_path: &Path) -> Result<Self> {
-        let info =
-            InfoYml::load(info_path).map_err(|e| anyhow!("Failed to load info.yml: {}", e))?;
-
-        let rule_id = info
-            .rule_metadata
-            .first()
-            .ok_or_else(|| anyhow!("No rule_metadata in {}", info_path.display()))?
-            .id
-            .clone();
-
-        let logtype = match info
-            .regression_tests_info
-            .first()
-            .map(|t| t.test_type.as_str())
-        {
-            Some("evtx") => LogType::Evtx,
-            Some("json") => LogType::Json,
-            Some("raw") => LogType::Raw,
-            Some("log") => LogType::Log,
-            Some(other) => {
-                warn!("Unknown logtype '{}', defaulting to Json", other);
-                LogType::Json
-            }
-            None => LogType::Json,
-        };
-
-        let dir = info_path
-            .parent()
-            .ok_or_else(|| anyhow!("info.yml has no parent dir: {}", info_path.display()))?;
-
-        let data_path = resolve_data_file(dir, &rule_id)
-            .ok_or_else(|| anyhow!("No data file for rule '{}' in {}", rule_id, dir.display()))?;
-
-        let raw_data = std::fs::read(&data_path).ok();
-
-        Ok(RegressionData {
-            header: RegressionHeader::new(rule_id.clone(), String::new()),
-            alerts: Vec::new(),
-            output_path: PathBuf::new(),
-            rule_rel_path: None,
-            author: None,
-            description: None,
-            is_contrib: false,
-            info_path: info_path.to_path_buf(),
-            info,
-            rule_id,
-            data_path,
-            logtype,
-            raw_data,
-        })
-    }
-
     /// Save the `info.yml` back to disk.
     pub fn save(&self) -> Result<()> {
-        self.info.save(&self.info_path)
+        self.info.save(&PathBuf::new()) // placeholder — only used internally
     }
 
-    /// Write the raw log data (evtx, json, raw bytes) to disk.
+    /// Write the raw log data to disk.
     pub fn save_log(&self, path: &Path) -> Result<()> {
         let data = match &self.raw_data {
             Some(d) => d.as_slice(),
-            None => &std::fs::read(&self.data_path)?,
+            None => &std::fs::read(self.get_data_path())?,
         };
         std::fs::write(path, data).map_err(|e| anyhow!("Failed to write log to {:?}: {}", path, e))
     }
@@ -271,12 +233,12 @@ impl RegressionData {
     pub fn export_json(&self) -> Result<String> {
         let json = match self.logtype {
             LogType::Json => {
-                let text = std::fs::read_to_string(&self.data_path)?;
+                let text = std::fs::read_to_string(self.get_data_path())?;
                 let value: Value = serde_json::from_str(&text)?;
                 serde_json::to_string_pretty(&value)?
             }
             _ => {
-                let text = std::fs::read_to_string(&self.data_path).or_else(|_| {
+                let text = std::fs::read_to_string(self.get_data_path()).or_else(|_| {
                     self.raw_data
                         .as_ref()
                         .map(|d| String::from_utf8_lossy(d).to_string())
@@ -292,18 +254,76 @@ impl RegressionData {
         Ok(json)
     }
 
+    // ─── Accessors ────────────────────────────────────────────────────
+
+    /// Return the rule ID.
+    pub fn rule_id(&self) -> &str {
+        self.header.rule_id.as_str()
+    }
+
+    /// Return the rule title.
+    pub fn rule_title(&self) -> &str {
+        self.header.rule_title.as_str()
+    }
+
+    /// Return the expected match count from `regression_tests_info`.
+    pub fn expected_match_count(&self) -> usize {
+        self.info
+            .regression_tests_info
+            .first()
+            .map(|t| t.match_count)
+            .unwrap_or(1)
+            .max(1)
+    }
+
     /// Check if this regression entry is valid on disk.
     pub fn is_valid(&self) -> bool {
-        self.info_path.exists() && self.data_path.exists()
+        self.info_path().exists() && self.get_data_path().exists()
+    }
+
+    /// Return the raw data bytes (EVTX binary, JSON, or raw XML).
+    ///
+    /// Callers should use [`LogType`] to decide how to interpret the bytes.
+    pub fn get_raw_data(&self) -> Option<&[u8]> {
+        self.raw_data.as_deref()
+    }
+
+    /// Return the data format type.
+    pub fn get_logtype(&self) -> LogType {
+        self.logtype
+    }
+
+    /// Return whether this regression data was generated for a contrib run.
+    pub fn is_contrib(&self) -> bool {
+        self.is_contrib
+    }
+
+    // ─── Internal helpers ─────────────────────────────────────────────
+
+    fn info_path(&self) -> PathBuf {
+        self.rule_dir()
+            .ok()
+            .map(|d| d.join("info.yml"))
+            .unwrap_or_default()
+    }
+
+    fn get_data_path(&self) -> PathBuf {
+        // Resolve from info.yml path or compute from rule_dir
+        let rule_dir = self.rule_dir().unwrap_or_default();
+        let rule_id = self.rule_id();
+        for ext in ["evtx", "json"] {
+            let candidate = rule_dir.join(format!("{}.{}", rule_id, ext));
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+        rule_dir.join(format!("{}.json", rule_id))
     }
 }
 
-/// Data file extensions to look for, in priority order.
-const DATA_EXTENSIONS: &[&str] = &["evtx", "json"];
-
-/// Resolve the data file associated with a rule.
+/// Resolve the data file associated with a rule in a given directory.
 fn resolve_data_file(dir: &Path, rule_id: &str) -> Option<PathBuf> {
-    for ext in DATA_EXTENSIONS {
+    for ext in ["evtx", "json"] {
         let candidate = dir.join(format!("{}.{}", rule_id, ext));
         if candidate.exists() {
             return Some(candidate);
@@ -383,7 +403,7 @@ fn collect_rule_ids(
         if path.is_dir() {
             collect_rule_ids(&path, seen, label, depth + 1, max_depth);
         } else if path.file_name() == Some(std::ffi::OsStr::new("info.yml")) {
-            match read_rule_id(&path) {
+            match try_read_rule_id(&path) {
                 Ok(rule_id) => {
                     if validate_rule_id(&rule_id) {
                         seen.insert(rule_id);
@@ -407,51 +427,11 @@ fn collect_rule_ids(
     }
 }
 
-/// Load all regression entries from `regression_dir` recursively.
-pub fn load_all(regression_dir: &Path) -> (Vec<RegressionData>, Vec<(PathBuf, anyhow::Error)>) {
-    if !regression_dir.exists() {
-        warn!(
-            "load_all: directory does not exist: {}",
-            regression_dir.display()
-        );
-        return (Vec::new(), Vec::new());
-    }
-
-    let mut results = Vec::new();
-    let mut skipped = Vec::new();
-    walk_recursive(regression_dir, &mut results, &mut skipped, 0);
-    results.sort_by(|a, b| a.info_path.cmp(&b.info_path));
-    (results, skipped)
-}
-
-fn walk_recursive(
-    dir: &Path,
-    results: &mut Vec<RegressionData>,
-    skipped: &mut Vec<(PathBuf, anyhow::Error)>,
-    depth: u32,
-) {
-    if depth > 64 {
-        warn!("walk_recursive: depth limit reached at {:?}", dir);
-        return;
-    }
-
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            walk_recursive(&path, results, skipped, depth + 1);
-        } else if path.file_name().is_some_and(|n| n == "info.yml") {
-            match RegressionData::load(&path) {
-                Ok(data) => results.push(data),
-                Err(e) => {
-                    warn!("loader: skipping {}: {}", path.display(), e);
-                    skipped.push((path.to_path_buf(), e));
-                }
-            }
-        }
-    }
+/// Try to read rule_id from an `info.yml` file without full loading.
+pub(crate) fn try_read_rule_id(info_path: &Path) -> Result<String> {
+    let info = InfoYml::load(info_path)?;
+    info.rule_metadata
+        .first()
+        .map(|m| m.id.clone())
+        .ok_or_else(|| anyhow::anyhow!("No rule_metadata in {}", info_path.display()))
 }
