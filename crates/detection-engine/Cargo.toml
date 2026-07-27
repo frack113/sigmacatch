@@ -16,8 +16,6 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 tracing = "0.1"
 sigmacatch-types = { path = "../sigmacatch-types" }
-input-windows-channels = { path = "../input-windows-channels" }
-tokio = { version = "1", features = ["full"] }
 
 [target.'cfg(not(unix))'.dependencies]
 dunce = "1.0"

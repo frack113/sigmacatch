@@ -70,11 +70,20 @@ impl SigmaRepo {
                 }
                 crate::config::GitTransport::Ssh => {
                     let key_path = git_config.ssh_key_path.clone();
-                    tokio::task::spawn_blocking(move || {
+                    let result = tokio::task::spawn_blocking(move || {
                         crate::repo::git_pull_ssh(&git_dir_clone, key_path.as_deref())
                     })
                     .await
-                    .map_err(|e| anyhow::anyhow!("Pull task panicked: {}", e))
+                    .map_err(|e| anyhow::anyhow!("Pull task panicked: {}", e));
+                    if let Err(ref e) = result {
+                        warn!(
+                            "SSH pull failed ({}): falling back to HTTPS fetch. \
+                             This can happen if ssh binary is not available (e.g. Windows without Git for Windows) \
+                             or the SSH key is invalid. Consider switching to transport = http in config.yaml.",
+                            e
+                        );
+                    }
+                    result
                 }
             };
             if let Err(e) = result? {

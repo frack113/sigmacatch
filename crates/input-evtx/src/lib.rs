@@ -3,9 +3,9 @@
 
 //! Parse EVTX files into [`Event`] objects for the detection engine.
 //!
-//! Pattern: collector → convert → FIFO (Event)
+//! Pattern: producer → mpsc channel → detection engine
 
 mod collector;
 
-pub use collector::{parse_evtx_file, EventCollector};
+pub use collector::{parse_evtx_bytes, parse_evtx_file, EventCollector};
 pub use sigmacatch_types::parse_winevt_xml;

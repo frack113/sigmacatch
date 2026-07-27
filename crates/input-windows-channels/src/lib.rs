@@ -1,16 +1,11 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Multi-channel Windows Event Log collector with internal FIFO.
-//!
-//! Collects events from all 131 Windows channels into an internal
-//! `Arc<Mutex<VecDeque<Event>>>`, exposed via `get_events()` which pops
-//! all entries.
+//! Multi-channel Windows Event Log collector that sends events into an mpsc channel.
 //!
 //! # API
-//! - `start()` → launches collection on all channels
-//! - `stop()` → signals shutdown and waits for tasks
-//! - `get_events()` → pops all events from FIFO
+//! - `EventCollector::new(channels)` → creates collector for specified channels
+//! - Implements `EventProducer` trait — calls `run(tx)` to collect and send events
 
 mod collector;
 pub mod mapping;

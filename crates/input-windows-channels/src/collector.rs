@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! `EventCollector` — multi-channel Winevt collector with internal FIFO.
+//! `EventCollector` — multi-channel Winevt collector that sends events into an mpsc channel.
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 
-use sigmacatch_types::Event;
-use tokio::sync::{mpsc, Mutex};
+use async_trait::async_trait;
+use sigmacatch_types::{Event, EventProducer};
+use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tracing::info;
 
@@ -26,103 +26,70 @@ const CHANNEL_IDLE_TIMEOUT_MS: u32 = 10_000;
 
 /// Multi-channel Windows Event Log collector.
 ///
-/// On `start()`, spawns one task per channel (95 tasks). Each task
-/// collects events via Winevt API and pushes into the shared FIFO.
-///
-/// `get_events()` pops all entries from the FIFO.
-/// `stop()` signals all collector tasks to shutdown and waits for them.
+/// Spawns one task per channel. Each task collects events via Winevt
+/// API and sends them into the provided `mpsc::Sender<Event>`.
 pub struct EventCollector {
-    fifo: Arc<Mutex<VecDeque<Event>>>,
-    tx: Option<mpsc::Sender<Event>>,
-    handles: JoinSet<Result<(), String>>,
+    channels: Vec<String>,
 }
 
 impl EventCollector {
-    /// Launch collection on all 95 channels.
-    ///
-    /// Spawns one task per channel. Each task collects events via Winevt
-    /// API and pushes into the shared FIFO.
-    pub fn start() -> Self {
-        let fifo = Arc::new(Mutex::new(VecDeque::new()));
-        let (tx, mut rx) = mpsc::channel::<Event>(1024);
+    /// Create a new collector for all configured channels.
+    pub fn new(channels: Vec<String>) -> Self {
+        Self { channels }
+    }
+}
 
-        let handles = {
-            let mut set = JoinSet::new();
-
-            for channel in ALL_CHANNELS {
-                let fifo = Arc::clone(&fifo);
-                let tx = tx.clone();
-                let channel = channel.to_string();
-
-                set.spawn(async move {
-                    Self::collect_channel(channel, Arc::clone(&fifo), tx).await;
-                    Ok(())
-                });
-            }
-
-            // Drop the original sender so rx closes when all tasks finish
-            drop(tx);
-
-            set
+#[async_trait]
+impl EventProducer for EventCollector {
+    async fn run(self, tx: mpsc::Sender<Event>) -> anyhow::Result<()> {
+        let channels = if self.channels.is_empty() {
+            ALL_CHANNELS.iter().map(|s| s.to_string()).collect()
+        } else {
+            self.channels.clone()
         };
 
-        // Spawn a background task that drains the channel receiver into the FIFO
-        let fifo_for_drain = Arc::clone(&fifo);
-        let _drain_task = tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                let mut fifo = fifo_for_drain.lock().await;
-                fifo.push_back(event);
-            }
-        });
+        let tx = Arc::new(tx);
+        let mut handles = JoinSet::new();
 
-        info!("EventCollector started on {} channels", ALL_CHANNELS.len());
+        for channel in &channels {
+            let tx = Arc::clone(&tx);
+            let channel = channel.to_string();
 
-        Self {
-            fifo,
-            tx: None,
-            handles,
+            handles.spawn(async move {
+                Self::collect_channel(channel, tx).await;
+            });
         }
-    }
-
-    /// Pop all events from the FIFO.
-    pub async fn get_events(&self) -> Vec<Event> {
-        let mut fifo = self.fifo.lock().await;
-        fifo.drain(..).collect()
-    }
-
-    /// Signal all collector tasks to shutdown and wait for them.
-    pub async fn stop(&mut self) {
-        // Drop tx to signal tasks to stop
-        self.tx.take();
 
         // Wait for all tasks to complete
-        while let Some(res) = self.handles.join_next().await {
+        while let Some(res) = handles.join_next().await {
             if let Err(e) = res {
                 tracing::warn!("Collector task failed: {e}");
             }
         }
 
-        info!("EventCollector stopped");
+        info!("EventCollector stopped — all channels collected");
+        Ok(())
     }
+}
 
+impl EventCollector {
     /// Collect events from a single channel via Winevt API.
     #[cfg(windows)]
-    async fn collect_channel(
-        channel: String,
-        fifo: Arc<Mutex<VecDeque<Event>>>,
-        _tx: mpsc::Sender<Event>,
-    ) {
+    async fn collect_channel(channel: String, tx: Arc<mpsc::Sender<Event>>) {
         let channel_name = channel.clone();
         let result =
             tokio::task::spawn_blocking(move || Self::collect_events_blocking(&channel_name)).await;
 
         match result {
             Ok(events) => {
-                let mut fifo = fifo.lock().await;
+                let count = events.len();
                 for event in events {
-                    fifo.push_back(event);
+                    if tx.send(event).await.is_err() {
+                        tracing::warn!("Channel '{channel}' — receiver dropped, stopping");
+                        return;
+                    }
                 }
-                info!("Collected {} events from channel '{channel}'", fifo.len());
+                info!("Collected {count} events from channel '{channel}'");
             }
             Err(e) => {
                 tracing::warn!("Failed to collect from channel '{channel}': {e}");
@@ -328,12 +295,8 @@ impl EventCollector {
 
     /// Non-Windows stub: returns empty events.
     #[cfg(not(windows))]
-    async fn collect_channel(
-        channel: String,
-        _fifo: Arc<Mutex<VecDeque<Event>>>,
-        _tx: mpsc::Sender<Event>,
-    ) {
-        tracing::info!("Channel '{channel}' — stub on non-Windows platform (collects 0 events)");
+    async fn collect_channel(_channel: String, _tx: Arc<mpsc::Sender<Event>>) {
+        // stub on non-Windows
     }
 
     #[cfg(not(windows))]
@@ -361,14 +324,4 @@ fn channel_to_wide(channel: &str) -> Vec<u16> {
     let mut v: Vec<u16> = channel.encode_utf16().collect();
     v.push(0);
     v
-}
-
-impl Drop for EventCollector {
-    fn drop(&mut self) {
-        // Drop tx to signal shutdown; JoinSet::shutdown() cancels remaining tasks.
-        self.tx.take();
-        // `shutdown()` returns a future but Drop can't await — tasks will
-        // be cancelled when the JoinSet is dropped at the end of this function.
-        std::mem::drop(self.handles.shutdown());
-    }
 }

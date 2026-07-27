@@ -7,10 +7,12 @@
 //! - [`Alert`] — a rule match produced by the detection engine (output)
 //! - [`RegressionHeader`] — minimal rule metadata for regression data generation
 
+use async_trait::async_trait;
 use roxmltree::Node;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::fmt;
+use tokio::sync::mpsc;
 
 /// Product identifier for rule filtering.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Hash, Serialize, Deserialize)]
@@ -313,25 +315,6 @@ impl Alert {
         }
     }
 
-    pub fn from_evaluation_result(r: rsigma_eval::EvaluationResult, event: &Event) -> Self {
-        Self {
-            rule_id: r
-                .header
-                .rule_id
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string()),
-            rule_title: r.header.rule_title.clone(),
-            severity: r
-                .header
-                .level
-                .as_ref()
-                .map(|l| format!("{:?}", l))
-                .unwrap_or_else(|| "unknown".to_string()),
-            event_json: event.event_json.clone(),
-            event_raw: event.event_raw.clone(),
-        }
-    }
-
     pub fn channel(&self) -> &str {
         self.event_json
             .get("Event")
@@ -394,13 +377,49 @@ impl From<Alert> for RegressionHeader {
     }
 }
 
-impl From<rsigma_eval::result::RuleHeader> for RegressionHeader {
-    fn from(h: rsigma_eval::result::RuleHeader) -> Self {
-        Self {
-            rule_id: h.rule_id.unwrap_or_else(|| "unknown".to_string()),
-            rule_title: h.rule_title,
+// ─── EventSource ──────────────────────────────────────────────────────────
+
+/// Event source type that determines which collector to use.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
+pub enum EventSource {
+    /// Windows Winevt (Event Log API).
+    #[default]
+    Winevt,
+    /// Linux log files (journald, syslog, etc.).
+    LogFile,
+    /// macOS Unified Logging / Console.
+    Console,
+    /// External EVTX files.
+    EvtxFile,
+    /// Raw JSON events (for testing / external adapters).
+    RawJson,
+}
+
+impl std::fmt::Display for EventSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Winevt => write!(f, "winevt"),
+            Self::LogFile => write!(f, "logfile"),
+            Self::Console => write!(f, "console"),
+            Self::EvtxFile => write!(f, "evtx_file"),
+            Self::RawJson => write!(f, "raw_json"),
         }
     }
+}
+
+// ─── EventProducer ────────────────────────────────────────────────────────
+
+/// Trait for async event producers that send events into a channel.
+///
+/// Implementors collect events from a source and send them into the provided
+/// `mpsc::Sender<Event>`. When collection is complete, the sender is dropped
+/// automatically.
+#[async_trait]
+pub trait EventProducer: Send {
+    /// Run the producer, sending collected events into `tx`.
+    async fn run(self, tx: mpsc::Sender<Event>) -> anyhow::Result<()>;
 }
 
 #[cfg(test)]

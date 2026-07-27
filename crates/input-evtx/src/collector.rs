@@ -5,47 +5,37 @@
 //!
 //! Pattern: collector → convert → FIFO (Event)
 
-use std::collections::VecDeque;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use sigmacatch_types::{parse_winevt_xml, Event};
+use async_trait::async_trait;
+use sigmacatch_types::{parse_winevt_xml, Event, EventProducer};
+use tokio::sync::mpsc;
 
-/// EVTX file collector.
+/// EVTX file producer.
 ///
-/// Loads `.evtx` files via `load_evtx()`, converts records to `Event`,
-/// and pushes them into an internal FIFO.
-///
-/// # Example
-/// ```
-/// use input_evtx::EventCollector;
-///
-/// let mut collector = EventCollector::new();
-/// // collector.load_evtx(path).unwrap();
-/// let events = collector.get_events();
-/// ```
+/// Loads `.evtx` files and sends parsed events into an `mpsc` channel.
 pub struct EventCollector {
-    fifo: VecDeque<Event>,
+    files: Vec<std::path::PathBuf>,
 }
 
 impl EventCollector {
-    /// Create an empty collector.
+    /// Create an empty producer.
     pub fn new() -> Self {
-        Self {
-            fifo: VecDeque::new(),
-        }
+        Self { files: Vec::new() }
     }
 
-    /// Load a single EVTX file into the FIFO.
-    ///
-    /// All events from the file are parsed first into a local buffer. Only on
-    /// complete success are they moved into the FIFO — a partial failure never
-    /// leaves the collector in a partially-loaded state.
-    pub fn load_evtx(&mut self, path: &Path) -> Result<()> {
+    /// Add an EVTX file to be collected.
+    pub fn add_file(&mut self, path: impl Into<std::path::PathBuf>) {
+        self.files.push(path.into());
+    }
+
+    /// Load a single EVTX file into a buffer.
+    fn load_evtx(path: &Path) -> Result<Vec<Event>> {
         let mut parser = evtx::EvtxParser::from_path(path)
             .with_context(|| format!("Failed to open EVTX {}", path.display()))?;
 
-        let mut buffer = Vec::new();
+        let mut events = Vec::new();
 
         for record in parser.records() {
             let record =
@@ -55,48 +45,13 @@ impl EventCollector {
             let event_json = parse_winevt_xml(xml)?;
             let event_raw = record.data.as_bytes().to_vec();
 
-            buffer.push(Event {
+            events.push(Event {
                 event_json,
                 event_raw,
             });
         }
 
-        self.fifo.extend(buffer);
-        Ok(())
-    }
-
-    /// Drain all collected events from the FIFO.
-    pub fn get_events(&mut self) -> Vec<Event> {
-        self.fifo.drain(..).collect()
-    }
-
-    /// Load EVTX data from raw bytes into the FIFO.
-    ///
-    /// Parses binary EVTX records directly from the provided slice.
-    /// All events are parsed first into a local buffer. Only on complete
-    /// success are they moved into the FIFO — a partial failure never
-    /// leaves the collector in a partially-loaded state.
-    pub fn from_bytes(&mut self, data: &[u8]) -> Result<()> {
-        let mut parser = evtx::EvtxParser::from_read_seek(std::io::Cursor::new(data))
-            .context("Failed to create EVTX parser from raw bytes")?;
-
-        let mut buffer = Vec::new();
-
-        for record in parser.records() {
-            let record = record.with_context(|| "EVTX record error in raw data")?;
-            let xml = std::str::from_utf8(record.data.as_bytes())
-                .context("Invalid UTF-8 in EVTX record")?;
-            let event_json = parse_winevt_xml(xml)?;
-            let event_raw = record.data.as_bytes().to_vec();
-
-            buffer.push(Event {
-                event_json,
-                event_raw,
-            });
-        }
-
-        self.fifo.extend(buffer);
-        Ok(())
+        Ok(events)
     }
 }
 
@@ -106,12 +61,50 @@ impl Default for EventCollector {
     }
 }
 
+#[async_trait]
+impl EventProducer for EventCollector {
+    async fn run(self, tx: mpsc::Sender<Event>) -> anyhow::Result<()> {
+        for path in &self.files {
+            let events = Self::load_evtx(path)
+                .with_context(|| format!("Failed to load EVTX {}", path.display()))?;
+            for event in events {
+                tx.send(event)
+                    .await
+                    .context("Channel send failed — receiver dropped")?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Parse a single EVTX file into a vector of `Event` objects.
 ///
-/// Standalone function for backward compatibility. Prefer `EventCollector::load_evtx` for
-/// batch or pipeline usage.
+/// Standalone function for backward compatibility.
 pub fn parse_evtx_file(path: &Path) -> Result<Vec<Event>> {
-    let mut collector = EventCollector::new();
-    collector.load_evtx(path)?;
-    Ok(collector.get_events())
+    EventCollector::load_evtx(path)
+}
+
+/// Parse EVTX data from raw bytes into a vector of `Event` objects.
+///
+/// Useful for loading EVTX regression data from memory (e.g., evtx_check binary).
+pub fn parse_evtx_bytes(data: &[u8]) -> Result<Vec<Event>> {
+    let mut parser = evtx::EvtxParser::from_read_seek(std::io::Cursor::new(data))
+        .context("Failed to create EVTX parser from raw bytes")?;
+
+    let mut events = Vec::new();
+
+    for record in parser.records() {
+        let record = record.with_context(|| "EVTX record error in raw data")?;
+        let xml =
+            std::str::from_utf8(record.data.as_bytes()).context("Invalid UTF-8 in EVTX record")?;
+        let event_json = parse_winevt_xml(xml)?;
+        let event_raw = record.data.as_bytes().to_vec();
+
+        events.push(Event {
+            event_json,
+            event_raw,
+        });
+    }
+
+    Ok(events)
 }

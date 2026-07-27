@@ -14,12 +14,13 @@ use sigma::loader::{LoadStats, SigmaRepo};
 use sigma::mapping::build_logsource_to_channels;
 
 use sigmacatch::sigma::mapping::load_custom_mapping;
-use sigmacatch_types::Alert;
+use sigmacatch_types::{Alert, Event, EventProducer};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::signal;
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, info_span, warn};
 
 struct Stats {
@@ -532,16 +533,28 @@ async fn stage_4_work_winevt(
 
     info!("Starting event collection on channels: {:?}", channels);
 
-    // Register Winevt input
-    engine.add_winevt_input();
-    engine.start_all_inputs();
+    // Create mpsc channel for producer → consumer
+    let (tx, mut rx) = mpsc::channel::<Event>(10_000);
 
-    // Wait for all channel tasks to complete
-    engine.stop_all_inputs().await;
+    // Spawn producer: collects events and sends them through the channel
+    let producer_channels = channels.clone();
+    let producer = tokio::spawn(async move {
+        let collector = input_windows_channels::EventCollector::new(producer_channels);
+        collector.run(tx).await
+    });
+
+    // Consumer loop: receive events from channel and feed to engine
+    while let Some(event) = rx.recv().await {
+        engine.put_events(vec![event]);
+    }
+
+    // Wait for producer to finish
+    if let Err(e) = producer.await.context("Producer task panicked")? {
+        warn!("Producer returned error: {}", e);
+    }
 
     info!(
-        "Collected {} events, processed {} events against {} rules",
-        engine.stats().events_collected,
+        "Processed {} events against {} rules",
         engine.stats().events_processed,
         engine.rule_count()
     );
@@ -841,16 +854,7 @@ async fn main() -> Result<()> {
     };
 
     let config_path = PathBuf::from("config.yaml");
-    let just_created = !config_path.exists();
     let mut config = Config::load(&config_path)?;
-
-    if just_created {
-        eprintln!("── config.yaml created ──────────────────────");
-        eprintln!("  Edit config.yaml with your settings,");
-        eprintln!("  then run sigmacatch again.");
-        eprintln!("──────────────────────────────────────────────");
-        std::process::exit(1);
-    }
 
     if let Some(author) = flag_value("--author") {
         config.git.author = author;

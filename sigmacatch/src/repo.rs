@@ -44,7 +44,12 @@ fn sanitize_url(url: &str) -> String {
 pub fn https_to_ssh_url(url: &str) -> Option<String> {
     let rest = url.strip_prefix("https://github.com/")?;
     // Reject path traversal and suspicious characters
-    if rest.contains("..") || rest.contains('/') || rest.contains([' ', '\t', '\n', '\r']) {
+    if rest.contains("..") || rest.contains([' ', '\t', '\n', '\r']) {
+        return None;
+    }
+    // Allow exactly one '/' for the user/repo pattern (e.g. "frack113/sigma")
+    let slash_count = rest.split('/').count() - 1;
+    if slash_count != 1 {
         return None;
     }
     let repo = rest.strip_suffix(".git").unwrap_or(rest);
@@ -1061,9 +1066,10 @@ pub fn git_pull(git_dir: &Path, token: Option<&str>) -> Result<()> {
 /// Fetch from origin via SSH and fast-forward the current branch.
 pub fn git_pull_ssh(git_dir: &Path, ssh_key_path: Option<&str>) -> Result<()> {
     let remote_url = read_remote_url_from_config(git_dir, "origin")?;
+    let ssh_url = https_to_ssh_url(&remote_url).unwrap_or(remote_url);
     let ssh_cmd = get_ssh_shell_command(ssh_key_path);
 
-    fetch_remote_ssh(git_dir, &remote_url, ssh_cmd.as_deref())?;
+    fetch_remote_ssh(git_dir, &ssh_url, ssh_cmd.as_deref())?;
     fast_forward_branch(git_dir)?;
 
     // Re-checkout worktree to reflect any changes from fast-forward
@@ -1115,8 +1121,9 @@ pub fn git_push_ssh(
     }
 
     let remote_url = read_remote_url_from_config(&git_dir, remote)?;
+    let ssh_url = https_to_ssh_url(&remote_url).unwrap_or(remote_url);
     let ssh_cmd = get_ssh_shell_command(ssh_key_path);
-    push_branch_ssh(&git_dir, &remote_url, branch, ssh_cmd.as_deref())
+    push_branch_ssh(&git_dir, &ssh_url, branch, ssh_cmd.as_deref())
 }
 
 /// Stage files under `paths` (relative to `work_tree`) into the git index.

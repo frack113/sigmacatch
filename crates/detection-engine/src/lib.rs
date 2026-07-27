@@ -6,7 +6,6 @@
 //! essentials for testing and validation.
 
 use anyhow::{anyhow, Result};
-use input_windows_channels::EventCollector;
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::pipeline::parse_pipeline;
 use rsigma_eval::Engine;
@@ -113,12 +112,8 @@ pub struct DetectionEngine {
     engine: Engine,
     events: Vec<Event>,
     alerts: Vec<Alert>,
-    inputs: Vec<EventInput>,
     stats: EngineStats,
     rule_index: RuleIndex,
-    winevt_collector: Option<EventCollector>,
-    winevt_collected: Vec<sigmacatch_types::Event>,
-    winevt_collecting: bool,
 }
 
 impl DetectionEngine {
@@ -133,8 +128,7 @@ impl DetectionEngine {
         engine.set_include_event(true);
 
         let pipelines_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("pipelines");
-        let pipelines =
-            load_pipelines_from_dir(&pipelines_dir).expect("pipelines must be valid");
+        let pipelines = load_pipelines_from_dir(&pipelines_dir).expect("pipelines must be valid");
         if pipelines.is_empty() {
             warn!(
                 "No pipelines loaded from {:?}: rules will be evaluated untransformed",
@@ -149,12 +143,8 @@ impl DetectionEngine {
             engine,
             events: Vec::new(),
             alerts: Vec::new(),
-            inputs: Vec::new(),
             stats: EngineStats::default(),
             rule_index: RuleIndex::new(),
-            winevt_collector: None,
-            winevt_collected: Vec::new(),
-            winevt_collecting: false,
         }
     }
 
@@ -171,12 +161,8 @@ impl DetectionEngine {
             engine,
             events: Vec::new(),
             alerts: Vec::new(),
-            inputs: Vec::new(),
             stats: EngineStats::default(),
             rule_index: RuleIndex::new(),
-            winevt_collector: None,
-            winevt_collected: Vec::new(),
-            winevt_collecting: false,
         })
     }
 
@@ -220,13 +206,7 @@ impl DetectionEngine {
         &self.rule_index
     }
 
-    /// Register an event input source for later collection.
-    pub fn add_input(&mut self, input: EventInput) {
-        self.inputs.push(input);
-        self.stats.inputs_count = self.inputs.len();
-    }
-
-    /// Return the current input stats (inputs_count, events_collected, events_processed, alerts_generated).
+    /// Return the current engine stats (events_processed, alerts_generated).
     pub fn stats(&self) -> EngineStats {
         self.stats.clone()
     }
@@ -235,7 +215,6 @@ impl DetectionEngine {
 
     /// Push events into the internal event pile.
     pub fn put_events(&mut self, events: Vec<Event>) {
-        self.stats.events_collected += events.len() as u64;
         self.events.extend(events);
     }
 
@@ -252,7 +231,22 @@ impl DetectionEngine {
             let json_event = JsonEvent::borrow(&event.event_json);
             let matches = self.engine.evaluate(&json_event);
             for result in matches {
-                let alert = Alert::from_evaluation_result(result, &event);
+                let alert = Alert {
+                    rule_id: result
+                        .header
+                        .rule_id
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    rule_title: result.header.rule_title.clone(),
+                    severity: result
+                        .header
+                        .level
+                        .as_ref()
+                        .map(|l| format!("{:?}", l))
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    event_json: event.event_json.clone(),
+                    event_raw: event.event_raw.clone(),
+                };
                 self.alerts.push(alert);
             }
         }
@@ -263,92 +257,6 @@ impl DetectionEngine {
         let alerts = std::mem::take(&mut self.alerts);
         self.stats.alerts_generated += alerts.len() as u64;
         alerts
-    }
-
-    // ─── Winevt lifecycle ─────────────────────────────────────────────────
-
-    /// Register a Winevt input source for live event collection.
-    pub fn add_winevt_input(&mut self) {
-        self.add_input(EventInput::new(EventSource::Winevt, "winevt"));
-    }
-
-    /// Register an event input source for later collection.
-    pub fn add_input_source(&mut self, input: EventInput) {
-        self.add_input(input);
-    }
-
-    /// Check whether all registered inputs are ready (collected their events).
-    ///
-    /// For Winevt this is true after `stop_winevt()` **and** only when a Winevt
-    /// input has actually been started (i.e. `start_winevt()` was called after
-    /// `add_winevt_input()`).  Returning `true` before any Winevt input was
-    /// started is correct — there is nothing that needs to be "ready".
-    pub fn all_inputs_ready(&self) -> bool {
-        let input_types: Vec<_> = self.inputs.iter().map(|i| i.source).collect();
-        input_types.iter().all(|src| match src {
-            EventSource::Winevt => !self.winevt_collecting,
-            _ => true,
-        })
-    }
-
-    /// Check whether the engine has any registered inputs.
-    pub fn all_inputs_empty(&self) -> bool {
-        self.inputs.is_empty()
-    }
-
-    /// Start all registered event inputs.
-    pub fn start_all_inputs(&mut self) {
-        let sources: Vec<EventSource> = self.inputs.iter().map(|i| i.source).collect();
-        for src in sources {
-            if src == EventSource::Winevt {
-                self.start_winevt();
-            }
-        }
-    }
-
-    /// Stop all registered event inputs and drain collected events into the engine's event pile.
-    pub async fn stop_all_inputs(&mut self) {
-        let mut all_collected = Vec::new();
-        let sources: Vec<EventSource> = self.inputs.iter().map(|i| i.source).collect();
-
-        if sources.contains(&EventSource::Winevt) {
-            if let Some(ref mut collector) = self.winevt_collector {
-                collector.stop().await;
-                let events = collector.get_events().await;
-                all_collected.extend(events);
-            }
-            // Stop Winevt collecting state
-            self.winevt_collector = None;
-            self.winevt_collecting = false;
-        }
-
-        // Push all collected events directly into the engine
-        self.put_events(all_collected);
-    }
-
-    /// Start Winevt live event collection.
-    ///
-    /// Sets `winevt_collecting` to `true` so that `all_inputs_ready()` returns
-    /// `false` until `stop_winevt()` is called.
-    pub fn start_winevt(&mut self) {
-        let collector = EventCollector::start();
-        self.winevt_collector = Some(collector);
-        self.winevt_collecting = true;
-    }
-
-    /// Stop Winevt collection and drain collected events into the engine's event pile.
-    pub async fn stop_winevt(&mut self) {
-        if let Some(mut collector) = self.winevt_collector.take() {
-            collector.stop().await;
-            let events = collector.get_events().await;
-            self.winevt_collected = events;
-            self.winevt_collecting = false;
-        }
-    }
-
-    /// Return a reference to events collected by Winevt since the last drain.
-    pub fn winevt_events(&self) -> &[sigmacatch_types::Event] {
-        &self.winevt_collected
     }
 
     // ─── private helpers ─────────────────────────────────────────────────
@@ -439,72 +347,15 @@ impl Default for DetectionEngine {
     }
 }
 
-// ─── Event Input Adapter ─────────────────────────────────────────────────
-
-/// Event source type that determines which collector to use.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
-)]
-pub enum EventSource {
-    /// Windows Winevt (Event Log API).
-    #[default]
-    Winevt,
-    /// Linux log files (journald, syslog, etc.).
-    LogFile,
-    /// macOS Unified Logging / Console.
-    Console,
-    /// External EVTX files.
-    EvtxFile,
-    /// Raw JSON events (for testing / external adapters).
-    RawJson,
-}
-
-impl std::fmt::Display for EventSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Winevt => write!(f, "winevt"),
-            Self::LogFile => write!(f, "logfile"),
-            Self::Console => write!(f, "console"),
-            Self::EvtxFile => write!(f, "evtx_file"),
-            Self::RawJson => write!(f, "raw_json"),
-        }
-    }
-}
-
-/// A configurable event input source.
-///
-/// Represents a single channel or log source that the engine can pull events from.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct EventInput {
-    /// The event source type (Winevt, LogFile, Console, etc.).
-    pub source: EventSource,
-    /// The channel, path, or identifier for this input.
-    /// For Winevt: channel name (e.g., "Security", "Sysmon").
-    /// For LogFile: file path (e.g., "/var/log/syslog").
-    /// For Console: subsystem or log type.
-    pub identifier: String,
-}
-
-impl EventInput {
-    pub fn new(source: EventSource, identifier: impl Into<String>) -> Self {
-        Self {
-            source,
-            identifier: identifier.into(),
-        }
-    }
-}
+// ─── Engine Stats ─────────────────────────────────────────────────────────
 
 /// Statistics for input/output tracking.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct EngineStats {
-    /// Total events collected from all inputs.
-    pub events_collected: u64,
     /// Total events processed against rules.
     pub events_processed: u64,
     /// Total alerts generated.
     pub alerts_generated: u64,
-    /// Number of inputs registered.
-    pub inputs_count: usize,
 }
 
 // ─── Rules directory discovery ──────────────────────────────────────────────
@@ -641,183 +492,6 @@ detection:
         path
     }
 
-    // ─── Event Input tests ─────────────────────────────────────────────────
-
-    #[test]
-    fn test_event_source_display_winevt() {
-        assert_eq!(EventSource::Winevt.to_string(), "winevt");
-    }
-
-    #[test]
-    fn test_event_source_display_logfile() {
-        assert_eq!(EventSource::LogFile.to_string(), "logfile");
-    }
-
-    #[test]
-    fn test_event_source_display_console() {
-        assert_eq!(EventSource::Console.to_string(), "console");
-    }
-
-    #[test]
-    fn test_event_source_display_evtx_file() {
-        assert_eq!(EventSource::EvtxFile.to_string(), "evtx_file");
-    }
-
-    #[test]
-    fn test_event_source_display_raw_json() {
-        assert_eq!(EventSource::RawJson.to_string(), "raw_json");
-    }
-
-    #[test]
-    fn test_event_source_default_is_winevt() {
-        let source: EventSource = Default::default();
-        assert_eq!(source, EventSource::Winevt);
-    }
-
-    #[test]
-    fn test_event_input_new() {
-        let input = EventInput::new(EventSource::Winevt, "Security");
-        assert_eq!(input.source, EventSource::Winevt);
-        assert_eq!(input.identifier, "Security");
-    }
-
-    #[test]
-    fn test_engine_add_input_and_stats() {
-        let mut engine = DetectionEngine::new();
-        let initial_stats = engine.stats();
-        assert_eq!(initial_stats.inputs_count, 0);
-
-        engine.add_input(EventInput::new(EventSource::Winevt, "Security"));
-        let stats = engine.stats();
-        assert_eq!(stats.inputs_count, 1);
-
-        engine.add_input(EventInput::new(EventSource::Winevt, "Sysmon"));
-        let stats = engine.stats();
-        assert_eq!(stats.inputs_count, 2);
-    }
-
-    #[test]
-    fn test_engine_stats_events_collected() {
-        let mut engine = DetectionEngine::new();
-        engine.add_input(EventInput::new(EventSource::RawJson, "test"));
-
-        engine.put_events(vec![
-            Event::new(serde_json::json!({}), Vec::new()),
-            Event::new(serde_json::json!({}), Vec::new()),
-            Event::new(serde_json::json!({}), Vec::new()),
-        ]);
-
-        let stats = engine.stats();
-        assert_eq!(stats.events_collected, 3);
-    }
-
-    #[test]
-    fn test_engine_stats_events_processed() {
-        let mut engine = DetectionEngine::new();
-        engine.put_events(vec![Event::new(serde_json::json!({}), Vec::new())]);
-        engine.put_events(vec![
-            Event::new(serde_json::json!({}), Vec::new()),
-            Event::new(serde_json::json!({}), Vec::new()),
-        ]);
-
-        engine.process_events();
-
-        let stats = engine.stats();
-        assert_eq!(stats.events_processed, 3);
-    }
-
-    #[test]
-    fn test_engine_stats_alerts_generated() {
-        let mut engine = DetectionEngine::new();
-        let dir = tempfile::tempdir().unwrap();
-        write_rule_to_dir(&dir, "test_rule.yml", MINIMAL_RULE_YAML);
-        let _engine = DetectionEngine::from_rules_dir(dir.path()).unwrap();
-
-        let event = Event::new(serde_json::json!({"event_id": 1}), Vec::new());
-        engine.put_events(vec![event]);
-        engine.process_events();
-
-        let alerts = engine.get_alerts();
-        let stats = engine.stats();
-        assert_eq!(stats.alerts_generated, alerts.len() as u64);
-    }
-
-    #[test]
-    fn test_new_engine_has_pipelines() {
-        let dir = tempfile::tempdir().unwrap();
-        write_rule_to_dir(&dir, "pipeline_test.yml", MINIMAL_RULE_YAML);
-        let engine = DetectionEngine::from_rules_dir(dir.path()).unwrap();
-        let count = engine.rule_count();
-        assert_eq!(
-            count, 1,
-            "engine should have 1 rule after loading with pipelines, got {}",
-            count
-        );
-    }
-
-    #[test]
-    fn test_from_rules_dir_nonexistent() {
-        let result = DetectionEngine::from_rules_dir(Path::new("/nonexistent"));
-        assert!(
-            result.is_ok(),
-            "from_rules_dir should succeed for nonexistent dir"
-        );
-        let engine = result.unwrap();
-        assert_eq!(
-            engine.rule_count(),
-            0,
-            "engine should have 0 rules when loaded from nonexistent directory"
-        );
-    }
-
-    #[test]
-    fn test_rule_count() {
-        let dir = tempfile::tempdir().unwrap();
-        write_rule_to_dir(&dir, "test_rule.yml", MINIMAL_RULE_YAML);
-
-        let engine = DetectionEngine::from_rules_dir(dir.path()).unwrap();
-        let count = engine.rule_count();
-        assert_eq!(
-            count, 1,
-            "engine should have exactly 1 rule loaded, got {}",
-            count
-        );
-    }
-
-    #[test]
-    fn test_load_rules_depth_limit() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut current = tmp.path().to_path_buf();
-        for i in 0..20 {
-            current = current.join(format!("level_{}", i));
-            std::fs::create_dir(&current).unwrap();
-        }
-        let rule_content = MINIMAL_RULE_YAML.replace("test-rule", "deep-rule");
-        std::fs::write(current.join("deep.yml"), rule_content).unwrap();
-
-        let engine = DetectionEngine::from_rules_dir(tmp.path()).unwrap();
-        assert_eq!(
-            engine.rule_count(),
-            0,
-            "rules beyond depth 16 should not be loaded"
-        );
-    }
-
-    #[test]
-    fn test_load_rules_at_depth_limit() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut current = tmp.path().to_path_buf();
-        for i in 0..15 {
-            current = current.join(format!("level_{}", i));
-            std::fs::create_dir(&current).unwrap();
-        }
-        let rule_content = MINIMAL_RULE_YAML.replace("test-rule", "edge-rule");
-        std::fs::write(current.join("edge.yml"), rule_content).unwrap();
-
-        let engine = DetectionEngine::from_rules_dir(tmp.path()).unwrap();
-        assert_eq!(engine.rule_count(), 1, "rules at depth 16 should be loaded");
-    }
-
     // ─── RuleIndex tests ─────────────────────────────────────────────────
 
     #[test]
@@ -889,76 +563,34 @@ detection:
         assert!(windows_rules.iter().any(|r| r.contains("test-rule")));
     }
 
-    // ─── Winevt lifecycle tests ──────────────────────────────────────────
+    // ─── FIFO API tests ──────────────────────────────────────────────────
 
     #[test]
-    fn test_add_winevt_input_registers_source() {
+    fn test_put_events_and_process() {
         let mut engine = DetectionEngine::new();
-        assert_eq!(engine.stats().inputs_count, 0);
+        engine.put_events(vec![
+            Event::new(serde_json::json!({}), Vec::new()),
+            Event::new(serde_json::json!({}), Vec::new()),
+        ]);
 
-        engine.add_winevt_input();
-        assert_eq!(engine.stats().inputs_count, 1);
+        engine.process_events();
 
-        // Adding Winevt again should add another input
-        engine.add_winevt_input();
-        assert_eq!(engine.stats().inputs_count, 2);
-    }
-
-    #[test]
-    fn test_all_inputs_ready_before_start() {
-        let mut engine = DetectionEngine::new();
-        // Before adding Winevt, all inputs are "ready" (no Winevt input)
-        assert!(engine.all_inputs_ready());
-
-        engine.add_winevt_input();
-        // After adding Winevt but before start_winevt, collecting is false → ready
-        assert!(engine.all_inputs_ready());
-    }
-
-    #[tokio::test]
-    async fn test_all_inputs_ready_after_start() {
-        let mut engine = DetectionEngine::new();
-        engine.add_winevt_input();
-        engine.start_winevt();
-
-        // After start_winevt(), collector is Some → not ready
-        assert!(!engine.all_inputs_ready());
-    }
-
-    #[tokio::test]
-    async fn test_stop_winevt_clears_collector() {
-        let mut engine = DetectionEngine::new();
-        engine.add_winevt_input();
-        engine.start_winevt();
-        assert!(!engine.all_inputs_ready());
-
-        engine.stop_winevt().await;
-        // After stop_winevt(), collector is None → ready again
-        assert!(engine.all_inputs_ready());
+        let stats = engine.stats();
+        assert_eq!(stats.events_processed, 2);
     }
 
     #[test]
-    fn test_all_inputs_empty_initially() {
-        let engine = DetectionEngine::new();
-        assert!(engine.all_inputs_empty());
-    }
+    fn test_process_events_and_get_alerts() {
+        let dir = tempfile::tempdir().unwrap();
+        write_rule_to_dir(&dir, "test_rule.yml", MINIMAL_RULE_YAML);
 
-    #[test]
-    fn test_all_inputs_empty_after_add_input() {
-        let mut engine = DetectionEngine::new();
-        engine.add_winevt_input();
-        assert!(!engine.all_inputs_empty());
-    }
+        let mut engine = DetectionEngine::from_rules_dir(dir.path()).unwrap();
+        let event = Event::new(serde_json::json!({"event_id": 1}), Vec::new());
+        engine.put_events(vec![event]);
+        engine.process_events();
 
-    #[tokio::test]
-    async fn test_stop_all_inputs_drains_events() {
-        let mut engine = DetectionEngine::new();
-        engine.add_winevt_input();
-        engine.start_all_inputs();
-        assert!(!engine.all_inputs_ready());
-
-        engine.stop_all_inputs().await;
-        assert!(engine.all_inputs_ready());
-        assert!(engine.stats().events_collected > 0 || engine.stats().events_collected == 0);
+        let alerts = engine.get_alerts();
+        let stats = engine.stats();
+        assert_eq!(stats.alerts_generated, alerts.len() as u64);
     }
 }

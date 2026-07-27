@@ -360,19 +360,26 @@ pub struct Config {
 
 impl Config {
     pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
-        if path.exists() {
-            #[cfg(unix)]
-            if let Ok(metadata) = std::fs::metadata(path) {
-                let mode = metadata.permissions().mode() & 0o777;
-                if mode != 0o600 {
-                    eprintln!(
-                        "⚠️  config.yaml has open permissions (0{:o}), fixing to 0600",
-                        mode
-                    );
-                    if let Err(e) = std::fs::set_permissions(path, PermissionsExt::from_mode(0o600))
-                    {
-                        eprintln!("⚠️  Failed to fix config.yaml permissions: {}", e);
-                    }
+        if !path.exists() {
+            let default = Config::default();
+            default.save(path)?;
+            eprintln!("── config.yaml created ──────────────────────");
+            eprintln!("  Edit config.yaml with your settings,");
+            eprintln!("  then run sigmacatch again.");
+            eprintln!("──────────────────────────────────────────────");
+            std::process::exit(1);
+        }
+
+        #[cfg(unix)]
+        if let Ok(metadata) = std::fs::metadata(path) {
+            let mode = metadata.permissions().mode() & 0o777;
+            if mode != 0o600 {
+                eprintln!(
+                    "⚠️  config.yaml has open permissions (0{:o}), fixing to 0600",
+                    mode
+                );
+                if let Err(e) = std::fs::set_permissions(path, PermissionsExt::from_mode(0o600)) {
+                    eprintln!("⚠️  Failed to fix config.yaml permissions: {}", e);
                 }
             }
         }
@@ -426,14 +433,44 @@ impl Config {
                 self.git.email
             );
         }
+        // SSH transport is not yet implemented on Windows
+        #[cfg(windows)]
+        if self.git.transport == GitTransport::Ssh {
+            anyhow::bail!(
+                "SSH transport is not yet implemented on Windows; \
+                 set transport = http in config.yaml"
+            );
+        }
+
         // Validate SSH key path if configured
         if let Some(ref key_path) = self.git.ssh_key_path {
             if !key_path.is_empty() {
-                let meta = std::fs::metadata(key_path).map_err(|e| {
-                    anyhow::anyhow!("config: SSH key path '{}' does not exist: {}", key_path, e)
+                // On Windows, reject unix-style absolute paths early (e.g. /home/user/.ssh/id)
+                #[cfg(windows)]
+                if key_path.starts_with('/') || key_path.starts_with('~') {
+                    anyhow::bail!(
+                        "config: SSH key path '{}' looks like a unix-style path on Windows; \
+                         use a windows path (e.g. 'C:\\Users\\user\\.ssh\\id_sigmacatch') \
+                         or set transport = http",
+                        key_path
+                    );
+                }
+
+                let meta = std::fs::metadata(key_path).map_err(|_| {
+                    anyhow::anyhow!(
+                        "config: SSH key path '{}' does not exist (transport={}); \
+                         remove ssh_key_path from config or switch to transport = http",
+                        key_path,
+                        self.git.transport
+                    )
                 })?;
                 if !meta.is_file() {
-                    anyhow::bail!("config: SSH key path '{}' is not a file", key_path);
+                    anyhow::bail!(
+                        "config: SSH key path '{}' is not a file (transport={}); \
+                         remove ssh_key_path from config or switch to transport = http",
+                        key_path,
+                        self.git.transport
+                    );
                 }
                 #[cfg(unix)]
                 {
@@ -893,5 +930,59 @@ log:
         assert_eq!(config.sigma.max_rules, 10000);
         assert_eq!(config.sigma.max_rule_size, 2097152);
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_ssh_key_unix_path_on_windows() {
+        // On windows, unix-style absolute paths starting with '/' are rejected.
+        // On unix this path format is valid but the file won't exist.
+        let config = Config {
+            log: LogConfig::default(),
+            sigma: SigmaFilterConfig::default(),
+            git: GitConfig {
+                author: "testuser".to_string(),
+                email: "user@example.com".to_string(),
+                transport: GitTransport::Ssh,
+                ssh_key_path: Some("/home/user/.ssh/id_sigmacatch".to_string()),
+                ..GitConfig::default()
+            },
+        };
+        #[cfg(windows)]
+        assert!(
+            config.validate().is_err(),
+            "unix-style absolute paths must be rejected on windows"
+        );
+        #[cfg(unix)]
+        assert!(
+            config.validate().is_err(),
+            "non-existent file should fail on unix too"
+        );
+    }
+
+    #[test]
+    fn test_validate_ssh_key_tilde_path_on_windows() {
+        // On windows, paths starting with '~' are rejected as unix-style.
+        // On unix this path format is valid but the file won't exist.
+        let config = Config {
+            log: LogConfig::default(),
+            sigma: SigmaFilterConfig::default(),
+            git: GitConfig {
+                author: "testuser".to_string(),
+                email: "user@example.com".to_string(),
+                transport: GitTransport::Ssh,
+                ssh_key_path: Some("~/.ssh/id_sigmacatch".to_string()),
+                ..GitConfig::default()
+            },
+        };
+        #[cfg(windows)]
+        assert!(
+            config.validate().is_err(),
+            "unix-style tilde paths must be rejected on windows"
+        );
+        #[cfg(unix)]
+        assert!(
+            config.validate().is_err(),
+            "non-existent file should fail on unix too"
+        );
     }
 }
