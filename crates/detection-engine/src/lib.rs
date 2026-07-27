@@ -16,50 +16,11 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
-/// Load all pipeline YAML files from the `pipelines/` directory next to this crate.
-///
-/// Returns the pipelines in alphabetical order by filename to ensure deterministic
-/// loading order (flatten_winevt before windows, etc.).
-pub fn load_pipelines_from_dir(
-    pipelines_dir: &Path,
-) -> Result<Vec<rsigma_eval::pipeline::Pipeline>> {
-    let mut pipelines = Vec::new();
+/// Embedded pipeline for flattening Winevt XML event structure.
+pub const FLATTEN_WINEVT_PIPELINE: &str = include_str!("../pipelines/flatten_winevt.yml");
 
-    if !pipelines_dir.exists() {
-        warn!("Pipelines directory does not exist: {:?}", pipelines_dir);
-        return Ok(pipelines);
-    }
-
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(pipelines_dir)?
-        .filter_map(|e| e.ok())
-        .filter_map(|e| {
-            let p = e.path();
-            if p.is_file() {
-                if let Some(ext) = p.extension().and_then(|ext| ext.to_str()) {
-                    if ext == "yml" || ext == "yaml" {
-                        return Some(p);
-                    }
-                }
-            }
-            None
-        })
-        .collect();
-
-    entries.sort();
-
-    for path in entries {
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| anyhow!("Failed to read pipeline {:?}: {}", path, e))?;
-
-        let pipeline = parse_pipeline(&content)
-            .map_err(|e| anyhow!("Failed to parse pipeline {:?}: {}", path, e))?;
-
-        info!("Loaded pipeline: {:?}", path.file_name());
-        pipelines.push(pipeline);
-    }
-
-    Ok(pipelines)
-}
+/// Embedded pipeline for Windows Sigma rule transformation.
+pub const WINDOWS_PIPELINE: &str = include_str!("../pipelines/windows.yml");
 
 /// Map of product → rule IDs for efficient product-scoped rule access.
 #[derive(Debug, Clone, Default)]
@@ -117,27 +78,17 @@ pub struct DetectionEngine {
 }
 
 impl DetectionEngine {
-    /// Create a new engine with embedded pipelines loaded automatically.
-    ///
-    /// **Warning:** if no pipelines are loaded (missing `pipelines/` dir),
-    /// rules will be evaluated **without transformation** — Sigma fields
-    /// may not map to event fields. Use `new_with_pipelines()` for `Result`
-    /// handling.
+    /// Create a new engine with the two embedded pipelines loaded.
     pub fn new() -> Self {
         let mut engine = Engine::new();
         engine.set_include_event(true);
 
-        let pipelines_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("pipelines");
-        let pipelines = load_pipelines_from_dir(&pipelines_dir).expect("pipelines must be valid");
-        if pipelines.is_empty() {
-            warn!(
-                "No pipelines loaded from {:?}: rules will be evaluated untransformed",
-                pipelines_dir
-            );
-        }
-        for pipeline in pipelines {
-            engine.add_pipeline(pipeline);
-        }
+        let flatten =
+            parse_pipeline(FLATTEN_WINEVT_PIPELINE).expect("flatten_winevt pipeline is valid");
+        engine.add_pipeline(flatten);
+
+        let windows = parse_pipeline(WINDOWS_PIPELINE).expect("windows pipeline is valid");
+        engine.add_pipeline(windows);
 
         Self {
             engine,
@@ -146,24 +97,6 @@ impl DetectionEngine {
             stats: EngineStats::default(),
             rule_index: RuleIndex::new(),
         }
-    }
-
-    /// Create a new engine and load pipelines from a custom directory.
-    pub fn new_with_pipelines(pipelines_dir: &Path) -> Result<Self> {
-        let mut engine = Engine::new();
-        engine.set_include_event(true);
-
-        for pipeline in load_pipelines_from_dir(pipelines_dir)? {
-            engine.add_pipeline(pipeline);
-        }
-
-        Ok(Self {
-            engine,
-            events: Vec::new(),
-            alerts: Vec::new(),
-            stats: EngineStats::default(),
-            rule_index: RuleIndex::new(),
-        })
     }
 
     /// Create a new engine and load rules from a directory in one call.
