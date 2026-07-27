@@ -26,6 +26,9 @@ impl std::fmt::Display for GitTransport {
     }
 }
 
+/// Default SigmaHQ repository URL.
+pub const DEFAULT_SIGMA_REPO_URL: &str = "https://github.com/SigmaHQ/sigma.git";
+
 /// Git transport configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -40,6 +43,20 @@ pub struct GitConfig {
     pub transport: GitTransport,
     /// Path to SSH private key (optional). If empty, uses default SSH agent.
     pub ssh_key_path: Option<String>,
+    /// Sigma repository URL to clone/fetch from.
+    #[serde(default = "default_sigma_repo_url")]
+    pub sigma_repo_url: String,
+    /// Local path to store the sigma repository.
+    #[serde(default = "default_sigma_repo_path")]
+    pub sigma_repo_path: String,
+}
+
+fn default_sigma_repo_url() -> String {
+    DEFAULT_SIGMA_REPO_URL.to_string()
+}
+
+fn default_sigma_repo_path() -> String {
+    "sigma".to_string()
 }
 
 impl Default for GitConfig {
@@ -50,6 +67,8 @@ impl Default for GitConfig {
             github_token: String::new(),
             transport: GitTransport::Http,
             ssh_key_path: None,
+            sigma_repo_url: default_sigma_repo_url(),
+            sigma_repo_path: default_sigma_repo_path(),
         }
     }
 }
@@ -181,6 +200,9 @@ impl std::str::FromStr for MinStatus {
     }
 }
 
+/// Re-export Product from sigmacatch_types for rule filtering.
+pub use sigmacatch_types::Product;
+
 /// Minimum Sigma rule level threshold (inclusive).
 ///
 /// Rules with `level >= min_level` are loaded.
@@ -257,15 +279,31 @@ impl std::str::FromStr for MinLevel {
 }
 
 /// Configuration for rule loading filters.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SigmaFilterConfig {
+    /// Target product for rule filtering: windows, linux, or macos.
+    pub product: Product,
     /// Minimum rule status (inclusive): unsupported < deprecated < experimental < test < stable.
     #[serde(default = "default_min_status")]
     pub min_status: MinStatus,
     /// Minimum rule level (inclusive): informational < low < medium < high < critical.
     #[serde(default = "default_min_level")]
     pub min_level: MinLevel,
+    /// Maximum number of rules to load (0 = unlimited).
+    #[serde(default = "default_max_rules")]
+    pub max_rules: u64,
+    /// Maximum size of a single rule file in bytes (default 1MB).
+    #[serde(default = "default_max_rule_size")]
+    pub max_rule_size: usize,
+}
+
+fn default_max_rules() -> u64 {
+    0
+}
+
+fn default_max_rule_size() -> usize {
+    1024 * 1024
 }
 
 fn default_min_status() -> MinStatus {
@@ -279,8 +317,11 @@ fn default_min_level() -> MinLevel {
 impl Default for SigmaFilterConfig {
     fn default() -> Self {
         Self {
+            product: Product::default(),
             min_status: default_min_status(),
             min_level: default_min_level(),
+            max_rules: default_max_rules(),
+            max_rule_size: default_max_rule_size(),
         }
     }
 }
@@ -439,6 +480,51 @@ impl Config {
                 }
             }
         }
+
+        if self.sigma.max_rules > 100000 {
+            anyhow::bail!(
+                "config: 'sigma.max_rules' exceeds maximum allowed value (100000), got {}",
+                self.sigma.max_rules
+            );
+        }
+
+        if self.sigma.max_rule_size < 1024 {
+            anyhow::bail!(
+                "config: 'sigma.max_rule_size' must be at least 1024 bytes, got {}",
+                self.sigma.max_rule_size
+            );
+        }
+
+        if self.sigma.max_rule_size > 10 * 1024 * 1024 {
+            anyhow::bail!(
+                "config: 'sigma.max_rule_size' exceeds maximum allowed value (10MB), got {}",
+                self.sigma.max_rule_size
+            );
+        }
+
+        // Validate sigma_repo_path — reject path traversal and absolute paths
+        if std::path::Path::new(&self.git.sigma_repo_path)
+            .components()
+            .any(|c| c == std::path::Component::ParentDir)
+        {
+            anyhow::bail!(
+                "config: 'git.sigma_repo_path' contains '..' path traversal, got {:?}",
+                self.git.sigma_repo_path
+            );
+        }
+        if std::path::Path::new(&self.git.sigma_repo_path).is_absolute() {
+            anyhow::bail!(
+                "config: 'git.sigma_repo_path' must be a relative path, got {:?}",
+                self.git.sigma_repo_path
+            );
+        }
+        if std::path::Path::new(&self.git.sigma_repo_path).is_absolute() {
+            anyhow::bail!(
+                "config: 'git.sigma_repo_path' must be a relative path, got {:?}",
+                self.git.sigma_repo_path
+            );
+        }
+
         if self.sigma.min_status.ordinal() >= MinStatus::Stable.ordinal() {
             tracing::warn!(
                 "sigma.min_status = {} — very restrictive, only stable rules will be loaded",
@@ -615,5 +701,197 @@ log:
             let deser: MinLevel = serde_yaml::from_str(&ser).unwrap();
             assert_eq!(deser, *v, "serde round-trip failed for {:?}", v);
         }
+    }
+
+    #[test]
+    fn test_config_default_product() {
+        let config = Config::default();
+        assert_eq!(config.sigma.product, Product::Windows);
+    }
+
+    #[test]
+    fn test_config_load_product_linux() {
+        let yaml = r#"
+sigma:
+  product: linux
+git:
+  author: testuser
+  email: user@example.com
+log:
+  level_file: debug
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sigma.product, Product::Linux);
+    }
+
+    #[test]
+    fn test_config_load_product_macos() {
+        let yaml = r#"
+sigma:
+  product: macos
+git:
+  author: testuser
+  email: user@example.com
+log:
+  level_file: debug
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sigma.product, Product::Macos);
+    }
+
+    #[test]
+    fn test_config_invalid_product() {
+        let yaml = r#"
+sigma:
+  product: invalid
+git:
+  author: testuser
+  email: user@example.com
+log:
+  level_file: debug
+"#;
+        let result: Result<Config, _> = serde_yaml::from_str(yaml);
+        assert!(result.is_err()); // serde rejects it — field is typed Product enum
+    }
+
+    #[test]
+    fn test_config_load_repo_url_and_path() {
+        let yaml = r#"
+sigma:
+  product: windows
+git:
+  author: testuser
+  email: user@example.com
+  sigma_repo_url: https://github.com/custom/sigma.git
+  sigma_repo_path: /opt/sigma/
+log:
+  level_file: debug
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.git.sigma_repo_url,
+            "https://github.com/custom/sigma.git"
+        );
+        assert_eq!(config.git.sigma_repo_path, "/opt/sigma/");
+    }
+
+    #[test]
+    fn test_config_default_repo_url() {
+        let yaml = r#"
+sigma:
+  product: windows
+git:
+  author: testuser
+  email: user@example.com
+log:
+  level_file: debug
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.git.sigma_repo_url,
+            "https://github.com/SigmaHQ/sigma.git"
+        );
+        assert_eq!(config.git.sigma_repo_path, "sigma");
+    }
+
+    #[test]
+    fn test_config_validate_path_traversal() {
+        let config = Config {
+            log: LogConfig::default(),
+            sigma: SigmaFilterConfig::default(),
+            git: GitConfig {
+                author: "testuser".to_string(),
+                email: "user@example.com".to_string(),
+                sigma_repo_path: "../escape".to_string(),
+                ..GitConfig::default()
+            },
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_validate_path_traversal_dot_slash() {
+        let config = Config {
+            log: LogConfig::default(),
+            sigma: SigmaFilterConfig::default(),
+            git: GitConfig {
+                author: "testuser".to_string(),
+                email: "user@example.com".to_string(),
+                sigma_repo_path: "././../escape".to_string(),
+                ..GitConfig::default()
+            },
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_max_rules_too_high() {
+        let config = Config {
+            log: LogConfig::default(),
+            sigma: SigmaFilterConfig {
+                max_rules: 200000,
+                ..SigmaFilterConfig::default()
+            },
+            git: GitConfig {
+                author: "testuser".to_string(),
+                email: "user@example.com".to_string(),
+                ..GitConfig::default()
+            },
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_max_rule_size_too_small() {
+        let config = Config {
+            log: LogConfig::default(),
+            sigma: SigmaFilterConfig {
+                max_rule_size: 512,
+                ..SigmaFilterConfig::default()
+            },
+            git: GitConfig {
+                author: "testuser".to_string(),
+                email: "user@example.com".to_string(),
+                ..GitConfig::default()
+            },
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_max_rule_size_too_large() {
+        let config = Config {
+            log: LogConfig::default(),
+            sigma: SigmaFilterConfig {
+                max_rule_size: 20 * 1024 * 1024,
+                ..SigmaFilterConfig::default()
+            },
+            git: GitConfig {
+                author: "testuser".to_string(),
+                email: "user@example.com".to_string(),
+                ..GitConfig::default()
+            },
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_load_with_max_rules() {
+        let yaml = r#"
+sigma:
+  product: windows
+  max_rules: 10000
+  max_rule_size: 2097152
+git:
+  author: testuser
+  email: user@example.com
+  transport: ssh
+log:
+  level_file: debug
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sigma.max_rules, 10000);
+        assert_eq!(config.sigma.max_rule_size, 2097152);
+        assert!(config.validate().is_ok());
     }
 }

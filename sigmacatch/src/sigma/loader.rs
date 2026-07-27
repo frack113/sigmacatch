@@ -9,8 +9,6 @@ use tracing::{info, warn};
 
 use crate::config::{GitConfig, SigmaFilterConfig};
 
-pub(crate) const SIGMA_REPO_URL: &str = "https://github.com/SigmaHQ/sigma.git";
-
 #[derive(Debug, Clone)]
 pub struct SigmaRepo {
     pub path: PathBuf,
@@ -97,7 +95,7 @@ impl SigmaRepo {
         let url = self
             .remote_url
             .clone()
-            .unwrap_or_else(|| SIGMA_REPO_URL.to_string());
+            .unwrap_or_else(|| crate::config::DEFAULT_SIGMA_REPO_URL.to_string());
         info!("Cloning Sigma repository from {}...", url);
         let path = self.path.clone();
         let git_config = self.git_config.clone();
@@ -151,7 +149,7 @@ fn is_repo_complete(git_dir: &Path) -> bool {
 /// Each candidate rule is counted in exactly one bucket. Cascade filtering means a rule with both
 /// bad status AND bad level is counted only in `rules_filtered_status` (level check never fires).
 ///
-/// `rules_total_candidate` = Windows rules that passed the skip set check (before status/level filtering).
+/// `rules_total_candidate` = rules matching `filter.product` that passed the skip set check (before status/level filtering).
 /// `rules_filtered_status` = rules rejected because their status is below `min_status`.
 /// `rules_filtered_level` = rules that passed status check but were rejected because their level is below `min_level`.
 /// `rules_loaded` = rules that passed all filters and were added to the collection.
@@ -185,10 +183,17 @@ pub fn load_all_rules(
     let mut rules_filtered_level: u64 = 0;
 
     let skip_set = skip_ids.clone();
+    let mut done = false;
     for dir in dirs {
+        if done {
+            break;
+        }
         let mut pending = vec![dir.to_path_buf()];
 
         while let Some(current) = pending.pop() {
+            if done {
+                break;
+            }
             if !current.exists() || !current.is_dir() {
                 continue;
             }
@@ -203,12 +208,24 @@ pub fn load_all_rules(
                                     continue;
                                 }
                             }
+                            if let Ok(metadata) = std::fs::metadata(&path) {
+                                if metadata.len() > filter.max_rule_size as u64 {
+                                    continue;
+                                }
+                            }
                             if let Ok(content) = std::fs::read_to_string(&path) {
+                                if filter.max_rules > 0
+                                    && collection.rules.len() >= filter.max_rules as usize
+                                {
+                                    done = true;
+                                    break;
+                                }
                                 match parse_sigma_yaml(&content) {
                                     Ok(parsed) => {
                                         for rule in parsed.rules {
                                             let rule_id = rule.id.clone().unwrap_or_default();
-                                            if rule.logsource.product.as_deref() != Some("windows")
+                                            if rule.logsource.product.as_deref()
+                                                != Some(filter.product.as_str())
                                             {
                                                 continue;
                                             }
@@ -266,7 +283,7 @@ pub fn load_all_rules(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{MinLevel, MinStatus};
+    use crate::config::{MinLevel, MinStatus, Product};
     use detection_engine::find_rules_dirs;
     use std::fs;
 
@@ -425,8 +442,11 @@ mod tests {
 
         let dirs = vec![rules_dir.as_path()];
         let filter = SigmaFilterConfig {
+            product: Product::Windows,
             min_status: MinStatus::Stable,
             min_level: MinLevel::Critical,
+            max_rules: 0,
+            max_rule_size: 1024 * 1024,
         };
         let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
 
@@ -450,8 +470,11 @@ mod tests {
 
         let dirs = vec![rules_dir.as_path()];
         let filter = SigmaFilterConfig {
+            product: Product::Windows,
             min_status: MinStatus::Stable,
             min_level: MinLevel::Critical,
+            max_rules: 0,
+            max_rule_size: 1024 * 1024,
         };
         let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
 
@@ -475,8 +498,11 @@ mod tests {
 
         let dirs = vec![rules_dir.as_path()];
         let filter = SigmaFilterConfig {
+            product: Product::Windows,
             min_status: MinStatus::Stable,
             min_level: MinLevel::Critical,
+            max_rules: 0,
+            max_rule_size: 1024 * 1024,
         };
         let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
 
@@ -505,8 +531,11 @@ mod tests {
 
         let dirs = vec![rules_dir.as_path()];
         let filter = SigmaFilterConfig {
+            product: Product::Windows,
             min_status: MinStatus::Stable,
             min_level: MinLevel::Critical,
+            max_rules: 0,
+            max_rule_size: 1024 * 1024,
         };
         let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
 
@@ -529,8 +558,11 @@ mod tests {
 
         let dirs = vec![rules_dir.as_path()];
         let filter = SigmaFilterConfig {
+            product: Product::Windows,
             min_status: MinStatus::Stable,
             min_level: MinLevel::High,
+            max_rules: 0,
+            max_rule_size: 1024 * 1024,
         };
         let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
 
@@ -584,8 +616,11 @@ mod tests {
 
         let dirs = vec![rules_dir.as_path()];
         let filter = SigmaFilterConfig {
+            product: Product::Windows,
             min_status: MinStatus::Stable,
             min_level: MinLevel::Critical,
+            max_rules: 0,
+            max_rule_size: 1024 * 1024,
         };
         let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
 
@@ -594,5 +629,146 @@ mod tests {
         assert_eq!(result.stats.rules_filtered_level, 0);
         assert_eq!(result.stats.rules_total_candidate, 2);
         assert!(result.collection.rules.is_empty());
+    }
+
+    #[test]
+    fn test_filter_product_windows_loads_windows_rules() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("rule_windows.yml"),
+            make_rule_yaml("windows rule", Some("stable"), Some("critical"), Some(1)),
+        )
+        .unwrap();
+        fs::write(
+            rules_dir.join("rule_linux.yml"),
+            "id: test_uuid2\ntitle: linux rule\nlogsource:\n  product: linux\ndetection:\n  sel:\n    EventID: 1\n  condition:\n    - sel\n".to_string(),
+        )
+        .unwrap();
+
+        let dirs = vec![rules_dir.as_path()];
+        let filter = SigmaFilterConfig {
+            product: Product::Windows,
+            min_status: MinStatus::Stable,
+            min_level: MinLevel::Critical,
+            max_rules: 0,
+            max_rule_size: 1024 * 1024,
+        };
+        let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
+
+        assert_eq!(result.stats.rules_loaded, 1);
+        assert_eq!(result.stats.rules_total_candidate, 1);
+    }
+
+    #[test]
+    fn test_filter_product_linux_loads_linux_rules() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("rule_linux.yml"),
+            "id: test_uuid2\ntitle: linux rule\nlogsource:\n  product: linux\ndetection:\n  sel:\n    EventID: 1\n  condition:\n    - sel\n".to_string(),
+        )
+        .unwrap();
+        fs::write(
+            rules_dir.join("rule_windows.yml"),
+            make_rule_yaml("windows rule", Some("stable"), Some("critical"), Some(1)),
+        )
+        .unwrap();
+
+        let dirs = vec![rules_dir.as_path()];
+        let filter = SigmaFilterConfig {
+            product: Product::Linux,
+            min_status: MinStatus::Stable,
+            min_level: MinLevel::Critical,
+            max_rules: 0,
+            max_rule_size: 1024 * 1024,
+        };
+        let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
+
+        assert_eq!(result.stats.rules_loaded, 1);
+        assert_eq!(result.stats.rules_total_candidate, 1);
+    }
+
+    #[test]
+    fn test_filter_product_macos_loads_macos_rules() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("rule_macos.yml"),
+            "id: test_uuid3\ntitle: macos rule\nlogsource:\n  product: macos\ndetection:\n  sel:\n    EventID: 1\n  condition:\n    - sel\n".to_string(),
+        )
+        .unwrap();
+
+        let dirs = vec![rules_dir.as_path()];
+        let filter = SigmaFilterConfig {
+            product: Product::Macos,
+            min_status: MinStatus::Stable,
+            min_level: MinLevel::Critical,
+            max_rules: 0,
+            max_rule_size: 1024 * 1024,
+        };
+        let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
+
+        assert_eq!(result.stats.rules_loaded, 1);
+        assert_eq!(result.stats.rules_total_candidate, 1);
+    }
+
+    #[test]
+    fn test_max_rules_limits_loaded_rules() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir(&rules_dir).unwrap();
+        for i in 0..5 {
+            let content = format!(
+                "id: test_rule_{i}\ntitle: rule {i}\nlogsource:\n  product: windows\ndetection:\n  sel:\n    EventID: {i}\n  condition:\n    - sel\n"
+            );
+            fs::write(rules_dir.join(format!("rule_{i}.yml")), content).unwrap();
+        }
+
+        let dirs = vec![rules_dir.as_path()];
+        let filter = SigmaFilterConfig {
+            product: Product::Windows,
+            min_status: MinStatus::Stable,
+            min_level: MinLevel::Critical,
+            max_rules: 3,
+            max_rule_size: 1024 * 1024,
+        };
+        let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
+
+        assert!(result.stats.rules_loaded <= 3);
+        assert_eq!(
+            result.collection.rules.len() as u64,
+            result.stats.rules_loaded
+        );
+    }
+
+    #[test]
+    fn test_max_rule_size_filters_large_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("rules");
+        fs::create_dir(&rules_dir).unwrap();
+        let small_content = make_rule_yaml("small rule", Some("stable"), Some("critical"), Some(1));
+        let large_content = format!(
+            "{}\ndetection:\n  sel:\n    EventID: 1\n    Padding:\n{}",
+            small_content.trim(),
+            "A".repeat(50000)
+        );
+        fs::write(rules_dir.join("small.yml"), small_content).unwrap();
+        fs::write(rules_dir.join("large.yml"), large_content).unwrap();
+
+        let dirs = vec![rules_dir.as_path()];
+        let filter = SigmaFilterConfig {
+            product: Product::Windows,
+            min_status: MinStatus::Stable,
+            min_level: MinLevel::Critical,
+            max_rules: 0,
+            max_rule_size: 1024,
+        };
+        let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
+
+        assert_eq!(result.stats.rules_loaded, 1);
     }
 }

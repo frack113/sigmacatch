@@ -55,8 +55,8 @@ Rules missing a `status` or `level` field are always accepted.
 |------|-------------|
 | `--author <name>` | Override detected username |
 | `--dry-run` | Git diagnostics only (no collection) |
-| `--channels-only` | Resolve channels without collecting |
-| `--all-rules` | Load all rules (for channels-only mode, skip set disabled) |
+| `--channels-only` | List resolved channels and exit (no collection) |
+| `--all-rules` | Load all rules — skip set is disabled |
 
 ## Requirements
 

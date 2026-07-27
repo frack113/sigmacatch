@@ -474,6 +474,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dunce",
+ "input-windows-channels",
  "rsigma-eval",
  "rsigma-parser",
  "serde",
@@ -2304,6 +2305,7 @@ version = "0.1.0"
 dependencies = [
  "roxmltree 0.21.1",
  "rsigma-eval",
+ "serde",
  "serde_json",
 ]
 

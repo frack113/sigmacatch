@@ -8,8 +8,47 @@
 //! - [`RegressionHeader`] — minimal rule metadata for regression data generation
 
 use roxmltree::Node;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::fmt;
+
+/// Product identifier for rule filtering.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Product {
+    #[default]
+    Windows,
+    Linux,
+    Macos,
+}
+
+impl Product {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Product::Windows => "windows",
+            Product::Linux => "linux",
+            Product::Macos => "macos",
+        }
+    }
+}
+
+impl std::str::FromStr for Product {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "windows" => Ok(Product::Windows),
+            "linux" => Ok(Product::Linux),
+            "macos" => Ok(Product::Macos),
+            _ => Err(format!("unknown product: {s}")),
+        }
+    }
+}
+
+impl std::fmt::Display for Product {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
 
 /// A generic event for the detection engine: parsed JSON + raw source bytes.
 #[derive(Debug, Clone)]

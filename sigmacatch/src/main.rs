@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 use detection_engine::DetectionEngine;
-use input_windows_channels::EventCollector;
 use sigmacatch::config;
 use sigmacatch::github;
 use sigmacatch::logger;
@@ -378,7 +377,7 @@ async fn stage_1_update_repo(
     config: &Config,
     fork_config: Option<&github::fork::ForkConfig>,
 ) -> Result<()> {
-    let mut sigma_repo = SigmaRepo::new(std::path::Path::new("sigma"));
+    let mut sigma_repo = SigmaRepo::new(std::path::Path::new(&config.git.sigma_repo_path));
 
     if let Some(fc) = fork_config {
         let base_url = fc.fork_url.strip_suffix(".git").unwrap_or(&fc.fork_url);
@@ -395,7 +394,7 @@ async fn stage_1_update_repo(
 
     // Switch to master/main before pulling, so the contrib branch is created
     // from the latest tracking branch, not from a stale contrib branch.
-    let sigma_path = PathBuf::from("sigma");
+    let sigma_path = PathBuf::from(&config.git.sigma_repo_path);
     let git_dir = sigma_path.join(".git");
     if git_dir.exists() {
         // read_loose_or_packed_ref is used here to check if the tracking ref
@@ -531,25 +530,23 @@ async fn stage_4_work_winevt(
     // re-staged and committed, polluting the branch.
     clean_partial_regressions(&output_base);
 
-    info!("Starting winevt collection on channels: {:?}", channels);
+    info!("Starting event collection on channels: {:?}", channels);
 
-    let mut collector = EventCollector::start();
+    // Register Winevt input
+    engine.add_winevt_input();
+    engine.start_all_inputs();
 
-    // Wait for all channel tasks to complete (no magic sleep)
-    collector.stop().await;
+    // Wait for all channel tasks to complete
+    engine.stop_all_inputs().await;
 
-    // Get all collected events
-    let events = collector.get_events().await;
-    info!("Got {} events from collector", events.len());
-
-    let event_count = events.len();
-
-    // Use the DetectionEngine FIFO API: push events → process → pull alerts
-    engine.put_events(events);
+    info!(
+        "Collected {} events, processed {} events against {} rules",
+        engine.stats().events_collected,
+        engine.stats().events_processed,
+        engine.rule_count()
+    );
     engine.process_events();
     let alerts = engine.get_alerts();
-
-    ctx.stats.events_processed = event_count as u64;
 
     for alert in alerts {
         let rule_id = &alert.rule_id;
@@ -727,12 +724,17 @@ type EngineFactory = Box<dyn Fn() -> DetectionEngine + Send + Sync>;
 async fn setup_pipeline(
     config: &Config,
     fork_config: Option<&github::fork::ForkConfig>,
+    all_rules: bool,
 ) -> Result<(EngineFactory, Vec<String>, HashMap<String, String>)> {
     let rules_dirs = detection_engine::find_rules_dirs(std::path::Path::new("sigma"))?;
     stage_0_init().await?;
     stage_1_update_repo(config, fork_config).await?;
 
-    let existing_rules = stage_2_existing_rules(config);
+    let existing_rules = if all_rules {
+        HashSet::new()
+    } else {
+        stage_2_existing_rules(config)
+    };
 
     let (engine, stats) = stage_3_load_rules(config, &existing_rules)?;
     let rules_count = stats.rules_loaded;
@@ -873,6 +875,11 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
+    let all_rules = flags.contains(&"--all-rules");
+    if all_rules {
+        info!("All-rules mode enabled — skip set will be empty");
+    }
+
     if flags.contains(&"--dry-run") {
         dry_run_git(&config).await?;
         return Ok(());
@@ -898,10 +905,18 @@ async fn main() -> Result<()> {
     let fork_config = github::fork::detect_fork(&config.git.author, &branch_name).await?;
 
     let (engine_factory, cycle_channels, custom_map) =
-        setup_pipeline(&config, Some(&fork_config)).await?;
+        setup_pipeline(&config, Some(&fork_config), all_rules).await?;
 
     if cycle_channels.is_empty() {
-        info!("No channels resolved — exiting cleanly");
+        warn!("0 channels resolved — nothing to collect");
+        return Ok(());
+    }
+
+    if flags.contains(&"--channels-only") {
+        info!("Channels only mode — listing channels and exiting");
+        for ch in &cycle_channels {
+            println!("  {}", ch);
+        }
         return Ok(());
     }
 
