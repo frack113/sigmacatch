@@ -59,14 +59,13 @@ Fonctionnalités identifiées comme utiles mais hors périmètre actuel. Pas de 
 
 ## 5. Optimiser DetectionEngine
 
-**État :** l'engine actuel charge toutes les rules dans `rsigma-eval` `Engine`, puis évalue chaque event contre l'ensemble des rules en une seule boucle.
+**État :** partielle. Le `RuleIndex` mappe les rule IDs par `Product` pour un accès filtré. Les pipelines sont chargées dynamiquement depuis `crates/detection-engine/pipelines/`.
 
 **Ce qui manque :**
-- Indexer les rules par `logsource` (product, service, category) pour éviter de charger les rules non pertinentes
 - Pré-filtrage par event : seulement push dans le moteur les events dont le logsource matche au moins une rule chargée
 - Table de lookup rapide : metadata des rules → logsource keys, construite avant la création de l'engine
 - `rsigma-eval` V2 pipeline : `rsigma-eval 0.30` supporte `set_pipeline` pour switcher les pipelines dynamiquement — router les events vers des engines spécialisés (ex. Sysmon-only, network-only)
-- Évaluation parallèle : `rayon` ou `crossbeam` pour distribuer les events sur plusieurs instances d'engine pendant `process_events`
+- Évaluation parallèle : `rayon` ou `crossbeam` pour distribuer les events sur plusieurs instances de `engine` pendant `process_events`
 - Caching de compilation des rules : éviter de recompiler la même rule pour chaque event — utiliser le caching interne de `rsigma-eval`
 
 **Cas d'usage :** cycles d'évaluation plus rapides avec des centaines de règles Sigma, empreinte mémoire réduite par évitement du chargement de rules inutiles.

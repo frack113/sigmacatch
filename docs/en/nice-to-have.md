@@ -59,10 +59,9 @@ Features identified as useful but out of current scope. No timeline — document
 
 ## 5. Optimize DetectionEngine
 
-**Status:** current engine loads all rules into `rsigma-eval` `Engine`, then evaluates each event against the full rule set in a single loop.
+**Status:** partial. `RuleIndex` maps rule IDs by `Product` for product-scoped access. Pipelines are loaded dynamically from `crates/detection-engine/pipelines/`.
 
 **What's missing:**
-- Index rules by `logsource` (product, service, category) to avoid loading non-relevant rules
 - Per-event: only push events whose logsource matches at least one loaded rule's `logsource` — skip evaluation entirely for irrelevant rules
 - Rule pre-filtering: build a fast lookup table from rule metadata → logsource keys before engine creation
 - `rsigma-eval` V2 pipeline: `rsigma-eval 0.30` supports `set_pipeline` to switch pipelines dynamically — could route events to specialized engines (e.g. Sysmon-only, network-only)

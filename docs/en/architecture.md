@@ -47,14 +47,14 @@ sigmacatch/src/
 ## Crate dependency graph
 
 ```
-sigmacatch ──┬── detection-engine        (rsigma-eval wrapper + embedded pipelines)
+sigmacatch ──┬── detection-engine        (dynamic pipelines + rules + RuleIndex + multi-input lifecycle)
              ├── input-windows-channels  (Winevt collector + LogSource resolution, taxonomy)
              ├── input-evtx              (EVTX file parser → Event)
-             ├── sigmacatch-types        (Event, Alert, RegressionHeader, XML parsing)
+             ├── sigmacatch-types        (Event, Alert, RegressionHeader, Product, XML parsing)
              └── sigma-regression        (InfoYml, SkipSet, triplet)
 ```
 
-All 5 library crates are independent (no cross-dependency between them). `sigmacatch` depends on all 5, plus external crates (`rsigma-eval`, `grit-lib`, `tokio`, `windows`, etc.).
+`detection-engine` depends on `input-windows-channels` and `input-evtx` (optional, cfg-gated). The other 3 crates are independent. `sigmacatch` depends on all 5, plus external crates (`rsigma-eval`, `grit-lib`, `tokio`, `windows`, etc.).
 
 ## Pipeline (single run, sequential)
 
@@ -63,8 +63,8 @@ All 5 library crates are independent (no cross-dependency between them). `sigmac
 3. Acquire SigmaHQ rules via `grit-lib` (clone); exit error if no rules found
 4. `find_rules_dirs()` scans `sigma/` for `rules` / `rules-*` dirs (excludes `rules-compliance`)
 5. Build skip set by scanning `regression_data/rules/` + `sigma/regression_data/` for existing `info.yml` → `HashSet<String>` of rule IDs
-6. Load Sigma rules from all `rules*` dirs, **excluding skipped rule IDs**; post-parse filter via `rule.logsource.product` filters non-Windows rules; status/level filter via `config.sigma.min_status`/`min_level` (sole allowed optimization) — a startup rule table is displayed (loaded / skipped / active services)
-7. Collect events via `EventCollector` (all Windows channels) → `Vec<Event>`:
+6. Load Sigma rules from all `rules*` dirs, **excluding skipped rule IDs**; post-parse filter via `rule.logsource.product` filters non-Windows rules; status/level filter via `config.sigma.min_status`/`min_level` (sole allowed optimization) — a startup rule table is displayed (loaded / skipped / active services). The `RuleIndex` maps each rule ID to its `Product` for product-scoped access.
+7. Collect events via engine lifecycle (`engine.start_all_inputs()` / `engine.stop_all_inputs()`) → `Vec<Event>`:
    - Each event carries `event_json: Value` (pre-parsed by collector, `parse_winevt_xml` fallback)
    - Each event's `LogSource` is derived from the **channel** via `resolve_logsource` (channel → service > provider → service > default)
     - Evaluate against **all loaded rules** via FIFO API: `engine.put_events(events) → engine.process_events() → engine.get_alerts()` — **no event lost**
@@ -85,5 +85,8 @@ All 5 library crates are independent (no cross-dependency between them). `sigmac
   - See `# INVARIANT:` comment in `crates/input-windows-channels/src/mapping/mod.rs`
 - **EVTX via `EvtExportLog`**: re-queries the event by RecordID from the live log. On success → binary `.evtx`. On failure (event rotated out of retention) or non-Windows → `.xml` fallback (raw XML, not invalid binary).
   - **Known limitation**: race condition with log retention — if the event has been purged between collection and export, `EvtExportLog` fails silently (`ERROR_EVT_QUERY_RESULT_STALE`).
+- **Dynamic pipelines**: Sigma pipelines are loaded from `crates/detection-engine/pipelines/` at engine startup (no embedded `include_str!`). Alphabetical filename ordering ensures determinism (flatten_winevt before windows, etc.).
+- **Multi-input lifecycle**: engine manages input lifecycle via `start_all_inputs()` / `stop_all_inputs()`. Each `EventSource` (Winevt, LogFile, Console, EvtxFile, RawJson) is registered via `EventInput` and its events are drained into a common event pile.
+- **RuleIndex**: maps rule IDs by `Product` for filtered access. Populated during rule loading, accessible via `engine.rule_index()`.
 
 > Skip set details, key design decisions, and skip set construction logic are in [`architecture-reference.md`](architecture-reference.md) (Stages 2, 5, 6, 7).

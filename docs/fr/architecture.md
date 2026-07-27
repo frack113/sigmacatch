@@ -47,14 +47,14 @@ sigmacatch/src/
 ## Graphe de dépendances
 
 ```
-sigmacatch ──┬── detection-engine        (wrapper rsigma-eval + pipelines embarquées)
+sigmacatch ──┬── detection-engine        (pipelines dynamiques + rules + RuleIndex + cycle multi-input)
              ├── input-windows-channels  (collecteur Winevt + résolution LogSource, taxonomie)
              ├── input-evtx              (parser fichiers EVTX → Event)
-             ├── sigmacatch-types        (Event, Alert, RegressionHeader, parsing XML)
+             ├── sigmacatch-types        (Event, Alert, RegressionHeader, Product, parsing XML)
              └── sigma-regression        (InfoYml, SkipSet, triplet)
 ```
 
-Les 5 crates sont indépendants (aucune dépendance croisée entre eux). `sigmacatch` dépend des 5, ainsi que de crates externes (`rsigma-eval`, `grit-lib`, `tokio`, `windows`, etc.).
+`detection-engine` dépend de `input-windows-channels` et `input-evtx` (optionnels, cfg-gated). Les 3 autres crates sont indépendants. `sigmacatch` dépend des 5 crates, ainsi que de crates externes (`rsigma-eval`, `grit-lib`, `tokio`, `windows`, etc.).
 
 ## Pipeline (single run, sequential)
 
@@ -63,11 +63,11 @@ Les 5 crates sont indépendants (aucune dépendance croisée entre eux). `sigmac
 3. Acquire SigmaHQ rules via `grit-lib` (clone); exit error if no rules found
 4. `find_rules_dirs()` scans `sigma/` for `rules` / `rules-*` dirs (excludes `rules-compliance`)
 5. Build skip set by scanning `regression_data/rules/` + `sigma/regression_data/` for existing `info.yml` → `HashSet<String>` of rule IDs
-6. Load Sigma rules from all `rules*` dirs, **excluding skipped rule IDs**; post-parse filter via `rule.logsource.product` filters non-Windows rules; status/level filter via `config.sigma.min_status`/`min_level` (seule optimisation autorisée) — une table de règles est affichée au démarrage (chargées / skipées / services actifs)
-7. Collect events via `EventCollector` (all Windows channels) → `Vec<Event>`:
+6. Load Sigma rules from all `rules*` dirs, **excluding skipped rule IDs**; post-parse filter via `rule.logsource.product` filters non-Windows rules; status/level filter via `config.sigma.min_status`/`min_level` (seule optimisation autorisée) — une table de règles est affichée au démarrage (chargées / skipées / services actifs). Le `RuleIndex` mappe chaque rule ID à son `Product` pour un accès filtré par produit.
+7. Collect events via l'engine lifecycle (`engine.start_all_inputs()` / `engine.stop_all_inputs()`) → `Vec<Event>`:
    - Chaque event porte `event_json: Value` (pré-parsé par le collector, fallback `parse_winevt_xml`)
    - Each event's `LogSource` est dérivé du **channel** via `resolve_logsource` (channel → service > provider → service > default)
-    - Evaluate against **all loaded rules** via FIFO API: `engine.put_events(events) → engine.process_events() → engine.get_alerts()` — **aucun event perdu**
+   - Evaluate against **all loaded rules** via FIFO API: `engine.put_events(events) → engine.process_events() → engine.get_alerts()` — **aucun event perdu**
    - Aggregate matches by `rule_id` in `HashMap<String, AggregatedRule>`
 8. Generate regression for rules without existing `info.yml` (skip at generate time too)
 9. Write: `<output>/<rule_rel_path>/<rule_id>.json` (first matched event) + `<rule_id>.evtx` + `info.yml`; append `regression_tests_path` line to the source rule YAML
@@ -85,5 +85,8 @@ Les 5 crates sont indépendants (aucune dépendance croisée entre eux). `sigmac
   - Voir `# INVARIANT:` comment in `crates/input-windows-channels/src/mapping/mod.rs`
 - **EVTX via `EvtExportLog`** : re-queries l'event par RecordID depuis le live log. Si succès → `.evtx` binaire valide. Si échec (event purgé) ou non-Windows → fallback `.xml` (raw XML, pas de binaire invalide).
   - **Known limitation** : race condition avec la rétention du log — si l'event a été purgé entre la collecte et l'export, `EvtExportLog` échoue silencieusement (`ERROR_EVT_QUERY_RESULT_STALE`).
+- **Pipelines dynamiques** : les pipelines Sigma sont chargées depuis `crates/detection-engine/pipelines/` au démarrage de l'engine (pas de `include_str!` embarqué). L'ordre alphabétique par nom de fichier garantit la déterministicité (flatten_winevt avant windows, etc.).
+- **Cycle multi-input** : l'engine gère le cycle de vie des inputs via `start_all_inputs()` / `stop_all_inputs()`. Chaque `EventSource` (Winevt, LogFile, Console, EvtxFile, RawJson) est enregistré via `EventInput` et ses events sont drainés dans le event pile commun.
+- **RuleIndex** : mappe les rule IDs par `Product` pour un accès filtré. Peuplé pendant le chargement des règles, consultable via `engine.rule_index()`.
 
 > Skip set details, key design decisions, and skip set construction logic are in [`architecture-reference.md`](architecture-reference.md) (Stages 2, 5, 6, 7).

@@ -36,14 +36,21 @@ cargo build --release
 On first run, a `config.yaml` is created with defaults:
 
 ```yaml
-author: "your-username"
-email: "you@example.com"
-github_token: ""          # GitHub token (or set GITHUB_TOKEN env var) — required for fork push
+git:
+  author: "your-username"
+  email: "you@example.com"
+  github_token: ""          # GitHub token (or set GITHUB_TOKEN env var) — required for fork push
+  transport: http           # http or ssh
+  sigma_repo_url: "https://github.com/SigmaHQ/sigma.git"
+  sigma_repo_path: "sigma"
 log:
   level_file: "debug"
 sigma:
-  min_status: "stable"    # load rules with status >= this threshold
-  min_level: "critical"   # load rules with level >= this threshold
+  product: windows          # windows, linux, or macos
+  min_status: "stable"      # load rules with status >= this threshold
+  min_level: "critical"     # load rules with level >= this threshold
+  max_rules: 0              # 0 = unlimited
+  max_rule_size: 1048576    # bytes (1MB default)
 ```
 
 Rules below the configured `min_status` / `min_level` thresholds are skipped at load time.
@@ -95,9 +102,8 @@ The project is a cargo workspace of 7 crates:
 |---|---|
 | `sigmacatch` | Binary + pipeline, all orchestration |
 | `detection-engine` | Thin wrapper around rsigma-eval for loading pipelines and rules, then evaluating events |
-| `input-windows-channels` | Multi-channel Windows Event Log collector (EvtQueryW, EvtNext, EvtRender) |
-| `input-evtx` | Parse EVTX files into `Event` objects for the detection engine |
 | `input-windows-channels` | LogSource resolution, taxonomy tables, channel mappings |
+| `input-evtx` | Parse EVTX files into `Event` objects for the detection engine |
 | `sigma-regression` | SigmaHQ regression data format (`InfoYml`, `SkipSet`, triplet) |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML/JSON parsing |
 
