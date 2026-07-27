@@ -288,7 +288,8 @@ impl EventCollector {
             Err(_) => return,
         };
 
-        if let Ok(event) = Event::from_xml(&xml_str) {
+        if let Ok(mut event) = Event::from_xml(&xml_str) {
+            event.inject_logsource_fields();
             events.push(event);
         }
     }

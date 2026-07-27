@@ -8,7 +8,7 @@
 use anyhow::{anyhow, Result};
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::pipeline::parse_pipeline;
-use rsigma_eval::Engine;
+use rsigma_eval::{Engine, LogSourceExtractor};
 use rsigma_parser::{parse_sigma_yaml, SigmaCollection};
 use sigmacatch_types::{Alert, Event, Product};
 #[cfg(unix)]
@@ -79,9 +79,22 @@ pub struct DetectionEngine {
 
 impl DetectionEngine {
     /// Create a new engine with the two embedded pipelines loaded.
+    ///
+    /// Enables bloom pre-filtering and logsource-based rule pruning for
+    /// optimal evaluation performance.
     pub fn new() -> Self {
         let mut engine = Engine::new();
         engine.set_include_event(true);
+
+        // Enable bloom pre-filter: short-circuits positive substring matchers
+        // (Contains, StartsWith, EndsWith) when the field value cannot possibly
+        // match based on trigram extraction. ~1µs per field probe.
+        engine.set_bloom_prefilter(true);
+
+        // Enable logsource pruning: extracts product/service/category from the
+        // event JSON and skips rules whose logsource conflicts. Fails open —
+        // an event without logsource fields evaluates all rules.
+        engine.set_logsource_extractor(Some(LogSourceExtractor::new()));
 
         let flatten =
             parse_pipeline(FLATTEN_WINEVT_PIPELINE).expect("flatten_winevt pipeline is valid");
@@ -157,6 +170,10 @@ impl DetectionEngine {
     }
 
     /// Evaluate all events in the pile against loaded rules.
+    ///
+    /// Events must have logsource fields (product, service, category) already
+    /// injected by the collector via `Event::inject_logsource_fields()`.
+    /// The bloom pre-filter and logsource pruning are both active.
     pub fn process_events(&mut self) {
         let events = std::mem::take(&mut self.events);
         self.stats.events_processed += events.len() as u64;

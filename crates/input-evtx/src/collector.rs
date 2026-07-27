@@ -45,10 +45,12 @@ impl EventCollector {
             let event_json = parse_winevt_xml(xml)?;
             let event_raw = record.data.as_bytes().to_vec();
 
-            events.push(Event {
+            let mut event = Event {
                 event_json,
                 event_raw,
-            });
+            };
+            event.inject_logsource_fields();
+            events.push(event);
         }
 
         Ok(events)
@@ -100,10 +102,12 @@ pub fn parse_evtx_bytes(data: &[u8]) -> Result<Vec<Event>> {
         let event_json = parse_winevt_xml(xml)?;
         let event_raw = record.data.as_bytes().to_vec();
 
-        events.push(Event {
+        let mut event = Event {
             event_json,
             event_raw,
-        });
+        };
+        event.inject_logsource_fields();
+        events.push(event);
     }
 
     Ok(events)
