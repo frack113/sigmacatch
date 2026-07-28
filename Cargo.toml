@@ -8,6 +8,8 @@ members = [
     "crates/sigmacatch-regression",
     "crates/sigmacatch-detection",
     "crates/sigmacatch-types",
+    "crates/sigmacatch-config",
+    "crates/sigmacatch-logger",
     "crates/input-evtx",
     "crates/input-windows-channels",
     "crates/sigmacatch-rule",

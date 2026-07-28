@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
+//! Application configuration types and loading.
+
 use serde::{Deserialize, Serialize};
 use sigmacatch_repo::DEFAULT_SIGMA_REPO_URL;
 #[cfg(unix)]

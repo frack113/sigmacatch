@@ -2210,7 +2210,9 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sigmacatch-config",
  "sigmacatch-detection",
+ "sigmacatch-logger",
  "sigmacatch-regression",
  "sigmacatch-repo",
  "sigmacatch-rule",
@@ -2226,6 +2228,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sigmacatch-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dunce",
+ "serde",
+ "sigmacatch-repo",
+ "sigmacatch-rule",
+ "sigmacatch-types",
+ "tracing",
+ "yaml_serde",
+]
+
+[[package]]
 name = "sigmacatch-detection"
 version = "0.1.0"
 dependencies = [
@@ -2237,6 +2253,17 @@ dependencies = [
  "sigmacatch-types",
  "tempfile",
  "tracing",
+]
+
+[[package]]
+name = "sigmacatch-logger"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sigmacatch-config",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -17,6 +17,12 @@ name = "evtx_check"
 path = "src/bin/evtx_check.rs"
 
 [dependencies]
+# Crate workspace — application configuration
+sigmacatch-config = { path = "../crates/sigmacatch-config" }
+
+# Crate workspace — logging setup
+sigmacatch-logger = { path = "../crates/sigmacatch-logger" }
+
 # Crate workspace — detection engine
 sigmacatch-detection = { path = "../crates/sigmacatch-detection" }
 

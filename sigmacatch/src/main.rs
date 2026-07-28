@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
+use anyhow::{Context, Result};
+use sigmacatch_config::{self, Config, GitTransport, MinLevel, MinStatus};
 use sigmacatch_detection::DetectionEngine;
-use sigmacatch::config;
 use sigmacatch::github;
 use sigmacatch::logger;
 use sigmacatch::repo;
-
-use anyhow::{Context, Result};
-use config::{Config, GitTransport};
 use input_windows_channels::mapping::build_logsource_to_channels;
 use repo::SigmaRepo;
 use sigmacatch_types::{Alert, Event, EventProducer};
@@ -438,26 +436,24 @@ fn stage_2_existing_rules(_config: &Config) -> HashSet<String> {
 }
 
 /// Convert config MinStatus to sigma_rule MinStatus.
-fn convert_min_status(s: &config::MinStatus) -> sigmacatch_rule::MinStatus {
-    use crate::config::MinStatus as C;
+fn convert_min_status(s: &MinStatus) -> sigmacatch_rule::MinStatus {
     match s {
-        C::Unsupported => sigmacatch_rule::MinStatus::Unsupported,
-        C::Deprecated => sigmacatch_rule::MinStatus::Deprecated,
-        C::Experimental => sigmacatch_rule::MinStatus::Experimental,
-        C::Test => sigmacatch_rule::MinStatus::Test,
-        C::Stable => sigmacatch_rule::MinStatus::Stable,
+        MinStatus::Unsupported => sigmacatch_rule::MinStatus::Unsupported,
+        MinStatus::Deprecated => sigmacatch_rule::MinStatus::Deprecated,
+        MinStatus::Experimental => sigmacatch_rule::MinStatus::Experimental,
+        MinStatus::Test => sigmacatch_rule::MinStatus::Test,
+        MinStatus::Stable => sigmacatch_rule::MinStatus::Stable,
     }
 }
 
 /// Convert config MinLevel to sigma_rule MinLevel.
-fn convert_min_level(l: &config::MinLevel) -> sigmacatch_rule::MinLevel {
-    use crate::config::MinLevel as C;
+fn convert_min_level(l: &MinLevel) -> sigmacatch_rule::MinLevel {
     match l {
-        C::Informational => sigmacatch_rule::MinLevel::Informational,
-        C::Low => sigmacatch_rule::MinLevel::Low,
-        C::Medium => sigmacatch_rule::MinLevel::Medium,
-        C::High => sigmacatch_rule::MinLevel::High,
-        C::Critical => sigmacatch_rule::MinLevel::Critical,
+        MinLevel::Informational => sigmacatch_rule::MinLevel::Informational,
+        MinLevel::Low => sigmacatch_rule::MinLevel::Low,
+        MinLevel::Medium => sigmacatch_rule::MinLevel::Medium,
+        MinLevel::High => sigmacatch_rule::MinLevel::High,
+        MinLevel::Critical => sigmacatch_rule::MinLevel::Critical,
     }
 }
 
