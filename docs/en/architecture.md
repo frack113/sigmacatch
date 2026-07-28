@@ -28,14 +28,7 @@ sigmacatch/src/
 ├── lib.rs               # pub mod declarations
 ├── config.rs            # YAML config (Config, SigmaFilterConfig, MinStatus, MinLevel)
 ├── logger.rs            # Two-layer tracing subscriber (stderr info + daily rolling file debug)
-├── repo.rs              # grit-lib wrapper: clone/fetch/push/commit/branch (pure Rust, no git CLI)
-├── parser/
-│   └── winevt.rs        # re-export from sigmacatch-types crate
-├── sigma/
-│   ├── mod.rs           # pub mod loader, mapping
-│   ├── loader.rs        # SigmaRepo (grit-lib) + find_rules_dirs()
-│   └── mapping/
-│       └── mod.rs       # re-export from input_windows_channels::mapping
+├── repo.rs              # grit-lib wrapper + SigmaRepo (clone/fetch/push/commit/branch)
 ├── github/
 │   ├── mod.rs           # pub mod commit, fork
 │   ├── commit.rs        # Commit workflow with author/email validation

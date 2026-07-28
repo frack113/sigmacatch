@@ -31,10 +31,7 @@ sigmacatch/
 │       ├── main.rs                # Pipeline + Stats + AggregatedRule
 │       ├── lib.rs                 # Déclarations pub mod
 │       ├── config.rs              # Config, SigmaFilterConfig, MinStatus, MinLevel
-│       ├── repo.rs                # wrapper grit-lib (clone/fetch/push/commit/branch)
-│       ├── sigma/
-│       │   ├── loader.rs          # SigmaRepo (grit-lib) + find_rules_dirs()
-│       │   └── mapping/mod.rs     # re-export from input_windows_channels::mapping
+│       ├── repo.rs                # wrapper grit-lib + SigmaRepo (clone/fetch/push/commit/branch)
 │       ├── github/
 │       │   ├── commit.rs          # commit_all_rules avec author env + fallback
 │       │   └── fork.rs            # ForkConfig, check_fork_exists, detect_fork
