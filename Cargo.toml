@@ -5,12 +5,12 @@
 resolver = "2"
 members = [
     "sigmacatch",
-    "crates/sigma-regression",
-    "crates/detection-engine",
+    "crates/sigmacatch-regression",
+    "crates/sigmacatch-detection",
     "crates/sigmacatch-types",
     "crates/input-evtx",
     "crates/input-windows-channels",
-    "crates/sigma-rule",
+    "crates/sigmacatch-rule",
     "crates/sigmacatch-repo",
 ]
 

@@ -134,7 +134,7 @@ impl MinStatus {
     }
 
     /// Returns `true` if `rule_status` meets or exceeds this threshold.
-    pub fn accepts(&self, rule_status: &sigma_rule::Status) -> bool {
+    pub fn accepts(&self, rule_status: &sigmacatch_rule::Status) -> bool {
         MinStatus::from(rule_status).ordinal() >= self.ordinal()
     }
 
@@ -149,14 +149,14 @@ impl MinStatus {
     }
 }
 
-impl From<&sigma_rule::Status> for MinStatus {
-    fn from(s: &sigma_rule::Status) -> Self {
+impl From<&sigmacatch_rule::Status> for MinStatus {
+    fn from(s: &sigmacatch_rule::Status) -> Self {
         match s {
-            sigma_rule::Status::Unsupported => MinStatus::Unsupported,
-            sigma_rule::Status::Deprecated => MinStatus::Deprecated,
-            sigma_rule::Status::Experimental => MinStatus::Experimental,
-            sigma_rule::Status::Test => MinStatus::Test,
-            sigma_rule::Status::Stable => MinStatus::Stable,
+            sigmacatch_rule::Status::Unsupported => MinStatus::Unsupported,
+            sigmacatch_rule::Status::Deprecated => MinStatus::Deprecated,
+            sigmacatch_rule::Status::Experimental => MinStatus::Experimental,
+            sigmacatch_rule::Status::Test => MinStatus::Test,
+            sigmacatch_rule::Status::Stable => MinStatus::Stable,
         }
     }
 }
@@ -212,7 +212,7 @@ impl MinLevel {
     }
 
     /// Returns `true` if `rule_level` meets or exceeds this threshold.
-    pub fn accepts(&self, rule_level: &sigma_rule::Level) -> bool {
+    pub fn accepts(&self, rule_level: &sigmacatch_rule::Level) -> bool {
         MinLevel::from(rule_level).ordinal() >= self.ordinal()
     }
 
@@ -227,14 +227,14 @@ impl MinLevel {
     }
 }
 
-impl From<&sigma_rule::Level> for MinLevel {
-    fn from(l: &sigma_rule::Level) -> Self {
+impl From<&sigmacatch_rule::Level> for MinLevel {
+    fn from(l: &sigmacatch_rule::Level) -> Self {
         match l {
-            sigma_rule::Level::Informational => MinLevel::Informational,
-            sigma_rule::Level::Low => MinLevel::Low,
-            sigma_rule::Level::Medium => MinLevel::Medium,
-            sigma_rule::Level::High => MinLevel::High,
-            sigma_rule::Level::Critical => MinLevel::Critical,
+            sigmacatch_rule::Level::Informational => MinLevel::Informational,
+            sigmacatch_rule::Level::Low => MinLevel::Low,
+            sigmacatch_rule::Level::Medium => MinLevel::Medium,
+            sigmacatch_rule::Level::High => MinLevel::High,
+            sigmacatch_rule::Level::Critical => MinLevel::Critical,
         }
     }
 }

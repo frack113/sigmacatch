@@ -12,9 +12,9 @@
 //! Usage:
 //!   cargo run --release --bin evtx_check <sigmahq_dir>
 
-use detection_engine::DetectionEngine;
+use sigmacatch_detection::DetectionEngine;
 use input_evtx::parse_evtx_bytes;
-use sigma_regression::{list_all, LogType, RegressionData};
+use sigmacatch_regression::{list_all, LogType, RegressionData};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -107,7 +107,7 @@ fn main() {
     println!();
 
     println!("Loading Sigma rules into engine...");
-    let dirs = match sigma_rule::find_rules_dirs(&sigma_dir) {
+    let dirs = match sigmacatch_rule::find_rules_dirs(&sigma_dir) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("Failed to find rule directories: {}", e);

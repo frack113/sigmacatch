@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-use detection_engine::DetectionEngine;
+use sigmacatch_detection::DetectionEngine;
 use sigmacatch::config;
 use sigmacatch::github;
 use sigmacatch::logger;
@@ -425,7 +425,7 @@ fn stage_2_existing_rules(_config: &Config) -> HashSet<String> {
     let sigma_regression_dir = PathBuf::from("sigma").join("regression_data");
 
     let existing_rules =
-        sigma_regression::build_skip_set(&[("sigma/regression_data", &sigma_regression_dir)], 64);
+        sigmacatch_regression::build_skip_set(&[("sigma/regression_data", &sigma_regression_dir)], 64);
 
     if !existing_rules.is_empty() {
         info!(
@@ -438,34 +438,34 @@ fn stage_2_existing_rules(_config: &Config) -> HashSet<String> {
 }
 
 /// Convert config MinStatus to sigma_rule MinStatus.
-fn convert_min_status(s: &config::MinStatus) -> sigma_rule::MinStatus {
+fn convert_min_status(s: &config::MinStatus) -> sigmacatch_rule::MinStatus {
     use crate::config::MinStatus as C;
     match s {
-        C::Unsupported => sigma_rule::MinStatus::Unsupported,
-        C::Deprecated => sigma_rule::MinStatus::Deprecated,
-        C::Experimental => sigma_rule::MinStatus::Experimental,
-        C::Test => sigma_rule::MinStatus::Test,
-        C::Stable => sigma_rule::MinStatus::Stable,
+        C::Unsupported => sigmacatch_rule::MinStatus::Unsupported,
+        C::Deprecated => sigmacatch_rule::MinStatus::Deprecated,
+        C::Experimental => sigmacatch_rule::MinStatus::Experimental,
+        C::Test => sigmacatch_rule::MinStatus::Test,
+        C::Stable => sigmacatch_rule::MinStatus::Stable,
     }
 }
 
 /// Convert config MinLevel to sigma_rule MinLevel.
-fn convert_min_level(l: &config::MinLevel) -> sigma_rule::MinLevel {
+fn convert_min_level(l: &config::MinLevel) -> sigmacatch_rule::MinLevel {
     use crate::config::MinLevel as C;
     match l {
-        C::Informational => sigma_rule::MinLevel::Informational,
-        C::Low => sigma_rule::MinLevel::Low,
-        C::Medium => sigma_rule::MinLevel::Medium,
-        C::High => sigma_rule::MinLevel::High,
-        C::Critical => sigma_rule::MinLevel::Critical,
+        C::Informational => sigmacatch_rule::MinLevel::Informational,
+        C::Low => sigmacatch_rule::MinLevel::Low,
+        C::Medium => sigmacatch_rule::MinLevel::Medium,
+        C::High => sigmacatch_rule::MinLevel::High,
+        C::Critical => sigmacatch_rule::MinLevel::Critical,
     }
 }
 
 fn stage_3_load_rules(
     config: &Config,
     existing_rules: &HashSet<String>,
-) -> Result<(DetectionEngine, sigma_rule::LoadStats)> {
-    let rules_dirs = sigma_rule::find_rules_dirs(std::path::Path::new("sigma"))?;
+) -> Result<(DetectionEngine, sigmacatch_rule::LoadStats)> {
+    let rules_dirs = sigmacatch_rule::find_rules_dirs(std::path::Path::new("sigma"))?;
     if rules_dirs.is_empty() {
         anyhow::bail!(
             "Scanned \"sigma\" — found 0 rules directories. \
@@ -474,14 +474,14 @@ fn stage_3_load_rules(
     }
 
     let rules_dirs_refs: Vec<&std::path::Path> = rules_dirs.iter().map(|d| d.as_path()).collect();
-    let filter = sigma_rule::LoadFilter {
+    let filter = sigmacatch_rule::LoadFilter {
         product: config.sigma.product.as_str().to_string(),
         min_status: Some(convert_min_status(&config.sigma.min_status)),
         min_level: Some(convert_min_level(&config.sigma.min_level)),
         max_rules: config.sigma.max_rules,
         max_rule_size: config.sigma.max_rule_size,
     };
-    let load_result = sigma_rule::load_all_rules(&rules_dirs_refs, existing_rules, &filter)?;
+    let load_result = sigmacatch_rule::load_all_rules(&rules_dirs_refs, existing_rules, &filter)?;
     let stats = load_result.stats;
     let collection = load_result.collection;
 
@@ -621,7 +621,7 @@ async fn stage_4_work_winevt(
     );
 
     // Generate regression data
-    let mut to_generate: Vec<(sigma_regression::RegressionData, Option<PathBuf>, String)> =
+    let mut to_generate: Vec<(sigmacatch_regression::RegressionData, Option<PathBuf>, String)> =
         Vec::new();
     for agg in ctx.aggregated.values_mut() {
         let rule_rel_path = agg.rule_path.as_ref().and_then(|p| {
@@ -630,7 +630,7 @@ async fn stage_4_work_winevt(
                 .map(|rel| rel.with_extension(""))
         });
 
-        let mut reg = sigma_regression::RegressionData::new(
+        let mut reg = sigmacatch_regression::RegressionData::new(
             agg.header.clone(),
             &output_base,
             rule_rel_path.as_deref(),
@@ -663,7 +663,7 @@ async fn stage_4_work_winevt(
         for (reg, rule_path_opt, rule_id) in &to_generate {
             let _gen_span = info_span!("generate", rule_id = %rule_id).entered();
             match reg.generate(|xml, channel, record_id, path| {
-                sigma_regression::write_evtx(xml, channel, record_id, path)
+                sigmacatch_regression::write_evtx(xml, channel, record_id, path)
             }) {
                 Ok(_) => {
                     ctx.stats.regression_data_generated += 1;
@@ -796,7 +796,7 @@ async fn setup_pipeline(
     fork_config: Option<&github::fork::ForkConfig>,
     all_rules: bool,
 ) -> Result<(EngineFactory, Vec<String>, HashMap<String, String>)> {
-    let rules_dirs = sigma_rule::find_rules_dirs(std::path::Path::new("sigma"))?;
+    let rules_dirs = sigmacatch_rule::find_rules_dirs(std::path::Path::new("sigma"))?;
     stage_0_init().await?;
     stage_1_update_repo(config, fork_config).await?;
 

@@ -18,7 +18,7 @@ path = "src/bin/evtx_check.rs"
 
 [dependencies]
 # Crate workspace — detection engine
-detection-engine = { path = "../crates/detection-engine" }
+sigmacatch-detection = { path = "../crates/sigmacatch-detection" }
 
 # Crate workspace — shared types
 sigmacatch-types = { path = "../crates/sigmacatch-types" }
@@ -27,13 +27,13 @@ sigmacatch-types = { path = "../crates/sigmacatch-types" }
 input-windows-channels = { path = "../crates/input-windows-channels" }
 
 # Crate workspace — SigmaHQ regression data format
-sigma-regression = { path = "../crates/sigma-regression" }
+sigmacatch-regression = { path = "../crates/sigmacatch-regression" }
 
 # Crate workspace — EVTX parsing
 input-evtx = { path = "../crates/input-evtx" }
 
 # Crate workspace — Sigma rule management
-sigma-rule = { path = "../crates/sigma-rule" }
+sigmacatch-rule = { path = "../crates/sigmacatch-rule" }
 
 # Crate workspace — Git operations
 sigmacatch-repo = { path = "../crates/sigmacatch-repo" }

@@ -1,0 +1,152 @@
+# Flatten Winevt pipeline.
+#
+# Maps flat SigmaHQ field names to nested JSON paths in RULES.
+# Engine receives nested JSON, rules use dotted paths after this pipeline.
+#
+# Priority: 0 (runs BEFORE windows.yml at priority 5)
+#
+# Without this pipeline: rules use "EventID: 1"
+# With this pipeline: rules use "Event.System.EventID: 1"
+
+name: flatten_winevt
+priority: 0
+
+transformations:
+  # System fields
+  - id: windows_fields
+    type: field_name_mapping
+    mapping:
+      Channel: Event.System.Channel
+      Computer: Event.System.Computer
+      EventID: Event.System.EventID
+      ProviderName: Event.System.Provider.#attributes.Name
+      CallTrace: Event.EventData.CallTrace
+      CallerProcessId: Event.EventData.CallerProcessId
+      CallerProcessName: Event.EventData.CallerProcessName
+      CommandLine: Event.EventData.CommandLine
+      Company: Event.EventData.Company
+      CurrentDirectory: Event.EventData.CurrentDirectory
+      Description: Event.EventData.Description
+      DestinationHostname: Event.EventData.DestinationHostname
+      DestinationIp: Event.EventData.DestinationIp
+      DestinationPort: Event.EventData.DestinationPort
+      Details: Event.EventData.Details
+      EventType: Event.EventData.EventType
+      FileVersion: Event.EventData.FileVersion
+      GrantedAccess: Event.EventData.GrantedAccess
+      Hash: Event.EventData.Hash
+      Hashes: Event.EventData.Hashes
+      HasFullTrust: Event.EventData.HasFullTrust
+      Image: Event.EventData.Image
+      ImageLoaded: Event.EventData.ImageLoaded
+      ImagePath: Event.EventData.ImagePath
+      Imphash: Event.EventData.Imphash
+      IntegrityLevel: Event.EventData.IntegrityLevel
+      Initiated: Event.EventData.Initiated
+      IpAddress: Event.EventData.IpAddress
+      IpPort: Event.EventData.IpPort
+      LogonType: Event.EventData.LogonType
+      NewName: Event.EventData.NewName
+      NewProcessId: Event.EventData.NewProcessId
+      NewProcessName: Event.EventData.NewProcessName
+      ObjectValueName: Event.EventData.ObjectValueName
+      ObjectType: Event.EventData.ObjectType
+      OriginalFileName: Event.EventData.OriginalFileName
+      ParentCommandLine: Event.EventData.ParentCommandLine
+      ParentImage: Event.EventData.ParentImage
+      ParentProcessId: Event.EventData.ParentProcessId
+      PipeName: Event.EventData.PipeName
+      PossibleCause: Event.EventData.PossibleCause
+      Product: Event.EventData.Product
+      Provider: Event.EventData.Provider
+      Protocol: Event.EventData.Protocol
+      Query: Event.EventData.Query
+      RuleName: Event.EventData.RuleName
+      Signature: Event.EventData.Signature
+      SignatureStatus: Event.EventData.SignatureStatus
+      Signed: Event.EventData.Signed
+      SourceHostname: Event.EventData.SourceHostname
+      SourceImage: Event.EventData.SourceImage
+      SourceIp: Event.EventData.SourceIp
+      SourcePort: Event.EventData.SourcePort
+      SourceProcessId: Event.EventData.SourceProcessId
+      SourceUser: Event.EventData.SourceUser
+      SubjectDomainName: Event.EventData.SubjectDomainName
+      SubjectLogonId: Event.EventData.SubjectLogonId
+      SubjectUserSid: Event.EventData.SubjectUserSid
+      SubjectUserName: Event.EventData.SubjectUserName
+      TargetDomainName: Event.EventData.TargetDomainName
+      TargetFilename: Event.EventData.TargetFilename
+      TargetHostname: Event.EventData.TargetHostname
+      TargetImage: Event.EventData.TargetImage
+      TargetLogonId: Event.EventData.TargetLogonId
+      TargetObject: Event.EventData.TargetObject
+      TargetProcessId: Event.EventData.TargetProcessId
+      TargetUserName: Event.EventData.TargetUserName
+      TargetUser: Event.EventData.TargetUser
+      UtcTime: Event.EventData.UtcTime
+      User: Event.EventData.User
+      UserAgent: Event.EventData.UserAgent
+      WorkstationName: Event.EventData.WorkstationName
+      TaskName: Event.EventData.TaskName
+    rule_conditions:
+      - type: logsource
+        product: windows
+
+  # ─── WinDefend-specific field name mapping ───
+  # WinDefend EventData keys have spaces (e.g. "Source Name", "Product Name").
+  # handle_event_data strips spaces → "SourceName", "ProductName", etc.
+  # Sigma rules use the same names — map them to Event.EventData.*
+  - id: windefend_eventdata_fields
+    type: field_name_mapping
+    mapping:
+      SourceName: Event.EventData.SourceName
+      ProductName: Event.EventData.ProductName
+      ProductVersion: Event.EventData.ProductVersion
+      DetectionID: Event.EventData.DetectionID
+      DetectionTime: Event.EventData.DetectionTime
+      ThreatID: Event.EventData.ThreatID
+      ThreatName: Event.EventData.ThreatName
+      SeverityID: Event.EventData.SeverityID
+      SeverityName: Event.EventData.SeverityName
+      CategoryID: Event.EventData.CategoryID
+      CategoryName: Event.EventData.CategoryName
+      StatusCode: Event.EventData.StatusCode
+      StatusDescription: Event.EventData.StatusDescription
+      SourceID: Event.EventData.SourceID
+      ProcessName: Event.EventData.ProcessName
+      Path: Event.EventData.Path
+      DetectionUser: Event.EventData.DetectionUser
+      OriginID: Event.EventData.OriginID
+      OriginName: Event.EventData.OriginName
+      ExecutionID: Event.EventData.ExecutionID
+      ExecutionName: Event.EventData.ExecutionName
+      TypeID: Event.EventData.TypeID
+      TypeName: Event.EventData.TypeName
+      PreExecutionStatus: Event.EventData.PreExecutionStatus
+      ActionID: Event.EventData.ActionID
+      ActionName: Event.EventData.ActionName
+      ErrorCode: Event.EventData.ErrorCode
+      ErrorDescription: Event.EventData.ErrorDescription
+      PostCleanStatus: Event.EventData.PostCleanStatus
+      AdditionalActionsID: Event.EventData.AdditionalActionsID
+      AdditionalActionsString: Event.EventData.AdditionalActionsString
+      RemediationUser: Event.EventData.RemediationUser
+      SecurityIntelligenceVersion: Event.EventData.SecurityIntelligenceVersion
+      EngineVersion: Event.EventData.EngineVersion
+    rule_conditions:
+      - type: logsource
+        service: windefend
+        product: windows
+
+  # ─── WMI-Activity-specific field name mapping ───
+  # WMI-Activity/Operational EID 5858 (ClientFailure) uses UserData.Operation_ClientFailure
+  # instead of EventData. Map Operation to the correct nested path.
+  - id: wmi_activity_fields
+    type: field_name_mapping
+    mapping:
+      Operation: Event.UserData.Operation_ClientFailure.Operation
+    rule_conditions:
+      - type: logsource
+        service: wmi
+        product: windows

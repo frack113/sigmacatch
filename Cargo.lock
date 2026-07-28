@@ -480,20 +480,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
 
 [[package]]
-name = "detection-engine"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "rsigma-eval",
- "serde",
- "serde_json",
- "sigma-rule",
- "sigmacatch-types",
- "tempfile",
- "tracing",
-]
-
-[[package]]
 name = "dialoguer"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2210,41 +2196,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
-name = "sigma-regression"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "serde",
- "serde_json",
- "sigmacatch-types",
- "tempfile",
- "tracing",
- "uuid",
- "windows",
- "yaml_serde",
-]
-
-[[package]]
-name = "sigma-rule"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dunce",
- "rsigma-parser",
- "serde",
- "sigmacatch-types",
- "tempfile",
- "tracing",
-]
-
-[[package]]
 name = "sigmacatch"
 version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
- "detection-engine",
  "dunce",
  "evtx",
  "input-evtx",
@@ -2254,15 +2210,46 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sigma-regression",
- "sigma-rule",
+ "sigmacatch-detection",
+ "sigmacatch-regression",
  "sigmacatch-repo",
+ "sigmacatch-rule",
  "sigmacatch-types",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "uuid",
+ "windows",
+ "yaml_serde",
+]
+
+[[package]]
+name = "sigmacatch-detection"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rsigma-eval",
+ "serde",
+ "serde_json",
+ "sigmacatch-rule",
+ "sigmacatch-types",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "sigmacatch-regression"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sigmacatch-types",
+ "tempfile",
+ "tracing",
  "uuid",
  "windows",
  "yaml_serde",
@@ -2277,9 +2264,22 @@ dependencies = [
  "grit-lib",
  "reqwest",
  "serde",
- "sigma-regression",
+ "sigmacatch-regression",
  "tempfile",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "sigmacatch-rule"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dunce",
+ "rsigma-parser",
+ "serde",
+ "sigmacatch-types",
+ "tempfile",
  "tracing",
 ]
 
