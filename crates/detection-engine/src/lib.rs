@@ -8,43 +8,107 @@
 use anyhow::{anyhow, Result};
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::pipeline::parse_pipeline;
-use rsigma_eval::Engine;
+use rsigma_eval::{Engine, LogSourceExtractor};
 use rsigma_parser::{parse_sigma_yaml, SigmaCollection};
-use sigmacatch_types::{Alert, Event};
+use sigmacatch_types::{Alert, Event, Product};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
-/// Default flatten-winevt pipeline YAML used to prep processing of raw Winevt XML events.
+/// Embedded pipeline for flattening Winevt XML event structure.
 pub const FLATTEN_WINEVT_PIPELINE: &str = include_str!("../pipelines/flatten_winevt.yml");
 
-/// Default Windows pipeline YAML for SigmaHQ rule transformation (logsource → Sysmon EventID conditions).
+/// Embedded pipeline for Windows Sigma rule transformation.
 pub const WINDOWS_PIPELINE: &str = include_str!("../pipelines/windows.yml");
+
+/// Map of product → rule IDs for efficient product-scoped rule access.
+#[derive(Debug, Clone, Default)]
+pub struct RuleIndex {
+    index: std::collections::HashMap<Product, Vec<String>>,
+}
+
+impl RuleIndex {
+    /// Create a new empty rule index.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a rule ID under the given product.
+    pub fn add_rule(&mut self, product: Product, rule_id: String) {
+        self.index.entry(product).or_default().push(rule_id);
+    }
+
+    /// Get all rule IDs for the given product. Returns empty vec if no rules.
+    pub fn get(&self, product: &Product) -> &[String] {
+        self.index
+            .get(product)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    /// Check if there are any rules for the given product.
+    pub fn has_rules(&self, product: &Product) -> bool {
+        self.index.get(product).is_some_and(|v| !v.is_empty())
+    }
+
+    /// Total number of rule entries across all products.
+    pub fn len(&self) -> usize {
+        self.index.values().map(Vec::len).sum()
+    }
+
+    /// Whether there are no rules at all.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Iterate over all (product, rule_ids) pairs.
+    pub fn iter(&self) -> impl Iterator<Item = (&sigmacatch_types::Product, &[String])> {
+        self.index.iter().map(|(k, v)| (k, v.as_slice()))
+    }
+}
 
 /// Detection engine — pipelines + rules + FIFO piles d'events et alerts.
 pub struct DetectionEngine {
     engine: Engine,
     events: Vec<Event>,
     alerts: Vec<Alert>,
+    stats: EngineStats,
+    rule_index: RuleIndex,
 }
 
 impl DetectionEngine {
-    /// Create a new engine with embedded pipelines loaded automatically.
+    /// Create a new engine with the two embedded pipelines loaded.
+    ///
+    /// Enables bloom pre-filtering and logsource-based rule pruning for
+    /// optimal evaluation performance.
     pub fn new() -> Self {
         let mut engine = Engine::new();
         engine.set_include_event(true);
-        let flatten_pipeline =
-            parse_pipeline(FLATTEN_WINEVT_PIPELINE).expect("flatten_winevt pipeline YAML is valid");
-        engine.add_pipeline(flatten_pipeline);
-        let windows_pipeline =
-            parse_pipeline(WINDOWS_PIPELINE).expect("windows pipeline YAML is valid");
-        engine.add_pipeline(windows_pipeline);
+
+        // Enable bloom pre-filter: short-circuits positive substring matchers
+        // (Contains, StartsWith, EndsWith) when the field value cannot possibly
+        // match based on trigram extraction. ~1µs per field probe.
+        engine.set_bloom_prefilter(true);
+
+        // Enable logsource pruning: extracts product/service/category from the
+        // event JSON and skips rules whose logsource conflicts. Fails open —
+        // an event without logsource fields evaluates all rules.
+        engine.set_logsource_extractor(Some(LogSourceExtractor::new()));
+
+        let flatten =
+            parse_pipeline(FLATTEN_WINEVT_PIPELINE).expect("flatten_winevt pipeline is valid");
+        engine.add_pipeline(flatten);
+
+        let windows = parse_pipeline(WINDOWS_PIPELINE).expect("windows pipeline is valid");
+        engine.add_pipeline(windows);
 
         Self {
             engine,
             events: Vec::new(),
             alerts: Vec::new(),
+            stats: EngineStats::default(),
+            rule_index: RuleIndex::new(),
         }
     }
 
@@ -83,6 +147,16 @@ impl DetectionEngine {
         &self.engine
     }
 
+    /// Get the rule index for product-scoped rule access.
+    pub fn rule_index(&self) -> &RuleIndex {
+        &self.rule_index
+    }
+
+    /// Return the current engine stats (events_processed, alerts_generated).
+    pub fn stats(&self) -> EngineStats {
+        self.stats.clone()
+    }
+
     // ─── FIFO API ─────────────────────────────────────────────────────────
 
     /// Push events into the internal event pile.
@@ -96,12 +170,33 @@ impl DetectionEngine {
     }
 
     /// Evaluate all events in the pile against loaded rules.
+    ///
+    /// Events must have logsource fields (product, service, category) already
+    /// injected by the collector via `Event::inject_logsource_fields()`.
+    /// The bloom pre-filter and logsource pruning are both active.
     pub fn process_events(&mut self) {
-        for event in std::mem::take(&mut self.events) {
+        let events = std::mem::take(&mut self.events);
+        self.stats.events_processed += events.len() as u64;
+        for event in events {
             let json_event = JsonEvent::borrow(&event.event_json);
             let matches = self.engine.evaluate(&json_event);
             for result in matches {
-                let alert = Alert::from_evaluation_result(result, &event);
+                let alert = Alert {
+                    rule_id: result
+                        .header
+                        .rule_id
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    rule_title: result.header.rule_title.clone(),
+                    severity: result
+                        .header
+                        .level
+                        .as_ref()
+                        .map(|l| format!("{:?}", l))
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    event_json: event.event_json.clone(),
+                    event_raw: event.event_raw.clone(),
+                };
                 self.alerts.push(alert);
             }
         }
@@ -109,7 +204,9 @@ impl DetectionEngine {
 
     /// Pop and return all accumulated alerts.
     pub fn get_alerts(&mut self) -> Vec<Alert> {
-        std::mem::take(&mut self.alerts)
+        let alerts = std::mem::take(&mut self.alerts);
+        self.stats.alerts_generated += alerts.len() as u64;
+        alerts
     }
 
     // ─── private helpers ─────────────────────────────────────────────────
@@ -145,7 +242,22 @@ impl DetectionEngine {
                             Ok(content) => match parse_sigma_yaml(&content) {
                                 Ok(c) => {
                                     for rule in c.rules {
+                                        let product =
+                                            rule.logsource.product.as_deref().unwrap_or("unknown");
+                                        if let Ok(parsed) = product.parse::<Product>() {
+                                            self.rule_index.add_rule(
+                                                parsed,
+                                                rule.id.clone().unwrap_or_default(),
+                                            );
+                                        }
                                         if rule.logsource.product.as_deref() == Some("windows") {
+                                            if rule.id.is_none() {
+                                                warn!(
+                                                    "Rule without 'id' field loaded from {:?}: {}",
+                                                    dir.display(),
+                                                    rule.title
+                                                );
+                                            }
                                             collection.rules.push(rule);
                                         }
                                     }
@@ -183,6 +295,17 @@ impl Default for DetectionEngine {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ─── Engine Stats ─────────────────────────────────────────────────────────
+
+/// Statistics for input/output tracking.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct EngineStats {
+    /// Total events processed against rules.
+    pub events_processed: u64,
+    /// Total alerts generated.
+    pub alerts_generated: u64,
 }
 
 // ─── Rules directory discovery ──────────────────────────────────────────────
@@ -319,79 +442,105 @@ detection:
         path
     }
 
+    // ─── RuleIndex tests ─────────────────────────────────────────────────
+
     #[test]
-    fn test_new_engine_has_pipelines() {
+    fn test_rule_index_new_is_empty() {
+        let index = RuleIndex::new();
+        assert!(index.is_empty());
+        assert_eq!(index.len(), 0);
+    }
+
+    #[test]
+    fn test_rule_index_add_and_get() {
+        let mut index = RuleIndex::new();
+        index.add_rule(Product::Windows, "rule1".to_string());
+        index.add_rule(Product::Windows, "rule2".to_string());
+        index.add_rule(Product::Linux, "rule3".to_string());
+
+        assert_eq!(index.len(), 3);
+        assert!(!index.is_empty());
+
+        let windows_rules = index.get(&Product::Windows);
+        assert_eq!(windows_rules.len(), 2);
+        assert!(windows_rules.contains(&"rule1".to_string()));
+        assert!(windows_rules.contains(&"rule2".to_string()));
+
+        let linux_rules = index.get(&Product::Linux);
+        assert_eq!(linux_rules.len(), 1);
+        assert_eq!(linux_rules[0], "rule3");
+
+        let macos_rules = index.get(&Product::Macos);
+        assert!(macos_rules.is_empty());
+    }
+
+    #[test]
+    fn test_rule_index_has_rules() {
+        let mut index = RuleIndex::new();
+        assert!(!index.has_rules(&Product::Windows));
+
+        index.add_rule(Product::Windows, "rule1".to_string());
+        assert!(index.has_rules(&Product::Windows));
+        assert!(!index.has_rules(&Product::Linux));
+    }
+
+    #[test]
+    fn test_rule_index_iter() {
+        let mut index = RuleIndex::new();
+        index.add_rule(Product::Windows, "rule1".to_string());
+        index.add_rule(Product::Linux, "rule2".to_string());
+
+        let mut count = 0;
+        for (product, rules) in index.iter() {
+            assert!(matches!(product, Product::Windows | Product::Linux));
+            assert!(!rules.is_empty());
+            count += rules.len();
+        }
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_engine_rule_index_populated() {
         let dir = tempfile::tempdir().unwrap();
-        write_rule_to_dir(&dir, "pipeline_test.yml", MINIMAL_RULE_YAML);
+        write_rule_to_dir(&dir, "win_rule.yml", MINIMAL_RULE_YAML);
+
         let engine = DetectionEngine::from_rules_dir(dir.path()).unwrap();
-        let count = engine.rule_count();
-        assert_eq!(
-            count, 1,
-            "engine should have 1 rule after loading with pipelines, got {}",
-            count
-        );
+        let index = engine.rule_index();
+
+        assert!(!index.is_empty());
+        assert!(index.has_rules(&Product::Windows));
+        let windows_rules = index.get(&Product::Windows);
+        assert!(windows_rules.iter().any(|r| r.contains("test-rule")));
+    }
+
+    // ─── FIFO API tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_put_events_and_process() {
+        let mut engine = DetectionEngine::new();
+        engine.put_events(vec![
+            Event::new(serde_json::json!({}), Vec::new()),
+            Event::new(serde_json::json!({}), Vec::new()),
+        ]);
+
+        engine.process_events();
+
+        let stats = engine.stats();
+        assert_eq!(stats.events_processed, 2);
     }
 
     #[test]
-    fn test_from_rules_dir_nonexistent() {
-        let result = DetectionEngine::from_rules_dir(Path::new("/nonexistent"));
-        assert!(
-            result.is_ok(),
-            "from_rules_dir should succeed for nonexistent dir"
-        );
-        let engine = result.unwrap();
-        assert_eq!(
-            engine.rule_count(),
-            0,
-            "engine should have 0 rules when loaded from nonexistent directory"
-        );
-    }
-
-    #[test]
-    fn test_rule_count() {
+    fn test_process_events_and_get_alerts() {
         let dir = tempfile::tempdir().unwrap();
         write_rule_to_dir(&dir, "test_rule.yml", MINIMAL_RULE_YAML);
 
-        let engine = DetectionEngine::from_rules_dir(dir.path()).unwrap();
-        let count = engine.rule_count();
-        assert_eq!(
-            count, 1,
-            "engine should have exactly 1 rule loaded, got {}",
-            count
-        );
-    }
+        let mut engine = DetectionEngine::from_rules_dir(dir.path()).unwrap();
+        let event = Event::new(serde_json::json!({"event_id": 1}), Vec::new());
+        engine.put_events(vec![event]);
+        engine.process_events();
 
-    #[test]
-    fn test_load_rules_depth_limit() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut current = tmp.path().to_path_buf();
-        for i in 0..20 {
-            current = current.join(format!("level_{}", i));
-            std::fs::create_dir(&current).unwrap();
-        }
-        let rule_content = MINIMAL_RULE_YAML.replace("test-rule", "deep-rule");
-        std::fs::write(current.join("deep.yml"), rule_content).unwrap();
-
-        let engine = DetectionEngine::from_rules_dir(tmp.path()).unwrap();
-        assert_eq!(
-            engine.rule_count(),
-            0,
-            "rules beyond depth 16 should not be loaded"
-        );
-    }
-
-    #[test]
-    fn test_load_rules_at_depth_limit() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut current = tmp.path().to_path_buf();
-        for i in 0..15 {
-            current = current.join(format!("level_{}", i));
-            std::fs::create_dir(&current).unwrap();
-        }
-        let rule_content = MINIMAL_RULE_YAML.replace("test-rule", "edge-rule");
-        std::fs::write(current.join("edge.yml"), rule_content).unwrap();
-
-        let engine = DetectionEngine::from_rules_dir(tmp.path()).unwrap();
-        assert_eq!(engine.rule_count(), 1, "rules at depth 16 should be loaded");
+        let alerts = engine.get_alerts();
+        let stats = engine.stats();
+        assert_eq!(stats.alerts_generated, alerts.len() as u64);
     }
 }

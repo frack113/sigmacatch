@@ -9,5 +9,3 @@ pub mod parser;
 
 pub mod repo;
 pub mod sigma;
-
-pub use detection_engine;

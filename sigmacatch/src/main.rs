@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 use detection_engine::DetectionEngine;
-use input_windows_channels::EventCollector;
 use sigmacatch::config;
 use sigmacatch::github;
 use sigmacatch::logger;
@@ -10,17 +9,18 @@ use sigmacatch::repo;
 use sigmacatch::sigma;
 
 use anyhow::{Context, Result};
-use config::Config;
-use sigma::loader::SigmaRepo;
+use config::{Config, GitTransport};
+use sigma::loader::{LoadStats, SigmaRepo};
 use sigma::mapping::build_logsource_to_channels;
 
 use sigmacatch::sigma::mapping::load_custom_mapping;
-use sigmacatch_types::Alert;
+use sigmacatch_types::{Alert, Event, EventProducer};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::signal;
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, info_span, warn};
 
 struct Stats {
@@ -73,8 +73,8 @@ impl DryRunConfig {
     }
 
     fn resolve_tokens(config: &Config) -> (Option<String>, String) {
-        let config_token = if !config.github_token.trim().is_empty() {
-            Some(config.github_token.trim())
+        let config_token = if !config.git.github_token.trim().is_empty() {
+            Some(config.git.github_token.trim())
         } else {
             None
         };
@@ -120,7 +120,7 @@ impl DryRunConfig {
     }
 
     async fn check_fork(&mut self, config: &Config, client: &reqwest::Client) -> Result<()> {
-        let username = &config.author;
+        let username = &config.git.author;
         let fork_url = format!("https://github.com/{}/sigma", username);
 
         println!("\n2. Fork detection (HTTP HEAD)");
@@ -351,7 +351,7 @@ async fn dry_run_git(config: &Config) -> Result<()> {
         dry_run.check_api_auth(t, &client).await?;
     }
 
-    let username = &config.author;
+    let username = &config.git.author;
     let fork_url = format!("https://github.com/{}/sigma", username);
     let clone_url = format!("{}.git", fork_url);
 
@@ -378,7 +378,7 @@ async fn stage_1_update_repo(
     config: &Config,
     fork_config: Option<&github::fork::ForkConfig>,
 ) -> Result<()> {
-    let mut sigma_repo = SigmaRepo::new(std::path::Path::new("sigma"));
+    let mut sigma_repo = SigmaRepo::new(std::path::Path::new(&config.git.sigma_repo_path));
 
     if let Some(fc) = fork_config {
         let base_url = fc.fork_url.strip_suffix(".git").unwrap_or(&fc.fork_url);
@@ -386,14 +386,16 @@ async fn stage_1_update_repo(
         sigma_repo = sigma_repo.with_remote_url(clone_url);
     }
 
-    let has_config_token = !config.github_token.trim().is_empty();
+    let has_config_token = !config.git.github_token.trim().is_empty();
     if has_config_token {
-        sigma_repo = sigma_repo.with_token(config.github_token.trim().to_string());
+        sigma_repo = sigma_repo.with_token(config.git.github_token.trim().to_string());
     }
+
+    sigma_repo = sigma_repo.with_git_config(config.git.clone());
 
     // Switch to master/main before pulling, so the contrib branch is created
     // from the latest tracking branch, not from a stale contrib branch.
-    let sigma_path = PathBuf::from("sigma");
+    let sigma_path = PathBuf::from(&config.git.sigma_repo_path);
     let git_dir = sigma_path.join(".git");
     if git_dir.exists() {
         // read_loose_or_packed_ref is used here to check if the tracking ref
@@ -437,9 +439,9 @@ fn stage_2_existing_rules(_config: &Config) -> HashSet<String> {
 }
 
 fn stage_3_load_rules(
-    _config: &Config,
+    config: &Config,
     existing_rules: &HashSet<String>,
-) -> Result<(DetectionEngine, u64)> {
+) -> Result<(DetectionEngine, LoadStats)> {
     let rules_dirs = detection_engine::find_rules_dirs(std::path::Path::new("sigma"))?;
     if rules_dirs.is_empty() {
         anyhow::bail!(
@@ -449,20 +451,33 @@ fn stage_3_load_rules(
     }
 
     let rules_dirs_refs: Vec<&std::path::Path> = rules_dirs.iter().map(|d| d.as_path()).collect();
-    let collection = sigma::loader::load_all_rules(&rules_dirs_refs, existing_rules)?;
+    let load_result =
+        sigma::loader::load_all_rules(&rules_dirs_refs, existing_rules, &config.sigma)?;
+    let stats = load_result.stats;
+    let collection = load_result.collection;
 
     let mut engine = DetectionEngine::new();
     engine.load_collection(collection)?;
 
-    let rules_count = engine.rule_count() as u64;
-
     info!(
-        "Loaded {} rules from {} directories ({} skipped by existing regression data)",
-        rules_count,
+        "Loaded {} rules from {} directories ({} skipped by existing regression data, {} filtered by status, {} filtered by level)",
+        stats.rules_loaded,
         rules_dirs.len(),
         existing_rules.len(),
+        stats.rules_filtered_status,
+        stats.rules_filtered_level,
     );
-    Ok((engine, rules_count))
+
+    if stats.rules_loaded == 0 {
+        anyhow::bail!(
+            "0 rules loaded — the filter config (min_status={}, min_level={}) is too restrictive. \
+             Adjust sigma.min_status and sigma.min_level in config.yaml or load rules with matching metadata.",
+            config.sigma.min_status,
+            config.sigma.min_level,
+        );
+    }
+
+    Ok((engine, stats))
 }
 
 /// Delete regression directories under `base` that contain generated files
@@ -516,25 +531,35 @@ async fn stage_4_work_winevt(
     // re-staged and committed, polluting the branch.
     clean_partial_regressions(&output_base);
 
-    info!("Starting winevt collection on channels: {:?}", channels);
+    info!("Starting event collection on channels: {:?}", channels);
 
-    let mut collector = EventCollector::start();
+    // Create mpsc channel for producer → consumer
+    let (tx, mut rx) = mpsc::channel::<Event>(10_000);
 
-    // Wait for all channel tasks to complete (no magic sleep)
-    collector.stop().await;
+    // Spawn producer: collects events and sends them through the channel
+    let producer_channels = channels.clone();
+    let producer = tokio::spawn(async move {
+        let collector = input_windows_channels::EventCollector::new(producer_channels);
+        collector.run(tx).await
+    });
 
-    // Get all collected events
-    let events = collector.get_events().await;
-    info!("Got {} events from collector", events.len());
+    // Consumer loop: receive events from channel and feed to engine
+    while let Some(event) = rx.recv().await {
+        engine.put_events(vec![event]);
+    }
 
-    let event_count = events.len();
+    // Wait for producer to finish
+    if let Err(e) = producer.await.context("Producer task panicked")? {
+        warn!("Producer returned error: {}", e);
+    }
 
-    // Use the DetectionEngine FIFO API: push events → process → pull alerts
-    engine.put_events(events);
+    info!(
+        "Processed {} events against {} rules",
+        engine.stats().events_processed,
+        engine.rule_count()
+    );
     engine.process_events();
     let alerts = engine.get_alerts();
-
-    ctx.stats.events_processed = event_count as u64;
 
     for alert in alerts {
         let rule_id = &alert.rule_id;
@@ -712,14 +737,20 @@ type EngineFactory = Box<dyn Fn() -> DetectionEngine + Send + Sync>;
 async fn setup_pipeline(
     config: &Config,
     fork_config: Option<&github::fork::ForkConfig>,
+    all_rules: bool,
 ) -> Result<(EngineFactory, Vec<String>, HashMap<String, String>)> {
     let rules_dirs = detection_engine::find_rules_dirs(std::path::Path::new("sigma"))?;
     stage_0_init().await?;
     stage_1_update_repo(config, fork_config).await?;
 
-    let existing_rules = stage_2_existing_rules(config);
+    let existing_rules = if all_rules {
+        HashSet::new()
+    } else {
+        stage_2_existing_rules(config)
+    };
 
-    let (engine, rules_count) = stage_3_load_rules(config, &existing_rules)?;
+    let (engine, stats) = stage_3_load_rules(config, &existing_rules)?;
+    let rules_count = stats.rules_loaded;
     let skipped = existing_rules.len();
     if skipped > 0 {
         info!(
@@ -823,37 +854,34 @@ async fn main() -> Result<()> {
     };
 
     let config_path = PathBuf::from("config.yaml");
-    let just_created = !config_path.exists();
     let mut config = Config::load(&config_path)?;
 
-    if just_created {
-        eprintln!("── config.yaml created ──────────────────────");
-        eprintln!("  Edit config.yaml with your settings,");
-        eprintln!("  then run sigmacatch again.");
-        eprintln!("──────────────────────────────────────────────");
-        std::process::exit(1);
-    }
-
     if let Some(author) = flag_value("--author") {
-        config.author = author;
+        config.git.author = author;
         if !config
+            .git
             .author
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-')
         {
             anyhow::bail!(
                 "--author must be a valid GitHub username (alphanumeric + hyphens), got {:?}",
-                config.author
+                config.git.author
             );
         }
     }
 
-    if config.author == "sigmacatch" {
+    if config.git.author == "sigmacatch" {
         eprintln!("── config.yaml not configured ──────────────");
         eprintln!("  Update the 'author' field in config.yaml");
         eprintln!("  before running.");
         eprintln!("──────────────────────────────────────────────");
         std::process::exit(1);
+    }
+
+    let all_rules = flags.contains(&"--all-rules");
+    if all_rules {
+        info!("All-rules mode enabled — skip set will be empty");
     }
 
     if flags.contains(&"--dry-run") {
@@ -874,17 +902,25 @@ async fn main() -> Result<()> {
 
     info!(
         "Sigmacatch started for {} <{}>",
-        config.author, config.email
+        config.git.author, config.git.email
     );
     let branch_name = repo::create_branch_name();
     info!("Branch name: {}", branch_name);
-    let fork_config = github::fork::detect_fork(&config.author, &branch_name).await?;
+    let fork_config = github::fork::detect_fork(&config.git.author, &branch_name).await?;
 
     let (engine_factory, cycle_channels, custom_map) =
-        setup_pipeline(&config, Some(&fork_config)).await?;
+        setup_pipeline(&config, Some(&fork_config), all_rules).await?;
 
     if cycle_channels.is_empty() {
-        info!("No channels resolved — exiting cleanly");
+        warn!("0 channels resolved — nothing to collect");
+        return Ok(());
+    }
+
+    if flags.contains(&"--channels-only") {
+        info!("Channels only mode — listing channels and exiting");
+        for ch in &cycle_channels {
+            println!("  {}", ch);
+        }
         return Ok(());
     }
 
@@ -905,16 +941,26 @@ async fn main() -> Result<()> {
     loop {
         if !running.load(Ordering::Relaxed) {
             info!("Interrupted, shutting down");
-            if let Err(e) = repo::git_push(
-                std::path::Path::new("sigma"),
-                "origin",
-                &fork_config.branch_name,
-                if !config.github_token.trim().is_empty() {
-                    Some(config.github_token.trim())
-                } else {
-                    None
-                },
-            ) {
+            let sigma_path = std::path::Path::new("sigma");
+            let push_result = match config.git.transport {
+                GitTransport::Http => repo::git_push(
+                    sigma_path,
+                    "origin",
+                    &fork_config.branch_name,
+                    if !config.git.github_token.trim().is_empty() {
+                        Some(config.git.github_token.trim())
+                    } else {
+                        None
+                    },
+                ),
+                GitTransport::Ssh => repo::git_push_ssh(
+                    sigma_path,
+                    "origin",
+                    &fork_config.branch_name,
+                    config.git.ssh_key_path.as_deref(),
+                ),
+            };
+            if let Err(e) = push_result {
                 warn!("Failed to push branch: {}", e);
             } else {
                 info!(
@@ -937,8 +983,8 @@ async fn main() -> Result<()> {
                 engine,
                 std::mem::take(&mut retired),
                 custom_map.clone(),
-                config.author.clone(),
-                config.email.clone(),
+                config.git.author.clone(),
+                config.git.email.clone(),
             )
             .await?;
             retired.extend(committed_rules.into_iter().map(|(rule_id, _, _)| rule_id));
@@ -954,8 +1000,8 @@ async fn main() -> Result<()> {
             std::path::Path::new("sigma"),
             "origin",
             &fork_config.branch_name,
-            if !config.github_token.trim().is_empty() {
-                Some(config.github_token.trim())
+            if !config.git.github_token.trim().is_empty() {
+                Some(config.git.github_token.trim())
             } else {
                 None
             },

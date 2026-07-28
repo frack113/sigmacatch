@@ -14,7 +14,7 @@
 
 use detection_engine::find_rules_dirs;
 use detection_engine::DetectionEngine;
-use input_evtx::EventCollector;
+use input_evtx::parse_evtx_bytes;
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::explain_rule;
 use sigma_regression::{list_all, LogType, RegressionData};
@@ -171,15 +171,14 @@ fn main() {
         let logtype = data.get_logtype();
 
         let events = match logtype {
-            LogType::Evtx => {
-                let mut collector = EventCollector::new();
-                if let Err(e) = collector.from_bytes(raw) {
+            LogType::Evtx => match parse_evtx_bytes(raw) {
+                Ok(events) => events,
+                Err(e) => {
                     stats.add_fail(name.clone(), format!("Failed to load EVTX: {}", e));
                     println!("[FAIL] Failed to load EVTX: {}", e);
                     continue;
                 }
-                collector.get_events()
-            }
+            },
             _ => {
                 stats.add_fail(
                     name.clone(),

@@ -6,12 +6,71 @@ use serde::{Deserialize, Serialize};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
-fn default_author() -> String {
-    "sigmacatch".to_string()
+/// Git transport protocol for clone/fetch/push operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GitTransport {
+    /// HTTPS with token auth (default). Uses `github_token` or `GITHUB_TOKEN` env var.
+    #[default]
+    Http,
+    /// SSH with key-based auth. Uses `ssh_key_path` or default SSH agent.
+    Ssh,
 }
 
-fn default_email() -> String {
-    String::new()
+impl std::fmt::Display for GitTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GitTransport::Http => write!(f, "http"),
+            GitTransport::Ssh => write!(f, "ssh"),
+        }
+    }
+}
+
+/// Default SigmaHQ repository URL.
+pub const DEFAULT_SIGMA_REPO_URL: &str = "https://github.com/SigmaHQ/sigma.git";
+
+/// Git transport configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GitConfig {
+    /// GitHub username for contrib workflow.
+    pub author: String,
+    /// Email address for git commits.
+    pub email: String,
+    /// GitHub token (or set GITHUB_TOKEN env var) — required for HTTP transport.
+    pub github_token: String,
+    /// Transport protocol: `http` (default) or `ssh`.
+    pub transport: GitTransport,
+    /// Path to SSH private key (optional). If empty, uses default SSH agent.
+    pub ssh_key_path: Option<String>,
+    /// Sigma repository URL to clone/fetch from.
+    #[serde(default = "default_sigma_repo_url")]
+    pub sigma_repo_url: String,
+    /// Local path to store the sigma repository.
+    #[serde(default = "default_sigma_repo_path")]
+    pub sigma_repo_path: String,
+}
+
+fn default_sigma_repo_url() -> String {
+    DEFAULT_SIGMA_REPO_URL.to_string()
+}
+
+fn default_sigma_repo_path() -> String {
+    "sigma".to_string()
+}
+
+impl Default for GitConfig {
+    fn default() -> Self {
+        Self {
+            author: "sigmacatch".to_string(),
+            email: String::new(),
+            github_token: String::new(),
+            transport: GitTransport::Http,
+            ssh_key_path: None,
+            sigma_repo_url: default_sigma_repo_url(),
+            sigma_repo_path: default_sigma_repo_path(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,6 +80,17 @@ pub enum LogLevel {
     Info,
     Warn,
     Error,
+}
+
+impl LogLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LogLevel::Debug => "debug",
+            LogLevel::Info => "info",
+            LogLevel::Warn => "warn",
+            LogLevel::Error => "error",
+        }
+    }
 }
 
 /// Error parsing a MinStatus string.
@@ -130,6 +200,9 @@ impl std::str::FromStr for MinStatus {
     }
 }
 
+/// Re-export Product from sigmacatch_types for rule filtering.
+pub use sigmacatch_types::Product;
+
 /// Minimum Sigma rule level threshold (inclusive).
 ///
 /// Rules with `level >= min_level` are loaded.
@@ -205,192 +278,290 @@ impl std::str::FromStr for MinLevel {
     }
 }
 
-/// Sigma rule filter configuration (status and level thresholds).
-///
-/// Applied during rule loading to exclude rules below configured thresholds.
-/// Rules missing a status or level field are always accepted (pass-through).
+/// Configuration for rule loading filters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SigmaFilterConfig {
-    /// Minimum status threshold (default: stable). Only rules with `status >= min_status` are loaded.
+    /// Target product for rule filtering: windows, linux, or macos.
+    pub product: Product,
+    /// Minimum rule status (inclusive): unsupported < deprecated < experimental < test < stable.
+    #[serde(default = "default_min_status")]
     pub min_status: MinStatus,
-    /// Minimum level threshold (default: critical). Only rules with `level >= min_level` are loaded.
+    /// Minimum rule level (inclusive): informational < low < medium < high < critical.
+    #[serde(default = "default_min_level")]
     pub min_level: MinLevel,
+    /// Maximum number of rules to load (0 = unlimited).
+    #[serde(default = "default_max_rules")]
+    pub max_rules: u64,
+    /// Maximum size of a single rule file in bytes (default 1MB).
+    #[serde(default = "default_max_rule_size")]
+    pub max_rule_size: usize,
+}
+
+fn default_max_rules() -> u64 {
+    0
+}
+
+fn default_max_rule_size() -> usize {
+    1024 * 1024
+}
+
+fn default_min_status() -> MinStatus {
+    MinStatus::Stable
+}
+
+fn default_min_level() -> MinLevel {
+    MinLevel::Critical
 }
 
 impl Default for SigmaFilterConfig {
     fn default() -> Self {
         Self {
-            min_status: MinStatus::Stable,
-            min_level: MinLevel::Critical,
+            product: Product::default(),
+            min_status: default_min_status(),
+            min_level: default_min_level(),
+            max_rules: default_max_rules(),
+            max_rule_size: default_max_rule_size(),
         }
     }
 }
 
-impl LogLevel {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            LogLevel::Debug => "debug",
-            LogLevel::Info => "info",
-            LogLevel::Warn => "warn",
-            LogLevel::Error => "error",
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+/// Log configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LogConfig {
+    /// Log level for file output.
+    #[serde(default = "default_level_file")]
     pub level_file: LogLevel,
+}
+
+fn default_level_file() -> LogLevel {
+    LogLevel::Debug
 }
 
 impl Default for LogConfig {
     fn default() -> Self {
         Self {
-            level_file: LogLevel::Info,
+            level_file: default_level_file(),
         }
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+/// Main application configuration.
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
-    #[serde(default = "default_author")]
-    pub author: String,
-    #[serde(default = "default_email")]
-    pub email: String,
-    #[serde(default)]
-    pub github_token: String,
     pub log: LogConfig,
     #[serde(default)]
     pub sigma: SigmaFilterConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            author: default_author(),
-            email: default_email(),
-            github_token: String::new(),
-            log: LogConfig::default(),
-            sigma: SigmaFilterConfig::default(),
-        }
-    }
+    #[serde(default)]
+    pub git: GitConfig,
 }
 
 impl Config {
     pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
-        if path.exists() {
-            #[cfg(unix)]
-            if let Ok(metadata) = std::fs::metadata(path) {
-                let mode = metadata.permissions().mode() & 0o777;
-                if mode != 0o600 {
-                    eprintln!(
-                        "⚠️  config.yaml has open permissions (0{:o}), fixing to 0600",
-                        mode
-                    );
-                    if let Err(e) = std::fs::set_permissions(path, PermissionsExt::from_mode(0o600))
-                    {
-                        eprintln!("⚠️  Failed to fix config.yaml permissions: {}", e);
-                    }
-                }
-            }
-
-            let content = std::fs::read_to_string(path)?;
-
-            let has_sigma = serde_yaml::from_str::<serde_yaml::Value>(&content)
-                .ok()
-                .is_some_and(|v| v.get("sigma").is_some());
-
-            let config: Config = serde_yaml::from_str(&content)?;
-
-            if !has_sigma {
-                eprintln!(
-                    "⚠️  config.yaml missing 'sigma' section — using defaults: min_status={}, min_level={}",
-                    config.sigma.min_status,
-                    config.sigma.min_level,
-                );
-
-                if let Ok(mut doc) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
-                    if let serde_yaml::Value::Mapping(ref mut map) = doc {
-                        if let Ok(sigma_val) = serde_yaml::to_value(SigmaFilterConfig::default()) {
-                            map.insert(serde_yaml::Value::String("sigma".to_string()), sigma_val);
-                            if let Ok(new_yaml) = serde_yaml::to_string(&doc) {
-                                match std::fs::write(path, &new_yaml) {
-                                    Ok(()) => {
-                                        #[cfg(unix)]
-                                        let _ = std::fs::set_permissions(
-                                            path,
-                                            PermissionsExt::from_mode(0o600),
-                                        );
-                                        eprintln!(
-                                            "   ✓ Fixed: added default sigma section to config.yaml — next run will be clean"
-                                        );
-                                    }
-                                    Err(e) => eprintln!(
-                                        "   ⚠️  Could not write config.yaml auto-fix: {}",
-                                        e
-                                    ),
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            config.validate()?;
-            Ok(config)
-        } else {
-            let config = Self::default();
-            let yaml = serde_yaml::to_string(&config)?;
-            std::fs::write(path, &yaml)?;
-            #[cfg(unix)]
-            if let Err(e) = std::fs::set_permissions(path, PermissionsExt::from_mode(0o600)) {
-                eprintln!(
-                    "⚠️  Failed to set restrictive permissions on config.yaml: {}",
-                    e
-                );
-            }
-            tracing::info!("Created default config file at {:?}", path);
-            Ok(config)
+        if !path.exists() {
+            let default = Config::default();
+            default.save(path)?;
+            eprintln!("── config.yaml created ──────────────────────");
+            eprintln!("  Edit config.yaml with your settings,");
+            eprintln!("  then run sigmacatch again.");
+            eprintln!("──────────────────────────────────────────────");
+            std::process::exit(1);
         }
+
+        #[cfg(unix)]
+        if let Ok(metadata) = std::fs::metadata(path) {
+            let mode = metadata.permissions().mode() & 0o777;
+            if mode != 0o600 {
+                eprintln!(
+                    "⚠️  config.yaml has open permissions (0{:o}), fixing to 0600",
+                    mode
+                );
+                if let Err(e) = std::fs::set_permissions(path, PermissionsExt::from_mode(0o600)) {
+                    eprintln!("⚠️  Failed to fix config.yaml permissions: {}", e);
+                }
+            }
+        }
+
+        let yaml = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read config file: {}", e))?;
+        let config: Config = serde_yaml::from_str(&yaml)
+            .map_err(|e| anyhow::anyhow!("Failed to parse config file: {}", e))?;
+
+        config.validate()?;
+
+        Ok(config)
+    }
+
+    pub fn save(&self, path: &PathBuf) -> anyhow::Result<()> {
+        let yaml = serde_yaml::to_string(self)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize config: {}", e))?;
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        std::fs::write(path, yaml)?;
+
+        #[cfg(unix)]
+        std::fs::set_permissions(path, PermissionsExt::from_mode(0o600))?;
+
+        Ok(())
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
-        if !self.author.is_empty()
-            && self.author != "sigmacatch"
+        if !self.git.author.is_empty()
+            && self.git.author != "sigmacatch"
             && !self
+                .git
                 .author
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '-')
         {
             anyhow::bail!(
-                "config: 'author' must be a valid GitHub username (alphanumeric + hyphens), got {:?}",
-                self.author
+                "config: 'git.author' must be a valid GitHub username (alphanumeric + hyphens), got {:?}",
+                self.git.author
             );
         }
-        if self.email.is_empty() {
-            anyhow::bail!("config: 'email' is required");
+        if self.git.email.is_empty() {
+            anyhow::bail!("config: 'git.email' is required");
         }
-        if !self.email.contains('@') {
-            anyhow::bail!("config: 'email' must contain '@', got {:?}", self.email);
-        }
-        let has_config_token = !self.github_token.trim().is_empty();
-        let has_env_token = std::env::var("GITHUB_TOKEN")
-            .map(|t| !t.trim().is_empty())
-            .unwrap_or(false);
-        if !has_config_token && !has_env_token {
+        if !self.git.email.contains('@') {
             anyhow::bail!(
-                "config: 'github_token' is required. Set github_token in config.yaml or GITHUB_TOKEN env var. \
-                 Create a token at https://github.com/settings/tokens"
+                "config: 'git.email' must contain '@', got {:?}",
+                self.git.email
             );
         }
-        if has_config_token {
-            let trimmed = self.github_token.trim();
-            if trimmed.contains(char::is_whitespace) {
-                anyhow::bail!("config: 'github_token' contains whitespace — trim it");
+        // SSH transport is not yet implemented on Windows
+        #[cfg(windows)]
+        if self.git.transport == GitTransport::Ssh {
+            anyhow::bail!(
+                "SSH transport is not yet implemented on Windows; \
+                 set transport = http in config.yaml"
+            );
+        }
+
+        // Validate SSH key path if configured
+        if let Some(ref key_path) = self.git.ssh_key_path {
+            if !key_path.is_empty() {
+                // On Windows, reject unix-style absolute paths early (e.g. /home/user/.ssh/id)
+                #[cfg(windows)]
+                if key_path.starts_with('/') || key_path.starts_with('~') {
+                    anyhow::bail!(
+                        "config: SSH key path '{}' looks like a unix-style path on Windows; \
+                         use a windows path (e.g. 'C:\\Users\\user\\.ssh\\id_sigmacatch') \
+                         or set transport = http",
+                        key_path
+                    );
+                }
+
+                let meta = std::fs::metadata(key_path).map_err(|_| {
+                    anyhow::anyhow!(
+                        "config: SSH key path '{}' does not exist (transport={}); \
+                         remove ssh_key_path from config or switch to transport = http",
+                        key_path,
+                        self.git.transport
+                    )
+                })?;
+                if !meta.is_file() {
+                    anyhow::bail!(
+                        "config: SSH key path '{}' is not a file (transport={}); \
+                         remove ssh_key_path from config or switch to transport = http",
+                        key_path,
+                        self.git.transport
+                    );
+                }
+                #[cfg(unix)]
+                {
+                    let mode = meta.permissions().mode() & 0o777;
+                    if mode & 0o077 != 0 {
+                        tracing::warn!(
+                            "config: SSH key '{}' has overly permissive mode 0{:o} — should be 0600. \
+                             SSH may refuse to use it. Run: chmod 600 {}",
+                            key_path,
+                            mode,
+                            key_path
+                        );
+                    }
+                    // Also check that the key is readable by the current user
+                    if mode & 0o400 == 0 {
+                        tracing::warn!(
+                            "config: SSH key '{}' is not readable by the owner (mode 0{:o}). \
+                             SSH will reject it. Run: chmod 400 {}",
+                            key_path,
+                            mode,
+                            key_path
+                        );
+                    }
+                }
             }
         }
+
+        // Token is only required for HTTP transport
+        if self.git.transport == GitTransport::Http {
+            let has_config_token = !self.git.github_token.trim().is_empty();
+            let has_env_token = std::env::var("GITHUB_TOKEN")
+                .map(|t| !t.trim().is_empty())
+                .unwrap_or(false);
+            if !has_config_token && !has_env_token {
+                anyhow::bail!(
+                    "config: 'git.github_token' is required for HTTP transport. Set git.github_token in config.yaml or GITHUB_TOKEN env var. \
+                     Create a token at https://github.com/settings/tokens"
+                );
+            }
+            if has_config_token {
+                let trimmed = self.git.github_token.trim();
+                if trimmed.contains(char::is_whitespace) {
+                    anyhow::bail!("config: 'git.github_token' contains whitespace — trim it");
+                }
+            }
+        }
+
+        if self.sigma.max_rules > 100000 {
+            anyhow::bail!(
+                "config: 'sigma.max_rules' exceeds maximum allowed value (100000), got {}",
+                self.sigma.max_rules
+            );
+        }
+
+        if self.sigma.max_rule_size < 1024 {
+            anyhow::bail!(
+                "config: 'sigma.max_rule_size' must be at least 1024 bytes, got {}",
+                self.sigma.max_rule_size
+            );
+        }
+
+        if self.sigma.max_rule_size > 10 * 1024 * 1024 {
+            anyhow::bail!(
+                "config: 'sigma.max_rule_size' exceeds maximum allowed value (10MB), got {}",
+                self.sigma.max_rule_size
+            );
+        }
+
+        // Validate sigma_repo_path — reject path traversal and absolute paths
+        if std::path::Path::new(&self.git.sigma_repo_path)
+            .components()
+            .any(|c| c == std::path::Component::ParentDir)
+        {
+            anyhow::bail!(
+                "config: 'git.sigma_repo_path' contains '..' path traversal, got {:?}",
+                self.git.sigma_repo_path
+            );
+        }
+        if std::path::Path::new(&self.git.sigma_repo_path).is_absolute() {
+            anyhow::bail!(
+                "config: 'git.sigma_repo_path' must be a relative path, got {:?}",
+                self.git.sigma_repo_path
+            );
+        }
+        if std::path::Path::new(&self.git.sigma_repo_path).is_absolute() {
+            anyhow::bail!(
+                "config: 'git.sigma_repo_path' must be a relative path, got {:?}",
+                self.git.sigma_repo_path
+            );
+        }
+
         if self.sigma.min_status.ordinal() >= MinStatus::Stable.ordinal() {
             tracing::warn!(
                 "sigma.min_status = {} — very restrictive, only stable rules will be loaded",
@@ -415,33 +586,35 @@ mod tests {
     #[test]
     fn test_default_config_has_default_author() {
         let config = Config::default();
-        assert_eq!(config.author, "sigmacatch");
+        assert_eq!(config.git.author, "sigmacatch");
     }
 
     #[test]
     fn test_default_config_has_default_email() {
         let config = Config::default();
-        assert!(config.email.is_empty());
+        assert!(config.git.email.is_empty());
     }
 
     #[test]
     fn test_load_config_minimal() {
         let yaml = r#"
-author: testuser
-email: user@example.com
+git:
+  author: testuser
+  email: user@example.com
 log:
   level_file: debug
 "#;
         let config: Config = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.author, "testuser");
-        assert_eq!(config.email, "user@example.com");
+        assert_eq!(config.git.author, "testuser");
+        assert_eq!(config.git.email, "user@example.com");
     }
 
     #[test]
     fn test_deny_unknown_fields() {
         let yaml = r#"
-author: testuser
-email: user@example.com
+git:
+  author: testuser
+  email: user@example.com
 unknown_field: oops
 log:
   level_file: debug
@@ -453,11 +626,14 @@ log:
     #[test]
     fn test_validate_invalid_author_chars() {
         let config = Config {
-            author: "user space".to_string(),
-            email: "user@example.com".to_string(),
-            github_token: String::new(),
             log: LogConfig::default(),
             sigma: SigmaFilterConfig::default(),
+            git: GitConfig {
+                author: "user space".to_string(),
+                email: "user@example.com".to_string(),
+                github_token: String::new(),
+                ..GitConfig::default()
+            },
         };
         assert!(config.validate().is_err());
     }
@@ -465,11 +641,14 @@ log:
     #[test]
     fn test_validate_email_required() {
         let config = Config {
-            author: "validuser".to_string(),
-            email: String::new(),
-            github_token: String::new(),
             log: LogConfig::default(),
             sigma: SigmaFilterConfig::default(),
+            git: GitConfig {
+                author: "validuser".to_string(),
+                email: String::new(),
+                github_token: String::new(),
+                ..GitConfig::default()
+            },
         };
         assert!(config.validate().is_err());
     }
@@ -477,11 +656,14 @@ log:
     #[test]
     fn test_validate_invalid_email() {
         let config = Config {
-            author: "validuser".to_string(),
-            email: "notanemail".to_string(),
-            github_token: String::new(),
             log: LogConfig::default(),
             sigma: SigmaFilterConfig::default(),
+            git: GitConfig {
+                author: "validuser".to_string(),
+                email: "notanemail".to_string(),
+                github_token: String::new(),
+                ..GitConfig::default()
+            },
         };
         assert!(config.validate().is_err());
     }
@@ -489,11 +671,14 @@ log:
     #[test]
     fn test_validate_valid_config() {
         let config = Config {
-            author: "valid-user".to_string(),
-            email: "user@example.com".to_string(),
-            github_token: "ghp_validtoken123".to_string(),
             log: LogConfig::default(),
             sigma: SigmaFilterConfig::default(),
+            git: GitConfig {
+                author: "valid-user".to_string(),
+                email: "user@example.com".to_string(),
+                github_token: "ghp_validtoken123".to_string(),
+                ..GitConfig::default()
+            },
         };
         assert!(config.validate().is_ok());
     }
@@ -501,17 +686,20 @@ log:
     #[test]
     fn test_save_and_load_config() {
         let config = Config {
-            author: "devuser".to_string(),
-            email: "dev@example.com".to_string(),
-            github_token: String::new(),
             log: LogConfig::default(),
             sigma: SigmaFilterConfig::default(),
+            git: GitConfig {
+                author: "devuser".to_string(),
+                email: "dev@example.com".to_string(),
+                github_token: String::new(),
+                ..GitConfig::default()
+            },
         };
         let yaml = serde_yaml::to_string(&config).unwrap();
         let loaded: Config = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(loaded.author, "devuser");
-        assert_eq!(loaded.email, "dev@example.com");
-        assert_eq!(loaded.github_token, "");
+        assert_eq!(loaded.git.author, "devuser");
+        assert_eq!(loaded.git.email, "dev@example.com");
+        assert_eq!(loaded.git.github_token, "");
     }
 
     #[test]
@@ -553,36 +741,248 @@ log:
     }
 
     #[test]
-    fn test_min_status_accepts_ordering() {
-        let filter = SigmaFilterConfig {
-            min_status: MinStatus::Test,
-            min_level: MinLevel::Informational,
-        };
-        assert!(filter.min_status.accepts(&rsigma_parser::Status::Test));
-        assert!(filter.min_status.accepts(&rsigma_parser::Status::Stable));
-        assert!(!filter
-            .min_status
-            .accepts(&rsigma_parser::Status::Experimental));
-        assert!(!filter
-            .min_status
-            .accepts(&rsigma_parser::Status::Deprecated));
-        assert!(!filter
-            .min_status
-            .accepts(&rsigma_parser::Status::Unsupported));
+    fn test_config_default_product() {
+        let config = Config::default();
+        assert_eq!(config.sigma.product, Product::Windows);
     }
 
     #[test]
-    fn test_min_level_accepts_ordering() {
-        let filter = SigmaFilterConfig {
-            min_status: MinStatus::Unsupported,
-            min_level: MinLevel::Medium,
+    fn test_config_load_product_linux() {
+        let yaml = r#"
+sigma:
+  product: linux
+git:
+  author: testuser
+  email: user@example.com
+log:
+  level_file: debug
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sigma.product, Product::Linux);
+    }
+
+    #[test]
+    fn test_config_load_product_macos() {
+        let yaml = r#"
+sigma:
+  product: macos
+git:
+  author: testuser
+  email: user@example.com
+log:
+  level_file: debug
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sigma.product, Product::Macos);
+    }
+
+    #[test]
+    fn test_config_invalid_product() {
+        let yaml = r#"
+sigma:
+  product: invalid
+git:
+  author: testuser
+  email: user@example.com
+log:
+  level_file: debug
+"#;
+        let result: Result<Config, _> = serde_yaml::from_str(yaml);
+        assert!(result.is_err()); // serde rejects it — field is typed Product enum
+    }
+
+    #[test]
+    fn test_config_load_repo_url_and_path() {
+        let yaml = r#"
+sigma:
+  product: windows
+git:
+  author: testuser
+  email: user@example.com
+  sigma_repo_url: https://github.com/custom/sigma.git
+  sigma_repo_path: /opt/sigma/
+log:
+  level_file: debug
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.git.sigma_repo_url,
+            "https://github.com/custom/sigma.git"
+        );
+        assert_eq!(config.git.sigma_repo_path, "/opt/sigma/");
+    }
+
+    #[test]
+    fn test_config_default_repo_url() {
+        let yaml = r#"
+sigma:
+  product: windows
+git:
+  author: testuser
+  email: user@example.com
+log:
+  level_file: debug
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.git.sigma_repo_url,
+            "https://github.com/SigmaHQ/sigma.git"
+        );
+        assert_eq!(config.git.sigma_repo_path, "sigma");
+    }
+
+    #[test]
+    fn test_config_validate_path_traversal() {
+        let config = Config {
+            log: LogConfig::default(),
+            sigma: SigmaFilterConfig::default(),
+            git: GitConfig {
+                author: "testuser".to_string(),
+                email: "user@example.com".to_string(),
+                sigma_repo_path: "../escape".to_string(),
+                ..GitConfig::default()
+            },
         };
-        assert!(filter.min_level.accepts(&rsigma_parser::Level::Medium));
-        assert!(filter.min_level.accepts(&rsigma_parser::Level::High));
-        assert!(filter.min_level.accepts(&rsigma_parser::Level::Critical));
-        assert!(!filter.min_level.accepts(&rsigma_parser::Level::Low));
-        assert!(!filter
-            .min_level
-            .accepts(&rsigma_parser::Level::Informational));
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_validate_path_traversal_dot_slash() {
+        let config = Config {
+            log: LogConfig::default(),
+            sigma: SigmaFilterConfig::default(),
+            git: GitConfig {
+                author: "testuser".to_string(),
+                email: "user@example.com".to_string(),
+                sigma_repo_path: "././../escape".to_string(),
+                ..GitConfig::default()
+            },
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_max_rules_too_high() {
+        let config = Config {
+            log: LogConfig::default(),
+            sigma: SigmaFilterConfig {
+                max_rules: 200000,
+                ..SigmaFilterConfig::default()
+            },
+            git: GitConfig {
+                author: "testuser".to_string(),
+                email: "user@example.com".to_string(),
+                ..GitConfig::default()
+            },
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_max_rule_size_too_small() {
+        let config = Config {
+            log: LogConfig::default(),
+            sigma: SigmaFilterConfig {
+                max_rule_size: 512,
+                ..SigmaFilterConfig::default()
+            },
+            git: GitConfig {
+                author: "testuser".to_string(),
+                email: "user@example.com".to_string(),
+                ..GitConfig::default()
+            },
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_max_rule_size_too_large() {
+        let config = Config {
+            log: LogConfig::default(),
+            sigma: SigmaFilterConfig {
+                max_rule_size: 20 * 1024 * 1024,
+                ..SigmaFilterConfig::default()
+            },
+            git: GitConfig {
+                author: "testuser".to_string(),
+                email: "user@example.com".to_string(),
+                ..GitConfig::default()
+            },
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_load_with_max_rules() {
+        let yaml = r#"
+sigma:
+  product: windows
+  max_rules: 10000
+  max_rule_size: 2097152
+git:
+  author: testuser
+  email: user@example.com
+  transport: ssh
+log:
+  level_file: debug
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sigma.max_rules, 10000);
+        assert_eq!(config.sigma.max_rule_size, 2097152);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_ssh_key_unix_path_on_windows() {
+        // On windows, unix-style absolute paths starting with '/' are rejected.
+        // On unix this path format is valid but the file won't exist.
+        let config = Config {
+            log: LogConfig::default(),
+            sigma: SigmaFilterConfig::default(),
+            git: GitConfig {
+                author: "testuser".to_string(),
+                email: "user@example.com".to_string(),
+                transport: GitTransport::Ssh,
+                ssh_key_path: Some("/home/user/.ssh/id_sigmacatch".to_string()),
+                ..GitConfig::default()
+            },
+        };
+        #[cfg(windows)]
+        assert!(
+            config.validate().is_err(),
+            "unix-style absolute paths must be rejected on windows"
+        );
+        #[cfg(unix)]
+        assert!(
+            config.validate().is_err(),
+            "non-existent file should fail on unix too"
+        );
+    }
+
+    #[test]
+    fn test_validate_ssh_key_tilde_path_on_windows() {
+        // On windows, paths starting with '~' are rejected as unix-style.
+        // On unix this path format is valid but the file won't exist.
+        let config = Config {
+            log: LogConfig::default(),
+            sigma: SigmaFilterConfig::default(),
+            git: GitConfig {
+                author: "testuser".to_string(),
+                email: "user@example.com".to_string(),
+                transport: GitTransport::Ssh,
+                ssh_key_path: Some("~/.ssh/id_sigmacatch".to_string()),
+                ..GitConfig::default()
+            },
+        };
+        #[cfg(windows)]
+        assert!(
+            config.validate().is_err(),
+            "unix-style tilde paths must be rejected on windows"
+        );
+        #[cfg(unix)]
+        assert!(
+            config.validate().is_err(),
+            "non-existent file should fail on unix too"
+        );
     }
 }

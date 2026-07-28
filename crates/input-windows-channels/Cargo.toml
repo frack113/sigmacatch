@@ -9,9 +9,9 @@ description = "Multi-channel Windows Event Log collector with internal FIFO"
 license = "MIT"
 
 [dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
 sigmacatch-types = { path = "../sigmacatch-types" }
-rsigma-parser = "0.20"
-phf = { version = "0.14", features = ["macros"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "signal"] }
 tracing = "0.1"
 

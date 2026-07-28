@@ -10,7 +10,7 @@ Headless tool that captures real Windows events via **Windows Event Log API** (w
 
 **Complete cycle (sequential):**
 1. Acquire SigmaHQ rules (grit-lib clone/pull)
-2. Load Sigma engine (rsigma-eval) with logsource filter
+2. Load Sigma engine (rsigma-eval) with bloom pre-filter + LogSourceExtractor
 3. Collect Event Log events (winevt, configured channels)
 4. Evaluate events against all loaded rules
 5. Generate regression output (JSON + EVTX template + info.yml)
@@ -32,22 +32,19 @@ sigmacatch/
 │       ├── lib.rs                 # Déclarations pub mod
 │       ├── config.rs              # Config, SigmaFilterConfig, MinStatus, MinLevel
 │       ├── repo.rs                # wrapper grit-lib (clone/fetch/push/commit/branch)
-│       ├── evtx/writer.rs         # write_evtx() via EvtExportLog API + .xml fallback
 │       ├── sigma/
 │       │   ├── loader.rs          # SigmaRepo (grit-lib) + find_rules_dirs()
 │       │   └── mapping/mod.rs     # re-export from input_windows_channels::mapping
-│       ├── regression/mod.rs      # re-export depuis sigma-regression
 │       ├── github/
 │       │   ├── commit.rs          # commit_all_rules avec author env + fallback
 │       │   └── fork.rs            # ForkConfig, check_fork_exists, detect_fork
 │       └── bin/evtx_check.rs      # Outil de validation batch
 ├── crates/
-│   ├── detection-engine/          # Wrapper rsigma-eval + pipelines embarquées (windows.yml, flatten_winevt.yml)
-│   ├── input-evtx/                # Parse EVTX files → Event objects
-│   ├── input-windows-channels/    # Collecteur multi-channels Windows Event Log (EvtQueryW, EvtNext, EvtRender)
-│   ├── input-windows-channels/    # LogSource, taxonomie (phf + channel_mapping.yml), mappings custom
-│   ├── sigma-regression/          # SkipSet, RegressionData, InfoYml, validation triplet
-│   └── sigmacatch-types/          # Types partagés : Event, Alert, RegressionHeader + parsing XML
+│   ├── detection-engine/          # Wrapper rsigma-eval + pipelines (windows.yml, flatten_winevt.yml) + bloom/logsource
+│   ├── input-evtx/                # Parse EVTX files → Event (inject_logsource_fields at creation)
+│   ├── input-windows-channels/    # Multi-channel Winevt collector (EventProducer) + inject_logsource_fields
+│   ├── sigma-regression/          # SkipSet, RegressionData, InfoYml, triplet validation
+│   └── sigmacatch-types/          # Shared types: Event, Alert, RegressionHeader + XML parsing + logsource mapping tables (phf)
 ```
 
 ---
@@ -57,14 +54,17 @@ sigmacatch/
 `config.yaml` (auto-créé au premier run, complété automatiquement si la section `sigma` manque) :
 
 ```yaml
-author: "sigmacatch"        # nom GitHub pour contrib workflow (doit être changé)
-email: "you@example.com"    # requis pour les commits git
-github_token: ""            # token GitHub (ou var env GITHUB_TOKEN) — requis pour le push du fork
+git:
+  author: "sigmacatch"        # GitHub username for contrib workflow
+  email: "you@example.com"    # required for git commits
+  github_token: ""            # GitHub token (or GITHUB_TOKEN env var) — required for HTTP transport
+  transport: http             # http or ssh
+  ssh_key_path: ""            # path to SSH private key (optional, only needed for SSH)
 log:
-  level_file: "debug"       # niveau fichier tracing
+  level_file: "debug"
 sigma:
-  min_status: "stable"      # seuil de statut minimal (inclus) : unsupported < deprecated < experimental < test < stable
-  min_level: "critical"     # seuil de niveau minimal (inclus) : informational < low < medium < high < critical
+  min_status: "stable"      # minimum rule status (inclusive): unsupported < deprecated < experimental < test < stable
+  min_level: "critical"     # minimum rule level (inclusive): informational < low < medium < high < critical
 ```
 
 **Filtrage des règles :** `min_status` et `min_level` sont appliqués au chargement. Les règles dont `status`/`level` est inférieur au seuil sont exclues du moteur. Les règles sans champ `status` ou `level` sont toujours acceptées.
@@ -128,11 +128,11 @@ find_rules_dirs("sigma/")
     ↓
 Sequential walk: collect all .yml / .yaml paths (cheap, no parse)
     ↓
-Parallel parse + filter (rayon::par_iter, no shared state):
+Parallel parse + filter (rayon):
     For each file:
     ├── parse_sigma_yaml() → Sigma rules
     ├── post-parse filter: rule.logsource.product == "windows" (or absent)
-    ├── status/level filter: rule.status >= min_status AND rule.level >= min_level (config.sigma)
+    ├── status/level filter: rule.status >= min_status AND rule.level >= min_level
     ├── skip if rule_id in skip set
     └── cross-file dedupe (first occurrence, walk order, wins)
     ↓
@@ -158,18 +158,19 @@ SigmaEngine in-memory (loaded rules + rule_paths)
 EventCollector (channels resolved from rules via resolve_channels_from_rules)
     ├── [Windows] EvtQueryW(channel="*") → EvtNext() → EvtRender() → XML
     │     → parse_winevt_xml() → Event (carries event_json + event_raw)
+    │     → event.inject_logsource_fields() (injects product/service/category)
     └── [non-Windows] Stub → Ok(vec![])
     ↓
-Vec<Event> { event_json, event_raw, input_source, channel }
+Vec<Event> { event_json, event_raw }
 ```
 
 ### Cycle — Evaluation
 
 ```
-For each SensorEvent:
-    ├── channel → LogSource { product: "windows", service, category }
-    │     (mapping::resolve_logsource + channel/service priority)
-    ├── event.event_json → flat serde_json::Value (pre-parsed, parse_winevt_xml fallback)
+For each Event:
+    ├── event.event_json contains product/service/category (injected by collector)
+    ├── LogSourceExtractor reads these fields → prunes incompatible rules
+    ├── bloom pre-filter prunes impossible substring matchers
      ├── engine.put_events(events) → engine.process_events() → engine.get_alerts()
     │     → Vec<EvaluationResult> (rsigma-eval)
     └── For each match:
@@ -225,12 +226,12 @@ push_branch() → fetch + compare + normal push to fork (skip if diverged)
 Event {
     event_json: serde_json::Value,    // parsed event JSON (nested)
     event_raw: Vec<u8>,               // raw source bytes (XML)
-    input_source: InputSource,        // Winevt, EvtxFile, or File
-    channel: Option<String>,          // Event Log channel name
 }
 ```
 
-Methods: `channel()`, `event_id()`, `provider()`, `from_xml()`
+Methods: `channel()`, `event_id()`, `provider()`, `from_xml()`, `inject_logsource_fields()`
+
+The `event_json` field contains logsource fields (`product`, `service`, `category`) injected by `inject_logsource_fields()` called by collectors. The `LogSourceExtractor` from rsigma-eval reads these fields to prune incompatible rules.
 
 ### Alert
 
@@ -283,19 +284,20 @@ RegressionData {
 ### DetectionEngine (`detection-engine/src/lib.rs`)
 
 - Loads pipelines (flatten_winevt.yml + windows.yml) and rules via rsigma-eval
-- `start()` returns async channel pair: `mpsc::Sender<Event>` → `mpsc::Receiver<Alert>`
-- `evaluate(event, logsource)` for synchronous evaluation
+- Enables bloom pre-filter + LogSourceExtractor in `new()` for evaluation optimization
+- `put_events()` / `process_events()` / `get_alerts()` for the FIFO cycle
 - `load_collection()` to bulk-load a SigmaCollection
 - `from_rules_dir()` / `from_rules_dirs()` for quick setup from filesystem
+- Independent: depends only on `sigmacatch-types` + `rsigma-eval` (no input-windows-channels)
 
 ### EventCollector (`input-windows-channels/src/collector.rs`)
 
-- Multi-channel Windows Event Log collector with internal FIFO
-- `start()` → launches collection on all channels
-- `stop()` → signals shutdown and waits for tasks
-- `get_events()` → pops all events from FIFO
-- Windows: EvtQueryW → EvtNext → EvtRender → XML → parse_winevt_xml → Event
-- Non-Windows: stub (empty vec)
+- Multi-channel Windows Event Log collector, implements `EventProducer`
+- `new(channels)` → creates collector for specified channels
+- `run(self, tx)` → launches collection and sends events via mpsc
+- Windows: EvtQueryW → EvtNext → EvtRender → XML → parse_winevt_xml → Event → inject_logsource_fields
+- Non-Windows: stub (no-op)
+- Logsource mapping tables (channel → service, provider → service, category) imported from `sigmacatch-types`
 
 ### EVTX Writer (`evtx/writer.rs`)
 
@@ -323,7 +325,8 @@ RegressionData {
 | All in RAM | in-memory aggregation before writing, no DB |
 | One run = complete cycle | no "just collect" or "just generate" mode |
 | Collection via Winevt | EvtQueryW → EvtNext → EvtRender, no ETW, no ferrisetw |
-| LogSource from channel | Event Log channel via resolve_logsource (channel > provider > default) |
+| LogSource injected by collector | `Event::inject_logsource_fields()` injects product/service/category into event_json, LogSourceExtractor from rsigma-eval prunes rules |
+| Bloom pre-filter | enabled in `DetectionEngine::new()`, prunes substring matchers via trigrams |
 | Skip-at-load sole optimization | rules with `info.yml` excluded from engine |
 | One event per test | `match_count: 1`, first event only |
 | Output mirrors source | `regression_tests_path` added to source YAML |
@@ -335,8 +338,8 @@ RegressionData {
 
 | Dependency | Usage |
 |---|---|---|
-| `grit-lib` | all git operations (clone, fetch, push, branch, commit, checkout) via HTTP, pure Rust |
-| `reqwest` (blocking) | HTTP client for git transport + fork detection (GitHub API) |
+| `grit-lib` | all git operations (clone, fetch, push, branch, commit, checkout) via HTTP + SSH, pure Rust |
+| `reqwest` (blocking) | HTTP client for fork detection + API calls (not used for git transport) |
 | `rsigma-eval` + `rsigma-parser` | Sigma rule loading/evaluation |
 | `tokio` | async runtime |
 | `tracing` + `tracing-subscriber` | logging |
@@ -345,7 +348,7 @@ RegressionData {
 | `chrono` | dates |
 | `uuid` | UUID v4 for info.yml |
 | `rayon` | parallel rule file parsing |
-| `phf` | static hash maps for taxonomy tables (in input-windows-channels) |
+| `phf` | static hash maps for taxonomy tables (in sigmacatch-types) |
 | `evtx` | EVTX file parsing (evtx_check binary + input-evtx crate) |
 | `roxmltree` | XML parsing for Winevt events (in sigmacatch-types) |
 | `windows` | Winevt API (cfg-gated: windows only, features: Foundation, Com, Console, EventLog, Threading, Security) |
@@ -427,15 +430,16 @@ Config is auto-created on first run with defaults. Edit `config.yaml` before run
 │  EventCollector (all Windows channels)                                  │
 │    ├── Windows: EvtQueryW → EvtNext → EvtRender → XML                │
 │    │     → parse_winevt_xml() → Event                                  │
+│    │     → event.inject_logsource_fields()                             │
 │    └── non-Windows: Stub → Ok(vec![])                                 │
-│  → Vec<Event> { event_json, event_raw, channel }                       │
+│  → Vec<Event> { event_json, event_raw }                                │
 └──────────────────────┬──────────────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  CYCLE — EVALUATION                                                     │
 │  For each Event:                                                        │
-│    ├── event.event_json → flat JSON (pre-parsed, parse_winevt_xml)     │
-│    ├── channel → LogSource via resolve_logsource()                    │
+│    ├── event.event_json contains product/service/category              │
+│    ├── LogSourceExtractor + bloom pre-filter optimize evaluation      │
  │    └── engine.put_events() → process_events() → get_alerts()          │
 │         → Vec<EvaluationResult>                                        │
 │  For each match:                                                        │
