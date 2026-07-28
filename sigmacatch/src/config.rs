@@ -2,32 +2,13 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 use serde::{Deserialize, Serialize};
+use sigmacatch_repo::DEFAULT_SIGMA_REPO_URL;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
-/// Git transport protocol for clone/fetch/push operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum GitTransport {
-    /// HTTPS with token auth (default). Uses `github_token` or `GITHUB_TOKEN` env var.
-    #[default]
-    Http,
-    /// SSH with key-based auth. Uses `ssh_key_path` or default SSH agent.
-    Ssh,
-}
-
-impl std::fmt::Display for GitTransport {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GitTransport::Http => write!(f, "http"),
-            GitTransport::Ssh => write!(f, "ssh"),
-        }
-    }
-}
-
-/// Default SigmaHQ repository URL.
-pub const DEFAULT_SIGMA_REPO_URL: &str = "https://github.com/SigmaHQ/sigma.git";
+/// Git transport protocol re-exported from sigmacatch-repo.
+pub use sigmacatch_repo::GitTransport;
 
 /// Git transport configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]

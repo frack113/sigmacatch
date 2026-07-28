@@ -21,9 +21,6 @@ fn commit_identity(author: &str, email: &str) -> (String, String) {
     (name.to_string(), addr.to_string())
 }
 
-/// Commit regression data and updated rule YAML files, one commit per rule.
-/// The commit message is `✨ feat(sigma): add {rule_id} regression data`.
-/// Falls back to a single batch commit if every per-rule commit fails.
 pub fn commit_all_rules(
     repo_path: &Path,
     rules: &[(String, String, Option<String>)],
@@ -60,13 +57,13 @@ pub fn commit_all_rules(
         if let Some(yaml) = rule_yaml.as_ref() {
             paths.push(yaml.as_str());
         }
-        if let Err(e) = crate::repo::git_add(&git_dir, repo_path, &paths) {
+        if let Err(e) = crate::git_add(&git_dir, repo_path, &paths) {
             warn!("git_add failed for '{}': {}", rule_id, e);
             failures += 1;
             continue;
         }
 
-        match crate::repo::git_commit(&git_dir, repo_path, &msg, &git_author, &git_email) {
+        match crate::git_commit(&git_dir, repo_path, &msg, &git_author, &git_email) {
             Ok(_) => {
                 info!("Committed {}", rule_id);
                 successes += 1;
@@ -94,7 +91,6 @@ pub fn commit_all_rules(
     Ok(())
 }
 
-/// Single commit for all rules (fallback path only).
 fn batch_commit(
     repo_path: &Path,
     rules: &[&(String, String, Option<String>)],
@@ -114,8 +110,8 @@ fn batch_commit(
             staged_paths.push(yaml.as_str());
         }
     }
-    crate::repo::git_add(&git_dir, repo_path, &staged_paths)?;
-    crate::repo::git_commit(&git_dir, repo_path, &message, git_author, git_email)?;
+    crate::git_add(&git_dir, repo_path, &staged_paths)?;
+    crate::git_commit(&git_dir, repo_path, &message, git_author, git_email)?;
     info!("Committed {} rules in batch (fallback)", rules.len());
     Ok(())
 }

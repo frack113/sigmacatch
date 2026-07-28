@@ -11,6 +11,7 @@ members = [
     "crates/input-evtx",
     "crates/input-windows-channels",
     "crates/sigma-rule",
+    "crates/sigmacatch-repo",
 ]
 
 [profile.release]

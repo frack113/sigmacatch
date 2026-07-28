@@ -21,23 +21,13 @@ impl ForkConfig {
     }
 }
 
-/// Possible outcomes of an SSH fork check.
 #[derive(Debug, Clone)]
 pub enum ForkSshResult {
-    /// The fork exists (ls-remote returned a valid response).
     Exists,
-    /// The fork does not exist (ls-remote returned an error from GitHub).
     NotFound,
-    /// SSH/git command failed (network error, key issue, git not installed, etc.).
     SshError(String),
 }
 
-/// Check if a GitHub fork exists via SSH `git ls-remote`.
-///
-/// Distinguishes three outcomes:
-/// - `Exists` — fork responds to ls-remote
-/// - `NotFound` — GitHub reports the repo does not exist
-/// - `SshError` — SSH/git command failed (network, key, or git not installed)
 pub fn check_fork_exists_ssh(username: &str) -> ForkSshResult {
     let ssh_remote = format!("git@github.com:{}/sigma.git", username);
     let output = Command::new("git")
@@ -50,8 +40,6 @@ pub fn check_fork_exists_ssh(username: &str) -> ForkSshResult {
             if out.status.success() && !out.stdout.is_empty() {
                 ForkSshResult::Exists
             } else {
-                // GitHub returns non-zero exit code when the repo doesn't exist.
-                // Typical stderr: "fatal: Repository not found."
                 let stderr = String::from_utf8_lossy(&out.stderr);
                 warn!(
                     "SSH fork check failed for '{}': {} — fork likely does not exist.",
@@ -73,10 +61,6 @@ pub fn check_fork_exists_ssh(username: &str) -> ForkSshResult {
     }
 }
 
-/// Check if a GitHub fork exists via HTTP HEAD request.
-/// Returns true if the fork URL responds with 2xx.
-/// Detects rate-limiting (403/429) and assumes fork exists.
-/// Returns an error on network failure (cannot reach GitHub).
 pub async fn check_fork_exists(username: &str) -> Result<bool> {
     let url = format!("https://github.com/{}/sigma", username);
     let client = Client::builder()
@@ -113,10 +97,6 @@ pub async fn check_fork_exists(username: &str) -> Result<bool> {
     }
 }
 
-/// Detect fork for a given username, with SSH fallback.
-/// First tries HTTP HEAD to `https://github.com/{username}/sigma`.
-/// If HTTP fails, falls back to SSH `git ls-remote git@github.com:{username}/sigma.git`.
-/// Returns ForkConfig with fork_url if fork exists, errors otherwise.
 pub async fn detect_fork(username: &str, branch_name: &str) -> Result<ForkConfig> {
     if username.is_empty() {
         anyhow::bail!("Cannot detect fork: username is empty");
@@ -124,7 +104,6 @@ pub async fn detect_fork(username: &str, branch_name: &str) -> Result<ForkConfig
 
     let fork_url = format!("https://github.com/{}/sigma", username);
 
-    // Try HTTP first (faster, no SSH overhead)
     match check_fork_exists(username).await {
         Ok(exists) => {
             if exists {
@@ -137,7 +116,6 @@ pub async fn detect_fork(username: &str, branch_name: &str) -> Result<ForkConfig
         }
     }
 
-    // SSH fallback
     match check_fork_exists_ssh(username) {
         ForkSshResult::Exists => {
             info!("Fork detected via SSH: {}", fork_url);

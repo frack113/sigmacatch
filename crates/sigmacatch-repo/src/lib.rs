@@ -8,6 +8,8 @@
 //!   Plumbing     → Raw git ops: Odb, Index, commit, checkout, refs
 //!   Porcelain    → High-level wrappers: clone, pull, push, add, commit
 
+pub mod github;
+
 use anyhow::Result;
 use grit_lib::fetch::NoProgress;
 use grit_lib::objects::ObjectId;
@@ -22,7 +24,28 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tracing::{debug, info, warn};
 
-use crate::config::{GitConfig, GitTransport, DEFAULT_SIGMA_REPO_URL};
+/// Default SigmaHQ repository URL.
+pub const DEFAULT_SIGMA_REPO_URL: &str = "https://github.com/SigmaHQ/sigma.git";
+
+/// Git transport protocol for clone/fetch/push operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GitTransport {
+    /// HTTPS with token auth (default).
+    #[default]
+    Http,
+    /// SSH with key-based auth.
+    Ssh,
+}
+
+impl std::fmt::Display for GitTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GitTransport::Http => write!(f, "http"),
+            GitTransport::Ssh => write!(f, "ssh"),
+        }
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Transport: AuthHttpClient
@@ -1323,7 +1346,8 @@ pub struct SigmaRepo {
     pub path: PathBuf,
     remote_url: Option<String>,
     token: Option<String>,
-    git_config: GitConfig,
+    transport: GitTransport,
+    ssh_key_path: Option<String>,
 }
 
 impl SigmaRepo {
@@ -1332,7 +1356,8 @@ impl SigmaRepo {
             path: path.to_path_buf(),
             remote_url: None,
             token: None,
-            git_config: GitConfig::default(),
+            transport: GitTransport::default(),
+            ssh_key_path: None,
         }
     }
 
@@ -1346,8 +1371,13 @@ impl SigmaRepo {
         self
     }
 
-    pub fn with_git_config(mut self, git_config: GitConfig) -> Self {
-        self.git_config = git_config;
+    pub fn with_transport(mut self, transport: GitTransport) -> Self {
+        self.transport = transport;
+        self
+    }
+
+    pub fn with_ssh_key_path(mut self, ssh_key_path: Option<String>) -> Self {
+        self.ssh_key_path = ssh_key_path;
         self
     }
 
@@ -1367,18 +1397,18 @@ impl SigmaRepo {
         if repo_exists {
             info!("Sigma repository exists, pulling latest...");
             let git_dir_clone = git_dir.clone();
-            let git_config = self.git_config.clone();
-            let result = match git_config.transport {
+            let transport = self.transport;
+            let token = self.token.clone();
+            let ssh_key_path = self.ssh_key_path.clone();
+            let result = match transport {
                 GitTransport::Http => {
-                    let token = self.token.clone();
                     tokio::task::spawn_blocking(move || git_pull(&git_dir_clone, token.as_deref()))
                         .await
                         .map_err(|e| anyhow::anyhow!("Pull task panicked: {}", e))
                 }
                 GitTransport::Ssh => {
-                    let key_path = git_config.ssh_key_path.clone();
                     let result = tokio::task::spawn_blocking(move || {
-                        git_pull_ssh(&git_dir_clone, key_path.as_deref())
+                        git_pull_ssh(&git_dir_clone, ssh_key_path.as_deref())
                     })
                     .await
                     .map_err(|e| anyhow::anyhow!("Pull task panicked: {}", e));
@@ -1412,12 +1442,13 @@ impl SigmaRepo {
             .remote_url
             .clone()
             .unwrap_or_else(|| DEFAULT_SIGMA_REPO_URL.to_string());
-        info!("Cloning Sigma repository from {}...", url);
+        info!("Cloning Sigma repository from {}...", sanitize_url(&url));
         let path = self.path.clone();
-        let git_config = self.git_config.clone();
+        let transport = self.transport;
         let token = self.token.clone();
+        let ssh_key_path = self.ssh_key_path.clone();
 
-        match git_config.transport {
+        match transport {
             GitTransport::Http => {
                 tokio::task::spawn_blocking(move || git_clone(&url, &path, token.as_deref()))
                     .await
@@ -1426,9 +1457,8 @@ impl SigmaRepo {
             GitTransport::Ssh => {
                 let ssh_url = https_to_ssh_url(&url)
                     .ok_or_else(|| anyhow::anyhow!("Cannot convert URL to SSH format: {}", url))?;
-                let key_path = git_config.ssh_key_path.clone();
                 tokio::task::spawn_blocking(move || {
-                    git_clone_ssh(&ssh_url, &path, key_path.as_deref())
+                    git_clone_ssh(&ssh_url, &path, ssh_key_path.as_deref())
                 })
                 .await
                 .map_err(|e| anyhow::anyhow!("Clone task panicked: {}", e))??;

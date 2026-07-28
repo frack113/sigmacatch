@@ -388,7 +388,9 @@ async fn stage_1_update_repo(
         sigma_repo = sigma_repo.with_token(config.git.github_token.trim().to_string());
     }
 
-    sigma_repo = sigma_repo.with_git_config(config.git.clone());
+    sigma_repo = sigma_repo
+        .with_transport(config.git.transport)
+        .with_ssh_key_path(config.git.ssh_key_path.clone());
 
     // Switch to master/main before pulling, so the contrib branch is created
     // from the latest tracking branch, not from a stale contrib branch.

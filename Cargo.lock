@@ -2247,7 +2247,6 @@ dependencies = [
  "detection-engine",
  "dunce",
  "evtx",
- "grit-lib",
  "input-evtx",
  "input-windows-channels",
  "phf",
@@ -2257,6 +2256,7 @@ dependencies = [
  "serde_json",
  "sigma-regression",
  "sigma-rule",
+ "sigmacatch-repo",
  "sigmacatch-types",
  "tempfile",
  "tokio",
@@ -2266,6 +2266,21 @@ dependencies = [
  "uuid",
  "windows",
  "yaml_serde",
+]
+
+[[package]]
+name = "sigmacatch-repo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "grit-lib",
+ "reqwest",
+ "serde",
+ "sigma-regression",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
