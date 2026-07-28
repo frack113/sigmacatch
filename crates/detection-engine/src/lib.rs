@@ -109,6 +109,19 @@ impl DetectionEngine {
         self.stats.clone()
     }
 
+    /// Explain why a specific rule matched or didn't match a given event.
+    /// Returns the full explain trace from rsigma-eval as JSON.
+    pub fn explain_rule(&self, rule_id: &str, event: &Event) -> Option<serde_json::Value> {
+        let compiled = self
+            .engine
+            .rules()
+            .iter()
+            .find(|r| r.id.as_deref() == Some(rule_id))?;
+        let json_event = JsonEvent::borrow(&event.event_json);
+        let explanation = rsigma_eval::explain_rule(compiled, &json_event);
+        serde_json::to_value(explanation).ok()
+    }
+
     // ─── FIFO API ─────────────────────────────────────────────────────────
 
     /// Push events into the internal event pile.

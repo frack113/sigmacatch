@@ -5,7 +5,5 @@ pub mod config;
 
 pub mod github;
 pub mod logger;
-pub mod parser;
 
 pub mod repo;
-pub mod sigma;

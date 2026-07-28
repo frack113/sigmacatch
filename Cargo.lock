@@ -2253,7 +2253,6 @@ dependencies = [
  "phf",
  "rayon",
  "reqwest",
- "rsigma-eval",
  "serde",
  "serde_json",
  "sigma-regression",

@@ -32,6 +32,9 @@ sigma-regression = { path = "../crates/sigma-regression" }
 # Crate workspace — EVTX parsing
 input-evtx = { path = "../crates/input-evtx" }
 
+# Crate workspace — Sigma rule management
+sigma-rule = { path = "../crates/sigma-rule" }
+
 # Git (100% Rust, no git binary required)
 grit-lib = "0.5"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
@@ -40,10 +43,6 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = { package = "yaml_serde", version = "0.10" }
-
-# rsigma
-rsigma-eval = "0.20"
-rsigma-parser = "0.20"
 
 # Async
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "signal"] }

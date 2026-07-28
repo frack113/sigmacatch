@@ -14,8 +14,6 @@
 
 use detection_engine::DetectionEngine;
 use input_evtx::parse_evtx_bytes;
-use rsigma_eval::event::JsonEvent;
-use rsigma_eval::explain_rule;
 use sigma_regression::{list_all, LogType, RegressionData};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -219,33 +217,19 @@ fn main() {
                 matched.join(", ")
             );
 
-            // Debug: find compiled rule and explain against each event
-            if let Some(compiled) = engine
-                .engine()
-                .rules()
-                .iter()
-                .find(|r| r.id.as_deref() == Some(rule_id))
-            {
-                println!("  Compiled rule: {:?}", compiled.title);
-                println!("  Logsource: {:?}", compiled.logsource);
-                println!(
-                    "  Detections: {:?}",
-                    compiled.detections.keys().collect::<Vec<_>>()
-                );
-                println!("  Conditions: {:?}", compiled.conditions);
-                println!("  --- explain_rule trace ---");
-                for event in &events_for_debug {
-                    let json_event = JsonEvent::borrow(&event.event_json);
-                    let explanation = explain_rule(compiled, &json_event);
+            // Debug: explain rule against each event
+            for event in &events_for_debug {
+                if let Some(explanation) = engine.explain_rule(rule_id, event) {
+                    println!("  --- explain_rule trace ---");
                     if let Ok(json) = serde_json::to_string_pretty(&explanation) {
                         println!("  {}", json.replace('\n', "\n  "));
                     }
-                    println!("  --- event JSON ---");
-                    if let Ok(json) = serde_json::to_string_pretty(&event.event_json) {
-                        println!("  {}", json.replace('\n', "\n  "));
-                    }
-                    println!();
                 }
+                println!("  --- event JSON ---");
+                if let Ok(json) = serde_json::to_string_pretty(&event.event_json) {
+                    println!("  {}", json.replace('\n', "\n  "));
+                }
+                println!();
             }
             continue;
         }
