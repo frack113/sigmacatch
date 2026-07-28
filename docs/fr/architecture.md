@@ -10,7 +10,7 @@ sigmacatch/
 ├── crates/
 │   ├── detection-engine/      # Wrapper fin autour de rsigma-eval pour pipelines et règles
 │   ├── input-evtx/            # Parse les fichiers EVTX en objets Event
-│   ├── input-windows-channels/ # Winevt collector + LogSource resolution, taxonomy
+│   ├── input-windows-channels/ # Collecteur Winevt (EventProducer) + taxonomie via sigmacatch-types
 │   ├── sigma-regression/      # InfoYml, SkipSet, validation triplet (format régression SigmaHQ)
 │   └── sigmacatch-types/      # Types partagés : Event, Alert, RegressionHeader + parsing XML
 └── sigmacatch/          # Binaire + pipeline
@@ -47,14 +47,14 @@ sigmacatch/src/
 ## Graphe de dépendances
 
 ```
-sigmacatch ──┬── detection-engine        (pipelines dynamiques + rules + RuleIndex + cycle multi-input)
-             ├── input-windows-channels  (collecteur Winevt + résolution LogSource, taxonomie)
-             ├── input-evtx              (parser fichiers EVTX → Event)
-             ├── sigmacatch-types        (Event, Alert, RegressionHeader, Product, parsing XML)
+sigmacatch ──┬── detection-engine        (wrapper rsigma-eval + pipelines + bloom/logsource optimizations)
+             ├── input-windows-channels  (collecteur Winevt + inject_logsource_fields via Event)
+             ├── input-evtx              (parser fichiers EVTX → Event + inject_logsource_fields)
+             ├── sigmacatch-types        (Event, Alert, RegressionHeader, Product, parsing XML, tables de mapping logsource)
              └── sigma-regression        (InfoYml, SkipSet, triplet)
 ```
 
-`detection-engine` dépend de `input-windows-channels` et `input-evtx` (optionnels, cfg-gated). Les 3 autres crates sont indépendants. `sigmacatch` dépend des 5 crates, ainsi que de crates externes (`rsigma-eval`, `grit-lib`, `tokio`, `windows`, etc.).
+`detection-engine` est indépendant (dépend uniquement de `sigmacatch-types` + `rsigma-eval`). `input-windows-channels` dépend de `sigmacatch-types` pour les types partagés et les tables de mapping. `sigmacatch` dépend des 5 crates, ainsi que de crates externes (`rsigma-eval`, `grit-lib`, `tokio`, `windows`, etc.).
 
 ## Pipeline (single run, sequential)
 
@@ -64,9 +64,10 @@ sigmacatch ──┬── detection-engine        (pipelines dynamiques + rules
 4. `find_rules_dirs()` scans `sigma/` for `rules` / `rules-*` dirs (excludes `rules-compliance`)
 5. Build skip set by scanning `regression_data/rules/` + `sigma/regression_data/` for existing `info.yml` → `HashSet<String>` of rule IDs
 6. Load Sigma rules from all `rules*` dirs, **excluding skipped rule IDs**; post-parse filter via `rule.logsource.product` filters non-Windows rules; status/level filter via `config.sigma.min_status`/`min_level` (seule optimisation autorisée) — une table de règles est affichée au démarrage (chargées / skipées / services actifs). Le `RuleIndex` mappe chaque rule ID à son `Product` pour un accès filtré par produit.
-7. Collect events via l'engine lifecycle (`engine.start_all_inputs()` / `engine.stop_all_inputs()`) → `Vec<Event>`:
+7. Collect events via les collectors (`EventCollector`, `EVTXCollector`) → `Vec<Event>`:
    - Chaque event porte `event_json: Value` (pré-parsé par le collector, fallback `parse_winevt_xml`)
-   - Each event's `LogSource` est dérivé du **channel** via `resolve_logsource` (channel → service > provider → service > default)
+   - Les collectors injectent `product`, `service`, `category` via `Event::inject_logsource_fields()` avant l'envoi
+   - Le moteur utilise `LogSourceExtractor` + bloom pre-filter de rsigma-eval pour elaguer les regles incompatibles
    - Evaluate against **all loaded rules** via FIFO API: `engine.put_events(events) → engine.process_events() → engine.get_alerts()` — **aucun event perdu**
    - Aggregate matches by `rule_id` in `HashMap<String, AggregatedRule>`
 8. Generate regression for rules without existing `info.yml` (skip at generate time too)
@@ -80,13 +81,14 @@ sigmacatch ──┬── detection-engine        (pipelines dynamiques + rules
 - Collecte Windows via **Winevt API** (`windows` crate, `EvtQueryW`/`EvtNext`/`EvtRender`) — pas d'ETW, pas de ferrisetw
 - Output = `regression_data/<rule_rel_path>/` (triplet: `<rule_id>.json` + `<rule_id>.evtx` + `info.yml` format SigmaHQ)
 - **Moteur temps réel** : `rsigma-eval` chargé une fois avec toutes les règles non skipées ; chaque event est évalué contre toutes les règles chargées. Aucun event perdu. Le skip-at-load est l'unique optimisation.
-- **LogSource dérivée du channel ETW** (`resolve_logsource`), avec provider comme fallback.
+- **LogSource injectée par le collector** : `Event::inject_logsource_fields()` injecte `product`/`service`/`category` dans `event_json` au moment de la création de l'Event. Le `LogSourceExtractor` de rsigma-eval lit ces champs pour elaguer les règles incompatibles.
+  - Les tables de mapping (channel → service, provider → service, category) sont dans `sigmacatch-types` (source unique de vérité)
   - Priority: channel → service > provider → service > default
-  - Voir `# INVARIANT:` comment in `crates/input-windows-channels/src/mapping/mod.rs`
+  - Fail-open : un event sans champs logsource est évalué contre toutes les règles
+- **Bloom pre-filter** : activé dans `DetectionEngine::new()`, elague les matchers de sous-chaîne (Contains, StartsWith, EndsWith) via extraction de trigrammes (~1µs par probe).
 - **EVTX via `EvtExportLog`** : re-queries l'event par RecordID depuis le live log. Si succès → `.evtx` binaire valide. Si échec (event purgé) ou non-Windows → fallback `.xml` (raw XML, pas de binaire invalide).
   - **Known limitation** : race condition avec la rétention du log — si l'event a été purgé entre la collecte et l'export, `EvtExportLog` échoue silencieusement (`ERROR_EVT_QUERY_RESULT_STALE`).
 - **Pipelines dynamiques** : les pipelines Sigma sont chargées depuis `crates/detection-engine/pipelines/` au démarrage de l'engine (pas de `include_str!` embarqué). L'ordre alphabétique par nom de fichier garantit la déterministicité (flatten_winevt avant windows, etc.).
-- **Cycle multi-input** : l'engine gère le cycle de vie des inputs via `start_all_inputs()` / `stop_all_inputs()`. Chaque `EventSource` (Winevt, LogFile, Console, EvtxFile, RawJson) est enregistré via `EventInput` et ses events sont drainés dans le event pile commun.
 - **RuleIndex** : mappe les rule IDs par `Product` pour un accès filtré. Peuplé pendant le chargement des règles, consultable via `engine.rule_index()`.
 
 > Skip set details, key design decisions, and skip set construction logic are in [`architecture-reference.md`](architecture-reference.md) (Stages 2, 5, 6, 7).

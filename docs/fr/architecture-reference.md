@@ -10,7 +10,7 @@ Outil headless qui capture des événements Windows réels via **Windows Event L
 
 **Cycle complet (séquentiel) :**
 1. Acquérir règles SigmaHQ (grit-lib clone/pull)
-2. Charger moteur Sigma (rsigma-eval) avec filtre logsource
+2. Charger moteur Sigma (rsigma-eval) avec bloom pre-filter + LogSourceExtractor
 3. Collecter événements Event Log (winevt, channels configurés)
 4. Évaluer events contre toutes les règles chargées
 5. Générer sortie regression (JSON + EVTX template + info.yml)
@@ -40,11 +40,11 @@ sigmacatch/
 │       │   └── fork.rs            # ForkConfig, check_fork_exists, detect_fork
 │       └── bin/evtx_check.rs      # Outil de validation batch
 ├── crates/
-│   ├── detection-engine/          # Wrapper rsigma-eval + pipelines embarquées (windows.yml, flatten_winevt.yml)
-│   ├── input-evtx/                # Parse EVTX files → Event objects
-│   ├── input-windows-channels/    # Collecteur multi-channels Windows Event Log (EvtQueryW, EvtNext, EvtRender) + LogSource, taxonomie (phf + channel_mapping.yml), mappings custom
+│   ├── detection-engine/          # Wrapper rsigma-eval + pipelines (windows.yml, flatten_winevt.yml) + bloom/logsource
+│   ├── input-evtx/                # Parse EVTX files → Event (inject_logsource_fields à la création)
+│   ├── input-windows-channels/    # Collecteur multi-channels Winevt (EventProducer) + inject_logsource_fields
 │   ├── sigma-regression/          # SkipSet, RegressionData, InfoYml, validation triplet
-│   └── sigmacatch-types/          # Types partagés : Event, Alert, RegressionHeader + parsing XML
+│   └── sigmacatch-types/          # Types partagés : Event, Alert, RegressionHeader + parsing XML + tables de mapping logsource (phf)
 ```
 
 ---
@@ -159,18 +159,19 @@ SigmaEngine in-memory (règles chargées + rule_paths)
 EventCollector (channels résolus depuis les règles via resolve_channels_from_rules)
     ├── [Windows] EvtQueryW(channel="*") → EvtNext() → EvtRender() → XML
     │     → parse_winevt_xml() → Event (porte event_json + event_raw)
+    │     → event.inject_logsource_fields() (injecte product/service/category)
     └── [non-Windows] Stub → Ok(vec![])
     ↓
-Vec<Event> { event_json, event_raw, input_source, channel }
+Vec<Event> { event_json, event_raw }
 ```
 
 ### Cycle — Évaluation
 
 ```
 Pour chaque Event :
-    ├── channel → LogSource { product: "windows", service, category }
-    │     (mapping::resolve_logsource + priorité channel/service)
-    ├── event.event_json → flat serde_json::Value (pré-parsé, fallback parse_winevt_xml)
+    ├── event.event_json contient product/service/category (injectés par le collector)
+    ├── LogSourceExtractor extrait ces champs → elague les règles incompatibles
+    ├── bloom pre-filter elague les matchers de sous-chaîne impossibles
      ├── engine.put_events(events) → engine.process_events() → engine.get_alerts()
     │     → Vec<EvaluationResult> (rsigma-eval)
     └── Pour chaque match :
@@ -226,12 +227,12 @@ push_branch() → fetch + comparaison + push normal vers le fork (skip si diverg
 Event {
     event_json: serde_json::Value,    // JSON parsé de l'event (imbriqué)
     event_raw: Vec<u8>,               // octets bruts source (XML)
-    input_source: InputSource,        // Winevt, EvtxFile, ou File
-    channel: Option<String>,          // nom du channel Event Log
 }
 ```
 
-Méthodes : `channel()`, `event_id()`, `provider()`, `from_xml()`
+Méthodes : `channel()`, `event_id()`, `provider()`, `from_xml()`, `inject_logsource_fields()`
+
+Le champ `event_json` contient les champs logsource (`product`, `service`, `category`) injectés par `inject_logsource_fields()` appelé par les collectors. Le `LogSourceExtractor` de rsigma-eval lit ces champs pour elaguer les règles incompatibles.
 
 ### Alert
 
@@ -284,19 +285,20 @@ RegressionData {
 ### DetectionEngine (`detection-engine/src/lib.rs`)
 
 - Charge les pipelines (flatten_winevt.yml + windows.yml) et les règles via rsigma-eval
-- `start()` retourne une paire de channels async : `mpsc::Sender<Event>` → `mpsc::Receiver<Alert>`
-- `evaluate(event, logsource)` pour l'évaluation synchrone
+- Active bloom pre-filter + LogSourceExtractor dans `new()` pour l'optimisation de l'évaluation
+- `put_events()` / `process_events()` / `get_alerts()` pour le cycle FIFO
 - `load_collection()` pour charger en bulk une SigmaCollection
-- `from_rules_dirs()` / `from_rules_dirs()` pour un setup rapide depuis le filesystem
+- `from_rules_dir()` / `from_rules_dirs()` pour un setup rapide depuis le filesystem
+- Indépendant : ne dépend que de `sigmacatch-types` + `rsigma-eval` (pas de input-windows-channels)
 
 ### EventCollector (`input-windows-channels/src/collector.rs`)
 
-- Collecteur multi-channels Windows Event Log avec FIFO interne
-- `start()` → lance la collecte sur tous les channels
-- `stop()` → signale l'arrêt et attend les tasks
-- `get_events()` → récupère tous les events de la FIFO
-- Windows : EvtQueryW → EvtNext → EvtRender → XML → parse_winevt_xml → Event
-- Non-Windows : stub (vecteur vide)
+- Collecteur multi-channels Windows Event Log, implémente `EventProducer`
+- `new(channels)` → crée le collecteur pour les channels spécifiés
+- `run(self, tx)` → lance la collecte et envoie les events via mpsc
+- Windows : EvtQueryW → EvtNext → EvtRender → XML → parse_winevt_xml → Event → inject_logsource_fields
+- Non-Windows : stub (ne fait rien)
+- Les tables de mapping logsource (channel → service, provider → service, category) sont importées depuis `sigmacatch-types`
 
 ### EVTX Writer (`evtx/writer.rs`)
 
@@ -324,7 +326,8 @@ RegressionData {
 | Tout en RAM | agrégation mémoire avant écriture, pas de DB |
 | Un run = cycle complet | pas de mode "juste collect" ou "juste generate" |
 | Collecte via Winevt | EvtQueryW → EvtNext → EvtRender, pas ETW, pas ferrisetw |
-| LogSource depuis channel | channel Event Log via resolve_logsource (channel > provider > default) |
+| LogSource injectée par le collector | `Event::inject_logsource_fields()` injecte product/service/category dans event_json, le LogSourceExtractor de rsigma-eval elague les règles |
+| Bloom pre-filter | activé dans `DetectionEngine::new()`, elague les matchers de sous-chaîne via trigrammes |
 | Skip-at-load unique optimisation | règles avec `info.yml` exclu du moteur |
 | Un event par test | `match_count: 1`, premier event seulement |
 | Output miroir source | `regression_tests_path` ajouté au YAML source |
@@ -346,7 +349,7 @@ RegressionData {
 | `chrono` | dates |
 | `uuid` | UUID v4 pour info.yml |
 | `rayon` | parse parallèle des fichiers de règles |
-| `phf` | tables de hash statiques pour la taxonomie (dans input-windows-channels) |
+| `phf` | tables de hash statiques pour la taxonomie (dans sigmacatch-types) |
 | `evtx` | parsing de fichiers EVTX (binaire evtx_check + crate input-evtx) |
 | `roxmltree` | parsing XML pour les events Winevt (dans sigmacatch-types) |
 | `windows` | Winevt API (cfg-gated: windows only, features: Foundation, Com, Console, EventLog, Threading, Security) |
@@ -435,8 +438,8 @@ La config est auto-créée au premier run avec les valeurs par défaut. Éditez 
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  CYCLE — ÉVALUATION                                                     │
 │  Pour chaque Event :                                                    │
-│    ├── event.event_json → JSON plat (pré-parsé, parse_winevt_xml)     │
-│    ├── channel → LogSource via resolve_logsource()                   │
+│    ├── event.event_json contient product/service/category              │
+│    ├── LogSourceExtractor + bloom pre-filter optimisent l'évaluation  │
  │    └── engine.put_events() → process_events() → get_alerts()          │
 │         → Vec<EvaluationResult>                                        │
 │  Pour chaque match :                                                    │
