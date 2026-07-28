@@ -12,7 +12,6 @@
 //! Usage:
 //!   cargo run --release --bin evtx_check <sigmahq_dir>
 
-use detection_engine::find_rules_dirs;
 use detection_engine::DetectionEngine;
 use input_evtx::parse_evtx_bytes;
 use rsigma_eval::event::JsonEvent;
@@ -110,7 +109,7 @@ fn main() {
     println!();
 
     println!("Loading Sigma rules into engine...");
-    let dirs = match find_rules_dirs(&sigma_dir) {
+    let dirs = match sigma_rule::find_rules_dirs(&sigma_dir) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("Failed to find rule directories: {}", e);

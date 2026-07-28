@@ -484,11 +484,10 @@ name = "detection-engine"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "dunce",
  "rsigma-eval",
- "rsigma-parser",
  "serde",
  "serde_json",
+ "sigma-rule",
  "sigmacatch-types",
  "tempfile",
  "tracing",
@@ -2227,6 +2226,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sigma-rule"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dunce",
+ "rsigma-parser",
+ "serde",
+ "sigmacatch-types",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "sigmacatch"
 version = "0.2.0"
 dependencies = [
@@ -2242,10 +2254,10 @@ dependencies = [
  "rayon",
  "reqwest",
  "rsigma-eval",
- "rsigma-parser",
  "serde",
  "serde_json",
  "sigma-regression",
+ "sigma-rule",
  "sigmacatch-types",
  "tempfile",
  "tokio",

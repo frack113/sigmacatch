@@ -10,7 +10,7 @@ use sigmacatch::sigma;
 
 use anyhow::{Context, Result};
 use config::{Config, GitTransport};
-use sigma::loader::{LoadStats, SigmaRepo};
+use sigma::loader::SigmaRepo;
 use sigma::mapping::build_logsource_to_channels;
 
 use sigmacatch::sigma::mapping::load_custom_mapping;
@@ -438,11 +438,35 @@ fn stage_2_existing_rules(_config: &Config) -> HashSet<String> {
     existing_rules
 }
 
+/// Convert config MinStatus to sigma_rule MinStatus.
+fn convert_min_status(s: &config::MinStatus) -> sigma_rule::MinStatus {
+    use crate::config::MinStatus as C;
+    match s {
+        C::Unsupported => sigma_rule::MinStatus::Unsupported,
+        C::Deprecated => sigma_rule::MinStatus::Deprecated,
+        C::Experimental => sigma_rule::MinStatus::Experimental,
+        C::Test => sigma_rule::MinStatus::Test,
+        C::Stable => sigma_rule::MinStatus::Stable,
+    }
+}
+
+/// Convert config MinLevel to sigma_rule MinLevel.
+fn convert_min_level(l: &config::MinLevel) -> sigma_rule::MinLevel {
+    use crate::config::MinLevel as C;
+    match l {
+        C::Informational => sigma_rule::MinLevel::Informational,
+        C::Low => sigma_rule::MinLevel::Low,
+        C::Medium => sigma_rule::MinLevel::Medium,
+        C::High => sigma_rule::MinLevel::High,
+        C::Critical => sigma_rule::MinLevel::Critical,
+    }
+}
+
 fn stage_3_load_rules(
     config: &Config,
     existing_rules: &HashSet<String>,
-) -> Result<(DetectionEngine, LoadStats)> {
-    let rules_dirs = detection_engine::find_rules_dirs(std::path::Path::new("sigma"))?;
+) -> Result<(DetectionEngine, sigma_rule::LoadStats)> {
+    let rules_dirs = sigma_rule::find_rules_dirs(std::path::Path::new("sigma"))?;
     if rules_dirs.is_empty() {
         anyhow::bail!(
             "Scanned \"sigma\" — found 0 rules directories. \
@@ -451,8 +475,14 @@ fn stage_3_load_rules(
     }
 
     let rules_dirs_refs: Vec<&std::path::Path> = rules_dirs.iter().map(|d| d.as_path()).collect();
-    let load_result =
-        sigma::loader::load_all_rules(&rules_dirs_refs, existing_rules, &config.sigma)?;
+    let filter = sigma_rule::LoadFilter {
+        product: config.sigma.product.as_str().to_string(),
+        min_status: Some(convert_min_status(&config.sigma.min_status)),
+        min_level: Some(convert_min_level(&config.sigma.min_level)),
+        max_rules: config.sigma.max_rules,
+        max_rule_size: config.sigma.max_rule_size,
+    };
+    let load_result = sigma_rule::load_all_rules(&rules_dirs_refs, existing_rules, &filter)?;
     let stats = load_result.stats;
     let collection = load_result.collection;
 
@@ -739,7 +769,7 @@ async fn setup_pipeline(
     fork_config: Option<&github::fork::ForkConfig>,
     all_rules: bool,
 ) -> Result<(EngineFactory, Vec<String>, HashMap<String, String>)> {
-    let rules_dirs = detection_engine::find_rules_dirs(std::path::Path::new("sigma"))?;
+    let rules_dirs = sigma_rule::find_rules_dirs(std::path::Path::new("sigma"))?;
     stage_0_init().await?;
     stage_1_update_repo(config, fork_config).await?;
 
