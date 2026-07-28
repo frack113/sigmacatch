@@ -4,11 +4,10 @@
 use anyhow::{Context, Result};
 use sigmacatch_config::{self, Config, GitTransport};
 use sigmacatch_detection::DetectionEngine;
-use sigmacatch::github;
-use sigmacatch::logger;
-use sigmacatch::repo;
+use sigmacatch_logger::init as init_logger;
+use sigmacatch_repo::github;
 use input_windows_channels::mapping::build_logsource_to_channels;
-use repo::SigmaRepo;
+use sigmacatch_repo::SigmaRepo;
 use sigmacatch_types::{Alert, Event, EventProducer};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -400,8 +399,8 @@ async fn stage_1_update_repo(
         // and git_pull will fast-forward it.
         for candidate in &["master", "main"] {
             let local_ref = format!("refs/heads/{}", candidate);
-            if repo::read_loose_or_packed_ref(&git_dir, &local_ref).is_some() {
-                if let Err(e) = repo::switch_head(&git_dir, candidate) {
+            if sigmacatch_repo::read_loose_or_packed_ref(&git_dir, &local_ref).is_some() {
+                if let Err(e) = sigmacatch_repo::switch_head(&git_dir, candidate) {
                     warn!("Failed to switch to '{}': {}", candidate, e);
                 }
                 break;
@@ -412,7 +411,7 @@ async fn stage_1_update_repo(
     sigma_repo.init().await?;
 
     if let Some(fc) = fork_config {
-        repo::create_branch(&sigma_repo.path.join(".git"), &fc.branch_name)?;
+        sigmacatch_repo::create_branch(&sigma_repo.path.join(".git"), &fc.branch_name)?;
     }
 
     info!("Sigma repository ready");
@@ -923,7 +922,7 @@ async fn main() -> Result<()> {
     #[cfg(windows)]
     setup_console();
 
-    let _guard = logger::init(&config)?;
+    let _guard = init_logger(&config)?;
 
     info!(
         "Sigma Regression Generator v{} — build {}",
@@ -935,7 +934,7 @@ async fn main() -> Result<()> {
         "Sigmacatch started for {} <{}>",
         config.git.author, config.git.email
     );
-    let branch_name = repo::create_branch_name();
+    let branch_name = sigmacatch_repo::create_branch_name();
     info!("Branch name: {}", branch_name);
     let fork_config = github::fork::detect_fork(&config.git.author, &branch_name).await?;
 
@@ -974,7 +973,7 @@ async fn main() -> Result<()> {
             info!("Interrupted, shutting down");
             let sigma_path = std::path::Path::new("sigma");
             let push_result = match config.git.transport {
-                GitTransport::Http => repo::git_push(
+                GitTransport::Http => sigmacatch_repo::git_push(
                     sigma_path,
                     "origin",
                     &fork_config.branch_name,
@@ -984,7 +983,7 @@ async fn main() -> Result<()> {
                         None
                     },
                 ),
-                GitTransport::Ssh => repo::git_push_ssh(
+                GitTransport::Ssh => sigmacatch_repo::git_push_ssh(
                     sigma_path,
                     "origin",
                     &fork_config.branch_name,
@@ -1027,7 +1026,7 @@ async fn main() -> Result<()> {
             );
         }
 
-        if let Err(e) = repo::git_push(
+        if let Err(e) = sigmacatch_repo::git_push(
             std::path::Path::new("sigma"),
             "origin",
             &fork_config.branch_name,
