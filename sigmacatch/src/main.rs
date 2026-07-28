@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 use anyhow::{Context, Result};
-use sigmacatch_config::{self, Config, GitTransport, MinLevel, MinStatus};
+use sigmacatch_config::{self, Config, GitTransport};
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch::github;
 use sigmacatch::logger;
@@ -435,28 +435,6 @@ fn stage_2_existing_rules(_config: &Config) -> HashSet<String> {
     existing_rules
 }
 
-/// Convert config MinStatus to sigma_rule MinStatus.
-fn convert_min_status(s: &MinStatus) -> sigmacatch_rule::MinStatus {
-    match s {
-        MinStatus::Unsupported => sigmacatch_rule::MinStatus::Unsupported,
-        MinStatus::Deprecated => sigmacatch_rule::MinStatus::Deprecated,
-        MinStatus::Experimental => sigmacatch_rule::MinStatus::Experimental,
-        MinStatus::Test => sigmacatch_rule::MinStatus::Test,
-        MinStatus::Stable => sigmacatch_rule::MinStatus::Stable,
-    }
-}
-
-/// Convert config MinLevel to sigma_rule MinLevel.
-fn convert_min_level(l: &MinLevel) -> sigmacatch_rule::MinLevel {
-    match l {
-        MinLevel::Informational => sigmacatch_rule::MinLevel::Informational,
-        MinLevel::Low => sigmacatch_rule::MinLevel::Low,
-        MinLevel::Medium => sigmacatch_rule::MinLevel::Medium,
-        MinLevel::High => sigmacatch_rule::MinLevel::High,
-        MinLevel::Critical => sigmacatch_rule::MinLevel::Critical,
-    }
-}
-
 fn stage_3_load_rules(
     config: &Config,
     existing_rules: &HashSet<String>,
@@ -472,8 +450,8 @@ fn stage_3_load_rules(
     let rules_dirs_refs: Vec<&std::path::Path> = rules_dirs.iter().map(|d| d.as_path()).collect();
     let filter = sigmacatch_rule::LoadFilter {
         product: config.sigma.product.as_str().to_string(),
-        min_status: Some(convert_min_status(&config.sigma.min_status)),
-        min_level: Some(convert_min_level(&config.sigma.min_level)),
+        min_status: Some(config.sigma.min_status),
+        min_level: Some(config.sigma.min_level),
         max_rules: config.sigma.max_rules,
         max_rule_size: config.sigma.max_rule_size,
     };
