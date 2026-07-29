@@ -2207,7 +2207,6 @@ dependencies = [
  "input-windows-channels",
  "phf",
  "rayon",
- "reqwest",
  "serde",
  "serde_json",
  "sigmacatch-config",
@@ -2233,7 +2232,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dunce",
+ "reqwest",
  "serde",
+ "serde_json",
  "sigmacatch-repo",
  "sigmacatch-rule",
  "sigmacatch-types",

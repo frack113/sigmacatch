@@ -44,9 +44,6 @@ sigmacatch-rule = { path = "../crates/sigmacatch-rule" }
 # Crate workspace — Git operations
 sigmacatch-repo = { path = "../crates/sigmacatch-repo" }
 
-# HTTP client (async, for fork detection and GitHub API calls)
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-
 # Sérialisation
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

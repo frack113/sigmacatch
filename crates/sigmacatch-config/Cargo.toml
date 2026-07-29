@@ -9,8 +9,10 @@ description = "Application configuration: Config, GitConfig, SigmaFilterConfig, 
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 serde_yaml = { package = "yaml_serde", version = "0.10" }
 anyhow = "1.0"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 tracing = "0.1"
 
 sigmacatch-repo = { path = "../sigmacatch-repo" }
