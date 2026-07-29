@@ -3,8 +3,8 @@
 
 //! SigmaHQ-compatible regression data format and helpers.
 //!
-//! **Closed interface** — callers must only use `RegressionData` methods and
-//! `list_all()`. No direct access to `info.yml`, data paths, or raw fields.
+//! **Public API** — callers use `RegressionData`, `list_all()`,
+//! `build_skip_set()`, and `clean_partial_artifacts()`.
 
 mod data;
 mod evtx;
@@ -15,9 +15,7 @@ mod validate;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
-pub use data::{
-    build_skip_set, generate_regression_entries, update_regression_tests_path, RegressionData,
-};
+pub use data::{build_skip_set, update_regression_tests_path, RegressionData};
 pub use evtx::writer::write_evtx;
 pub use logtype::LogType;
 pub use validate::validate_rule_id;
@@ -66,42 +64,48 @@ pub fn clean_partial_artifacts(base: &Path) {
     if !base.exists() {
         return;
     }
-    let walk = match std::fs::read_dir(base) {
-        Ok(w) => w,
+    clean_recursive(base, 0);
+}
+
+const MAX_CLEAN_DEPTH: u32 = 64;
+
+fn clean_recursive(dir: &Path, depth: u32) {
+    if depth > MAX_CLEAN_DEPTH {
+        warn!("clean_recursive: depth limit reached at {:?}", dir);
+        return;
+    }
+
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
         Err(e) => {
-            warn!("Failed to read regression base directory {:?}: {}", base, e);
+            warn!("Failed to read {:?}: {}", dir, e);
             return;
         }
     };
-    for entry in walk.flatten() {
-        let sub = entry.path();
-        if !sub.is_dir() {
-            continue;
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if let Ok(metadata) = path.symlink_metadata() {
+            if metadata.file_type().is_symlink() {
+                warn!("Skipping symlink at {:?}", path);
+                continue;
+            }
         }
-        let inner_walk = match std::fs::read_dir(&sub) {
-            Ok(w) => w,
-            Err(e) => {
-                warn!("Failed to read regression subdirectory {:?}: {}", sub, e);
-                continue;
-            }
-        };
-        for entry in inner_walk.flatten() {
-            let dir = entry.path();
-            if !dir.is_dir() {
-                continue;
-            }
-            let has_info = dir.join("info.yml").exists();
+        if path.is_dir() {
+            let has_info = path.join("info.yml").exists();
             if !has_info {
-                let dir_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                let has_generated = dir.join(format!("{dir_name}.json")).exists()
-                    || dir.join(format!("{dir_name}.evtx")).exists();
+                let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                let has_generated = path.join(format!("{dir_name}.json")).exists()
+                    || path.join(format!("{dir_name}.evtx")).exists();
                 if !has_generated {
+                    clean_recursive(&path, depth + 1);
                     continue;
                 }
-                match std::fs::remove_dir_all(&dir) {
-                    Ok(()) => info!("Cleaned partial regression dir {:?}", dir),
-                    Err(e) => warn!("Failed to clean partial regression dir {:?}: {}", dir, e),
+                match std::fs::remove_dir_all(&path) {
+                    Ok(()) => info!("Cleaned partial regression dir {:?}", path),
+                    Err(e) => warn!("Failed to clean partial regression dir {:?}: {}", path, e),
                 }
+            } else {
+                clean_recursive(&path, depth + 1);
             }
         }
     }

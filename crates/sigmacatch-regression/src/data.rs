@@ -14,9 +14,10 @@ use crate::info::InfoYml;
 use crate::logtype::LogType;
 use crate::validate::validate_rule_id;
 
-/// Platform-agnostic regression data entry.
+/// Platform-agnostic regression data entry and batch generator.
 ///
-/// All fields are private — use the public methods.
+/// Autonomous high-level interface — create with `new(path)`, configure
+/// with setters, then call `generate_all()` for batch generation.
 pub struct RegressionData {
     // Generation state
     header: RegressionHeader,
@@ -28,14 +29,123 @@ pub struct RegressionData {
     is_contrib: bool,
     // Loaded state
     info: InfoYml,
+    info_path: PathBuf,
     raw_data: Option<Vec<u8>>,
     logtype: LogType,
 }
 
 impl RegressionData {
-    /// Create a new `RegressionData` for generation (writing output).
-    pub fn new(
-        header: RegressionHeader,
+    /// Create a new `RegressionData` for batch generation.
+    ///
+    /// Set `output_path` to the directory where regression data will be written.
+    /// Configure with `set_author()`, `set_is_contrib()`, then call `generate_all()`.
+    pub fn new(output_path: &Path) -> Self {
+        Self {
+            header: RegressionHeader::new(String::new(), String::new()),
+            alerts: Vec::new(),
+            output_path: output_path.to_path_buf(),
+            rule_rel_path: None,
+            author: None,
+            description: None,
+            is_contrib: false,
+            info: InfoYml::new("", "", 0, "", "", "", ""),
+            info_path: PathBuf::new(),
+            raw_data: None,
+            logtype: LogType::Json,
+        }
+    }
+
+    /// Set the author for generated regression entries.
+    pub fn set_author(&mut self, author: &str) {
+        self.author = Some(author.to_string());
+    }
+
+    /// Set whether this is a contrib run (output inside the sigma repo).
+    pub fn set_is_contrib(&mut self, is_contrib: bool) {
+        self.is_contrib = is_contrib;
+    }
+
+    /// Generate regression data for all non-retired, non-existing rules.
+    ///
+    /// Returns a vec of `(rule_id, rel_dir, rule_yaml_rel)` for committed entries.
+    pub fn generate_all(
+        &self,
+        aggregated: &HashMap<String, AggregatedRule>,
+        sigma_repo_path: &Path,
+        to_retire: &mut HashSet<String>,
+    ) -> Vec<(String, String, Option<String>)> {
+        clean_partial_artifacts(&self.output_path);
+
+        let mut committed: Vec<(String, String, Option<String>)> = Vec::new();
+        let author = self
+            .author
+            .as_deref()
+            .unwrap_or("Sigma Regression Generator");
+
+        for agg in aggregated.values() {
+            let rule_id = &agg.header.rule_id;
+            if to_retire.contains(rule_id) {
+                continue;
+            }
+
+            let rule_rel_path = agg.rule_path.as_ref().and_then(|p| {
+                p.strip_prefix(sigma_repo_path)
+                    .ok()
+                    .map(|rel| rel.with_extension(""))
+            });
+
+            let mut reg = RegressionData::for_rule(
+                &agg.header,
+                &self.output_path,
+                rule_rel_path.as_deref(),
+                Some(author),
+                agg.description.as_deref(),
+                self.is_contrib,
+            );
+            if reg.exists() {
+                continue;
+            }
+
+            for alert in &agg.alerts {
+                reg.add_alert(alert.clone());
+            }
+
+            let _gen_span = info_span!("generate", rule_id = %rule_id).entered();
+            match reg.generate(write_evtx) {
+                Ok(_) => {
+                    let rel_dir = reg
+                        .sigma_rel_dir()
+                        .unwrap_or_else(|| format!("regression_data/rules/{rule_id}"));
+
+                    let rule_yaml_rel = agg
+                        .rule_path
+                        .as_ref()
+                        .and_then(|p| p.strip_prefix(sigma_repo_path).ok())
+                        .and_then(|p| p.to_str())
+                        .map(|s| s.to_string().replace('\\', "/"));
+
+                    let tests_path = format!("{}/info.yml", rel_dir.replace('\\', "/"));
+                    if let Some(ref rule_yaml_path) = agg.rule_path {
+                        update_regression_tests_path(rule_yaml_path, &tests_path);
+                    }
+
+                    to_retire.insert(rule_id.clone());
+                    info!("Rule {rule_id} retired from detection engine");
+
+                    committed.push((rule_id.clone(), rel_dir, rule_yaml_rel));
+                }
+                Err(e) => {
+                    error!("Failed to generate regression for {}: {}", rule_id, e);
+                }
+            }
+        }
+
+        committed
+    }
+
+    /// Create a `RegressionData` for a single rule (internal helper).
+    fn for_rule(
+        header: &RegressionHeader,
         output_path: &Path,
         rule_rel_path: Option<&Path>,
         author: Option<&str>,
@@ -43,7 +153,7 @@ impl RegressionData {
         is_contrib: bool,
     ) -> Self {
         Self {
-            header,
+            header: header.clone(),
             alerts: Vec::new(),
             output_path: output_path.to_path_buf(),
             rule_rel_path: rule_rel_path.map(|p| p.to_path_buf()),
@@ -51,6 +161,7 @@ impl RegressionData {
             description: description.map(|s| s.to_string()),
             is_contrib,
             info: InfoYml::new("", "", 0, "", "", "", ""),
+            info_path: PathBuf::new(),
             raw_data: None,
             logtype: LogType::Json,
         }
@@ -96,12 +207,13 @@ impl RegressionData {
         Ok(Self {
             header: RegressionHeader::new(rule_id.clone(), String::new()),
             alerts: Vec::new(),
-            output_path: PathBuf::new(),
+            output_path: dir.to_path_buf(),
             rule_rel_path: None,
             author: None,
             description: None,
             is_contrib: false,
             info,
+            info_path: info_path.to_path_buf(),
             raw_data,
             logtype,
         })
@@ -217,11 +329,6 @@ impl RegressionData {
         Ok(())
     }
 
-    /// Save the `info.yml` back to disk.
-    pub fn save(&self) -> Result<()> {
-        self.info.save(&PathBuf::new()) // placeholder — only used internally
-    }
-
     /// Write the raw log data to disk.
     pub fn save_log(&self, path: &Path) -> Result<()> {
         let data = match &self.raw_data {
@@ -280,7 +387,7 @@ impl RegressionData {
 
     /// Check if this regression entry is valid on disk.
     pub fn is_valid(&self) -> bool {
-        self.info_path().exists() && self.get_data_path().exists()
+        self.info_path.exists() && self.get_data_path().exists()
     }
 
     /// Return the raw data bytes (EVTX binary, JSON, or raw XML).
@@ -301,13 +408,6 @@ impl RegressionData {
     }
 
     // ─── Internal helpers ─────────────────────────────────────────────
-
-    fn info_path(&self) -> PathBuf {
-        self.rule_dir()
-            .ok()
-            .map(|d| d.join("info.yml"))
-            .unwrap_or_default()
-    }
 
     fn get_data_path(&self) -> PathBuf {
         // Resolve from info.yml path or compute from rule_dir
@@ -427,88 +527,6 @@ fn collect_rule_ids(
             }
         }
     }
-}
-
-/// Generate regression data entries for all non-retired, non-existing rules.
-/// Returns a vec of `(rule_id, rel_dir, rule_yaml_rel)` for committed entries.
-pub fn generate_regression_entries(
-    aggregated: &mut HashMap<String, AggregatedRule>,
-    sigma_repo_path: &Path,
-    author: &str,
-    to_retire: &mut HashSet<String>,
-) -> Vec<(String, String, Option<String>)> {
-    let output_base = sigma_repo_path.join("regression_data");
-    clean_partial_artifacts(&output_base);
-
-    let mut committed: Vec<(String, String, Option<String>)> = Vec::new();
-
-    for agg in aggregated.values_mut() {
-        let rule_id = &agg.header.rule_id;
-        if to_retire.contains(rule_id) {
-            continue;
-        }
-
-        let rule_rel_path = agg.rule_path.as_ref().and_then(|p| {
-            p.strip_prefix(sigma_repo_path)
-                .ok()
-                .map(|rel| rel.with_extension(""))
-        });
-
-        let mut reg = RegressionData::new(
-            agg.header.clone(),
-            &output_base,
-            rule_rel_path.as_deref(),
-            Some(author),
-            agg.description.as_deref(),
-            sigma_repo_path.file_name().is_some_and(|n| n == "sigma"),
-        );
-        if reg.exists() {
-            continue;
-        }
-
-        for alert in &agg.alerts {
-            reg.add_alert(alert.clone());
-        }
-
-        let _gen_span = info_span!("generate", rule_id = %rule_id).entered();
-        match reg.generate(write_evtx) {
-            Ok(_) => {
-                to_retire.insert(rule_id.clone());
-                info!("Rule {rule_id} retired from detection engine");
-
-                let rel_dir = reg.sigma_rel_dir().unwrap_or_else(|| {
-                    if reg.is_contrib() {
-                        let repo_name = sigma_repo_path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_default();
-                        format!("{repo_name}/regression_data/rules/{rule_id}")
-                    } else {
-                        format!("regression_data/rules/{rule_id}")
-                    }
-                });
-
-                let rule_yaml_rel = agg
-                    .rule_path
-                    .as_ref()
-                    .and_then(|p| p.strip_prefix(sigma_repo_path).ok())
-                    .and_then(|p| p.to_str())
-                    .map(|s| s.to_string().replace('\\', "/"));
-
-                let tests_path = format!("{}/info.yml", rel_dir.replace('\\', "/"));
-                if let Some(ref rule_yaml_path) = agg.rule_path {
-                    update_regression_tests_path(rule_yaml_path, &tests_path);
-                }
-
-                committed.push((rule_id.clone(), rel_dir, rule_yaml_rel));
-            }
-            Err(e) => {
-                error!("Failed to generate regression for {}: {}", rule_id, e);
-            }
-        }
-    }
-
-    committed
 }
 
 /// Add or update the `regression_tests_path` line in a Sigma rule YAML file.

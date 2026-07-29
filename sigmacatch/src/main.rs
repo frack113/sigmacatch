@@ -5,10 +5,11 @@ use anyhow::{Context, Result};
 use sigmacatch_config::{self, dry_run_git, parse_args, Config};
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_logger::init as init_logger;
+use sigmacatch_regression::RegressionData;
 use sigmacatch_repo::{self, github, SigmaRepo};
 use sigmacatch_types::{AggregatedRule, Event, EventProducer, Stats};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::signal;
@@ -261,14 +262,14 @@ async fn main() -> Result<()> {
             "evaluation complete"
         );
 
-        let mut to_generate = aggregated;
-        let committed = sigmacatch_regression::generate_regression_entries(
-            &mut to_generate,
-            std::path::Path::new(&config.git.sigma_repo_path),
-            &config.git.author,
-            &mut retired,
-        );
-        let sigma_repo_path = std::path::Path::new(&config.git.sigma_repo_path);
+        let sigma_repo_path = Path::new(&config.git.sigma_repo_path);
+        let output_base = sigma_repo_path.join("regression_data");
+        let mut reg = RegressionData::new(&output_base);
+        let author = config.git.author.clone();
+        let is_contrib = sigma_repo_path.file_name().is_some_and(|n| n == "sigma");
+        reg.set_author(&author);
+        reg.set_is_contrib(is_contrib);
+        let committed = reg.generate_all(&aggregated, sigma_repo_path, &mut retired);
         if !committed.is_empty() {
             if let Err(e) = sigmacatch_repo::github::commit::commit_all_rules(
                 sigma_repo_path,
