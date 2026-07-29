@@ -6,29 +6,15 @@ use sigmacatch_config::{self, Config, GitTransport};
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_logger::init as init_logger;
 use sigmacatch_repo::github;
-use input_windows_channels::mapping::build_logsource_to_channels;
 use sigmacatch_repo::SigmaRepo;
-use sigmacatch_types::{Alert, Event, EventProducer};
+use sigmacatch_types::{AggregatedRule, Event, EventProducer, Stats};
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, info_span, warn};
-
-struct Stats {
-    events_processed: u64,
-    matches_found: u64,
-    regression_data_generated: u64,
-}
-
-struct AggregatedRule {
-    header: sigmacatch_types::RegressionHeader,
-    alerts: Vec<Alert>,
-    rule_path: Option<PathBuf>,
-    description: Option<String>,
-}
 
 struct WorkContext {
     retired: HashSet<String>,
@@ -37,8 +23,6 @@ struct WorkContext {
     author: String,
     email: String,
     sigma_repo_path: std::path::PathBuf,
-    #[allow(dead_code)]
-    custom_map: HashMap<String, String>,
 }
 
 struct DryRunConfig {
@@ -421,8 +405,10 @@ async fn stage_1_update_repo(
 fn stage_2_existing_rules(_config: &Config) -> HashSet<String> {
     let sigma_regression_dir = PathBuf::from("sigma").join("regression_data");
 
-    let existing_rules =
-        sigmacatch_regression::build_skip_set(&[("sigma/regression_data", &sigma_regression_dir)], 64);
+    let existing_rules = sigmacatch_regression::build_skip_set(
+        &[("sigma/regression_data", &sigma_regression_dir)],
+        64,
+    );
 
     if !existing_rules.is_empty() {
         info!(
@@ -487,33 +473,7 @@ fn stage_3_load_rules(
 /// a prior run that aborted before committing; they are never part of the skip
 /// set and must not be carried into the current run's commit.
 fn clean_partial_regressions(base: &std::path::Path) {
-    if !base.exists() {
-        return;
-    }
-    let walk = match std::fs::read_dir(base) {
-        Ok(w) => w,
-        Err(_) => return,
-    };
-    for entry in walk.flatten() {
-        let sub = entry.path();
-        if !sub.is_dir() {
-            continue;
-        }
-        for inner in std::fs::read_dir(&sub).into_iter().flatten().flatten() {
-            let dir = inner.path();
-            if !dir.is_dir() {
-                continue;
-            }
-            let has_info = dir.join("info.yml").exists();
-            if !has_info {
-                if let Err(e) = std::fs::remove_dir_all(&dir) {
-                    warn!("Failed to clean partial regression dir {:?}: {}", dir, e);
-                } else {
-                    info!("Cleaned partial regression dir {:?}", dir);
-                }
-            }
-        }
-    }
+    sigmacatch_regression::clean_partial_artifacts(base);
 }
 
 async fn stage_4_work_winevt(
@@ -594,8 +554,11 @@ async fn stage_4_work_winevt(
     );
 
     // Generate regression data
-    let mut to_generate: Vec<(sigmacatch_regression::RegressionData, Option<PathBuf>, String)> =
-        Vec::new();
+    let mut to_generate: Vec<(
+        sigmacatch_regression::RegressionData,
+        Option<PathBuf>,
+        String,
+    )> = Vec::new();
     for agg in ctx.aggregated.values_mut() {
         let rule_rel_path = agg.rule_path.as_ref().and_then(|p| {
             p.strip_prefix("sigma")
@@ -713,63 +676,16 @@ fn resolve_channels_from_rules(
     engine: &DetectionEngine,
     custom_map: &HashMap<String, String>,
 ) -> Vec<String> {
-    let rules_count = engine.rule_count();
-    if rules_count == 0 {
-        info!("No rules loaded — cannot resolve channels");
-        return Vec::new();
-    }
-
-    // Without service/category tracking, collect all known channels from the mapping
-    let map = build_logsource_to_channels(custom_map);
-    let channels_set: HashSet<String> = map
-        .values()
-        .flat_map(|targets| targets.iter().map(|t| t.channel.to_string()))
-        .collect();
-
-    let mut channels: Vec<String> = channels_set.into_iter().collect();
-    channels.sort();
-
-    info!("Channels to collect: {:?}", channels);
-
-    channels
+    input_windows_channels::mapping::resolve_channels(engine.rule_count() > 0, custom_map)
 }
 
-type EngineFactory = Box<dyn Fn() -> DetectionEngine + Send + Sync>;
-
-use serde::Deserialize;
-
-#[derive(Deserialize)]
-struct CustomChannels {
-    channels: HashMap<String, String>,
-}
-
-/// Loads custom channel mappings from custom_channels.yaml.
-/// Returns an empty HashMap if the file does not exist.
-fn load_custom_mapping(path: &Path) -> HashMap<String, String> {
-    if !path.exists() {
-        return HashMap::new();
-    }
-    match std::fs::read_to_string(path) {
-        Ok(content) => match serde_yaml::from_str::<CustomChannels>(&content) {
-            Ok(custom) => custom.channels,
-            Err(e) => {
-                warn!("Failed to parse custom_channels.yaml: {}", e);
-                HashMap::new()
-            }
-        },
-        Err(e) => {
-            warn!("Failed to read custom_channels.yaml: {}", e);
-            HashMap::new()
-        }
-    }
-}
+type EngineFactory = Box<dyn Fn() -> Result<DetectionEngine> + Send + Sync>;
 
 async fn setup_pipeline(
     config: &Config,
     fork_config: Option<&github::fork::ForkConfig>,
     all_rules: bool,
-) -> Result<(EngineFactory, Vec<String>, HashMap<String, String>)> {
-    let rules_dirs = sigmacatch_rule::find_rules_dirs(std::path::Path::new("sigma"))?;
+) -> Result<(EngineFactory, Vec<String>)> {
     stage_0_init().await?;
     stage_1_update_repo(config, fork_config).await?;
 
@@ -791,20 +707,24 @@ async fn setup_pipeline(
         info!("done: {} rules loaded", rules_count);
     }
 
-    let custom_map = load_custom_mapping(PathBuf::from("custom_channels.yaml").as_path());
+    // Serialize compiled rules once, then clone via HIR blob for each cycle.
+    let hir_blob = engine.save_hir()?;
+
+    let custom_map = sigmacatch_config::load_custom_channel_mapping(
+        PathBuf::from("custom_channels.yaml").as_path(),
+    );
     let channels = resolve_channels_from_rules(&engine, &custom_map);
 
     if channels.is_empty() {
         warn!("0 channels resolved — nothing to collect");
     }
 
-    let dirs = rules_dirs.clone();
     let factory: EngineFactory = Box::new(move || {
-        let dirs_ref: Vec<std::path::PathBuf> = dirs.to_vec();
-        let refs: Vec<&std::path::Path> = dirs_ref.iter().map(|p| p.as_path()).collect();
-        DetectionEngine::from_rules_dirs(&refs).unwrap()
+        let mut de = DetectionEngine::new();
+        de.load_hir(&hir_blob)?;
+        Ok(de)
     });
-    Ok((factory, channels, custom_map))
+    Ok((factory, channels))
 }
 
 /// Configure Windows console for UTF-8 output and ANSI escape sequences.
@@ -828,7 +748,6 @@ async fn run_cycle(
     channels: Vec<String>,
     engine: DetectionEngine,
     mut retired: HashSet<String>,
-    custom_map: HashMap<String, String>,
     author: String,
     email: String,
 ) -> Result<(
@@ -847,7 +766,6 @@ async fn run_cycle(
         author,
         email,
         sigma_repo_path: std::path::PathBuf::from("sigma"),
-        custom_map,
     };
 
     if channels.is_empty() {
@@ -867,6 +785,24 @@ async fn run_cycle(
     );
 
     Ok((retired, stats, committed_rules))
+}
+
+/// Push the sigma repo branch using the configured transport (HTTP or SSH).
+fn do_git_push(sigma_path: &std::path::Path, branch_name: &str, config: &Config) -> Result<()> {
+    let token = if !config.git.github_token.trim().is_empty() {
+        Some(config.git.github_token.trim())
+    } else {
+        None
+    };
+    match config.git.transport {
+        GitTransport::Http => sigmacatch_repo::git_push(sigma_path, "origin", branch_name, token),
+        GitTransport::Ssh => sigmacatch_repo::git_push_ssh(
+            sigma_path,
+            "origin",
+            branch_name,
+            config.git.ssh_key_path.as_deref(),
+        ),
+    }
 }
 
 #[tokio::main]
@@ -938,7 +874,7 @@ async fn main() -> Result<()> {
     info!("Branch name: {}", branch_name);
     let fork_config = github::fork::detect_fork(&config.git.author, &branch_name).await?;
 
-    let (engine_factory, cycle_channels, custom_map) =
+    let (engine_factory, cycle_channels) =
         setup_pipeline(&config, Some(&fork_config), all_rules).await?;
 
     if cycle_channels.is_empty() {
@@ -972,25 +908,7 @@ async fn main() -> Result<()> {
         if !running.load(Ordering::Relaxed) {
             info!("Interrupted, shutting down");
             let sigma_path = std::path::Path::new("sigma");
-            let push_result = match config.git.transport {
-                GitTransport::Http => sigmacatch_repo::git_push(
-                    sigma_path,
-                    "origin",
-                    &fork_config.branch_name,
-                    if !config.git.github_token.trim().is_empty() {
-                        Some(config.git.github_token.trim())
-                    } else {
-                        None
-                    },
-                ),
-                GitTransport::Ssh => sigmacatch_repo::git_push_ssh(
-                    sigma_path,
-                    "origin",
-                    &fork_config.branch_name,
-                    config.git.ssh_key_path.as_deref(),
-                ),
-            };
-            if let Err(e) = push_result {
+            if let Err(e) = do_git_push(sigma_path, &fork_config.branch_name, &config) {
                 warn!("Failed to push branch: {}", e);
             } else {
                 info!(
@@ -1007,12 +925,11 @@ async fn main() -> Result<()> {
             info!("collecting…");
 
             let channels = cycle_channels.clone();
-            let engine = engine_factory();
+            let engine = engine_factory()?;
             let (mut retired, stats, committed_rules) = run_cycle(
                 channels,
                 engine,
                 std::mem::take(&mut retired),
-                custom_map.clone(),
                 config.git.author.clone(),
                 config.git.email.clone(),
             )
@@ -1026,15 +943,10 @@ async fn main() -> Result<()> {
             );
         }
 
-        if let Err(e) = sigmacatch_repo::git_push(
+        if let Err(e) = do_git_push(
             std::path::Path::new("sigma"),
-            "origin",
             &fork_config.branch_name,
-            if !config.git.github_token.trim().is_empty() {
-                Some(config.git.github_token.trim())
-            } else {
-                None
-            },
+            &config,
         ) {
             warn!("Failed to push branch: {}", e);
         } else {
@@ -1046,57 +958,4 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-
-    #[test]
-    fn test_load_custom_mapping_missing_file() {
-        let path = Path::new("/nonexistent/custom_channels_nonexistent.yaml");
-        let result = load_custom_mapping(path);
-        assert!(
-            result.is_empty(),
-            "missing file should return empty HashMap"
-        );
-    }
-
-    #[test]
-    fn test_load_custom_mapping_valid_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("custom_channels.yaml");
-        {
-            let mut file = std::fs::File::create(&path).unwrap();
-            writeln!(file, "channels:").unwrap();
-            writeln!(file, "  'Custom-Channel/Operational': 'custom_service'").unwrap();
-            writeln!(file, "  'Another-Channel': 'another_service'").unwrap();
-        }
-        let result = load_custom_mapping(&path);
-        assert_eq!(result.len(), 2);
-        assert_eq!(
-            result.get("Custom-Channel/Operational"),
-            Some(&"custom_service".to_string())
-        );
-        assert_eq!(
-            result.get("Another-Channel"),
-            Some(&"another_service".to_string())
-        );
-    }
-
-    #[test]
-    fn test_load_custom_mapping_malformed_yaml() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("custom_channels.yaml");
-        {
-            let mut file = std::fs::File::create(&path).unwrap();
-            writeln!(file, "channels: {{invalid yaml content<<<").unwrap();
-        }
-        let result = load_custom_mapping(&path);
-        assert!(
-            result.is_empty(),
-            "malformed YAML should return empty HashMap"
-        );
-    }
 }
