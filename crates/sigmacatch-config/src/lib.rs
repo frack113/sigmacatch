@@ -341,7 +341,13 @@ impl Config {
             );
         }
 
-        // Validate sigma_repo_path — reject path traversal and absolute paths
+        // Validate sigma_repo_path — reject empty, path traversal, and absolute paths
+        if self.git.sigma_repo_path.trim().is_empty() {
+            anyhow::bail!(
+                "config: 'git.sigma_repo_path' must not be empty, got {:?}",
+                self.git.sigma_repo_path
+            );
+        }
         if std::path::Path::new(&self.git.sigma_repo_path)
             .components()
             .any(|c| c == std::path::Component::ParentDir)
@@ -377,6 +383,15 @@ impl Config {
                 self.sigma.min_level
             );
         }
+        Ok(())
+    }
+
+    /// Ensure required directories exist.
+    pub fn ensure_dirs(&self) -> anyhow::Result<()> {
+        let repo = std::path::Path::new(&self.git.sigma_repo_path);
+        std::fs::create_dir_all(repo)?;
+        std::fs::create_dir_all("logs")?;
+        tracing::info!("directory structure ready");
         Ok(())
     }
 }

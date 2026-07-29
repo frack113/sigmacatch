@@ -25,61 +25,26 @@ struct WorkContext {
     sigma_repo_path: std::path::PathBuf,
 }
 
-async fn stage_0_init() -> Result<()> {
-    std::fs::create_dir_all("sigma")?;
-    std::fs::create_dir_all("logs")?;
-    info!("directory structure ready");
-    Ok(())
-}
-
-async fn stage_1_update_repo(
+async fn ensure_sigma_repo(
     config: &Config,
     fork_config: Option<&github::fork::ForkConfig>,
 ) -> Result<()> {
-    let mut sigma_repo = SigmaRepo::new(std::path::Path::new(&config.git.sigma_repo_path));
-
-    if let Some(fc) = fork_config {
-        let base_url = fc.fork_url.strip_suffix(".git").unwrap_or(&fc.fork_url);
-        let clone_url = format!("{}.git", base_url);
-        sigma_repo = sigma_repo.with_remote_url(clone_url);
-    }
-
-    let has_config_token = !config.git.github_token.trim().is_empty();
-    if has_config_token {
-        sigma_repo = sigma_repo.with_token(config.git.github_token.trim().to_string());
-    }
-
-    sigma_repo = sigma_repo
+    let mut sigma_repo = SigmaRepo::new(std::path::Path::new(&config.git.sigma_repo_path))
         .with_transport(config.git.transport)
         .with_ssh_key_path(config.git.ssh_key_path.clone());
 
-    // Switch to master/main before pulling, so the contrib branch is created
-    // from the latest tracking branch, not from a stale contrib branch.
-    let sigma_path = PathBuf::from(&config.git.sigma_repo_path);
-    let git_dir = sigma_path.join(".git");
-    if git_dir.exists() {
-        // read_loose_or_packed_ref is used here to check if the tracking ref
-        // exists after a shallow fetch. If not, we stay on the current branch
-        // and git_pull will fast-forward it.
-        for candidate in &["master", "main"] {
-            let local_ref = format!("refs/heads/{}", candidate);
-            if sigmacatch_repo::read_loose_or_packed_ref(&git_dir, &local_ref).is_some() {
-                if let Err(e) = sigmacatch_repo::switch_head(&git_dir, candidate) {
-                    warn!("Failed to switch to '{}': {}", candidate, e);
-                }
-                break;
-            }
-        }
-    }
-
-    sigma_repo.init().await?;
-
     if let Some(fc) = fork_config {
-        sigmacatch_repo::create_branch(&sigma_repo.path.join(".git"), &fc.branch_name)?;
+        let url = fc.fork_url.trim_end_matches(".git").to_string() + ".git";
+        sigma_repo = sigma_repo
+            .with_remote_url(url)
+            .with_fork_branch(fc.branch_name.clone());
     }
 
-    info!("Sigma repository ready");
-    Ok(())
+    if !config.git.github_token.trim().is_empty() {
+        sigma_repo = sigma_repo.with_token(config.git.github_token.trim().to_string());
+    }
+
+    sigma_repo.init().await
 }
 
 fn stage_2_existing_rules(_config: &Config) -> HashSet<String> {
@@ -366,8 +331,8 @@ async fn setup_pipeline(
     fork_config: Option<&github::fork::ForkConfig>,
     all_rules: bool,
 ) -> Result<(EngineFactory, Vec<String>)> {
-    stage_0_init().await?;
-    stage_1_update_repo(config, fork_config).await?;
+    config.ensure_dirs()?;
+    ensure_sigma_repo(config, fork_config).await?;
 
     let existing_rules = if all_rules {
         HashSet::new()

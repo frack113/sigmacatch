@@ -1348,6 +1348,7 @@ pub struct SigmaRepo {
     token: Option<String>,
     transport: GitTransport,
     ssh_key_path: Option<String>,
+    fork_branch: Option<String>,
 }
 
 impl SigmaRepo {
@@ -1358,6 +1359,7 @@ impl SigmaRepo {
             token: None,
             transport: GitTransport::default(),
             ssh_key_path: None,
+            fork_branch: None,
         }
     }
 
@@ -1381,6 +1383,12 @@ impl SigmaRepo {
         self
     }
 
+    pub fn with_fork_branch(mut self, branch_name: String) -> Self {
+        assert!(!branch_name.is_empty(), "fork_branch must not be empty");
+        self.fork_branch = Some(branch_name);
+        self
+    }
+
     pub async fn init(&self) -> Result<()> {
         let git_dir = self.path.join(".git");
 
@@ -1395,6 +1403,8 @@ impl SigmaRepo {
         let repo_exists = git_dir.exists();
 
         if repo_exists {
+            self.switch_to_tracking_branch();
+
             info!("Sigma repository exists, pulling latest...");
             let git_dir_clone = git_dir.clone();
             let transport = self.transport;
@@ -1429,12 +1439,29 @@ impl SigmaRepo {
                     e
                 );
                 std::fs::remove_dir_all(&git_dir)?;
-                return self.clone_repo().await;
+                self.clone_repo().await?;
             }
-            return Ok(());
+        } else {
+            self.clone_repo().await?;
         }
 
-        self.clone_repo().await
+        if let Some(ref branch_name) = self.fork_branch {
+            create_branch(&git_dir, branch_name)?;
+        }
+        Ok(())
+    }
+
+    fn switch_to_tracking_branch(&self) {
+        let git_dir = self.path.join(".git");
+        for candidate in &["master", "main"] {
+            let local_ref = format!("refs/heads/{}", candidate);
+            if read_loose_or_packed_ref(&git_dir, &local_ref).is_some() {
+                if let Err(e) = switch_head(&git_dir, candidate) {
+                    warn!("Failed to switch to '{}': {}", candidate, e);
+                }
+                break;
+            }
+        }
     }
 
     async fn clone_repo(&self) -> Result<()> {
