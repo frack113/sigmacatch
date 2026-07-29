@@ -7,7 +7,9 @@ pub use rsigma_parser::{
     parse_sigma_yaml, Detections, Level, LogSource, SigmaCollection, SigmaRule, Status,
 };
 
-pub use crate::loader::{load_all_rules, LoadFilter, LoadResult, LoadStats, MinLevel, MinStatus};
+pub use crate::loader::{
+    load_all_rules, load_rules_from, LoadFilter, LoadResult, LoadStats, MinLevel, MinStatus,
+};
 pub use crate::rule_index::RuleIndex;
 pub use crate::scanner::find_rules_dirs;
 

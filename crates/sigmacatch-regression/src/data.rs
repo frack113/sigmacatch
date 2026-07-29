@@ -3,11 +3,13 @@
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
-use sigmacatch_types::{Alert, RegressionHeader};
-use std::collections::HashSet;
+use sigmacatch_types::{AggregatedRule, Alert, RegressionHeader};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use tracing::warn;
+use tracing::{error, info, info_span, warn};
 
+use crate::clean_partial_artifacts;
+use crate::evtx::writer::write_evtx;
 use crate::info::InfoYml;
 use crate::logtype::LogType;
 use crate::validate::validate_rule_id;
@@ -424,6 +426,118 @@ fn collect_rule_ids(
                 }
             }
         }
+    }
+}
+
+/// Generate regression data entries for all non-retired, non-existing rules.
+/// Returns a vec of `(rule_id, rel_dir, rule_yaml_rel)` for committed entries.
+pub fn generate_regression_entries(
+    aggregated: &mut HashMap<String, AggregatedRule>,
+    sigma_repo_path: &Path,
+    author: &str,
+    to_retire: &mut HashSet<String>,
+) -> Vec<(String, String, Option<String>)> {
+    let output_base = sigma_repo_path.join("regression_data");
+    clean_partial_artifacts(&output_base);
+
+    let mut committed: Vec<(String, String, Option<String>)> = Vec::new();
+
+    for agg in aggregated.values_mut() {
+        let rule_id = &agg.header.rule_id;
+        if to_retire.contains(rule_id) {
+            continue;
+        }
+
+        let rule_rel_path = agg.rule_path.as_ref().and_then(|p| {
+            p.strip_prefix(sigma_repo_path)
+                .ok()
+                .map(|rel| rel.with_extension(""))
+        });
+
+        let mut reg = RegressionData::new(
+            agg.header.clone(),
+            &output_base,
+            rule_rel_path.as_deref(),
+            Some(author),
+            agg.description.as_deref(),
+            sigma_repo_path.file_name().is_some_and(|n| n == "sigma"),
+        );
+        if reg.exists() {
+            continue;
+        }
+
+        for alert in &agg.alerts {
+            reg.add_alert(alert.clone());
+        }
+
+        let _gen_span = info_span!("generate", rule_id = %rule_id).entered();
+        match reg.generate(write_evtx) {
+            Ok(_) => {
+                to_retire.insert(rule_id.clone());
+                info!("Rule {rule_id} retired from detection engine");
+
+                let rel_dir = reg.sigma_rel_dir().unwrap_or_else(|| {
+                    if reg.is_contrib() {
+                        let repo_name = sigma_repo_path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        format!("{repo_name}/regression_data/rules/{rule_id}")
+                    } else {
+                        format!("regression_data/rules/{rule_id}")
+                    }
+                });
+
+                let rule_yaml_rel = agg
+                    .rule_path
+                    .as_ref()
+                    .and_then(|p| p.strip_prefix(sigma_repo_path).ok())
+                    .and_then(|p| p.to_str())
+                    .map(|s| s.to_string().replace('\\', "/"));
+
+                let tests_path = format!("{}/info.yml", rel_dir.replace('\\', "/"));
+                if let Some(ref rule_yaml_path) = agg.rule_path {
+                    update_regression_tests_path(rule_yaml_path, &tests_path);
+                }
+
+                committed.push((rule_id.clone(), rel_dir, rule_yaml_rel));
+            }
+            Err(e) => {
+                error!("Failed to generate regression for {}: {}", rule_id, e);
+            }
+        }
+    }
+
+    committed
+}
+
+/// Add or update the `regression_tests_path` line in a Sigma rule YAML file.
+pub fn update_regression_tests_path(rule_yaml_path: &Path, tests_path: &str) {
+    let content = match std::fs::read_to_string(rule_yaml_path) {
+        Ok(c) => c,
+        Err(e) => {
+            warn!("Failed to read {:?}: {}", rule_yaml_path, e);
+            return;
+        }
+    };
+    let expected_line = format!("regression_tests_path: {}", tests_path);
+    if content.lines().any(|l| l.trim() == expected_line) {
+        return;
+    }
+    let filtered: Vec<&str> = content
+        .lines()
+        .filter(|l| !l.trim().starts_with("regression_tests_path:"))
+        .collect();
+    let mut new_text = filtered.join("\n");
+    if !new_text.is_empty() && !new_text.ends_with('\n') {
+        new_text.push('\n');
+    }
+    new_text.push_str(&format!("{}\n", expected_line));
+    if let Err(e) = std::fs::write(rule_yaml_path, new_text) {
+        warn!(
+            "Failed to update regression_tests_path in {:?}: {}",
+            rule_yaml_path, e
+        );
     }
 }
 

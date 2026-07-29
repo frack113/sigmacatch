@@ -1151,6 +1151,20 @@ pub fn git_push_ssh(
     push_branch_ssh(&git_dir, &ssh_url, branch, ssh_cmd.as_deref())
 }
 
+/// Push a branch to the remote, selecting HTTP or SSH based on transport.
+pub fn push(
+    repo_path: &Path,
+    branch: &str,
+    transport: GitTransport,
+    token: Option<&str>,
+    ssh_key_path: Option<&str>,
+) -> Result<()> {
+    match transport {
+        GitTransport::Http => git_push(repo_path, "origin", branch, token),
+        GitTransport::Ssh => git_push_ssh(repo_path, "origin", branch, ssh_key_path),
+    }
+}
+
 /// Stage files under `paths` (relative to `work_tree`) into the git index.
 pub fn git_add(git_dir: &Path, work_tree: &Path, paths: &[&str]) -> Result<()> {
     let mut index = grit_lib::index::Index::new();

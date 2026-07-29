@@ -363,12 +363,6 @@ impl Config {
                 self.git.sigma_repo_path
             );
         }
-        if std::path::Path::new(&self.git.sigma_repo_path).is_absolute() {
-            anyhow::bail!(
-                "config: 'git.sigma_repo_path' must be a relative path, got {:?}",
-                self.git.sigma_repo_path
-            );
-        }
 
         if self.sigma.min_status >= MinStatus::Stable {
             tracing::warn!(
@@ -400,6 +394,44 @@ impl Config {
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CustomChannels {
     pub channels: std::collections::HashMap<String, String>,
+}
+
+/// Parsed CLI arguments.
+#[derive(Debug, Clone, Default)]
+pub struct CliArgs {
+    pub author: Option<String>,
+    pub dry_run: bool,
+    pub channels_only: bool,
+    pub all_rules: bool,
+}
+
+/// Parse CLI arguments from environment.
+pub fn parse_args() -> CliArgs {
+    let args: Vec<String> = std::env::args().collect();
+    let mut author = None;
+    let mut dry_run = false;
+    let mut channels_only = false;
+    let mut all_rules = false;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--author" => {
+                i += 1;
+                author = args.get(i).cloned();
+            }
+            "--dry-run" => dry_run = true,
+            "--channels-only" => channels_only = true,
+            "--all-rules" => all_rules = true,
+            _ => {}
+        }
+        i += 1;
+    }
+    CliArgs {
+        author,
+        dry_run,
+        channels_only,
+        all_rules,
+    }
 }
 
 /// Load custom channel mappings from a YAML file.
