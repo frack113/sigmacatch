@@ -13,7 +13,7 @@ mod logtype;
 mod validate;
 
 use std::path::{Path, PathBuf};
-use tracing::warn;
+use tracing::{info, warn};
 
 pub use data::{build_skip_set, RegressionData};
 pub use evtx::writer::write_evtx;
@@ -52,6 +52,55 @@ fn walk(dir: &Path, paths: &mut Vec<PathBuf>, depth: u32) {
             && data::try_read_rule_id(&path).is_ok()
         {
             paths.push(path);
+        }
+    }
+}
+
+/// Delete regression directories that contain generated files (.json/.evtx)
+/// but no `info.yml`. Such directories are partial artifacts from a prior run
+/// that aborted before committing; they are never part of the skip set and
+/// must not be carried into the current run's commit.
+pub fn clean_partial_artifacts(base: &Path) {
+    if !base.exists() {
+        return;
+    }
+    let walk = match std::fs::read_dir(base) {
+        Ok(w) => w,
+        Err(e) => {
+            warn!("Failed to read regression base directory {:?}: {}", base, e);
+            return;
+        }
+    };
+    for entry in walk.flatten() {
+        let sub = entry.path();
+        if !sub.is_dir() {
+            continue;
+        }
+        let inner_walk = match std::fs::read_dir(&sub) {
+            Ok(w) => w,
+            Err(e) => {
+                warn!("Failed to read regression subdirectory {:?}: {}", sub, e);
+                continue;
+            }
+        };
+        for entry in inner_walk.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let has_info = dir.join("info.yml").exists();
+            if !has_info {
+                let dir_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                let has_generated = dir.join(format!("{dir_name}.json")).exists()
+                    || dir.join(format!("{dir_name}.evtx")).exists();
+                if !has_generated {
+                    continue;
+                }
+                match std::fs::remove_dir_all(&dir) {
+                    Ok(()) => info!("Cleaned partial regression dir {:?}", dir),
+                    Err(e) => warn!("Failed to clean partial regression dir {:?}: {}", dir, e),
+                }
+            }
         }
     }
 }

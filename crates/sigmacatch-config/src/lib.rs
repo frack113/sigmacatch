@@ -380,3 +380,110 @@ impl Config {
         Ok(())
     }
 }
+
+/// Custom channel mappings from custom_channels.yaml.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct CustomChannels {
+    pub channels: std::collections::HashMap<String, String>,
+}
+
+/// Load custom channel mappings from a YAML file.
+/// Returns an empty HashMap if the file does not exist or cannot be parsed.
+pub fn load_custom_channel_mapping(
+    path: &std::path::Path,
+) -> std::collections::HashMap<String, String> {
+    if !path.exists() {
+        return std::collections::HashMap::new();
+    }
+    match std::fs::read_to_string(path) {
+        Ok(content) => {
+            if content.trim().is_empty() {
+                tracing::info!("Empty custom_channels.yaml at {:?}", path);
+                return std::collections::HashMap::new();
+            }
+            match serde_yaml::from_str::<CustomChannels>(&content) {
+                Ok(custom) => {
+                    tracing::info!(
+                        "Loaded {} custom channel mappings from {:?}",
+                        custom.channels.len(),
+                        path
+                    );
+                    custom.channels
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to parse custom_channels.yaml at {:?}: {}", path, e);
+                    std::collections::HashMap::new()
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to read custom_channels.yaml at {:?}: {}", path, e);
+            std::collections::HashMap::new()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn test_load_custom_mapping_missing_file() {
+        let path = std::path::Path::new("/nonexistent/custom_channels_nonexistent.yaml");
+        let result = load_custom_channel_mapping(path);
+        assert!(
+            result.is_empty(),
+            "missing file should return empty HashMap"
+        );
+    }
+
+    #[test]
+    fn test_load_custom_mapping_valid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("custom_channels.yaml");
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "channels:").unwrap();
+            writeln!(file, "  'Custom-Channel/Operational': 'custom_service'").unwrap();
+            writeln!(file, "  'Another-Channel': 'another_service'").unwrap();
+        }
+        let result = load_custom_channel_mapping(&path);
+        assert_eq!(result.len(), 2);
+        assert_eq!(
+            result.get("Custom-Channel/Operational"),
+            Some(&"custom_service".to_string())
+        );
+        assert_eq!(
+            result.get("Another-Channel"),
+            Some(&"another_service".to_string())
+        );
+    }
+
+    #[test]
+    fn test_load_custom_mapping_malformed_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("custom_channels.yaml");
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "channels: {{invalid yaml content<<<").unwrap();
+        }
+        let result = load_custom_channel_mapping(&path);
+        assert!(
+            result.is_empty(),
+            "malformed YAML should return empty HashMap"
+        );
+    }
+
+    #[test]
+    fn test_load_custom_mapping_empty_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("custom_channels.yaml");
+        std::fs::File::create(&path).unwrap();
+        let result = load_custom_channel_mapping(&path);
+        assert!(
+            result.is_empty(),
+            "empty YAML should return empty HashMap without warning"
+        );
+    }
+}

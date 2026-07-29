@@ -99,6 +99,25 @@ impl DetectionEngine {
         &self.engine
     }
 
+    /// Mutable access to the inner rsigma-eval engine.
+    pub fn engine_mut(&mut self) -> &mut Engine {
+        &mut self.engine
+    }
+
+    /// Serialize compiled rules as a HIR blob for cheap engine cloning.
+    pub fn save_hir(&self) -> Result<Vec<u8>> {
+        self.engine
+            .save_hir()
+            .map_err(|e| anyhow!("save_hir failed: {e}"))
+    }
+
+    /// Load compiled rules from a HIR blob previously saved by `save_hir`.
+    pub fn load_hir(&mut self, blob: &[u8]) -> Result<()> {
+        self.engine
+            .load_hir(blob)
+            .map_err(|e| anyhow!("load_hir failed: {e}"))
+    }
+
     /// Get the rule index for product-scoped rule access.
     pub fn rule_index(&self) -> &RuleIndex {
         &self.rule_index

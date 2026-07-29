@@ -2237,6 +2237,7 @@ dependencies = [
  "sigmacatch-repo",
  "sigmacatch-rule",
  "sigmacatch-types",
+ "tempfile",
  "tracing",
  "yaml_serde",
 ]

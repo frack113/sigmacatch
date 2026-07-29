@@ -579,6 +579,34 @@ impl std::fmt::Display for EventSource {
     }
 }
 
+// ─── Stats ────────────────────────────────────────────────────────────────
+
+/// Statistics for input/output tracking.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct Stats {
+    /// Total events processed against rules.
+    pub events_processed: u64,
+    /// Total rule matches found.
+    pub matches_found: u64,
+    /// Total regression data generated.
+    pub regression_data_generated: u64,
+}
+
+// ─── AggregatedRule ───────────────────────────────────────────────────────
+
+/// Aggregated rule matches for regression data generation.
+#[derive(Debug, Clone)]
+pub struct AggregatedRule {
+    /// Minimal rule metadata.
+    pub header: RegressionHeader,
+    /// All alerts for this rule.
+    pub alerts: Vec<Alert>,
+    /// Path to the source rule YAML file.
+    pub rule_path: Option<std::path::PathBuf>,
+    /// Rule description (optional).
+    pub description: Option<String>,
+}
+
 // ─── EventProducer ────────────────────────────────────────────────────────
 
 /// Trait for async event producers that send events into a channel.

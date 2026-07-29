@@ -19,3 +19,6 @@ sigmacatch-types = { path = "../sigmacatch-types" }
 
 [target.'cfg(unix)'.dependencies]
 dunce = "1.0"
+
+[dev-dependencies]
+tempfile = "3.12"
