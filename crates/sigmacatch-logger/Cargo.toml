@@ -5,6 +5,7 @@
 name = "sigmacatch-logger"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "Two-layer tracing subscriber: stderr info + daily rolling file debug"
 
 [dependencies]
