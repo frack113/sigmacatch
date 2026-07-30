@@ -9,11 +9,9 @@ use anyhow::{anyhow, Result};
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::pipeline::parse_pipeline;
 use rsigma_eval::{Engine, LogSourceExtractor};
-use rsigma_parser::{parse_sigma_yaml, SigmaCollection};
+use sigmacatch_rule::{parse_sigma_yaml, RuleIndex, SigmaCollection};
 use sigmacatch_types::{Alert, Event, Product};
-#[cfg(unix)]
-use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tracing::{info, warn};
 
 /// Embedded pipeline for flattening Winevt XML event structure.
@@ -21,52 +19,6 @@ pub const FLATTEN_WINEVT_PIPELINE: &str = include_str!("../pipelines/flatten_win
 
 /// Embedded pipeline for Windows Sigma rule transformation.
 pub const WINDOWS_PIPELINE: &str = include_str!("../pipelines/windows.yml");
-
-/// Map of product → rule IDs for efficient product-scoped rule access.
-#[derive(Debug, Clone, Default)]
-pub struct RuleIndex {
-    index: std::collections::HashMap<Product, Vec<String>>,
-}
-
-impl RuleIndex {
-    /// Create a new empty rule index.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Register a rule ID under the given product.
-    pub fn add_rule(&mut self, product: Product, rule_id: String) {
-        self.index.entry(product).or_default().push(rule_id);
-    }
-
-    /// Get all rule IDs for the given product. Returns empty vec if no rules.
-    pub fn get(&self, product: &Product) -> &[String] {
-        self.index
-            .get(product)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-    }
-
-    /// Check if there are any rules for the given product.
-    pub fn has_rules(&self, product: &Product) -> bool {
-        self.index.get(product).is_some_and(|v| !v.is_empty())
-    }
-
-    /// Total number of rule entries across all products.
-    pub fn len(&self) -> usize {
-        self.index.values().map(Vec::len).sum()
-    }
-
-    /// Whether there are no rules at all.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Iterate over all (product, rule_ids) pairs.
-    pub fn iter(&self) -> impl Iterator<Item = (&sigmacatch_types::Product, &[String])> {
-        self.index.iter().map(|(k, v)| (k, v.as_slice()))
-    }
-}
 
 /// Detection engine — pipelines + rules + FIFO piles d'events et alerts.
 pub struct DetectionEngine {
@@ -147,6 +99,25 @@ impl DetectionEngine {
         &self.engine
     }
 
+    /// Mutable access to the inner rsigma-eval engine.
+    pub fn engine_mut(&mut self) -> &mut Engine {
+        &mut self.engine
+    }
+
+    /// Serialize compiled rules as a HIR blob for cheap engine cloning.
+    pub fn save_hir(&self) -> Result<Vec<u8>> {
+        self.engine
+            .save_hir()
+            .map_err(|e| anyhow!("save_hir failed: {e}"))
+    }
+
+    /// Load compiled rules from a HIR blob previously saved by `save_hir`.
+    pub fn load_hir(&mut self, blob: &[u8]) -> Result<()> {
+        self.engine
+            .load_hir(blob)
+            .map_err(|e| anyhow!("load_hir failed: {e}"))
+    }
+
     /// Get the rule index for product-scoped rule access.
     pub fn rule_index(&self) -> &RuleIndex {
         &self.rule_index
@@ -155,6 +126,19 @@ impl DetectionEngine {
     /// Return the current engine stats (events_processed, alerts_generated).
     pub fn stats(&self) -> EngineStats {
         self.stats.clone()
+    }
+
+    /// Explain why a specific rule matched or didn't match a given event.
+    /// Returns the full explain trace from rsigma-eval as JSON.
+    pub fn explain_rule(&self, rule_id: &str, event: &Event) -> Option<serde_json::Value> {
+        let compiled = self
+            .engine
+            .rules()
+            .iter()
+            .find(|r| r.id.as_deref() == Some(rule_id))?;
+        let json_event = JsonEvent::borrow(&event.event_json);
+        let explanation = rsigma_eval::explain_rule(compiled, &json_event);
+        serde_json::to_value(explanation).ok()
     }
 
     // ─── FIFO API ─────────────────────────────────────────────────────────
@@ -188,6 +172,8 @@ impl DetectionEngine {
                         .clone()
                         .unwrap_or_else(|| "unknown".to_string()),
                     rule_title: result.header.rule_title.clone(),
+                    description: None,
+                    rule_path: None,
                     severity: result
                         .header
                         .level
@@ -308,116 +294,6 @@ pub struct EngineStats {
     pub alerts_generated: u64,
 }
 
-// ─── Rules directory discovery ──────────────────────────────────────────────
-
-/// Scan `root` for `rules` / `rules-*` directories (excludes `rules-compliance`).
-///
-/// Returns directories that contain Sigma rule YAML files, suitable for
-/// passing to [`DetectionEngine::from_rules_dirs`].
-pub fn find_rules_dirs(root: &Path) -> Result<Vec<PathBuf>> {
-    let mut dirs = Vec::new();
-    let mut excluded = Vec::new();
-    #[cfg(unix)]
-    let mut visited_inodes = std::collections::HashSet::new();
-    #[cfg(not(unix))]
-    let mut visited_paths = std::collections::HashSet::new();
-    if !root.exists() {
-        warn!("Root directory does not exist: {:?}", root);
-        return Ok(dirs);
-    }
-
-    let entries = std::fs::read_dir(root)?;
-    for entry_result in entries {
-        match entry_result {
-            Ok(entry) => {
-                let path = entry.path();
-                if path.is_dir() {
-                    #[cfg(unix)]
-                    {
-                        let inode = path.metadata().ok().map(|m| m.ino());
-                        if let Some(id) = inode {
-                            if !visited_inodes.insert(id) {
-                                warn!("Skipping symlink cycle detected at: {:?}", path);
-                                continue;
-                            }
-                        }
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        let abs_path = dunce::canonicalize(&path).ok();
-                        if let Some(abs) = abs_path {
-                            if !visited_paths.insert(abs) {
-                                warn!("Skipping symlink cycle detected at: {:?}", path);
-                                continue;
-                            }
-                        }
-                    }
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        if name == "rules" || name.starts_with("rules-") {
-                            if name.starts_with("rules-compliance") {
-                                excluded.push(name.to_string());
-                                continue;
-                            }
-                            if name.starts_with("rules-") && !has_yml_files(&path, 0) {
-                                continue;
-                            }
-                            info!("Found rules directory: {:?}", path);
-                            dirs.push(path);
-                        }
-                    } else {
-                        warn!("Skipping non-UTF8 directory name: {:?}", path);
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("Skipping entry due to error: {}", e);
-            }
-        }
-    }
-
-    if dirs.is_empty() {
-        warn!("No 'rules*' directories found in {:?}", root);
-    }
-    if !excluded.is_empty() {
-        info!("Excluded non-detection directories: {:?}", excluded);
-    }
-
-    Ok(dirs)
-}
-
-fn has_yml_files(dir: &Path, depth: u32) -> bool {
-    if depth > 8 {
-        return false;
-    }
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(e) => {
-            warn!(
-                "Cannot read directory {:?} while scanning for rules: {}",
-                dir, e
-            );
-            return false;
-        }
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if has_yml_files(&path, depth + 1) {
-                return true;
-            }
-        } else if let Some(ext) = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_ascii_lowercase())
-        {
-            if ext == "yml" || ext == "yaml" {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,63 +318,6 @@ detection:
         path
     }
 
-    // ─── RuleIndex tests ─────────────────────────────────────────────────
-
-    #[test]
-    fn test_rule_index_new_is_empty() {
-        let index = RuleIndex::new();
-        assert!(index.is_empty());
-        assert_eq!(index.len(), 0);
-    }
-
-    #[test]
-    fn test_rule_index_add_and_get() {
-        let mut index = RuleIndex::new();
-        index.add_rule(Product::Windows, "rule1".to_string());
-        index.add_rule(Product::Windows, "rule2".to_string());
-        index.add_rule(Product::Linux, "rule3".to_string());
-
-        assert_eq!(index.len(), 3);
-        assert!(!index.is_empty());
-
-        let windows_rules = index.get(&Product::Windows);
-        assert_eq!(windows_rules.len(), 2);
-        assert!(windows_rules.contains(&"rule1".to_string()));
-        assert!(windows_rules.contains(&"rule2".to_string()));
-
-        let linux_rules = index.get(&Product::Linux);
-        assert_eq!(linux_rules.len(), 1);
-        assert_eq!(linux_rules[0], "rule3");
-
-        let macos_rules = index.get(&Product::Macos);
-        assert!(macos_rules.is_empty());
-    }
-
-    #[test]
-    fn test_rule_index_has_rules() {
-        let mut index = RuleIndex::new();
-        assert!(!index.has_rules(&Product::Windows));
-
-        index.add_rule(Product::Windows, "rule1".to_string());
-        assert!(index.has_rules(&Product::Windows));
-        assert!(!index.has_rules(&Product::Linux));
-    }
-
-    #[test]
-    fn test_rule_index_iter() {
-        let mut index = RuleIndex::new();
-        index.add_rule(Product::Windows, "rule1".to_string());
-        index.add_rule(Product::Linux, "rule2".to_string());
-
-        let mut count = 0;
-        for (product, rules) in index.iter() {
-            assert!(matches!(product, Product::Windows | Product::Linux));
-            assert!(!rules.is_empty());
-            count += rules.len();
-        }
-        assert_eq!(count, 2);
-    }
-
     #[test]
     fn test_engine_rule_index_populated() {
         let dir = tempfile::tempdir().unwrap();
@@ -512,8 +331,6 @@ detection:
         let windows_rules = index.get(&Product::Windows);
         assert!(windows_rules.iter().any(|r| r.contains("test-rule")));
     }
-
-    // ─── FIFO API tests ──────────────────────────────────────────────────
 
     #[test]
     fn test_put_events_and_process() {

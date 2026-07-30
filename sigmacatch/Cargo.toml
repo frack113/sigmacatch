@@ -17,8 +17,14 @@ name = "evtx_check"
 path = "src/bin/evtx_check.rs"
 
 [dependencies]
+# Crate workspace — application configuration
+sigmacatch-config = { path = "../crates/sigmacatch-config" }
+
+# Crate workspace — logging setup
+sigmacatch-logger = { path = "../crates/sigmacatch-logger" }
+
 # Crate workspace — detection engine
-detection-engine = { path = "../crates/detection-engine" }
+sigmacatch-detection = { path = "../crates/sigmacatch-detection" }
 
 # Crate workspace — shared types
 sigmacatch-types = { path = "../crates/sigmacatch-types" }
@@ -27,23 +33,21 @@ sigmacatch-types = { path = "../crates/sigmacatch-types" }
 input-windows-channels = { path = "../crates/input-windows-channels" }
 
 # Crate workspace — SigmaHQ regression data format
-sigma-regression = { path = "../crates/sigma-regression" }
+sigmacatch-regression = { path = "../crates/sigmacatch-regression" }
 
 # Crate workspace — EVTX parsing
 input-evtx = { path = "../crates/input-evtx" }
 
-# Git (100% Rust, no git binary required)
-grit-lib = "0.5"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
+# Crate workspace — Sigma rule management
+sigmacatch-rule = { path = "../crates/sigmacatch-rule" }
+
+# Crate workspace — Git operations
+sigmacatch-repo = { path = "../crates/sigmacatch-repo" }
 
 # Sérialisation
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = { package = "yaml_serde", version = "0.10" }
-
-# rsigma
-rsigma-eval = "0.20"
-rsigma-parser = "0.20"
 
 # Async
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "signal"] }

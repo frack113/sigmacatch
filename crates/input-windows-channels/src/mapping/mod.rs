@@ -116,3 +116,30 @@ pub fn build_logsource_to_channels(
 
     merged
 }
+
+/// Resolve channels from a detection engine's rule set.
+///
+/// Without service/category tracking, collects all known channels from the
+/// logsource-to-channel mapping. Returns a sorted, deduplicated list.
+pub fn resolve_channels(
+    has_rules: bool,
+    custom_map: &std::collections::HashMap<String, String>,
+) -> Vec<String> {
+    if !has_rules {
+        tracing::info!("No rules loaded — cannot resolve channels");
+        return Vec::new();
+    }
+
+    let map = build_logsource_to_channels(custom_map);
+    let channels_set: std::collections::HashSet<String> = map
+        .values()
+        .flat_map(|targets| targets.iter().map(|t| t.channel.to_string()))
+        .collect();
+
+    let mut channels: Vec<String> = channels_set.into_iter().collect();
+    channels.sort();
+
+    tracing::info!("Channels to collect: {:?}", channels);
+
+    channels
+}

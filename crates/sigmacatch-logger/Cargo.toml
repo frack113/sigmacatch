@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[package]
+name = "sigmacatch-logger"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Two-layer tracing subscriber: stderr info + daily rolling file debug"
+
+[dependencies]
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+sigmacatch-config = { path = "../sigmacatch-config" }

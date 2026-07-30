@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 [package]
-name = "detection-engine"
+name = "sigmacatch-detection"
 version = "0.1.0"
 edition = "2021"
 description = "Thin wrapper around rsigma-eval for loading pipelines and rules, then evaluating events"
@@ -11,14 +11,11 @@ license = "MIT"
 [dependencies]
 anyhow = "1.0"
 rsigma-eval = "0.20"
-rsigma-parser = "0.20"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 tracing = "0.1"
 sigmacatch-types = { path = "../sigmacatch-types" }
-
-[target.'cfg(not(unix))'.dependencies]
-dunce = "1.0"
+sigmacatch-rule = { path = "../sigmacatch-rule" }
 
 [dev-dependencies]
 tempfile = "3"

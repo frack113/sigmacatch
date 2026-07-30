@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-use crate::config::Config;
+//! Two-layer tracing subscriber:
+//! - **stderr**: human-readable format (level + message), info level by default
+//! - **file**: structured format (module, file, line), configurable level
+
 use anyhow::{Context, Result};
+use sigmacatch_config::Config;
 use std::fs;
 use std::path::PathBuf;
 use tracing_appender::non_blocking::WorkerGuard;
