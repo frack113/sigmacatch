@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
 pub use data::{build_skip_set, update_regression_tests_path, RegressionData};
-pub use evtx::writer::write_evtx;
+pub use evtx::write_evtx;
 pub use logtype::LogType;
 pub use validate::validate_rule_id;
 

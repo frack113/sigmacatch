@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use tracing::{error, info, info_span, warn};
 
 use crate::clean_partial_artifacts;
-use crate::evtx::writer::write_evtx;
+use crate::evtx::write_evtx;
 use crate::info::InfoYml;
 use crate::logtype::LogType;
 use crate::validate::validate_rule_id;
