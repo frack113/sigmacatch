@@ -7,8 +7,8 @@ use sigmacatch_detection::DetectionEngine;
 use sigmacatch_logger::init as init_logger;
 use sigmacatch_regression::RegressionData;
 use sigmacatch_repo::{self, github, SigmaRepo};
-use sigmacatch_types::{AggregatedRule, Event, EventProducer, Stats};
-use std::collections::{HashMap, HashSet};
+use sigmacatch_types::{Event, EventProducer, Stats};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -104,25 +104,19 @@ async fn main() -> Result<()> {
         sigma_repo.init().await?;
     }
 
-    let existing_rules = if cli.all_rules {
+    let existing_rules: HashSet<String> = if cli.all_rules {
         HashSet::new()
     } else {
         let sigma_regression_dir =
             PathBuf::from(&config.git.sigma_repo_path).join("regression_data");
-        let existing_rules = sigmacatch_regression::build_skip_set(
-            &[(
-                &format!("{}/regression_data", config.git.sigma_repo_path),
-                &sigma_regression_dir,
-            )],
-            64,
-        );
-        if !existing_rules.is_empty() {
+        let existing = sigmacatch_regression::list_sigma_id(&sigma_regression_dir);
+        if !existing.is_empty() {
             info!(
                 "{} rules with existing regression data (skipped)",
-                existing_rules.len()
+                existing.len()
             );
         }
-        existing_rules
+        existing.into_iter().collect()
     };
 
     let sigma_path = std::path::Path::new(&config.git.sigma_repo_path);
@@ -176,7 +170,6 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let mut retired: HashSet<String> = HashSet::new();
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
     tokio::spawn(async move {
@@ -235,25 +228,14 @@ async fn main() -> Result<()> {
         engine.process_events();
         let event_count = engine.stats().events_processed;
         let alerts = engine.get_alerts();
-        let mut aggregated: HashMap<String, AggregatedRule> = HashMap::new();
-        for alert in alerts {
-            aggregated
-                .entry(alert.rule_id.clone())
-                .or_insert_with(|| AggregatedRule {
-                    header: sigmacatch_types::RegressionHeader::new(
-                        alert.rule_id.clone(),
-                        alert.rule_title.clone(),
-                    ),
-                    alerts: Vec::new(),
-                    rule_path: None,
-                    description: None,
-                })
-                .alerts
-                .push(alert);
-        }
+        let unique_match_count = {
+            let ids: std::collections::HashSet<&str> =
+                alerts.iter().map(|a| a.rule_id.as_str()).collect();
+            ids.len()
+        };
         let stats = Stats {
             events_processed: event_count,
-            matches_found: aggregated.len() as u64,
+            matches_found: unique_match_count as u64,
             regression_data_generated: 0,
         };
         info!(
@@ -265,23 +247,30 @@ async fn main() -> Result<()> {
         let sigma_repo_path = Path::new(&config.git.sigma_repo_path);
         let output_base = sigma_repo_path.join("regression_data");
         let mut reg = RegressionData::new(&output_base);
-        let author = config.git.author.clone();
+        reg.set_author(&config.git.author);
+        reg.set_sigma_repo_path(sigma_repo_path);
         let is_contrib = sigma_repo_path.file_name().is_some_and(|n| n == "sigma");
-        reg.set_author(&author);
         reg.set_is_contrib(is_contrib);
-        let committed = reg.generate_all(&aggregated, sigma_repo_path, &mut retired);
-        if !committed.is_empty() {
+        sigmacatch_regression::clean_partial_artifacts(&output_base);
+
+        let mut created_files: Vec<String> = Vec::new();
+        for alert in alerts {
+            if let Some(files) = reg.generate_from_alert(&alert) {
+                created_files.extend(files);
+            }
+        }
+
+        if !created_files.is_empty() {
             if let Err(e) = sigmacatch_repo::github::commit::commit_all_rules(
                 sigma_repo_path,
-                &committed,
+                &created_files,
                 &config.git.author,
                 &config.git.email,
             ) {
                 warn!("Failed to commit regression data: {}", e);
             }
         }
-        let generated_count = committed.len();
-        retired.extend(committed.into_iter().map(|(rule_id, _, _)| rule_id));
+        let generated_count = created_files.len();
 
         info!(
             events_processed = stats.events_processed,

@@ -14,7 +14,8 @@
 
 use input_evtx::parse_evtx_bytes;
 use sigmacatch_detection::DetectionEngine;
-use sigmacatch_regression::{list_all, LogType, RegressionData};
+use sigmacatch_regression::logtype::LogType;
+use sigmacatch_regression::{list_all, RegressionData};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 

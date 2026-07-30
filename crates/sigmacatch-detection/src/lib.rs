@@ -172,6 +172,8 @@ impl DetectionEngine {
                         .clone()
                         .unwrap_or_else(|| "unknown".to_string()),
                     rule_title: result.header.rule_title.clone(),
+                    description: None,
+                    rule_path: None,
                     severity: result
                         .header
                         .level

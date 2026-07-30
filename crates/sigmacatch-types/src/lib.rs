@@ -12,6 +12,7 @@ use roxmltree::Node;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::fmt;
+use std::path::PathBuf;
 use tokio::sync::mpsc;
 
 /// Product identifier for rule filtering.
@@ -469,6 +470,8 @@ pub fn validate_event_id(event: &Value) -> Value {
 pub struct Alert {
     pub rule_id: String,
     pub rule_title: String,
+    pub description: Option<String>,
+    pub rule_path: Option<PathBuf>,
     pub severity: String,
     pub event_json: Value,
     pub event_raw: Vec<u8>,
@@ -479,6 +482,8 @@ impl Alert {
         Self {
             rule_id,
             rule_title,
+            description: None,
+            rule_path: None,
             severity,
             event_json: event.event_json.clone(),
             event_raw: event.event_raw.clone(),
@@ -590,21 +595,6 @@ pub struct Stats {
     pub matches_found: u64,
     /// Total regression data generated.
     pub regression_data_generated: u64,
-}
-
-// ─── AggregatedRule ───────────────────────────────────────────────────────
-
-/// Aggregated rule matches for regression data generation.
-#[derive(Debug, Clone)]
-pub struct AggregatedRule {
-    /// Minimal rule metadata.
-    pub header: RegressionHeader,
-    /// All alerts for this rule.
-    pub alerts: Vec<Alert>,
-    /// Path to the source rule YAML file.
-    pub rule_path: Option<std::path::PathBuf>,
-    /// Rule description (optional).
-    pub description: Option<String>,
 }
 
 // ─── EventProducer ────────────────────────────────────────────────────────
