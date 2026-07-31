@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use sigmacatch_repo::DEFAULT_SIGMA_REPO_URL;
-use sigmacatch_rule::{MinLevel, MinStatus};
+use sigmacatch_rule::{Level, MinLevel, MinStatus, Status};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -109,11 +109,11 @@ fn default_max_rule_size() -> usize {
 }
 
 fn default_min_status() -> MinStatus {
-    MinStatus::Stable
+    MinStatus(Status::Stable)
 }
 
 fn default_min_level() -> MinLevel {
-    MinLevel::Critical
+    MinLevel(Level::Critical)
 }
 
 impl Default for SigmaFilterConfig {
@@ -364,13 +364,13 @@ impl Config {
             );
         }
 
-        if self.sigma.min_status >= MinStatus::Stable {
+        if self.sigma.min_status >= MinStatus(Status::Stable) {
             tracing::warn!(
                 "sigma.min_status = {} — very restrictive, only stable rules will be loaded",
                 self.sigma.min_status
             );
         }
-        if self.sigma.min_level >= MinLevel::High {
+        if self.sigma.min_level >= MinLevel(Level::High) {
             tracing::warn!(
                 "sigma.min_level = {} — very restrictive, only {} and higher rules will be loaded",
                 self.sigma.min_level,

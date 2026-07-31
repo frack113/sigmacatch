@@ -127,7 +127,7 @@ transformations:
         product: windows
 
   # EventID 12: registry_delete (sub-category of registry_event)
-  # No EventType filter: Sysmon EventID 12 uses both DeleteKey and DeleteValue
+  # No EventType filter: Sysmon EventID 12 uses both DeleteKey and DeleteValue pb rsigma >0.20.0
   - id: win_registry_delete
     type: add_condition
     conditions:
@@ -169,17 +169,7 @@ transformations:
         category: create_stream_hash
         product: windows
 
-  # EventID 17+18: pipe_created (OR — each event has exactly one EID)
-  - id: win_pipe_created
-    type: add_condition
-    conditions:
-      Event.System.EventID:
-        - 17
-        - 18
-    rule_conditions:
-      - type: logsource
-        category: pipe_created
-        product: windows
+
 
   # EventID 19: wmi_event
   - id: win_wmi_event_19
@@ -191,25 +181,6 @@ transformations:
         category: wmi_event
         product: windows
 
-  # EventID 20: wmi_event
-  - id: win_wmi_event_20
-    type: add_condition
-    conditions:
-      Event.System.EventID: 20
-    rule_conditions:
-      - type: logsource
-        category: wmi_event
-        product: windows
-
-  # EventID 21: wmi_event
-  - id: win_wmi_event_21
-    type: add_condition
-    conditions:
-      Event.System.EventID: 21
-    rule_conditions:
-      - type: logsource
-        category: wmi_event
-        product: windows
 
   # EventID 22: dns_query
   - id: win_dns_query
@@ -291,26 +262,7 @@ transformations:
         category: file_executable_detected
         product: windows
 
-  # EventID 4: sysmon_status (system status events)
-  - id: win_sysmon_status_4
-    type: add_condition
-    conditions:
-      Event.System.EventID: 4
-    rule_conditions:
-      - type: logsource
-        category: sysmon_status
-        product: windows
-
-  # EventID 16: sysmon_status (system status events)
-  - id: win_sysmon_status_16
-    type: add_condition
-    conditions:
-      Event.System.EventID: 16
-    rule_conditions:
-      - type: logsource
-        category: sysmon_status
-        product: windows
-
+ 
   # EventID 255: sysmon_error
   - id: win_sysmon_error
     type: add_condition
@@ -321,20 +273,51 @@ transformations:
         category: sysmon_error
         product: windows
 
-  # ─── Parent category: registry_event ───
-  # Parent of registry_add (12), registry_set (13), registry_rename (14).
-  # Rules using category: registry_event need to match ANY of these EIDs.
-  # List values create OR semantics (multiple values = OR per Sigma spec).
-  - id: win_registry_event
-    type: add_condition
-    conditions:
-      Event.System.EventID:
-        - 12
-        - 13
-        - 14
-    rule_conditions:
-      - type: logsource
-        category: registry_event
-        product: windows
+  # - id: win_registry_event
+  #   type: add_condition
+  #   conditions:
+  #     Event.System.EventID:
+  #       - 12
+  #       - 13
+  #       - 14
+  #   rule_conditions:
+  #     - type: logsource
+  #       category: registry_event
+  #       product: windows
 
- 
+  # EventID 4: sysmon_status (system status events)
+  # - id: win_sysmon_status_4
+  #   type: add_condition
+  #   conditions:
+  #     Event.System.EventID: 
+  #       - 4
+  #       - 16
+  #   rule_conditions:
+  #     - type: logsource
+  #       category: sysmon_status
+  #       product: windows
+
+
+  # EventID 20: wmi_event
+  # - id: win_wmi_event_20
+  #   type: add_condition
+  #   conditions:
+  #     Event.System.EventID: 
+  #       - 20
+  #       - 21
+  #   rule_conditions:
+  #     - type: logsource
+  #       category: wmi_event
+  #       product: windows
+
+  # EventID 17+18: pipe_created (OR — each event has exactly one EID)
+  # - id: win_pipe_created
+  #   type: add_condition
+  #   conditions:
+  #     Event.System.EventID:
+  #       - 17
+  #       - 18
+  #   rule_conditions:
+  #     - type: logsource
+  #       category: pipe_created
+  #       product: windows

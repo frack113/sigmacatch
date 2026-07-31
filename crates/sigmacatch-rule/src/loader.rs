@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-use crate::{parse_sigma_yaml, Level, SigmaCollection, Status};
+use crate::SigmahqRules;
+use crate::{Level, SigmaCollection, Status};
 use anyhow::Result;
 use std::collections::HashSet;
 use std::path::Path;
-use tracing::info;
 
 /// Statistics returned by `load_all_rules`.
 ///
@@ -41,8 +41,9 @@ pub struct LoadResult {
 /// and resource limits.
 #[derive(Debug, Clone)]
 pub struct LoadFilter {
-    /// Target product (e.g. "windows", "linux", "macos").
-    pub product: String,
+    /// Target product (e.g. "windows", "linux", "macos"). `None` = no
+    /// product restriction.
+    pub product: Option<String>,
     /// Minimum status threshold.
     pub min_status: Option<MinStatus>,
     /// Minimum level threshold.
@@ -56,9 +57,9 @@ pub struct LoadFilter {
 impl Default for LoadFilter {
     fn default() -> Self {
         Self {
-            product: "windows".to_string(),
-            min_status: Some(MinStatus::Stable),
-            min_level: Some(MinLevel::Critical),
+            product: None,
+            min_status: Some(MinStatus(Status::Stable)),
+            min_level: Some(MinLevel(Level::Critical)),
             max_rules: 0,
             max_rule_size: 1024 * 1024,
         }
@@ -83,137 +84,127 @@ impl LoadFilter {
 
 // ─── Status filtering ──────────────────────────────────────────────────────
 
-/// Sigma rule status with ordinal comparison.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
-)]
-#[serde(rename_all = "lowercase")]
-pub enum MinStatus {
-    Unsupported = 0,
-    Deprecated = 1,
-    Experimental = 2,
-    Test = 3,
-    Stable = 4,
-}
+/// Minimum Sigma rule status threshold (newtype over rsigma's `Status` with
+/// ordinal ordering). `accepts` is inclusive: a rule is loaded when its status
+/// is at least the configured threshold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct MinStatus(pub Status);
 
 impl MinStatus {
+    fn rank(&self) -> u8 {
+        match self.0 {
+            Status::Unsupported => 0,
+            Status::Deprecated => 1,
+            Status::Experimental => 2,
+            Status::Test => 3,
+            Status::Stable => 4,
+        }
+    }
+
     pub fn accepts(&self, rule_status: &Status) -> bool {
-        let threshold = *self as u8;
-        let rule_val = match rule_status {
+        let rule_rank = match rule_status {
             Status::Unsupported => 0,
             Status::Deprecated => 1,
             Status::Experimental => 2,
             Status::Test => 3,
             Status::Stable => 4,
         };
-        rule_val >= threshold
+        rule_rank >= self.rank()
     }
 }
 
-impl From<&Status> for MinStatus {
-    fn from(s: &Status) -> Self {
-        match s {
-            Status::Unsupported => MinStatus::Unsupported,
-            Status::Deprecated => MinStatus::Deprecated,
-            Status::Experimental => MinStatus::Experimental,
-            Status::Test => MinStatus::Test,
-            Status::Stable => MinStatus::Stable,
-        }
+impl Default for MinStatus {
+    fn default() -> Self {
+        MinStatus(Status::Stable)
+    }
+}
+
+impl PartialOrd for MinStatus {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for MinStatus {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.rank().cmp(&other.rank())
     }
 }
 
 impl std::fmt::Display for MinStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MinStatus::Unsupported => write!(f, "unsupported"),
-            MinStatus::Deprecated => write!(f, "deprecated"),
-            MinStatus::Experimental => write!(f, "experimental"),
-            MinStatus::Test => write!(f, "test"),
-            MinStatus::Stable => write!(f, "stable"),
-        }
-    }
-}
-
-/// Parse a status string from YAML config.
-impl std::str::FromStr for MinStatus {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "unsupported" => Ok(MinStatus::Unsupported),
-            "deprecated" => Ok(MinStatus::Deprecated),
-            "experimental" => Ok(MinStatus::Experimental),
-            "test" => Ok(MinStatus::Test),
-            "stable" => Ok(MinStatus::Stable),
-            _ => Err(format!("Invalid status: '{}'", s)),
-        }
+        let s = match self.0 {
+            Status::Unsupported => "unsupported",
+            Status::Deprecated => "deprecated",
+            Status::Experimental => "experimental",
+            Status::Test => "test",
+            Status::Stable => "stable",
+        };
+        write!(f, "{s}")
     }
 }
 
 // ─── Level filtering ───────────────────────────────────────────────────────
 
-/// Sigma rule level with ordinal comparison.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
-)]
-#[serde(rename_all = "lowercase")]
-pub enum MinLevel {
-    Informational = 0,
-    Low = 1,
-    Medium = 2,
-    High = 3,
-    Critical = 4,
-}
+/// Minimum Sigma rule level threshold (newtype over rsigma's `Level` with
+/// ordinal ordering). `accepts` is inclusive: a rule is loaded when its level
+/// is at least the configured threshold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct MinLevel(pub Level);
 
 impl MinLevel {
+    fn rank(&self) -> u8 {
+        match self.0 {
+            Level::Informational => 0,
+            Level::Low => 1,
+            Level::Medium => 2,
+            Level::High => 3,
+            Level::Critical => 4,
+        }
+    }
+
     pub fn accepts(&self, rule_level: &Level) -> bool {
-        let threshold = *self as u8;
-        let rule_val = match rule_level {
+        let rule_rank = match rule_level {
             Level::Informational => 0,
             Level::Low => 1,
             Level::Medium => 2,
             Level::High => 3,
             Level::Critical => 4,
         };
-        rule_val >= threshold
+        rule_rank >= self.rank()
     }
 }
 
-impl From<&Level> for MinLevel {
-    fn from(l: &Level) -> Self {
-        match l {
-            Level::Informational => MinLevel::Informational,
-            Level::Low => MinLevel::Low,
-            Level::Medium => MinLevel::Medium,
-            Level::High => MinLevel::High,
-            Level::Critical => MinLevel::Critical,
-        }
+impl Default for MinLevel {
+    fn default() -> Self {
+        MinLevel(Level::Critical)
+    }
+}
+
+impl PartialOrd for MinLevel {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for MinLevel {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.rank().cmp(&other.rank())
     }
 }
 
 impl std::fmt::Display for MinLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MinLevel::Informational => write!(f, "informational"),
-            MinLevel::Low => write!(f, "low"),
-            MinLevel::Medium => write!(f, "medium"),
-            MinLevel::High => write!(f, "high"),
-            MinLevel::Critical => write!(f, "critical"),
-        }
-    }
-}
-
-/// Parse a level string from YAML config.
-impl std::str::FromStr for MinLevel {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "informational" => Ok(MinLevel::Informational),
-            "low" => Ok(MinLevel::Low),
-            "medium" => Ok(MinLevel::Medium),
-            "high" => Ok(MinLevel::High),
-            "critical" => Ok(MinLevel::Critical),
-            _ => Err(format!("Invalid level: '{}'", s)),
-        }
+        let s = match self.0 {
+            Level::Informational => "informational",
+            Level::Low => "low",
+            Level::Medium => "medium",
+            Level::High => "high",
+            Level::Critical => "critical",
+        };
+        write!(f, "{s}")
     }
 }
 
@@ -221,104 +212,19 @@ impl std::str::FromStr for MinLevel {
 
 /// Load all Sigma rules from the given directories, applying status/level filters
 /// and skipping rules in the skip set.
+///
+/// Thin adapter over [`SigmahqRules::load`] that returns the engine-facing
+/// `SigmaCollection`. Use `SigmahqRules` directly when the in-memory rules
+/// (raw YAML + source path) must be kept without re-reading from disk.
 pub fn load_all_rules(
     dirs: &[&Path],
     skip_ids: &HashSet<String>,
     filter: &LoadFilter,
 ) -> Result<LoadResult> {
-    let mut collection = SigmaCollection::default();
-    let mut rules_total_candidate: u64 = 0;
-    let mut rules_filtered_status: u64 = 0;
-    let mut rules_filtered_level: u64 = 0;
-
-    let mut done = false;
-    for dir in dirs {
-        if done {
-            break;
-        }
-        let mut pending = vec![dir.to_path_buf()];
-
-        while let Some(current) = pending.pop() {
-            if done {
-                break;
-            }
-            if !current.exists() || !current.is_dir() {
-                continue;
-            }
-
-            for entry in std::fs::read_dir(&current)?.flatten() {
-                let path = entry.path();
-                if path.is_file() {
-                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                        if ext == "yml" || ext == "yaml" {
-                            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                                if name == "index.yml" {
-                                    continue;
-                                }
-                            }
-                            if let Ok(metadata) = std::fs::metadata(&path) {
-                                if metadata.len() > filter.max_rule_size as u64 {
-                                    continue;
-                                }
-                            }
-                            if let Ok(content) = std::fs::read_to_string(&path) {
-                                if filter.max_rules > 0
-                                    && collection.rules.len() >= filter.max_rules as usize
-                                {
-                                    done = true;
-                                    break;
-                                }
-                                match parse_sigma_yaml(&content) {
-                                    Ok(parsed) => {
-                                        for rule in parsed.rules {
-                                            let rule_id = rule.id.clone().unwrap_or_default();
-                                            if rule.logsource.product.as_deref()
-                                                != Some(&filter.product)
-                                            {
-                                                continue;
-                                            }
-                                            if skip_ids.contains(&rule_id) {
-                                                continue;
-                                            }
-                                            rules_total_candidate += 1;
-
-                                            if !filter.accepts_status(&rule.status) {
-                                                rules_filtered_status += 1;
-                                                continue;
-                                            }
-
-                                            if !filter.accepts_level(&rule.level) {
-                                                rules_filtered_level += 1;
-                                                continue;
-                                            }
-
-                                            collection.rules.push(rule);
-                                        }
-                                    }
-                                    Err(e) => {
-                                        info!("Failed to parse {:?}: {}", path, e);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else if path.is_dir() {
-                    pending.push(path);
-                }
-            }
-        }
-    }
-
-    let rules_loaded = collection.rules.len() as u64;
-
+    let set = SigmahqRules::load(dirs, skip_ids, filter)?;
     Ok(LoadResult {
-        collection,
-        stats: LoadStats {
-            rules_loaded,
-            rules_filtered_status,
-            rules_filtered_level,
-            rules_total_candidate,
-        },
+        collection: set.to_collection(),
+        stats: set.stats().clone(),
     })
 }
 
@@ -359,9 +265,9 @@ mod tests {
 
         let dirs = vec![rules_dir.as_path()];
         let filter = LoadFilter {
-            product: "windows".to_string(),
-            min_status: Some(MinStatus::Stable),
-            min_level: Some(MinLevel::Critical),
+            product: Some("windows".to_string()),
+            min_status: Some(MinStatus(Status::Stable)),
+            min_level: Some(MinLevel(Level::Critical)),
             max_rules: 0,
             max_rule_size: 1024 * 1024,
         };
@@ -387,9 +293,9 @@ mod tests {
 
         let dirs = vec![rules_dir.as_path()];
         let filter = LoadFilter {
-            product: "windows".to_string(),
-            min_status: Some(MinStatus::Stable),
-            min_level: Some(MinLevel::Critical),
+            product: Some("windows".to_string()),
+            min_status: Some(MinStatus(Status::Stable)),
+            min_level: Some(MinLevel(Level::Critical)),
             max_rules: 0,
             max_rule_size: 1024 * 1024,
         };
@@ -415,9 +321,9 @@ mod tests {
 
         let dirs = vec![rules_dir.as_path()];
         let filter = LoadFilter {
-            product: "windows".to_string(),
-            min_status: Some(MinStatus::Stable),
-            min_level: Some(MinLevel::Critical),
+            product: Some("windows".to_string()),
+            min_status: Some(MinStatus(Status::Stable)),
+            min_level: Some(MinLevel(Level::Critical)),
             max_rules: 0,
             max_rule_size: 1024 * 1024,
         };
@@ -448,9 +354,9 @@ mod tests {
 
         let dirs = vec![rules_dir.as_path()];
         let filter = LoadFilter {
-            product: "windows".to_string(),
-            min_status: Some(MinStatus::Stable),
-            min_level: Some(MinLevel::Critical),
+            product: Some("windows".to_string()),
+            min_status: Some(MinStatus(Status::Stable)),
+            min_level: Some(MinLevel(Level::Critical)),
             max_rules: 0,
             max_rule_size: 1024 * 1024,
         };
@@ -475,9 +381,9 @@ mod tests {
 
         let dirs = vec![rules_dir.as_path()];
         let filter = LoadFilter {
-            product: "windows".to_string(),
-            min_status: Some(MinStatus::Stable),
-            min_level: Some(MinLevel::High),
+            product: Some("windows".to_string()),
+            min_status: Some(MinStatus(Status::Stable)),
+            min_level: Some(MinLevel(Level::High)),
             max_rules: 0,
             max_rule_size: 1024 * 1024,
         };
@@ -528,9 +434,9 @@ mod tests {
 
         let dirs = vec![rules_dir.as_path()];
         let filter = LoadFilter {
-            product: "windows".to_string(),
-            min_status: Some(MinStatus::Stable),
-            min_level: Some(MinLevel::Critical),
+            product: Some("windows".to_string()),
+            min_status: Some(MinStatus(Status::Stable)),
+            min_level: Some(MinLevel(Level::Critical)),
             max_rules: 0,
             max_rule_size: 1024 * 1024,
         };
@@ -558,9 +464,9 @@ mod tests {
 
         let dirs = vec![rules_dir.as_path()];
         let filter = LoadFilter {
-            product: "linux".to_string(),
-            min_status: Some(MinStatus::Stable),
-            min_level: Some(MinLevel::Critical),
+            product: Some("linux".to_string()),
+            min_status: Some(MinStatus(Status::Stable)),
+            min_level: Some(MinLevel(Level::Critical)),
             max_rules: 0,
             max_rule_size: 1024 * 1024,
         };
@@ -583,9 +489,9 @@ mod tests {
 
         let dirs = vec![rules_dir.as_path()];
         let filter = LoadFilter {
-            product: "macos".to_string(),
-            min_status: Some(MinStatus::Stable),
-            min_level: Some(MinLevel::Critical),
+            product: Some("macos".to_string()),
+            min_status: Some(MinStatus(Status::Stable)),
+            min_level: Some(MinLevel(Level::Critical)),
             max_rules: 0,
             max_rule_size: 1024 * 1024,
         };
@@ -609,9 +515,9 @@ mod tests {
 
         let dirs = vec![rules_dir.as_path()];
         let filter = LoadFilter {
-            product: "windows".to_string(),
-            min_status: Some(MinStatus::Stable),
-            min_level: Some(MinLevel::Critical),
+            product: Some("windows".to_string()),
+            min_status: Some(MinStatus(Status::Stable)),
+            min_level: Some(MinLevel(Level::Critical)),
             max_rules: 3,
             max_rule_size: 1024 * 1024,
         };
@@ -640,14 +546,61 @@ mod tests {
 
         let dirs = vec![rules_dir.as_path()];
         let filter = LoadFilter {
-            product: "windows".to_string(),
-            min_status: Some(MinStatus::Stable),
-            min_level: Some(MinLevel::Critical),
+            product: Some("windows".to_string()),
+            min_status: Some(MinStatus(Status::Stable)),
+            min_level: Some(MinLevel(Level::Critical)),
             max_rules: 0,
             max_rule_size: 1024,
         };
         let result = load_all_rules(&dirs, &HashSet::new(), &filter).unwrap();
 
         assert_eq!(result.stats.rules_loaded, 1);
+    }
+
+    // ─── MinStatus / MinLevel newtype behavior ─────────────────────────
+
+    #[test]
+    fn test_min_status_serde_roundtrip_lowercase() {
+        let yaml = serde_yaml::to_string(&MinStatus(Status::Stable)).unwrap();
+        assert_eq!(yaml.trim(), "stable");
+        let parsed: MinStatus = serde_yaml::from_str("experimental").unwrap();
+        assert_eq!(parsed, MinStatus(Status::Experimental));
+    }
+
+    #[test]
+    fn test_min_level_serde_roundtrip_lowercase() {
+        let yaml = serde_yaml::to_string(&MinLevel(Level::Critical)).unwrap();
+        assert_eq!(yaml.trim(), "critical");
+        let parsed: MinLevel = serde_yaml::from_str("high").unwrap();
+        assert_eq!(parsed, MinLevel(Level::High));
+    }
+
+    #[test]
+    fn test_min_status_default_stable() {
+        assert_eq!(MinStatus::default(), MinStatus(Status::Stable));
+        assert_eq!(MinLevel::default(), MinLevel(Level::Critical));
+    }
+
+    #[test]
+    fn test_min_status_ordinal_order() {
+        assert!(MinStatus(Status::Stable) > MinStatus(Status::Test));
+        assert!(MinStatus(Status::Test) > MinStatus(Status::Experimental));
+        assert!(MinStatus(Status::Experimental) > MinStatus(Status::Deprecated));
+        assert!(MinStatus(Status::Deprecated) > MinStatus(Status::Unsupported));
+        assert!(MinStatus(Status::Unsupported) >= MinStatus(Status::Unsupported));
+    }
+
+    #[test]
+    fn test_min_level_ordinal_order() {
+        assert!(MinLevel(Level::Critical) > MinLevel(Level::High));
+        assert!(MinLevel(Level::High) > MinLevel(Level::Medium));
+        assert!(MinLevel(Level::Medium) > MinLevel(Level::Low));
+        assert!(MinLevel(Level::Low) > MinLevel(Level::Informational));
+    }
+
+    #[test]
+    fn test_min_status_display_lowercase() {
+        assert_eq!(MinStatus(Status::Stable).to_string(), "stable");
+        assert_eq!(MinLevel(Level::Critical).to_string(), "critical");
     }
 }

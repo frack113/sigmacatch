@@ -11,12 +11,11 @@
 //! `get_collection()`. The rsigma-eval `Engine`
 //! holds the compiled rules; `RuleIndex` is the data hub.
 
-use crate::channel_resolver::resolve_channels_from_collection;
+use crate::channel_resolver::resolve_channels;
 use crate::loader::{load_all_rules, LoadFilter, LoadStats};
 use crate::scanner::find_rules_dirs;
 use anyhow::Result;
 use rsigma_parser::SigmaCollection;
-use sigmacatch_types::Product;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -132,7 +131,7 @@ impl RuleIndex {
     /// Delegates to `resolve_channels_from_collection()` using the
     /// SigmaCollection owned by this RuleIndex.
     pub fn get_channels(&self, custom_map: &HashMap<String, String>) -> Vec<String> {
-        resolve_channels_from_collection(&self.collection, custom_map)
+        resolve_channels(&self.collection.rules, custom_map)
     }
 
     // ─── Stats ───────────────────────────────────────────────────────
@@ -140,36 +139,6 @@ impl RuleIndex {
     /// Load statistics (rules loaded, filtered by status/level).
     pub fn stats(&self) -> &LoadStats {
         &self.stats
-    }
-
-    // ─── Product-scoped access (legacy compat) ──────────────────────
-
-    /// Get all rule IDs for the given product. Returns empty vec if none.
-    pub fn get(&self, product: &Product) -> Vec<String> {
-        self.collection
-            .rules
-            .iter()
-            .filter(|r| r.logsource.product.as_deref() == Some(product.as_str()))
-            .filter_map(|r| r.id.clone())
-            .collect()
-    }
-
-    /// Check if there are any rules for the given product.
-    pub fn has_rules(&self, product: &Product) -> bool {
-        self.collection
-            .rules
-            .iter()
-            .any(|r| r.logsource.product.as_deref() == Some(product.as_str()))
-    }
-
-    /// Total number of rules currently loaded.
-    pub fn len(&self) -> usize {
-        self.collection.rules.len()
-    }
-
-    /// Whether there are no rules at all.
-    pub fn is_empty(&self) -> bool {
-        self.collection.rules.is_empty()
     }
 }
 
@@ -199,7 +168,6 @@ detection:
     #[test]
     fn test_rule_index_new_empty() {
         let idx = RuleIndex::new();
-        assert!(idx.is_empty());
         assert_eq!(idx.rule_count(), 0);
         assert_eq!(idx.skip_count(), 0);
     }
@@ -219,10 +187,12 @@ detection:
         )
         .unwrap();
 
-        assert!(!idx.is_empty());
-        assert!(idx.has_rules(&Product::Windows));
-        let windows_rules = idx.get(&Product::Windows);
-        assert!(windows_rules.iter().any(|r| r.contains("test-rule")));
+        assert_eq!(idx.rule_count(), 1);
+        assert!(idx
+            .get_collection()
+            .rules
+            .iter()
+            .any(|r| r.id.as_deref() == Some("test-rule-001")));
     }
 
     #[test]

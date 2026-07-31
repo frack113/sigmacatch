@@ -120,7 +120,7 @@ async fn main() -> Result<()> {
 
     let sigma_path = std::path::Path::new(&config.git.sigma_repo_path);
     let filter = LoadFilter {
-        product: config.sigma.product.as_str().to_string(),
+        product: Some(config.sigma.product.as_str().to_string()),
         min_status: Some(config.sigma.min_status),
         min_level: Some(config.sigma.min_level),
         max_rules: config.sigma.max_rules,

@@ -2305,11 +2305,12 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "dunce",
+ "phf",
  "rsigma-parser",
  "serde",
- "sigmacatch-types",
  "tempfile",
  "tracing",
+ "yaml_serde",
 ]
 
 [[package]]
