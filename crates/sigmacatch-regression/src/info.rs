@@ -62,14 +62,12 @@ impl InfoYml {
         }
     }
 
-    /// Serialize to YAML using serde_yaml.
     pub fn save(&self, path: &Path) -> anyhow::Result<()> {
         let file = std::fs::File::create(path)?;
         serde_yaml::to_writer(file, self)?;
         Ok(())
     }
 
-    /// Load from YAML file.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let mut content =
             std::fs::read_to_string(path).map_err(|e| anyhow!("Failed to read info.yml: {}", e))?;

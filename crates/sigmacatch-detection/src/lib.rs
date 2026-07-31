@@ -19,12 +19,6 @@ pub const FLATTEN_WINEVT_PIPELINE: &str = include_str!("../pipelines/flatten_win
 /// Embedded pipeline for Windows Sigma rule transformation.
 pub const WINDOWS_PIPELINE: &str = include_str!("../pipelines/windows.yml");
 
-/// Detection engine — pipelines + rsigma-eval Engine + FIFO piles d'events et alerts.
-///
-/// Created from a `SigmahqRules` (read-only consumption). The rsigma-eval `Engine`
-/// holds the compiled rules; `DetectionEngine` is a thin wrapper that adds
-/// pipelines, bloom pre-filter, and logsource pruning, then provides the FIFO
-/// API (`put_events` / `process_events` / `get_alerts`).
 pub struct DetectionEngine {
     engine: Engine,
     events: Vec<Event>,
@@ -33,11 +27,6 @@ pub struct DetectionEngine {
 }
 
 impl DetectionEngine {
-    /// Create a new engine from a `SigmahqRules`, loading all rules into rsigma-eval.
-    ///
-    /// Enables bloom pre-filtering and logsource-based rule pruning for
-    /// optimal evaluation performance. Pipelines (flatten_winevt + windows)
-    /// are loaded automatically.
     pub fn new(rules: &SigmahqRules) -> Result<Self> {
         let mut engine = Self::create_engine()?;
         engine
@@ -52,11 +41,6 @@ impl DetectionEngine {
         })
     }
 
-    /// Reload rules from an updated `SigmahqRules` (e.g. after `remove_id`).
-    ///
-    /// Creates a fresh rsigma-eval `Engine` with pipelines + bloom pre-filter,
-    /// then loads the current collection from `rules`. This drops all
-    /// previously compiled rules and recompiles from the updated set.
     pub fn reload_rules(&mut self, rules: &SigmahqRules) -> Result<()> {
         let mut engine = Self::create_engine()?;
         engine
@@ -91,42 +75,34 @@ impl DetectionEngine {
         Ok(engine)
     }
 
-    /// Number of rules currently loaded in the engine.
     pub fn rule_count(&self) -> usize {
         self.engine.rule_count()
     }
 
-    /// Access the inner rsigma-eval engine for introspection (compiled rules, etc.).
     pub fn engine(&self) -> &Engine {
         &self.engine
     }
 
-    /// Mutable access to the inner rsigma-eval engine.
     pub fn engine_mut(&mut self) -> &mut Engine {
         &mut self.engine
     }
 
-    /// Serialize compiled rules as a HIR blob for cheap engine cloning.
     pub fn save_hir(&self) -> Result<Vec<u8>> {
         self.engine
             .save_hir()
             .map_err(|e| anyhow!("save_hir failed: {e}"))
     }
 
-    /// Load compiled rules from a HIR blob previously saved by `save_hir`.
     pub fn load_hir(&mut self, blob: &[u8]) -> Result<()> {
         self.engine
             .load_hir(blob)
             .map_err(|e| anyhow!("load_hir failed: {e}"))
     }
 
-    /// Return the current engine stats (events_processed, alerts_generated).
     pub fn stats(&self) -> EngineStats {
         self.stats.clone()
     }
 
-    /// Explain why a specific rule matched or didn't match a given event.
-    /// Returns the full explain trace from rsigma-eval as JSON.
     pub fn explain_rule(&self, rule_id: &str, event: &Event) -> Option<serde_json::Value> {
         let compiled = self
             .engine
@@ -140,12 +116,10 @@ impl DetectionEngine {
 
     // ─── FIFO API ─────────────────────────────────────────────────────────
 
-    /// Push events into the internal event pile.
     pub fn put_events(&mut self, events: Vec<Event>) {
         self.events.extend(events);
     }
 
-    /// Pop and return all events from the pile.
     pub fn get_events(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.events)
     }
@@ -185,7 +159,6 @@ impl DetectionEngine {
         }
     }
 
-    /// Pop and return all accumulated alerts.
     pub fn get_alerts(&mut self) -> Vec<Alert> {
         let alerts = std::mem::take(&mut self.alerts);
         self.stats.alerts_generated += alerts.len() as u64;
@@ -195,12 +168,9 @@ impl DetectionEngine {
 
 // ─── Engine Stats ─────────────────────────────────────────────────────────
 
-/// Statistics for input/output tracking.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct EngineStats {
-    /// Total events processed against rules.
     pub events_processed: u64,
-    /// Total alerts generated.
     pub alerts_generated: u64,
 }
 
@@ -222,11 +192,6 @@ detection:
     event_id: 1
   condition: selection
 "#;
-
-    fn write_rule_to_dir(dir: &tempfile::TempDir, name: &str, yaml: &str) {
-        let path = dir.path().join(name);
-        std::fs::write(&path, yaml).expect("write rule file");
-    }
 
     #[test]
     fn test_engine_with_rule_index() {

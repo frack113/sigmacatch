@@ -23,7 +23,6 @@ use crate::info::InfoYml;
 use crate::logtype::LogType;
 use crate::validate::validate_rule_id;
 
-/// Cached metadata for a single regression entry.
 #[derive(Debug, Clone)]
 pub struct RegressionEntry {
     pub rule_id: String,
@@ -66,22 +65,16 @@ impl RegressionEntry {
     }
 }
 
-/// Collection of regression data entries loaded from disk.
-///
-/// Create with `new()` to load from `./regression_data`, or
-/// `new_from_path()` for custom directories (tests).
 pub struct SigmahqRegression {
     entries: Vec<(PathBuf, InfoYml, RegressionEntry)>,
     author: String,
 }
 
 impl SigmahqRegression {
-    /// Load all regression entries from `./sigma/regression_data`.
     pub fn new() -> Result<Self> {
         Self::new_from_path(Path::new("./sigma/regression_data"))
     }
 
-    /// Load all regression entries from a custom directory.
     pub fn new_from_path(regression_path: &Path) -> Result<Self> {
         if !regression_path.exists() {
             anyhow::bail!(
@@ -109,42 +102,34 @@ impl SigmahqRegression {
         })
     }
 
-    /// Set the author name for this regression collection.
     pub fn set_author(&mut self, author: String) {
         self.author = author;
     }
 
-    /// Get the author name.
     pub fn author(&self) -> &str {
         &self.author
     }
 
-    /// Return the number of regression entries.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
-    /// Return whether there are no regression entries.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
-    /// Iterate over the loaded (path, InfoYml) entries.
     pub fn iter(&self) -> impl Iterator<Item = (&PathBuf, &InfoYml)> {
         self.entries.iter().map(|(path, info, _)| (path, info))
     }
 
-    /// Return all loaded InfoYml entries.
     pub fn infos(&self) -> impl Iterator<Item = &InfoYml> {
         self.entries.iter().map(|(_, info, _)| info)
     }
 
-    /// Iterate over the cached regression entries.
     pub fn entries(&self) -> impl Iterator<Item = &RegressionEntry> {
         self.entries.iter().map(|(_, _, entry)| entry)
     }
 
-    /// Return sorted list of rule UUIDs that have regression tests.
     pub fn list_sigma_id(regression_path: &Path) -> Vec<Uuid> {
         let string_ids = list_sigma_id(regression_path);
         string_ids
@@ -153,21 +138,16 @@ impl SigmahqRegression {
             .collect()
     }
 
-    /// Get the cached entry metadata for an index.
     pub fn get_entry(&self, index: usize) -> Option<&RegressionEntry> {
         self.entries.get(index).map(|(_, _, entry)| entry)
     }
 
-    /// Find the index of an entry by its sigma rule ID.
     pub fn find_by_rule_id(&self, rule_id: &str) -> Option<usize> {
         self.entries
             .iter()
             .position(|(_, _, entry)| entry.rule_id == rule_id)
     }
 
-    /// Get the raw data bytes for an entry by index.
-    ///
-    /// Reads the data file (.evtx/.json/.raw) from the same directory as info.yml.
     pub fn get_raw_data(&self, index: usize) -> Option<Vec<u8>> {
         let (info_path, info, _) = self.entries.get(index)?;
         let rule_id = info.rule_metadata.first()?.id.as_str();
@@ -177,10 +157,6 @@ impl SigmahqRegression {
     }
 }
 
-/// Platform-agnostic regression data entry and per-alert generator.
-///
-/// Create with `new(path)`, configure with setters, then call
-/// `generate_from_alert()` for each alert.
 pub struct RegressionData {
     header: RegressionHeader,
     alerts: Vec<Alert>,
@@ -198,11 +174,6 @@ pub struct RegressionData {
 }
 
 impl RegressionData {
-    /// Create a new `RegressionData` for per-alert generation.
-    ///
-    /// Set `output_path` to the directory where regression data will be written
-    /// (typically `<sigma_repo>/regression_data`). Configure with `set_author()`,
-    /// `set_sigma_repo_path()`, `set_is_contrib()`, then call `generate_from_alert()`.
     pub fn new(output_path: &Path) -> Self {
         Self {
             header: RegressionHeader::new(String::new(), String::new()),
@@ -221,26 +192,18 @@ impl RegressionData {
         }
     }
 
-    /// Set the author for generated regression entries.
     pub fn set_author(&mut self, author: &str) {
         self.author = Some(author.to_string());
     }
 
-    /// Set whether this is a contrib run (output inside the sigma repo).
     pub fn set_is_contrib(&mut self, is_contrib: bool) {
         self.is_contrib = is_contrib;
     }
 
-    /// Set the sigma repo path (used to compute relative rule paths).
     pub fn set_sigma_repo_path(&mut self, path: &Path) {
         self.sigma_repo_path = path.to_path_buf();
     }
 
-    /// Generate regression data for a single matched alert.
-    ///
-    /// Returns `None` if the rule already has regression data (either generated
-    /// earlier in this run or found on disk). Returns `Some(files)` on success
-    /// with the list of generated file paths (relative to the sigma repo root).
     pub fn generate_from_alert(&mut self, alert: &Alert) -> Option<Vec<String>> {
         let rule_id = &alert.rule_id;
         if self.retired.contains(rule_id) {
@@ -309,7 +272,6 @@ impl RegressionData {
         }
     }
 
-    /// Create a `RegressionData` for a single rule (internal helper).
     fn for_rule(
         header: &RegressionHeader,
         output_path: &Path,
@@ -336,7 +298,6 @@ impl RegressionData {
         }
     }
 
-    /// Construct a new `RegressionData` from an `info.yml` path.
     pub fn from_info(info_path: &Path) -> Result<Self> {
         let info =
             InfoYml::load(info_path).map_err(|e| anyhow!("Failed to load info.yml: {}", e))?;
@@ -390,12 +351,10 @@ impl RegressionData {
         })
     }
 
-    /// Add an alert to this regression data.
     pub fn add_alert(&mut self, alert: Alert) {
         self.alerts.push(alert);
     }
 
-    /// Resolve the output rule directory path.
     pub fn rule_dir(&self) -> Result<PathBuf> {
         if let Some(rel_path) = &self.rule_rel_path {
             return Ok(self.output_path.join(rel_path));
@@ -414,7 +373,6 @@ impl RegressionData {
         Ok(self.output_path.join("rules").join(rule_id))
     }
 
-    /// Compute the sigma-relative directory path string.
     pub fn sigma_rel_dir(&self) -> Option<String> {
         self.rule_rel_path.as_ref().map(|rel_path| {
             let rel = rel_path.display().to_string().replace('\\', "/");
@@ -426,12 +384,10 @@ impl RegressionData {
         })
     }
 
-    /// Check if regression data already exists on disk.
     pub fn exists(&self) -> bool {
         self.rule_dir().is_ok_and(|d| d.join("info.yml").exists())
     }
 
-    /// Generate regression output (json, evtx, info.yml).
     pub fn generate<F>(&self, write_fn: F) -> Result<()>
     where
         F: Fn(&str, &str, Option<u64>, &Path) -> Result<()>,
@@ -500,7 +456,6 @@ impl RegressionData {
         Ok(())
     }
 
-    /// Write the raw log data to disk.
     pub fn save_log(&self, path: &Path) -> Result<()> {
         let data = match &self.raw_data {
             Some(d) => d.as_slice(),
@@ -509,7 +464,6 @@ impl RegressionData {
         std::fs::write(path, data).map_err(|e| anyhow!("Failed to write log to {:?}: {}", path, e))
     }
 
-    /// Export the data as pretty-printed JSON.
     pub fn export_json(&self) -> Result<String> {
         let json = match self.logtype {
             LogType::Json => {
@@ -536,17 +490,14 @@ impl RegressionData {
 
     // ─── Accessors ────────────────────────────────────────────────────
 
-    /// Return the rule ID.
     pub fn rule_id(&self) -> &str {
         self.header.rule_id.as_str()
     }
 
-    /// Return the rule title.
     pub fn rule_title(&self) -> &str {
         self.header.rule_title.as_str()
     }
 
-    /// Return the expected match count from `regression_tests_info`.
     pub fn expected_match_count(&self) -> usize {
         self.info
             .regression_tests_info
@@ -556,24 +507,18 @@ impl RegressionData {
             .max(1)
     }
 
-    /// Check if this regression entry is valid on disk.
     pub fn is_valid(&self) -> bool {
         self.info_path.exists() && self.get_data_path().exists()
     }
 
-    /// Return the raw data bytes (EVTX binary, JSON, or raw XML).
-    ///
-    /// Callers should use [`LogType`] to decide how to interpret the bytes.
     pub fn get_raw_data(&self) -> Option<&[u8]> {
         self.raw_data.as_deref()
     }
 
-    /// Return the data format type.
     pub fn get_logtype(&self) -> LogType {
         self.logtype
     }
 
-    /// Return whether this regression data was generated for a contrib run.
     pub fn is_contrib(&self) -> bool {
         self.is_contrib
     }
@@ -673,10 +618,6 @@ mod tests {
 
 // ─── Free functions ────────────────────────────────────────────────────
 
-/// Scan regression data directories and return all existing rule IDs.
-///
-/// Walks `output_base/rules/` recursively, finds `info.yml` files, extracts
-/// and validates each `rule_id`. Returns a sorted list of valid rule IDs.
 pub fn list_sigma_id(output_base: &Path) -> Vec<String> {
     if !output_base.exists() {
         warn!(
@@ -740,7 +681,6 @@ fn collect_ids(dir: &Path, ids: &mut Vec<String>, depth: u32) {
     }
 }
 
-/// Resolve the data file associated with a rule in a given directory.
 fn resolve_data_file(dir: &Path, rule_id: &str) -> Option<PathBuf> {
     for ext in ["evtx", "json"] {
         let candidate = dir.join(format!("{}.{}", rule_id, ext));
@@ -751,7 +691,6 @@ fn resolve_data_file(dir: &Path, rule_id: &str) -> Option<PathBuf> {
     None
 }
 
-/// Add or update the `regression_tests_path` line in a Sigma rule YAML file.
 pub(crate) fn update_regression_tests_path(rule_yaml_path: &Path, tests_path: &str) {
     let content = match std::fs::read_to_string(rule_yaml_path) {
         Ok(c) => c,
@@ -781,7 +720,6 @@ pub(crate) fn update_regression_tests_path(rule_yaml_path: &Path, tests_path: &s
     }
 }
 
-/// Try to read rule_id from an `info.yml` file without full loading.
 pub(crate) fn try_read_rule_id(info_path: &Path) -> Result<String> {
     let info = InfoYml::load(info_path)?;
     info.rule_metadata
@@ -792,10 +730,6 @@ pub(crate) fn try_read_rule_id(info_path: &Path) -> Result<String> {
 
 // ─── list_all ──────────────────────────────────────────────────────────
 
-/// Return paths to `info.yml` files under `dir`, recursively.
-///
-/// Only returns paths to valid `info.yml` files — callers decide what to do
-/// with them. Failing to load an `info.yml` is silently ignored.
 pub fn list_all(dir: &Path) -> Vec<PathBuf> {
     if !dir.exists() {
         warn!("list_all: directory does not exist: {}", dir.display());
@@ -835,10 +769,6 @@ fn walk(dir: &Path, paths: &mut Vec<PathBuf>, depth: u32) {
 
 // ─── clean_partial_artifacts ───────────────────────────────────────────
 
-/// Delete regression directories that contain generated files (.json/.evtx)
-/// but no `info.yml`. Such directories are partial artifacts from a prior run
-/// that aborted before committing; they must not be carried into the current
-/// run's commit.
 pub fn clean_partial_artifacts(base: &Path) {
     if !base.exists() {
         return;

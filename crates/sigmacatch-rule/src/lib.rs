@@ -31,7 +31,7 @@ impl SigmahqRules {
         Self::new_from_path(Path::new("./sigma"))
     }
 
-    fn new_from_path(sigma_path: &Path) -> Result<Self> {
+    pub fn new_from_path(sigma_path: &Path) -> Result<Self> {
         let dirs = find_rules_dirs(sigma_path)?;
         if dirs.is_empty() {
             anyhow::bail!(
