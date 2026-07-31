@@ -4,14 +4,15 @@
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleMetadata {
     pub id: String,
     pub title: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegressionTestInfo {
     pub name: String,
     #[serde(rename = "type")]
@@ -22,9 +23,9 @@ pub struct RegressionTestInfo {
     pub path: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InfoYml {
-    pub id: String,
+    pub id: Uuid,
     pub description: String,
     pub date: String,
     pub author: String,
@@ -43,7 +44,7 @@ impl InfoYml {
         provider: &str,
     ) -> Self {
         Self {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: Uuid::new_v4(),
             description: description.to_string(),
             date: chrono::Utc::now().format("%Y-%m-%d").to_string(),
             author: author.to_string(),

@@ -8,18 +8,174 @@ mod info;
 pub mod logtype;
 pub mod validate;
 
+use std::path::{Path, PathBuf};
+
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 use sigmacatch_types::{Alert, RegressionHeader};
 use std::collections::HashSet;
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
 use tracing::{error, info, info_span, warn};
+use uuid::Uuid;
 
 use crate::evtx::write_evtx;
 use crate::info::InfoYml;
 use crate::logtype::LogType;
 use crate::validate::validate_rule_id;
+
+/// Cached metadata for a single regression entry.
+#[derive(Debug, Clone)]
+pub struct RegressionEntry {
+    pub rule_id: String,
+    pub rule_name: String,
+    pub logtype: LogType,
+}
+
+impl RegressionEntry {
+    fn from_info(info: &InfoYml, info_path: &Path) -> Self {
+        let rule_id = info
+            .rule_metadata
+            .first()
+            .map(|m| m.id.clone())
+            .unwrap_or_default();
+        let rule_name = info_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let logtype = info
+            .regression_tests_info
+            .first()
+            .map(|t| match t.test_type.as_str() {
+                "evtx" => LogType::Evtx,
+                "json" => LogType::Json,
+                "raw" => LogType::Raw,
+                "log" => LogType::Log,
+                other => {
+                    warn!("Unknown logtype '{other}', defaulting to Json");
+                    LogType::Json
+                }
+            })
+            .unwrap_or(LogType::Json);
+        Self {
+            rule_id,
+            rule_name,
+            logtype,
+        }
+    }
+}
+
+/// Collection of regression data entries loaded from disk.
+///
+/// Create with `new()` to load from `./regression_data`, or
+/// `new_from_path()` for custom directories (tests).
+pub struct SigmahqRegression {
+    entries: Vec<(PathBuf, InfoYml, RegressionEntry)>,
+    author: String,
+}
+
+impl SigmahqRegression {
+    /// Load all regression entries from `./sigma/regression_data`.
+    pub fn new() -> Result<Self> {
+        Self::new_from_path(Path::new("./sigma/regression_data"))
+    }
+
+    /// Load all regression entries from a custom directory.
+    pub fn new_from_path(regression_path: &Path) -> Result<Self> {
+        if !regression_path.exists() {
+            anyhow::bail!(
+                "Regression data directory does not exist: {:?}",
+                regression_path
+            );
+        }
+        let info_paths = list_all(regression_path);
+        if info_paths.is_empty() {
+            anyhow::bail!("No regression entries found in {:?}", regression_path);
+        }
+        let mut entries = Vec::with_capacity(info_paths.len());
+        for path in &info_paths {
+            if let Ok(info) = InfoYml::load(path) {
+                let entry = RegressionEntry::from_info(&info, path);
+                entries.push((path.clone(), info, entry));
+            }
+        }
+        if entries.is_empty() {
+            anyhow::bail!("No valid regression entries found in {:?}", regression_path);
+        }
+        Ok(Self {
+            entries,
+            author: String::new(),
+        })
+    }
+
+    /// Set the author name for this regression collection.
+    pub fn set_author(&mut self, author: String) {
+        self.author = author;
+    }
+
+    /// Get the author name.
+    pub fn author(&self) -> &str {
+        &self.author
+    }
+
+    /// Return the number of regression entries.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Return whether there are no regression entries.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Iterate over the loaded (path, InfoYml) entries.
+    pub fn iter(&self) -> impl Iterator<Item = (&PathBuf, &InfoYml)> {
+        self.entries.iter().map(|(path, info, _)| (path, info))
+    }
+
+    /// Return all loaded InfoYml entries.
+    pub fn infos(&self) -> impl Iterator<Item = &InfoYml> {
+        self.entries.iter().map(|(_, info, _)| info)
+    }
+
+    /// Iterate over the cached regression entries.
+    pub fn entries(&self) -> impl Iterator<Item = &RegressionEntry> {
+        self.entries.iter().map(|(_, _, entry)| entry)
+    }
+
+    /// Return sorted list of rule UUIDs that have regression tests.
+    pub fn list_sigma_id(regression_path: &Path) -> Vec<Uuid> {
+        let string_ids = list_sigma_id(regression_path);
+        string_ids
+            .into_iter()
+            .filter_map(|id| Uuid::parse_str(&id).ok())
+            .collect()
+    }
+
+    /// Get the cached entry metadata for an index.
+    pub fn get_entry(&self, index: usize) -> Option<&RegressionEntry> {
+        self.entries.get(index).map(|(_, _, entry)| entry)
+    }
+
+    /// Find the index of an entry by its sigma rule ID.
+    pub fn find_by_rule_id(&self, rule_id: &str) -> Option<usize> {
+        self.entries
+            .iter()
+            .position(|(_, _, entry)| entry.rule_id == rule_id)
+    }
+
+    /// Get the raw data bytes for an entry by index.
+    ///
+    /// Reads the data file (.evtx/.json/.raw) from the same directory as info.yml.
+    pub fn get_raw_data(&self, index: usize) -> Option<Vec<u8>> {
+        let (info_path, info, _) = self.entries.get(index)?;
+        let rule_id = info.rule_metadata.first()?.id.as_str();
+        let dir = info_path.parent()?;
+        let data_path = resolve_data_file(dir, rule_id)?;
+        std::fs::read(&data_path).ok()
+    }
+}
 
 /// Platform-agnostic regression data entry and per-alert generator.
 ///
@@ -434,6 +590,84 @@ impl RegressionData {
             }
         }
         rule_dir.join(format!("{}.json", rule_id))
+    }
+}
+
+// ─── Tests ─────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_list_sigma_id_returns_uuids() {
+        let regression_dir = std::env::current_dir().ok().and_then(|cwd| {
+            cwd.parent()
+                .map(|p| p.join("sigma").join("regression_data"))
+        });
+        if let Some(ref dir) = regression_dir {
+            let ids = SigmahqRegression::list_sigma_id(dir);
+            if !ids.is_empty() {
+                let first = &ids[0];
+                let first_str = first.to_string();
+                assert!(
+                    first_str.contains('-'),
+                    "UUID should contain hyphens: {}",
+                    first_str
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_sigmahq_regression_len() {
+        let regression_dir = std::env::current_dir().ok().and_then(|cwd| {
+            cwd.parent()
+                .map(|p| p.join("sigma").join("regression_data"))
+        });
+        if let Some(ref dir) = regression_dir {
+            if let Ok(reg) = SigmahqRegression::new_from_path(dir) {
+                assert!(reg.len() > 0, "should have regression entries");
+            }
+        }
+    }
+
+    #[test]
+    fn test_sigmahq_regression_is_empty() {
+        let regression_dir = std::env::current_dir().ok().and_then(|cwd| {
+            cwd.parent()
+                .map(|p| p.join("sigma").join("regression_data"))
+        });
+        if let Some(ref dir) = regression_dir {
+            if let Ok(reg) = SigmahqRegression::new_from_path(dir) {
+                assert!(!reg.is_empty(), "should not be empty");
+            }
+        }
+    }
+
+    #[test]
+    fn test_sigmahq_regression_iter() {
+        let regression_dir = std::env::current_dir().ok().and_then(|cwd| {
+            cwd.parent()
+                .map(|p| p.join("sigma").join("regression_data"))
+        });
+        if let Some(ref dir) = regression_dir {
+            if let Ok(reg) = SigmahqRegression::new_from_path(dir) {
+                let entries: Vec<(&PathBuf, &InfoYml)> = reg.iter().collect();
+                assert_eq!(entries.len(), reg.len());
+                for (path, info) in &entries {
+                    assert!(
+                        path.to_string_lossy().ends_with("info.yml"),
+                        "path should end with info.yml: {:?}",
+                        path
+                    );
+                    assert!(
+                        !info.rule_metadata.is_empty(),
+                        "info should have rule_metadata"
+                    );
+                }
+            }
+        }
     }
 }
 
