@@ -2,15 +2,15 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 //! Detection engine — thin wrapper around rsigma-eval for loading pipelines and
-//! rules, then evaluating events. Consumes rules from `RuleIndex` in read-only
-//! mode. No filtering, no skip sets — just the bare essentials for testing and
-//! validation.
+//! rules, then evaluating events. Consumes rules from `SigmahqRules` in
+//! read-only mode. No filtering, no skip sets — just the bare essentials for
+//! testing and validation.
 
 use anyhow::{anyhow, Result};
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::pipeline::parse_pipeline;
 use rsigma_eval::{Engine, LogSourceExtractor};
-use sigmacatch_rule::RuleIndex;
+use sigmacatch_rule::SigmahqRules;
 use sigmacatch_types::{Alert, Event};
 
 /// Embedded pipeline for flattening Winevt XML event structure.
@@ -21,7 +21,7 @@ pub const WINDOWS_PIPELINE: &str = include_str!("../pipelines/windows.yml");
 
 /// Detection engine — pipelines + rsigma-eval Engine + FIFO piles d'events et alerts.
 ///
-/// Created from a `RuleIndex` (read-only consumption). The rsigma-eval `Engine`
+/// Created from a `SigmahqRules` (read-only consumption). The rsigma-eval `Engine`
 /// holds the compiled rules; `DetectionEngine` is a thin wrapper that adds
 /// pipelines, bloom pre-filter, and logsource pruning, then provides the FIFO
 /// API (`put_events` / `process_events` / `get_alerts`).
@@ -33,15 +33,15 @@ pub struct DetectionEngine {
 }
 
 impl DetectionEngine {
-    /// Create a new engine from a `RuleIndex`, loading all rules into rsigma-eval.
+    /// Create a new engine from a `SigmahqRules`, loading all rules into rsigma-eval.
     ///
     /// Enables bloom pre-filtering and logsource-based rule pruning for
     /// optimal evaluation performance. Pipelines (flatten_winevt + windows)
     /// are loaded automatically.
-    pub fn new(rule_index: &RuleIndex) -> Result<Self> {
+    pub fn new(rules: &SigmahqRules) -> Result<Self> {
         let mut engine = Self::create_engine()?;
         engine
-            .add_collection(rule_index.get_collection())
+            .add_collection(&rules.to_collection())
             .map_err(|e| anyhow!("Engine add_collection failed: {e}"))?;
 
         Ok(Self {
@@ -52,15 +52,15 @@ impl DetectionEngine {
         })
     }
 
-    /// Reload rules from an updated `RuleIndex` (e.g. after `exclude_rule_id`).
+    /// Reload rules from an updated `SigmahqRules` (e.g. after `remove_id`).
     ///
     /// Creates a fresh rsigma-eval `Engine` with pipelines + bloom pre-filter,
-    /// then loads the current collection from `rule_index`. This drops all
+    /// then loads the current collection from `rules`. This drops all
     /// previously compiled rules and recompiles from the updated set.
-    pub fn reload_rules(&mut self, rule_index: &RuleIndex) -> Result<()> {
+    pub fn reload_rules(&mut self, rules: &SigmahqRules) -> Result<()> {
         let mut engine = Self::create_engine()?;
         engine
-            .add_collection(rule_index.get_collection())
+            .add_collection(&rules.to_collection())
             .map_err(|e| anyhow!("Engine reload_rules failed: {e}"))?;
         self.engine = engine;
         Ok(())
@@ -207,8 +207,7 @@ pub struct EngineStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sigmacatch_rule::{LoadFilter, RuleIndex};
-    use std::collections::HashSet;
+    use sigmacatch_rule::SigmahqRules;
     use std::fs;
 
     const MINIMAL_RULE_YAML: &str = r#"title: Test Rule
@@ -232,27 +231,21 @@ detection:
     #[test]
     fn test_engine_with_rule_index() {
         let dir = tempfile::tempdir().unwrap();
-        let rules_dir = dir.path().join("rules");
-        fs::create_dir(&rules_dir).unwrap();
-        write_rule_to_dir(&dir, "rules/win_rule.yml", MINIMAL_RULE_YAML);
+        let sigma_dir = dir.path().join("sigma");
+        let rules_dir = sigma_dir.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        fs::write(rules_dir.join("win_rule.yml"), MINIMAL_RULE_YAML).unwrap();
 
-        let mut rule_index = RuleIndex::new();
-        rule_index
-            .load_from_dirs(
-                &[rules_dir.as_path()],
-                &HashSet::new(),
-                &LoadFilter::default(),
-            )
-            .unwrap();
+        let rules = SigmahqRules::new(&sigma_dir).unwrap();
 
-        let engine = DetectionEngine::new(&rule_index).unwrap();
+        let engine = DetectionEngine::new(&rules).unwrap();
         assert_eq!(engine.rule_count(), 1);
     }
 
     #[test]
     fn test_put_events_and_process() {
-        let rule_index = RuleIndex::new();
-        let mut engine = DetectionEngine::new(&rule_index).unwrap();
+        let rules = SigmahqRules::default();
+        let mut engine = DetectionEngine::new(&rules).unwrap();
         engine.put_events(vec![
             Event::new(serde_json::json!({}), Vec::new()),
             Event::new(serde_json::json!({}), Vec::new()),
@@ -267,20 +260,14 @@ detection:
     #[test]
     fn test_process_events_and_get_alerts() {
         let dir = tempfile::tempdir().unwrap();
-        let rules_dir = dir.path().join("rules");
-        fs::create_dir(&rules_dir).unwrap();
-        write_rule_to_dir(&dir, "rules/test_rule.yml", MINIMAL_RULE_YAML);
+        let sigma_dir = dir.path().join("sigma");
+        let rules_dir = sigma_dir.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        fs::write(rules_dir.join("test_rule.yml"), MINIMAL_RULE_YAML).unwrap();
 
-        let mut rule_index = RuleIndex::new();
-        rule_index
-            .load_from_dirs(
-                &[rules_dir.as_path()],
-                &HashSet::new(),
-                &LoadFilter::default(),
-            )
-            .unwrap();
+        let rules = SigmahqRules::new(&sigma_dir).unwrap();
 
-        let mut engine = DetectionEngine::new(&rule_index).unwrap();
+        let mut engine = DetectionEngine::new(&rules).unwrap();
         let event = Event::new(serde_json::json!({"event_id": 1}), Vec::new());
         engine.put_events(vec![event]);
         engine.process_events();
@@ -293,24 +280,18 @@ detection:
     #[test]
     fn test_reload_rules_after_exclude() {
         let dir = tempfile::tempdir().unwrap();
-        let rules_dir = dir.path().join("rules");
-        fs::create_dir(&rules_dir).unwrap();
-        write_rule_to_dir(&dir, "rules/win_rule.yml", MINIMAL_RULE_YAML);
+        let sigma_dir = dir.path().join("sigma");
+        let rules_dir = sigma_dir.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        fs::write(rules_dir.join("win_rule.yml"), MINIMAL_RULE_YAML).unwrap();
 
-        let mut rule_index = RuleIndex::new();
-        rule_index
-            .load_from_dirs(
-                &[rules_dir.as_path()],
-                &HashSet::new(),
-                &LoadFilter::default(),
-            )
-            .unwrap();
+        let mut rules = SigmahqRules::new(&sigma_dir).unwrap();
 
-        let mut engine = DetectionEngine::new(&rule_index).unwrap();
+        let mut engine = DetectionEngine::new(&rules).unwrap();
         assert_eq!(engine.rule_count(), 1);
 
-        rule_index.exclude_rule_id("test-rule-001");
-        engine.reload_rules(&rule_index).unwrap();
+        rules.remove_id("test-rule-001");
+        engine.reload_rules(&rules).unwrap();
         assert_eq!(engine.rule_count(), 0);
     }
 }

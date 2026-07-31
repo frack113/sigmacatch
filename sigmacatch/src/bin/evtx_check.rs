@@ -16,9 +16,9 @@ use input_evtx::parse_evtx_bytes;
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_regression::logtype::LogType;
 use sigmacatch_regression::{list_all, RegressionData};
-use sigmacatch_rule::{LoadFilter, RuleIndex};
+use sigmacatch_rule::SigmahqRules;
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
 
@@ -81,6 +81,23 @@ fn main() {
     }
 
     let regression_dir = sigma_dir.join("regression_data");
+    if !regression_dir.exists() {
+        eprintln!("sigma/regression_data directory not found — run sigmacatch first");
+        std::process::exit(1);
+    }
+
+    println!("Loading Sigma rules into engine...");
+    let rules = match SigmahqRules::new(&sigma_dir) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Failed to load rules: {}", e);
+            std::process::exit(1);
+        }
+    };
+    println!("Found {} sigmahq rules", rules.len());
+    let rules = rules.filter(Some("windows"), None, None);
+    println!("Found {} windows rules", rules.len());
+    println!();
 
     println!("Scanning regression data: {}", regression_dir.display());
     println!();
@@ -99,29 +116,14 @@ fn main() {
     println!();
 
     println!("Loading Sigma rules into engine...");
-    let dirs = match sigmacatch_rule::find_rules_dirs(&sigma_dir) {
-        Ok(d) => d,
+    let rules = match SigmahqRules::new(&sigma_dir) {
+        Ok(r) => r,
         Err(e) => {
-            eprintln!("Failed to find rule directories: {}", e);
+            eprintln!("Failed to load rules: {}", e);
             std::process::exit(1);
         }
     };
-    let refs: Vec<&Path> = dirs.iter().map(|d| d.as_path()).collect();
-    // Permissive filter: validate regression data against ALL Windows rules,
-    // regardless of status/level. A restrictive default (stable+critical)
-    // would produce false "RULE NOT MATCHED" failures for regression entries
-    // whose rule is experimental or lower severity.
-    let filter = LoadFilter {
-        min_status: None,
-        min_level: None,
-        ..LoadFilter::default()
-    };
-    let mut rule_index = RuleIndex::new();
-    if let Err(e) = rule_index.load_from_dirs(&refs, &HashSet::new(), &filter) {
-        eprintln!("Failed to load rules: {}", e);
-        std::process::exit(1);
-    }
-    let mut engine = match DetectionEngine::new(&rule_index) {
+    let mut engine = match DetectionEngine::new(&rules) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("Failed to build engine: {}", e);

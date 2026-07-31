@@ -7,7 +7,7 @@ use sigmacatch_detection::DetectionEngine;
 use sigmacatch_logger::init as init_logger;
 use sigmacatch_regression::RegressionData;
 use sigmacatch_repo::{self, github, SigmaRepo};
-use sigmacatch_rule::{LoadFilter, RuleIndex};
+use sigmacatch_rule::SigmahqRules;
 use sigmacatch_types::{Event, EventProducer};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -119,21 +119,24 @@ async fn main() -> Result<()> {
     };
 
     let sigma_path = std::path::Path::new(&config.git.sigma_repo_path);
-    let filter = LoadFilter {
-        product: Some(config.sigma.product.as_str().to_string()),
-        min_status: Some(config.sigma.min_status),
-        min_level: Some(config.sigma.min_level),
-        max_rules: config.sigma.max_rules,
-        max_rule_size: config.sigma.max_rule_size,
-    };
-    let mut rule_index = RuleIndex::new();
-    rule_index.load_from_sigma_path(sigma_path, &existing_rules, &filter)?;
-    let stats = rule_index.stats();
+    let mut rules = SigmahqRules::new(sigma_path)?;
+
+    for id in &existing_rules {
+        rules.remove_id(id);
+    }
+
+    let mut rules = rules.filter(
+        Some(config.sigma.product.as_str()),
+        Some(config.sigma.min_status),
+        Some(config.sigma.min_level),
+    );
+    let stats = rules.stats();
 
     info!(
-        "Loaded {} rules ({} skipped by existing regression, {} filtered by status, {} filtered by level)",
+        "Loaded {} rules ({} skipped by existing regression, {} filtered by product, {} filtered by status, {} filtered by level)",
         stats.rules_loaded,
         existing_rules.len(),
+        stats.rules_filtered_product,
         stats.rules_filtered_status,
         stats.rules_filtered_level,
     );
@@ -150,14 +153,14 @@ async fn main() -> Result<()> {
     let custom_map = sigmacatch_config::load_custom_channel_mapping(
         PathBuf::from("custom_channels.yaml").as_path(),
     );
-    let cycle_channels = rule_index.get_channels(&custom_map);
+    let cycle_channels = rules.channels(&custom_map);
 
     if cycle_channels.is_empty() {
         warn!("0 channels resolved — nothing to collect");
         return Ok(());
     }
 
-    let mut engine = DetectionEngine::new(&rule_index)?;
+    let mut engine = DetectionEngine::new(&rules)?;
 
     if cli.channels_only {
         info!("Channels only mode — listing channels and exiting");
@@ -216,7 +219,7 @@ async fn main() -> Result<()> {
             _ = generate_interval.tick() => {
                 let created_files = process_and_generate(
                     &mut engine,
-                    &mut rule_index,
+                    &mut rules,
                     &output_base,
                     &config.git.author,
                     sigma_repo_path,
@@ -250,7 +253,7 @@ async fn main() -> Result<()> {
 
     let created_files = process_and_generate(
         &mut engine,
-        &mut rule_index,
+        &mut rules,
         &output_base,
         &config.git.author,
         sigma_repo_path,
@@ -290,7 +293,7 @@ async fn main() -> Result<()> {
 
 fn process_and_generate(
     engine: &mut DetectionEngine,
-    rule_index: &mut RuleIndex,
+    rules: &mut SigmahqRules,
     output_base: &Path,
     author: &str,
     sigma_repo_path: &Path,
@@ -335,9 +338,9 @@ fn process_and_generate(
     // Reloading once per batch avoids a full recompile per alert.
     if !retired_ids.is_empty() {
         for id in &retired_ids {
-            rule_index.exclude_rule_id(id);
+            rules.remove_id(id);
         }
-        if let Err(e) = engine.reload_rules(rule_index) {
+        if let Err(e) = engine.reload_rules(rules) {
             warn!(
                 "Failed to reload engine after retiring {} rules: {}",
                 retired_ids.len(),

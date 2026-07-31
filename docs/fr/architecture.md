@@ -66,22 +66,4 @@ sigmacatch ──┬── detection-engine        (wrapper rsigma-eval + pipeli
 8. Generate regression for rules without existing `info.yml` (skip at generate time too)
 9. Write: `<output>/<rule_rel_path>/<rule_id>.json` (first matched event) + `<rule_id>.evtx` + `info.yml`; append `regression_tests_path` line to the source rule YAML
 
-## Invariants architecturaux (fondations non négociables)
-
-- Pipeline 100% séquentiel : acquérir règles → charger moteur → collecter events → matcher → générer
-- Tout en RAM : aggregation en mémoire avant écriture (pas de DB intermédiaire)
-- Un run = cycle complet (pas de mode "juste collect" ou "juste generate")
-- Collecte Windows via **Winevt API** (`windows` crate, `EvtQueryW`/`EvtNext`/`EvtRender`) — pas d'ETW, pas de ferrisetw
-- Output = `regression_data/<rule_rel_path>/` (triplet: `<rule_id>.json` + `<rule_id>.evtx` + `info.yml` format SigmaHQ)
-- **Moteur temps réel** : `rsigma-eval` chargé une fois avec toutes les règles non skipées ; chaque event est évalué contre toutes les règles chargées. Aucun event perdu. Le skip-at-load est l'unique optimisation.
-- **LogSource injectée par le collector** : `Event::inject_logsource_fields()` injecte `product`/`service`/`category` dans `event_json` au moment de la création de l'Event. Le `LogSourceExtractor` de rsigma-eval lit ces champs pour elaguer les règles incompatibles.
-  - Les tables de mapping (channel → service, provider → service, category) sont dans `sigmacatch-types` (source unique de vérité)
-  - Priority: channel → service > provider → service > default
-  - Fail-open : un event sans champs logsource est évalué contre toutes les règles
-- **Bloom pre-filter** : activé dans `DetectionEngine::new()`, elague les matchers de sous-chaîne (Contains, StartsWith, EndsWith) via extraction de trigrammes (~1µs par probe).
-- **EVTX via `EvtExportLog`** : re-queries l'event par RecordID depuis le live log. Si succès → `.evtx` binaire valide. Si échec (event purgé) ou non-Windows → fallback `.xml` (raw XML, pas de binaire invalide).
-  - **Known limitation** : race condition avec la rétention du log — si l'event a été purgé entre la collecte et l'export, `EvtExportLog` échoue silencieusement (`ERROR_EVT_QUERY_RESULT_STALE`).
-- **Pipelines dynamiques** : les pipelines Sigma sont chargées depuis `crates/detection-engine/pipelines/` au démarrage de l'engine (pas de `include_str!` embarqué). L'ordre alphabétique par nom de fichier garantit la déterministicité (flatten_winevt avant windows, etc.).
-- **RuleIndex** : mappe les rule IDs par `Product` pour un accès filtré. Peuplé pendant le chargement des règles, consultable via `engine.rule_index()`.
-
 > Skip set details, key design decisions, and skip set construction logic are in [`architecture-reference.md`](architecture-reference.md) (Stages 2, 5, 6, 7).

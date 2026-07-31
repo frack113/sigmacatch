@@ -2206,7 +2206,6 @@ dependencies = [
  "input-evtx",
  "input-windows-channels",
  "phf",
- "rayon",
  "serde",
  "serde_json",
  "sigmacatch-config",

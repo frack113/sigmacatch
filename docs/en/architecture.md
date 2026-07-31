@@ -66,22 +66,4 @@ sigmacatch ──┬── detection-engine        (rsigma-eval wrapper + pipeli
 8. Generate regression for rules without existing `info.yml` (skip at generate time too)
 9. Write: `<output>/<rule_rel_path>/<rule_id>.json` (first matched event) + `<rule_id>.evtx` + `info.yml`; append `regression_tests_path` line to the source rule YAML
 
-## Architectural invariants (non-negotiable foundations)
-
-- 100% sequential pipeline: acquire rules → load engine → collect events → match → generate
-- All in RAM: in-memory aggregation before writing (no intermediate DB)
-- One run = complete cycle (no "just collect" or "just generate" mode)
-- Windows collection via **Winevt API** (`windows` crate, `EvtQueryW`/`EvtNext`/`EvtRender`) — no ETW, no ferrisetw
-- Output = `regression_data/<rule_rel_path>/` (triplet: `<rule_id>.json` + `<rule_id>.evtx` + `info.yml` SigmaHQ format)
-- **Real-time engine**: `rsigma-eval` loaded once with all non-skipped rules; every event is evaluated against all loaded rules. No event lost. Skip-at-load is the only optimization.
-- **LogSource injected by collector**: `Event::inject_logsource_fields()` injects `product`/`service`/`category` into `event_json` at Event creation time. The `LogSourceExtractor` from rsigma-eval reads these fields to prune incompatible rules.
-  - Mapping tables (channel → service, provider → service, category) live in `sigmacatch-types` (single source of truth)
-  - Priority: channel → service > provider → service > default
-  - Fail-open: an event without logsource fields evaluates against all rules
-- **Bloom pre-filter**: enabled in `DetectionEngine::new()`, prunes substring matchers (Contains, StartsWith, EndsWith) via trigram extraction (~1µs per probe).
-- **EVTX via `EvtExportLog`**: re-queries the event by RecordID from the live log. On success → binary `.evtx`. On failure (event rotated out of retention) or non-Windows → `.xml` fallback (raw XML, not invalid binary).
-  - **Known limitation**: race condition with log retention — if the event has been purged between collection and export, `EvtExportLog` fails silently (`ERROR_EVT_QUERY_RESULT_STALE`).
-- **Dynamic pipelines**: Sigma pipelines are loaded from `crates/detection-engine/pipelines/` at engine startup (no embedded `include_str!`). Alphabetical filename ordering ensures determinism (flatten_winevt before windows, etc.).
-- **RuleIndex**: maps rule IDs by `Product` for filtered access. Populated during rule loading, accessible via `engine.rule_index()`.
-
 > Skip set details, key design decisions, and skip set construction logic are in [`architecture-reference.md`](architecture-reference.md) (Stages 2, 5, 6, 7).

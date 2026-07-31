@@ -314,24 +314,9 @@ RegressionData {
 
 ---
 
-## 7. Architectural invariants
-
-| Invariant | Detail |
-|---|---|
-| 100% sequential pipeline | rules → engine → collect → match → generate |
-| All in RAM | in-memory aggregation before writing, no DB |
-| One run = complete cycle | no "just collect" or "just generate" mode |
-| Collection via Winevt | EvtQueryW → EvtNext → EvtRender, no ETW, no ferrisetw |
-| LogSource injected by collector | `Event::inject_logsource_fields()` injects product/service/category into event_json, LogSourceExtractor from rsigma-eval prunes rules |
-| Bloom pre-filter | enabled in `DetectionEngine::new()`, prunes substring matchers via trigrams |
-| Skip-at-load sole optimization | rules with `info.yml` excluded from engine |
-| One event per test | `match_count: 1`, first event only |
-| Output mirrors source | `regression_tests_path` added to source YAML |
-| EVTX via EvtExportLog | Re-queries event by RecordID → valid binary EVTX. .xml fallback on failure. |
-
 ---
 
-## 8. Dependencies
+## 7. Dependencies
 
 | Dependency | Usage |
 |---|---|---|
@@ -354,7 +339,7 @@ RegressionData {
 
 ---
 
-## 9. Build & Lint
+## 8. Build & Lint
 
 ```bash
 cargo build --release
@@ -364,7 +349,7 @@ cargo xwin build --release --target x86_64-pc-windows-msvc   # cross-compile Win
 
 ---
 
-## 10. CLI
+## 9. CLI
 
 ```
 sigmacatch
@@ -376,7 +361,7 @@ Config is auto-created on first run with defaults. Edit `config.yaml` before run
 
 ---
 
-## 11. Pipeline diagram
+## 10. Pipeline diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐

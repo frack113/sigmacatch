@@ -1,18 +1,13 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Rules directory discovery — scan a SigmaHQ repository root for `rules` / `rules-*` directories.
-
 use anyhow::Result;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
-/// Scan `root` for `rules` / `rules-*` directories (excludes `rules-compliance`).
-///
-/// Returns directories that contain Sigma rule YAML files.
-pub fn find_rules_dirs(root: &Path) -> Result<Vec<PathBuf>> {
+pub(crate) fn find_rules_dirs(root: &Path) -> Result<Vec<PathBuf>> {
     let mut dirs = Vec::new();
     let mut excluded = Vec::new();
     #[cfg(unix)]
@@ -181,7 +176,6 @@ mod tests {
     fn test_find_rules_dirs_empty_rules_prefix_not_discovered() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir(tmp.path().join("rules-empty")).unwrap();
-        // `rules-*` dirs without yml files are excluded
         let result = find_rules_dirs(tmp.path()).unwrap();
         assert!(result.is_empty());
     }
@@ -192,7 +186,6 @@ mod tests {
         let rules = tmp.path().join("rules");
         fs::create_dir_all(rules.join("nested")).unwrap();
         let result = find_rules_dirs(tmp.path()).unwrap();
-        // `rules` dir is always discovered (no yml check for bare `rules`)
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].file_name().unwrap(), "rules");
     }

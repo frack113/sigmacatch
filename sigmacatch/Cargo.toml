@@ -61,7 +61,7 @@ tracing-appender = "0.2"
 anyhow = "1.0"
 phf = { version = "0.14", features = ["macros"] }
 chrono = "0.4"
-rayon = "1.10"
+
 uuid = { version = "1", features = ["v4"] }
 
 # EVTX parsing (for evtx_check tool)
