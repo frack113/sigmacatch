@@ -236,7 +236,7 @@ detection:
         fs::create_dir_all(&rules_dir).unwrap();
         fs::write(rules_dir.join("win_rule.yml"), MINIMAL_RULE_YAML).unwrap();
 
-        let rules = SigmahqRules::new(&sigma_dir).unwrap();
+        let rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
 
         let engine = DetectionEngine::new(&rules).unwrap();
         assert_eq!(engine.rule_count(), 1);
@@ -265,7 +265,7 @@ detection:
         fs::create_dir_all(&rules_dir).unwrap();
         fs::write(rules_dir.join("test_rule.yml"), MINIMAL_RULE_YAML).unwrap();
 
-        let rules = SigmahqRules::new(&sigma_dir).unwrap();
+        let rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
 
         let mut engine = DetectionEngine::new(&rules).unwrap();
         let event = Event::new(serde_json::json!({"event_id": 1}), Vec::new());
@@ -285,7 +285,7 @@ detection:
         fs::create_dir_all(&rules_dir).unwrap();
         fs::write(rules_dir.join("win_rule.yml"), MINIMAL_RULE_YAML).unwrap();
 
-        let mut rules = SigmahqRules::new(&sigma_dir).unwrap();
+        let mut rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
 
         let mut engine = DetectionEngine::new(&rules).unwrap();
         assert_eq!(engine.rule_count(), 1);

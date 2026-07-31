@@ -12,7 +12,8 @@ pub(crate) mod channel_resolver;
 pub(crate) mod discover;
 pub(crate) mod thresholds;
 
-// Note: init_from_sigma_path was removed; use SigmahqRules::new(path) instead.
+// Note: init_from_sigma_path was removed; use SigmahqRules::new() for production,
+// SigmahqRules::new_from_path() for tests with custom directories.
 
 use crate::channel_resolver::resolve_channels;
 use anyhow::Result;
@@ -26,7 +27,11 @@ pub struct SigmahqRules {
 }
 
 impl SigmahqRules {
-    pub fn new(sigma_path: &Path) -> Result<Self> {
+    pub fn new() -> Result<Self> {
+        Self::new_from_path(Path::new("./sigma"))
+    }
+
+    fn new_from_path(sigma_path: &Path) -> Result<Self> {
         let dirs = find_rules_dirs(sigma_path)?;
         if dirs.is_empty() {
             anyhow::bail!(
@@ -248,7 +253,7 @@ detection:
             ],
         );
 
-        let set = SigmahqRules::new(&sigma).unwrap().filter(
+        let set = SigmahqRules::new_from_path(&sigma).unwrap().filter(
             Some("windows"),
             Some(MinStatus(Status::Stable)),
             Some(MinLevel(Level::Critical)),
@@ -274,7 +279,7 @@ detection:
         fs::create_dir_all(&rules_dir).unwrap();
         write_rules(&rules_dir, &[("win.yml", MINIMAL_RULE)]);
 
-        let mut set = SigmahqRules::new(&sigma).unwrap();
+        let mut set = SigmahqRules::new_from_path(&sigma).unwrap();
         set.remove_id("11111111-1111-1111-1111-111111111111");
 
         assert!(set.is_empty());
@@ -288,7 +293,7 @@ detection:
         fs::create_dir_all(&rules_dir).unwrap();
         write_rules(&rules_dir, &[("win.yml", MINIMAL_RULE)]);
 
-        let set = SigmahqRules::new(&sigma).unwrap();
+        let set = SigmahqRules::new_from_path(&sigma).unwrap();
 
         assert!(set.get("11111111-1111-1111-1111-111111111111").is_some());
         assert!(set.get("unknown-id").is_none());
@@ -302,7 +307,7 @@ detection:
         fs::create_dir_all(&rules_dir).unwrap();
         write_rules(&rules_dir, &[("win.yml", MINIMAL_RULE)]);
 
-        let set = SigmahqRules::new(&sigma).unwrap();
+        let set = SigmahqRules::new_from_path(&sigma).unwrap();
 
         let collection = set.to_collection();
         assert_eq!(collection.rules.len(), 1);
@@ -329,7 +334,7 @@ detection:
         );
         write_rules(&rules_windows, &[("win2.yml", &other)]);
 
-        let set = SigmahqRules::new(&sigma).unwrap();
+        let set = SigmahqRules::new_from_path(&sigma).unwrap();
 
         assert_eq!(set.len(), 2);
         assert_eq!(set.stats().rules_loaded, 2);
@@ -338,7 +343,7 @@ detection:
     #[test]
     fn test_ruleset_init_from_sigma_path_empty() {
         let tmp = tempfile::tempdir().unwrap();
-        let err = SigmahqRules::new(tmp.path()).unwrap_err();
+        let err = SigmahqRules::new_from_path(tmp.path()).unwrap_err();
         assert!(err.to_string().contains("No rules directories found"));
     }
 
@@ -364,7 +369,7 @@ detection:
             ],
         );
 
-        let set = SigmahqRules::new(&sigma_dir).unwrap();
+        let set = SigmahqRules::new_from_path(&sigma_dir).unwrap();
         assert_eq!(set.len(), 2);
 
         let filtered = set.filter(
@@ -392,7 +397,7 @@ detection:
         fs::create_dir_all(&rules_dir).unwrap();
         write_rules(&rules_dir, &[("win.yml", MINIMAL_RULE)]);
 
-        let set = SigmahqRules::new(&sigma_dir).unwrap();
+        let set = SigmahqRules::new_from_path(&sigma_dir).unwrap();
 
         let filtered = set.filter(None, None, None);
         assert_eq!(filtered.len(), 1);
@@ -418,7 +423,7 @@ detection:
             &[("win.yml", MINIMAL_RULE), ("linux.yml", &linux_crit)],
         );
 
-        let all = SigmahqRules::new(&sigma).unwrap();
+        let all = SigmahqRules::new_from_path(&sigma).unwrap();
 
         let windows = all.clone().filter(Some("windows"), None, None);
         assert_eq!(windows.len(), 1);
@@ -462,7 +467,7 @@ detection:
             ],
         );
 
-        let mut set = SigmahqRules::new(&sigma).unwrap();
+        let mut set = SigmahqRules::new_from_path(&sigma).unwrap();
         assert_eq!(set.len(), 2);
 
         assert!(set.remove_id("11111111-1111-1111-1111-111111111111"));
@@ -502,7 +507,7 @@ detection:
             ],
         );
 
-        let set = SigmahqRules::new(&sigma).unwrap();
+        let set = SigmahqRules::new_from_path(&sigma).unwrap();
         assert_eq!(set.len(), 3);
 
         let channels = set.channels(&HashMap::new());
@@ -538,7 +543,7 @@ detection:
             ],
         );
 
-        let set = SigmahqRules::new(&sigma_dir).unwrap().filter(
+        let set = SigmahqRules::new_from_path(&sigma_dir).unwrap().filter(
             Some("windows"),
             Some(MinStatus(Status::Stable)),
             Some(MinLevel(Level::Critical)),

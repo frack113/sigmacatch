@@ -118,8 +118,7 @@ async fn main() -> Result<()> {
         existing.into_iter().collect()
     };
 
-    let sigma_path = std::path::Path::new(&config.git.sigma_repo_path);
-    let mut rules = SigmahqRules::new(sigma_path)?;
+    let mut rules = SigmahqRules::new()?;
 
     for id in &existing_rules {
         rules.remove_id(id);
