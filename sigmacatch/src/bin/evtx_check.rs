@@ -4,13 +4,13 @@
 //! evtx_check: validate SigmaHQ regression data against the detection engine.
 //!
 //! Pipeline:
-//!   1. Scan <sigmahq_dir>/regression_data for info.yml entries via list_all()
-//!   2. Load all Sigma rules into a single DetectionEngine
+//!   1. Scan `./sigma/regression_data` for info.yml entries via list_all()
+//!   2. Load all Sigma rules from `./sigma` into a single DetectionEngine
 //!   3. For each entry: load its evtx data, push events into the engine, check alerts
 //!   4. Report per-rule pass/fail + summary
 //!
 //! Usage:
-//!   cargo run --release --bin evtx_check <sigmahq_dir>
+//!   cargo run --release --bin evtx_check
 
 use input_evtx::parse_evtx_bytes;
 use sigmacatch_detection::DetectionEngine;
@@ -74,24 +74,14 @@ impl ValidationStats {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-
-    if args.len() < 2 {
-        eprintln!("Usage: evtx_check <sigmahq_dir>");
-        eprintln!();
-        eprintln!("Scans <sigmahq_dir>/regression_data/ for info.yml entries,");
-        eprintln!("pushes each evtx's events into the detection engine, and");
-        eprintln!("checks that expected rules match with at least one hit.");
-        eprintln!();
-        eprintln!("Example:");
-        eprintln!("  cargo run --release --bin evtx_check ./sigma");
+    let sigma_dir = PathBuf::from("./sigma");
+    if !sigma_dir.exists() {
+        eprintln!("sigma/ directory not found — run sigmacatch first");
         std::process::exit(1);
     }
 
-    let sigma_dir = PathBuf::from(&args[1]);
     let regression_dir = sigma_dir.join("regression_data");
 
-    println!("SigmaHQ directory: {}", sigma_dir.display());
     println!("Scanning regression data: {}", regression_dir.display());
     println!();
 
