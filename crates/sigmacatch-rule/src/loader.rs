@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 use crate::{parse_sigma_yaml, Level, SigmaCollection, Status};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashSet;
 use std::path::Path;
 use tracing::info;
@@ -17,7 +17,7 @@ use tracing::info;
 /// `rules_filtered_status` = rules rejected because their status is below `min_status`.
 /// `rules_filtered_level` = rules that passed status check but were rejected because their level is below `min_level`.
 /// `rules_loaded` = rules that passed all filters and were added to the collection.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct LoadStats {
     /// Rules added to the collection (passed all filters).
     pub rules_loaded: u64,
@@ -320,28 +320,6 @@ pub fn load_all_rules(
             rules_total_candidate,
         },
     })
-}
-
-/// Find rules directories under `sigma_path`, then load rules with the given
-/// filter and skip set. Returns the collection + load statistics.
-///
-/// Convenience wrapper combining [`find_rules_dirs`] + [`load_all_rules`].
-pub fn load_rules_from(
-    sigma_path: &Path,
-    filter: &LoadFilter,
-    skip_ids: &HashSet<String>,
-) -> Result<LoadResult> {
-    let rules_dirs =
-        crate::scanner::find_rules_dirs(sigma_path).context("Failed to scan rules directories")?;
-    if rules_dirs.is_empty() {
-        anyhow::bail!(
-            "Scanned \"{path}\" — found 0 rules directories. \
-             The repository may be empty or incomplete.",
-            path = sigma_path.display()
-        );
-    }
-    let dirs: Vec<&Path> = rules_dirs.iter().map(|d| d.as_path()).collect();
-    load_all_rules(&dirs, skip_ids, filter)
 }
 
 #[cfg(test)]

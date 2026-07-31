@@ -3,7 +3,7 @@
 
 [package]
 name = "input-windows-channels"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Multi-channel Windows Event Log collector with internal FIFO"
 license = "MIT"

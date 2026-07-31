@@ -8,6 +8,5 @@
 //! - Implements `EventProducer` trait — calls `run(tx)` to collect and send events
 
 mod collector;
-pub mod mapping;
 
 pub use collector::EventCollector;

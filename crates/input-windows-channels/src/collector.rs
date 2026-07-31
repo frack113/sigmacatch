@@ -8,26 +8,34 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use sigmacatch_types::{Event, EventProducer};
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tracing::info;
 
-use crate::mapping::channel_list::ALL_CHANNELS;
-
-/// Maximum events to collect per channel before stopping.
-#[allow(dead_code)]
-const MAX_EVENTS: usize = 100_000;
 /// Timeout in ms for each EvtNext call.
-#[allow(dead_code)]
+#[cfg(windows)]
 const EVT_NEXT_TIMEOUT_MS: u32 = 5000;
-/// Idle timeout per channel: if a channel returns no events for this duration,
-/// it is considered exhausted (prevents 5s per-channel waste on empty logs).
-#[allow(dead_code)]
-const CHANNEL_IDLE_TIMEOUT_MS: u32 = 10_000;
+
+/// Maximum events to collect per channel before the initial drain is capped.
+#[cfg(windows)]
+const MAX_EVENTS: usize = 100_000;
+
+/// Backoff in ms when EvtNext returns a real error.
+#[cfg(windows)]
+const ERROR_BACKOFF_MS: u64 = 5_000;
+
+/// Idle poll interval in ms when a channel has no new events (normal state).
+#[cfg(windows)]
+const IDLE_POLL_MS: u64 = 1_000;
+
+/// Number of consecutive empty incremental cycles before probing for a record-id rollover.
+#[cfg(windows)]
+const ROLLOVER_CHECK_CYCLES: u32 = 30;
 
 /// Multi-channel Windows Event Log collector.
 ///
-/// Spawns one task per channel. Each task collects events via Winevt
-/// API and sends them into the provided `mpsc::Sender<Event>`.
+/// Spawns one task per channel. Each task continuously polls for new events
+/// via the Winevt API until the receiver is dropped.
 pub struct EventCollector {
     channels: Vec<String>,
 }
@@ -41,22 +49,17 @@ impl EventCollector {
 
 #[async_trait]
 impl EventProducer for EventCollector {
-    async fn run(self, tx: mpsc::Sender<Event>) -> anyhow::Result<()> {
-        let channels = if self.channels.is_empty() {
-            ALL_CHANNELS.iter().map(|s| s.to_string()).collect()
-        } else {
-            self.channels.clone()
-        };
-
+    async fn run(self, tx: mpsc::Sender<Event>, stop: watch::Receiver<bool>) -> anyhow::Result<()> {
         let tx = Arc::new(tx);
         let mut handles = JoinSet::new();
 
-        for channel in &channels {
+        for channel in &self.channels {
             let tx = Arc::clone(&tx);
+            let stop = stop.clone();
             let channel = channel.to_string();
 
             handles.spawn(async move {
-                Self::collect_channel(channel, tx).await;
+                Self::collect_channel(channel, tx, stop).await;
             });
         }
 
@@ -67,114 +70,269 @@ impl EventProducer for EventCollector {
             }
         }
 
-        info!("EventCollector stopped — all channels collected");
+        info!("EventCollector stopped");
         Ok(())
     }
 }
 
 impl EventCollector {
-    /// Collect events from a single channel via Winevt API.
+    /// Collect events from a single channel via Winevt API (continuous).
     #[cfg(windows)]
-    async fn collect_channel(channel: String, tx: Arc<mpsc::Sender<Event>>) {
-        let channel_name = channel.clone();
-        let result =
-            tokio::task::spawn_blocking(move || Self::collect_events_blocking(&channel_name)).await;
+    async fn collect_channel(
+        channel: String,
+        tx: Arc<mpsc::Sender<Event>>,
+        stop: watch::Receiver<bool>,
+    ) {
+        let ch = channel.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            Self::collect_continuous(&ch, &tx, &stop);
+        })
+        .await;
 
-        match result {
-            Ok(events) => {
-                let count = events.len();
-                for event in events {
-                    if tx.send(event).await.is_err() {
-                        tracing::warn!("Channel '{channel}' — receiver dropped, stopping");
-                        return;
-                    }
-                }
-                info!("Collected {count} events from channel '{channel}'");
-            }
-            Err(e) => {
-                tracing::warn!("Failed to collect from channel '{channel}': {e}");
-            }
+        if let Err(e) = result {
+            tracing::warn!("Channel '{channel}' collector panicked: {e}");
         }
     }
 
-    /// Collect events from a single channel via Winevt API (blocking).
+    /// Continuous event collection from a single channel using Winevt API.
+    ///
+    /// Polls the channel in a loop, using XPath `*[System[EventRecordID > {last}]]`
+    /// to fetch only new events. Events are sent through `tx` as they arrive.
+    /// Returns when `stop` is set, `tx.blocking_send()` fails (receiver dropped),
+    /// or an unrecoverable error occurs.
     #[cfg(windows)]
-    fn collect_events_blocking(channel: &str) -> Vec<Event> {
+    fn collect_continuous(channel: &str, tx: &mpsc::Sender<Event>, stop: &watch::Receiver<bool>) {
         use windows::Win32::System::EventLog::{EvtClose, EVT_HANDLE};
 
-        // Initialize COM for the thread
         let _com_guard = match Self::init_com() {
             Ok(g) => g,
             Err(e) => {
                 tracing::warn!("CoInitializeEx failed for channel '{channel}': {e}");
-                return Vec::new();
+                return;
             }
         };
 
-        // Convert channel name to wide string for Winevt API
-        let channel_wide = channel_to_wide(channel);
+        let mut last_record_id: u64 = 0;
+        let mut empty_cycles: u32 = 0;
 
-        // Query events from channel (deferred query)
-        let query_handle = match Self::evt_query(&channel_wide) {
-            Ok(h) => h,
-            Err(e) => {
-                tracing::warn!("EvtQuery failed for channel '{channel}': {e}");
-                return Vec::new();
-            }
-        };
+        while !*stop.borrow() {
+            let channel_wide = str_to_wide(channel);
+            let query_wide = if last_record_id == 0 {
+                str_to_wide("*")
+            } else {
+                str_to_wide(&format!("*[System[EventRecordID > {}]]", last_record_id))
+            };
 
-        let mut events = Vec::new();
-        let mut event_handles: Vec<isize> = vec![0; 32];
-        let mut idle_count: u32 = 0;
-
-        while events.len() < MAX_EVENTS {
-            let events_fetched = match Self::evt_next(query_handle, &mut event_handles) {
-                Ok(n) => n,
+            let query_handle = match Self::evt_query(&channel_wide, &query_wide) {
+                Ok(h) => h,
                 Err(e) => {
-                    tracing::warn!("EvtNext failed for channel '{channel}': {e}");
-                    break;
+                    tracing::warn!("EvtQuery failed for channel '{channel}': {e}");
+                    std::thread::sleep(std::time::Duration::from_millis(ERROR_BACKOFF_MS));
+                    continue;
                 }
             };
 
-            if events_fetched == 0 {
-                idle_count += 1;
-                if idle_count > CHANNEL_IDLE_TIMEOUT_MS / 10 {
-                    tracing::debug!("Channel '{channel}' idle, stopping");
+            let mut event_handles: Vec<isize> = vec![0; 32];
+            let mut total_sent: usize = 0;
+            loop {
+                if *stop.borrow() {
                     break;
                 }
-                continue;
-            }
 
-            idle_count = 0;
-
-            for i in 0..events_fetched {
-                let handle_value = event_handles[i as usize];
-                if handle_value == 0 {
-                    continue;
+                let events_fetched = match Self::evt_next(query_handle, &mut event_handles) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        if Self::is_idle_error(&e) {
+                            break; // normal idle timeout / no more items — re-query
+                        }
+                        tracing::warn!("EvtNext failed for channel '{channel}': {e}");
+                        std::thread::sleep(std::time::Duration::from_millis(ERROR_BACKOFF_MS));
+                        break;
+                    }
+                };
+                if events_fetched == 0 {
+                    break; // timeout with no new events — re-query
                 }
 
-                let event_handle = EVT_HANDLE(handle_value);
-                Self::render_and_push(event_handle, channel, &mut events);
+                for i in 0..events_fetched as usize {
+                    let handle_value = event_handles[i];
+                    if handle_value == 0 {
+                        event_handles[i] = 0;
+                        continue;
+                    }
 
-                // Close event handle
-                unsafe {
-                    let _ = EvtClose(event_handle);
+                    let event_handle = EVT_HANDLE(handle_value);
+                    let render_result = Self::render_event(event_handle);
+                    unsafe {
+                        let _ = EvtClose(event_handle);
+                    }
+                    event_handles[i] = 0;
+
+                    if let Some(event) = render_result {
+                        if let Some(rid) = event
+                            .record_id()
+                            .or_else(|| Self::extract_record_id_from_raw(&event.event_raw))
+                        {
+                            if rid > last_record_id {
+                                last_record_id = rid;
+                            }
+                        }
+                        if tx.blocking_send(event).is_err() {
+                            // Receiver dropped — close remaining handles and exit
+                            for j in (i + 1)..events_fetched as usize {
+                                if event_handles[j] != 0 {
+                                    unsafe {
+                                        let _ = EvtClose(EVT_HANDLE(event_handles[j]));
+                                    }
+                                    event_handles[j] = 0;
+                                }
+                            }
+                            unsafe {
+                                let _ = EvtClose(query_handle);
+                            }
+                            return;
+                        }
+                        total_sent += 1;
+                    }
+                }
+
+                if total_sent >= MAX_EVENTS {
+                    tracing::warn!(
+                        "Channel '{channel}' reached MAX_EVENTS ({MAX_EVENTS}), stopping initial drain"
+                    );
+                    break;
                 }
             }
 
-            // Reset event handles for next batch
-            for handle in event_handles.iter_mut() {
-                *handle = 0;
+            unsafe {
+                let _ = EvtClose(query_handle);
+            }
+
+            if total_sent == 0 {
+                empty_cycles += 1;
+                if empty_cycles >= ROLLOVER_CHECK_CYCLES {
+                    empty_cycles = 0;
+                    let max_record_id = Self::probe_max_record_id(channel);
+                    if max_record_id > 0 && max_record_id <= last_record_id {
+                        tracing::warn!(
+                            "Channel '{channel}' record-id rollover detected (last={last_record_id}, max={max_record_id}); resetting to 0"
+                        );
+                        last_record_id = 0;
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(IDLE_POLL_MS));
+            } else {
+                empty_cycles = 0;
+            }
+
+            if *stop.borrow() {
+                break;
+            }
+        }
+    }
+
+    /// True when `EvtNext` failed due to normal idle conditions (ERROR_TIMEOUT,
+    /// ERROR_NO_MORE_ITEMS) — not an actual error worth logging.
+    #[cfg(windows)]
+    fn is_idle_error(e: &windows::core::Error) -> bool {
+        use windows::Win32::Foundation::{ERROR_NO_MORE_ITEMS, ERROR_TIMEOUT};
+
+        let code = e.code().0;
+        code == windows::core::HRESULT::from_win32(ERROR_TIMEOUT.0).0
+            || code == windows::core::HRESULT::from_win32(ERROR_NO_MORE_ITEMS.0).0
+    }
+
+    /// Extract the event record id directly from the raw rendered XML as a
+    /// fallback when the structured parse did not carry it (avoids re-fetching
+    /// duplicates on the next incremental query).
+    #[cfg(windows)]
+    fn extract_record_id_from_raw(raw: &[u8]) -> Option<u64> {
+        const MARKER: &str = "<EventRecordID>";
+        const END: &str = "</EventRecordID>";
+        let s = std::str::from_utf8(raw).ok()?;
+        let start = s.find(MARKER)? + MARKER.len();
+        let rest = &s[start..];
+        let end = rest.find(END)?;
+        rest[..end].trim().parse().ok()
+    }
+
+    /// Probe the current maximum record id of the channel via a reverse-direction
+    /// query (first result is the newest event). Returns 0 when the channel is
+    /// empty or the query fails.
+    #[cfg(windows)]
+    fn probe_max_record_id(channel: &str) -> u64 {
+        use windows::Win32::System::EventLog::{
+            EvtClose, EvtNext, EvtQueryReverseDirection, EVT_HANDLE,
+        };
+
+        let channel_wide = str_to_wide(channel);
+        let query_wide = str_to_wide("*");
+
+        let query_handle =
+            match Self::evt_query_flags(&channel_wide, &query_wide, EvtQueryReverseDirection.0) {
+                Ok(h) => h,
+                Err(_) => return 0,
+            };
+
+        let mut event_handles = [0isize; 1];
+        let mut events_fetched: u32 = 0;
+        let mut max_record_id: u64 = 0;
+
+        let result = unsafe {
+            EvtNext(
+                query_handle,
+                &mut event_handles,
+                EVT_NEXT_TIMEOUT_MS,
+                0,
+                &mut events_fetched,
+            )
+        };
+
+        if result.is_ok() && events_fetched > 0 && event_handles[0] != 0 {
+            let event_handle = EVT_HANDLE(event_handles[0]);
+            if let Some(event) = Self::render_event(event_handle) {
+                max_record_id = event.record_id().unwrap_or(0);
+            }
+            unsafe {
+                let _ = EvtClose(event_handle);
             }
         }
 
-        // Close query handle
         unsafe {
             let _ = EvtClose(query_handle);
         }
+        max_record_id
+    }
 
-        // COM guard drops here, calling CoUninitialize
-        events
+    /// Query events from a channel with the given XPath query.
+    #[cfg(windows)]
+    fn evt_query(
+        channel_wide: &[u16],
+        query_wide: &[u16],
+    ) -> Result<windows::Win32::System::EventLog::EVT_HANDLE, String> {
+        use windows::Win32::System::EventLog::EvtQueryChannelPath;
+        Self::evt_query_flags(channel_wide, query_wide, EvtQueryChannelPath.0)
+    }
+
+    /// Query events from a channel with the given XPath query and flags.
+    #[cfg(windows)]
+    fn evt_query_flags(
+        channel_wide: &[u16],
+        query_wide: &[u16],
+        flags: u32,
+    ) -> Result<windows::Win32::System::EventLog::EVT_HANDLE, String> {
+        use windows::core::PCWSTR;
+        use windows::Win32::System::EventLog::EvtQuery;
+
+        let path = PCWSTR::from_raw(channel_wide.as_ptr());
+        let query = PCWSTR::from_raw(query_wide.as_ptr());
+
+        let handle = unsafe { EvtQuery(None, path, query, flags) };
+
+        match handle {
+            Ok(h) => Ok(h),
+            Err(e) => Err(format!("EvtQuery failed: {e}")),
+        }
     }
 
     /// Initialize COM apartment for the current thread.
@@ -191,58 +349,32 @@ impl EventCollector {
         }
     }
 
-    /// Query events from a channel.
-    #[cfg(windows)]
-    fn evt_query(
-        channel_wide: &[u16],
-    ) -> Result<windows::Win32::System::EventLog::EVT_HANDLE, String> {
-        use windows::core::PCWSTR;
-        use windows::Win32::System::EventLog::{EvtQuery, EvtQueryChannelPath};
-
-        let path = PCWSTR::from_raw(channel_wide.as_ptr());
-        let query = PCWSTR::from_raw(b"*\0".as_ptr() as *const u16);
-
-        let handle = unsafe { EvtQuery(None, path, query, EvtQueryChannelPath.0) };
-
-        match handle {
-            Ok(h) => Ok(h),
-            Err(e) => Err(format!("EvtQuery failed: {e}")),
-        }
-    }
-
     /// Fetch the next batch of events.
     #[cfg(windows)]
     fn evt_next(
         query_handle: windows::Win32::System::EventLog::EVT_HANDLE,
         event_handles: &mut [isize],
-    ) -> Result<u32, String> {
+    ) -> Result<u32, windows::core::Error> {
         use windows::Win32::System::EventLog::EvtNext;
 
         let mut events_fetched: u32 = 0;
 
-        let result = unsafe {
+        unsafe {
             EvtNext(
                 query_handle,
                 event_handles,
                 EVT_NEXT_TIMEOUT_MS,
                 0,
                 &mut events_fetched,
-            )
-        };
-
-        match result {
-            Ok(()) => Ok(events_fetched),
-            Err(e) => Err(format!("EvtNext failed: {e}")),
+            )?;
         }
+
+        Ok(events_fetched)
     }
 
-    /// Render event handle to XML and parse into Event.
+    /// Render event handle to XML and parse into an Event.
     #[cfg(windows)]
-    fn render_and_push(
-        event_handle: windows::Win32::System::EventLog::EVT_HANDLE,
-        _channel: &str,
-        events: &mut Vec<Event>,
-    ) {
+    fn render_event(event_handle: windows::Win32::System::EventLog::EVT_HANDLE) -> Option<Event> {
         use windows::Win32::System::EventLog::{EvtRender, EvtRenderEventXml};
 
         // First call to get required buffer size
@@ -260,7 +392,7 @@ impl EventCollector {
         };
 
         if result.is_err() || buffer_size == 0 {
-            return;
+            return None;
         }
 
         // Allocate and render
@@ -279,31 +411,25 @@ impl EventCollector {
         };
 
         if result.is_err() || bytes_used == 0 {
-            return;
+            return None;
         }
 
         // Parse XML to Event
-        let xml_str = match String::from_utf8(buffer[..bytes_used as usize].to_vec()) {
-            Ok(s) => s,
-            Err(_) => return,
-        };
+        let xml_str = String::from_utf8(buffer[..bytes_used as usize].to_vec()).ok()?;
 
-        if let Ok(mut event) = Event::from_xml(&xml_str) {
-            event.inject_logsource_fields();
-            events.push(event);
-        }
+        let mut event = Event::from_xml(&xml_str).ok()?;
+        event.inject_logsource_fields();
+        Some(event)
     }
 
-    /// Non-Windows stub: returns empty events.
+    /// Non-Windows stub: continuous collection is a no-op.
     #[cfg(not(windows))]
-    async fn collect_channel(_channel: String, _tx: Arc<mpsc::Sender<Event>>) {
+    async fn collect_channel(
+        _channel: String,
+        _tx: Arc<mpsc::Sender<Event>>,
+        _stop: watch::Receiver<bool>,
+    ) {
         // stub on non-Windows
-    }
-
-    #[cfg(not(windows))]
-    #[allow(dead_code)]
-    fn collect_events_blocking(_channel: &str) -> Vec<Event> {
-        Vec::new()
     }
 }
 
@@ -319,10 +445,10 @@ impl Drop for ComGuard {
     }
 }
 
-/// Convert a channel name to a null-terminated wide string.
+/// Convert a string to a null-terminated wide string for the Winevt API.
 #[cfg(windows)]
-fn channel_to_wide(channel: &str) -> Vec<u16> {
-    let mut v: Vec<u16> = channel.encode_utf16().collect();
+fn str_to_wide(s: &str) -> Vec<u16> {
+    let mut v: Vec<u16> = s.encode_utf16().collect();
     v.push(0);
     v
 }

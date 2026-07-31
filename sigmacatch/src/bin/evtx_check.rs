@@ -16,6 +16,7 @@ use input_evtx::parse_evtx_bytes;
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_regression::logtype::LogType;
 use sigmacatch_regression::{list_all, RegressionData};
+use sigmacatch_rule::{LoadFilter, RuleIndex};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -116,7 +117,21 @@ fn main() {
         }
     };
     let refs: Vec<&Path> = dirs.iter().map(|d| d.as_path()).collect();
-    let mut engine = match DetectionEngine::from_rules_dirs(&refs) {
+    // Permissive filter: validate regression data against ALL Windows rules,
+    // regardless of status/level. A restrictive default (stable+critical)
+    // would produce false "RULE NOT MATCHED" failures for regression entries
+    // whose rule is experimental or lower severity.
+    let filter = LoadFilter {
+        min_status: None,
+        min_level: None,
+        ..LoadFilter::default()
+    };
+    let mut rule_index = RuleIndex::new();
+    if let Err(e) = rule_index.load_from_dirs(&refs, &HashSet::new(), &filter) {
+        eprintln!("Failed to load rules: {}", e);
+        std::process::exit(1);
+    }
+    let mut engine = match DetectionEngine::new(&rule_index) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("Failed to build engine: {}", e);

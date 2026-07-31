@@ -114,6 +114,15 @@ impl Event {
             .unwrap_or("")
     }
 
+    /// EventRecordID extracted from the parsed JSON (`Event.System.EventRecordID`).
+    pub fn record_id(&self) -> Option<u64> {
+        self.event_json
+            .get("Event")?
+            .get("System")?
+            .get("EventRecordID")
+            .and_then(|v| v.as_u64())
+    }
+
     /// Inject `product`, `service`, `category` fields into `event_json`.
     ///
     /// The detection engine's `LogSourceExtractor` reads these fields to prune
@@ -502,7 +511,9 @@ impl Alert {
 
     pub fn record_id(&self) -> Option<u64> {
         self.event_json
-            .get("EventRecordID_num")
+            .get("Event")?
+            .get("System")?
+            .get("EventRecordID")
             .and_then(|v| v.as_u64())
     }
 
@@ -603,11 +614,16 @@ pub struct Stats {
 ///
 /// Implementors collect events from a source and send them into the provided
 /// `mpsc::Sender<Event>`. When collection is complete, the sender is dropped
-/// automatically.
+/// automatically. The producer must exit promptly when `stop` is set.
 #[async_trait]
 pub trait EventProducer: Send {
     /// Run the producer, sending collected events into `tx`.
-    async fn run(self, tx: mpsc::Sender<Event>) -> anyhow::Result<()>;
+    /// Stops when `stop` is set to `true` or when the receiver is dropped.
+    async fn run(
+        self,
+        tx: mpsc::Sender<Event>,
+        stop: tokio::sync::watch::Receiver<bool>,
+    ) -> anyhow::Result<()>;
 }
 
 #[cfg(test)]

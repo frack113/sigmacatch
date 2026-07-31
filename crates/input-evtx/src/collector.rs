@@ -10,7 +10,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use sigmacatch_types::{parse_winevt_xml, Event, EventProducer};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 /// EVTX file producer.
 ///
@@ -65,11 +65,17 @@ impl Default for EventCollector {
 
 #[async_trait]
 impl EventProducer for EventCollector {
-    async fn run(self, tx: mpsc::Sender<Event>) -> anyhow::Result<()> {
+    async fn run(self, tx: mpsc::Sender<Event>, stop: watch::Receiver<bool>) -> anyhow::Result<()> {
         for path in &self.files {
+            if *stop.borrow() {
+                break;
+            }
             let events = Self::load_evtx(path)
                 .with_context(|| format!("Failed to load EVTX {}", path.display()))?;
             for event in events {
+                if *stop.borrow() {
+                    break;
+                }
                 tx.send(event)
                     .await
                     .context("Channel send failed — receiver dropped")?;

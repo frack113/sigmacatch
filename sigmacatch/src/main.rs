@@ -1,20 +1,19 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use sigmacatch_config::{self, dry_run_git, parse_args, Config};
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_logger::init as init_logger;
 use sigmacatch_regression::RegressionData;
 use sigmacatch_repo::{self, github, SigmaRepo};
-use sigmacatch_types::{Event, EventProducer, Stats};
+use sigmacatch_rule::{LoadFilter, RuleIndex};
+use sigmacatch_types::{Event, EventProducer};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::mpsc;
-use tracing::{info, info_span, warn};
+use tracing::{info, warn};
 
 #[cfg(windows)]
 fn setup_console() {
@@ -120,15 +119,16 @@ async fn main() -> Result<()> {
     };
 
     let sigma_path = std::path::Path::new(&config.git.sigma_repo_path);
-    let filter = sigmacatch_rule::LoadFilter {
+    let filter = LoadFilter {
         product: config.sigma.product.as_str().to_string(),
         min_status: Some(config.sigma.min_status),
         min_level: Some(config.sigma.min_level),
         max_rules: config.sigma.max_rules,
         max_rule_size: config.sigma.max_rule_size,
     };
-    let load_result = sigmacatch_rule::load_rules_from(sigma_path, &filter, &existing_rules)?;
-    let stats = &load_result.stats;
+    let mut rule_index = RuleIndex::new();
+    rule_index.load_from_sigma_path(sigma_path, &existing_rules, &filter)?;
+    let stats = rule_index.stats();
 
     info!(
         "Loaded {} rules ({} skipped by existing regression, {} filtered by status, {} filtered by level)",
@@ -147,20 +147,17 @@ async fn main() -> Result<()> {
         );
     }
 
-    let mut engine = DetectionEngine::new();
-    engine.load_collection(load_result.collection)?;
-    let hir_blob = engine.save_hir()?;
-
     let custom_map = sigmacatch_config::load_custom_channel_mapping(
         PathBuf::from("custom_channels.yaml").as_path(),
     );
-    let cycle_channels =
-        input_windows_channels::mapping::resolve_channels(engine.rule_count() > 0, &custom_map);
+    let cycle_channels = rule_index.get_channels(&custom_map);
 
     if cycle_channels.is_empty() {
         warn!("0 channels resolved — nothing to collect");
         return Ok(());
     }
+
+    let mut engine = DetectionEngine::new(&rule_index)?;
 
     if cli.channels_only {
         info!("Channels only mode — listing channels and exiting");
@@ -170,131 +167,189 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let running = Arc::new(AtomicBool::new(true));
-    let running_clone = running.clone();
+    // ─── Shutdown signal (Ctrl+C) ────────────────────────────────────────
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+    let stx = shutdown_tx.clone();
     tokio::spawn(async move {
         if let Err(e) = signal::ctrl_c().await {
-            warn!("Failed to wait for Ctrl+C: {}", e);
+            warn!("Failed to register Ctrl+C handler: {}", e);
             return;
         }
-        info!("Ctrl+C received, stopping…");
-        running_clone.store(false, Ordering::Relaxed);
+        info!("Ctrl+C received, shutting down…");
+        let _ = stx.send(true);
     });
     info!("Ctrl+C handler registered");
 
-    let mut cycle = 0u32;
+    // ─── Paths ───────────────────────────────────────────────────────────
+    let sigma_repo_path = Path::new(&config.git.sigma_repo_path);
+    let output_base = sigma_repo_path.join("regression_data");
+
+    // ─── Spawn continuous collector ──────────────────────────────────────
+    sigmacatch_regression::clean_partial_artifacts(&output_base);
+
+    let (tx, mut rx) = mpsc::channel::<Event>(100_000);
+    let producer_channels = cycle_channels.clone();
+    let collector_stop = shutdown_rx.clone();
+    let collector_handle = tokio::spawn(async move {
+        let collector = input_windows_channels::EventCollector::new(producer_channels);
+        if let Err(e) = collector.run(tx, collector_stop).await {
+            warn!("Collector finished with error: {}", e);
+        }
+    });
+    info!("Continuous collector started");
+
+    // ─── Generate timer (every 30s) ──────────────────────────────────────
+    let mut generate_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    generate_interval.tick().await; // skip immediate first tick
+
+    // ─── Continuous event loop ───────────────────────────────────────────
+
     loop {
-        if !running.load(Ordering::Relaxed) {
-            info!("Interrupted, shutting down");
-            let sigma_path = std::path::Path::new(&config.git.sigma_repo_path);
-            let github_token = (!config.git.github_token.trim().is_empty())
-                .then(|| config.git.github_token.trim());
-            if let Err(e) = sigmacatch_repo::push(
-                sigma_path,
-                &fork_config.branch_name,
-                config.git.transport,
-                github_token,
-                config.git.ssh_key_path.as_deref(),
-            ) {
-                warn!("Failed to push branch: {}", e);
-            } else {
-                info!(
-                    "Branch '{}' pushed to origin. Next step: create PR at https://github.com/SigmaHQ/sigma/pulls",
-                    fork_config.branch_name
+        tokio::select! {
+            _ = shutdown_rx.changed() => {
+                info!("Shutting down…");
+                break;
+            }
+            Some(event) = rx.recv() => {
+                engine.put_events(vec![event]);
+            }
+            _ = generate_interval.tick() => {
+                let created_files = process_and_generate(
+                    &mut engine,
+                    &mut rule_index,
+                    &output_base,
+                    &config.git.author,
+                    sigma_repo_path,
                 );
-            }
-            break;
-        }
 
-        cycle += 1;
-        let _span = info_span!("cycle", cycle_id = cycle).entered();
-        info!("collecting…");
-
-        let mut engine = DetectionEngine::new();
-        engine.load_hir(&hir_blob)?;
-
-        let (tx, mut rx) = mpsc::channel::<Event>(10_000);
-        let producer_channels = cycle_channels.clone();
-        let producer = tokio::spawn(async move {
-            let collector = input_windows_channels::EventCollector::new(producer_channels);
-            collector.run(tx).await
-        });
-        while let Some(event) = rx.recv().await {
-            engine.put_events(vec![event]);
-        }
-        if let Err(e) = producer.await.context("Producer panicked")? {
-            warn!("Producer returned error: {}", e);
-        }
-        engine.process_events();
-        let event_count = engine.stats().events_processed;
-        let alerts = engine.get_alerts();
-        let unique_match_count = {
-            let ids: std::collections::HashSet<&str> =
-                alerts.iter().map(|a| a.rule_id.as_str()).collect();
-            ids.len()
-        };
-        let stats = Stats {
-            events_processed: event_count,
-            matches_found: unique_match_count as u64,
-            regression_data_generated: 0,
-        };
-        info!(
-            events_processed = stats.events_processed,
-            matches_found = stats.matches_found,
-            "evaluation complete"
-        );
-
-        let sigma_repo_path = Path::new(&config.git.sigma_repo_path);
-        let output_base = sigma_repo_path.join("regression_data");
-        let mut reg = RegressionData::new(&output_base);
-        reg.set_author(&config.git.author);
-        reg.set_sigma_repo_path(sigma_repo_path);
-        let is_contrib = sigma_repo_path.file_name().is_some_and(|n| n == "sigma");
-        reg.set_is_contrib(is_contrib);
-        sigmacatch_regression::clean_partial_artifacts(&output_base);
-
-        let mut created_files: Vec<String> = Vec::new();
-        for alert in alerts {
-            if let Some(files) = reg.generate_from_alert(&alert) {
-                created_files.extend(files);
+                if !created_files.is_empty() {
+                    if let Err(e) = sigmacatch_repo::github::commit::commit_all_rules(
+                        sigma_repo_path,
+                        &created_files,
+                        &config.git.author,
+                        &config.git.email,
+                    ) {
+                        warn!("Failed to commit regression data: {}", e);
+                    }
+                }
             }
         }
-
-        if !created_files.is_empty() {
-            if let Err(e) = sigmacatch_repo::github::commit::commit_all_rules(
-                sigma_repo_path,
-                &created_files,
-                &config.git.author,
-                &config.git.email,
-            ) {
-                warn!("Failed to commit regression data: {}", e);
-            }
-        }
-        let generated_count = created_files.len();
-
-        info!(
-            events_processed = stats.events_processed,
-            regression_data_generated = generated_count,
-            "cycle complete"
-        );
-
-        let github_token =
-            (!config.git.github_token.trim().is_empty()).then(|| config.git.github_token.trim());
-        if let Err(e) = sigmacatch_repo::push(
-            std::path::Path::new(&config.git.sigma_repo_path),
-            &fork_config.branch_name,
-            config.git.transport,
-            github_token,
-            config.git.ssh_key_path.as_deref(),
-        ) {
-            warn!("Failed to push branch: {}", e);
-        } else {
-            info!("Branch '{}' pushed to origin", fork_config.branch_name);
-        }
-
-        info!("waiting 30s before next cycle…");
-        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
     }
 
+    // ─── Final shutdown flush ────────────────────────────────────────────
+    // Signal the collector to stop, wait for its tasks to finish (which drops
+    // the last Sender clones), then drain any remaining events. Draining before
+    // the collector exits would never terminate: the collector only stops when
+    // the receiver is dropped, and the receiver is needed to drain.
+    info!("Final flush — draining remaining events");
+    let _ = collector_handle.await;
+    while let Some(event) = rx.recv().await {
+        engine.put_events(vec![event]);
+    }
+    drop(rx);
+
+    let created_files = process_and_generate(
+        &mut engine,
+        &mut rule_index,
+        &output_base,
+        &config.git.author,
+        sigma_repo_path,
+    );
+
+    if !created_files.is_empty() {
+        if let Err(e) = sigmacatch_repo::github::commit::commit_all_rules(
+            sigma_repo_path,
+            &created_files,
+            &config.git.author,
+            &config.git.email,
+        ) {
+            warn!("Failed to commit regression data: {}", e);
+        }
+    }
+
+    let github_token =
+        (!config.git.github_token.trim().is_empty()).then(|| config.git.github_token.trim());
+    if let Err(e) = sigmacatch_repo::push(
+        sigma_repo_path,
+        &fork_config.branch_name,
+        config.git.transport,
+        github_token,
+        config.git.ssh_key_path.as_deref(),
+    ) {
+        warn!("Failed to push branch: {}", e);
+    } else {
+        info!(
+            "Branch '{}' pushed to origin. Next step: create PR at https://github.com/SigmaHQ/sigma/pulls",
+            fork_config.branch_name
+        );
+    }
+
+    info!("Sigmacatch finished");
     Ok(())
+}
+
+fn process_and_generate(
+    engine: &mut DetectionEngine,
+    rule_index: &mut RuleIndex,
+    output_base: &Path,
+    author: &str,
+    sigma_repo_path: &Path,
+) -> Vec<String> {
+    engine.process_events();
+    let alerts = engine.get_alerts();
+
+    if alerts.is_empty() {
+        return Vec::new();
+    }
+
+    let unique_match_count = {
+        let ids: std::collections::HashSet<&str> =
+            alerts.iter().map(|a| a.rule_id.as_str()).collect();
+        ids.len()
+    };
+
+    info!(
+        events_processed = engine.stats().events_processed,
+        matches_found = unique_match_count,
+        alerts_count = alerts.len(),
+        "evaluation complete"
+    );
+
+    let mut reg = RegressionData::new(output_base);
+    reg.set_author(author);
+    reg.set_sigma_repo_path(sigma_repo_path);
+    let is_contrib = sigma_repo_path.file_name().is_some_and(|n| n == "sigma");
+    reg.set_is_contrib(is_contrib);
+
+    let mut created_files: Vec<String> = Vec::new();
+    let mut retired_ids: Vec<String> = Vec::new();
+    for alert in alerts {
+        if let Some(files) = reg.generate_from_alert(&alert) {
+            created_files.extend(files);
+            // AD-4: retire the rule once its regression data is generated
+            retired_ids.push(alert.rule_id.clone());
+        }
+    }
+
+    // AD-4: exclude retired rules and reload the engine in one batch.
+    // Reloading once per batch avoids a full recompile per alert.
+    if !retired_ids.is_empty() {
+        for id in &retired_ids {
+            rule_index.exclude_rule_id(id);
+        }
+        if let Err(e) = engine.reload_rules(rule_index) {
+            warn!(
+                "Failed to reload engine after retiring {} rules: {}",
+                retired_ids.len(),
+                e
+            );
+        }
+    }
+
+    info!(
+        regression_data_generated = created_files.len(),
+        rules_retired = retired_ids.len(),
+        "batch complete"
+    );
+    created_files
 }
