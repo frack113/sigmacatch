@@ -16,7 +16,7 @@ use input_evtx::parse_evtx_bytes;
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_regression::logtype::LogType;
 use sigmacatch_regression::SigmahqRegression;
-use sigmacatch_rule::SigmahqRules;
+use sigmacatch_rule::{SigmaFilterConfig, SigmahqRules};
 use std::collections::HashSet;
 use std::process;
 use uuid::Uuid;
@@ -92,7 +92,10 @@ fn main() {
     };
     println!("Found {} total rules", rules.len());
 
-    let rules = rules.filter(Some("windows"), None, None);
+    let rules = rules.filter(SigmaFilterConfig {
+        product: "windows".to_string(),
+        ..Default::default()
+    });
     println!("  → {} windows rules after filtering", rules.len());
     println!();
 

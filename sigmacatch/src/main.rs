@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
     let cli = parse_args();
 
     let config_path = PathBuf::from("config.yaml");
-    let config = Config::load_with_cli(&config_path, &cli)?;
+    let mut config = Config::load_with_cli(&config_path, &cli)?;
 
     if cli.all_rules {
         info!("All-rules mode enabled — skip set will be empty");
@@ -106,28 +106,28 @@ async fn main() -> Result<()> {
         rules.remove_id(id);
     }
 
-    let mut rules = rules.filter(
-        Some(config.sigma.product.as_str()),
-        Some(config.sigma.min_status),
-        Some(config.sigma.min_level),
-    );
+    config.sigma.normalize();
+    let mut rules = rules.filter(config.sigma.clone());
     let stats = rules.stats();
 
     info!(
-        "Loaded {} rules ({} skipped by existing regression, {} filtered by product, {} filtered by status, {} filtered by level)",
+        "Loaded {} rules ({} skipped by existing regression, {} filtered by product, {} filtered by status, {} filtered by level, {} filtered by author)",
         stats.rules_loaded,
         existing_rules.len(),
         stats.rules_filtered_product,
         stats.rules_filtered_status,
         stats.rules_filtered_level,
+        stats.rules_filtered_author,
     );
 
     if stats.rules_loaded == 0 {
         anyhow::bail!(
-            "0 rules loaded — the filter config (min_status={}, min_level={}) is too restrictive. \
-             Adjust sigma.min_status and sigma.min_level in config.yaml or load rules with matching metadata.",
+            "0 rules loaded — the filter config (product={}, min_status={:?}, min_level={:?}, authors={:?}) is too restrictive. \
+             Adjust sigma.* filters in config.yaml or load rules with matching metadata.",
+            config.sigma.product,
             config.sigma.min_status,
             config.sigma.min_level,
+            config.sigma.authors,
         );
     }
 
