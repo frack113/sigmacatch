@@ -4,8 +4,10 @@ The tool produces regression data compatible with the [SigmaHQ](https://github.c
 
 ## Directory structure
 
+The output always lives inside the sigma repo, under `regression_data/`:
+
 ```
-regression_data/
+<sigma_repo_path>/regression_data/
 └── <rule_rel_path>/         # mirrors the rule path under sigma/rules/ (or rules/<rule_id>)
     ├── info.yml
     ├── <rule_id>.json
@@ -16,10 +18,10 @@ The directory mirrors the rule path under `rules/`. For example:
 
 ```
 sigma/rules/windows/builtin/security/win_security_foo.yml
-    → regression_data/rules/windows/builtin/security/win_security_foo/
-    → regression_data/rules/windows/builtin/security/win_security_foo/info.yml
-    → regression_data/rules/windows/builtin/security/win_security_foo/<rule_id>.json
-    → regression_data/rules/windows/builtin/security/win_security_foo/<rule_id>.evtx
+    → sigma/regression_data/rules/windows/builtin/security/win_security_foo/
+    → sigma/regression_data/rules/windows/builtin/security/win_security_foo/info.yml
+    → sigma/regression_data/rules/windows/builtin/security/win_security_foo/<rule_id>.json
+    → sigma/regression_data/rules/windows/builtin/security/win_security_foo/<rule_id>.evtx
 ```
 
 ## File contents
@@ -62,7 +64,7 @@ regression_tests_info:
       path: "regression_data/<rule_rel_path>/<rule_id>.evtx"  # relative path to the EVTX file
 ```
 
-> `path` is the relative path to the `.evtx` file under `regression_data/`.
+> `path` is the relative path to the `.evtx` file under `regression_data/` (inside the sigma repo).
 
 The source rule YAML is also annotated with:
 

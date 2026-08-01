@@ -47,7 +47,7 @@ Applied profile:
 
 ## Workspace
 
-The project is a cargo workspace with 7 crates:
+The project is a cargo workspace of 10 packages (1 binary + 9 libraries):
 
 ```bash
 # Build everything
@@ -55,11 +55,15 @@ cargo build --workspace
 
 # Build a specific crate
 cargo build -p sigmacatch
-cargo build -p detection-engine
+cargo build -p sigmacatch-config
+cargo build -p sigmacatch-logger
+cargo build -p sigmacatch-rule
+cargo build -p sigmacatch-detection
 cargo build -p input-windows-channels
-cargo build -p input-evtx
-cargo build -p sigma-regression
+cargo build -p sigmacatch-regression
 cargo build -p sigmacatch-types
+cargo build -p sigmacatch-repo
+cargo build -p input-evtx
 ```
 
 ## Binary

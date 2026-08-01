@@ -12,18 +12,22 @@ Capture real Windows events via the **Windows Event Log API** (`winevt`), match 
 ```
 SigmaHQ rules (auto-cloned via grit-lib)
     ↓
-Load rules → filter Windows → apply pipeline
+Load rules → skip existing regression → filter Windows → apply pipeline
     ↓
-WinevtCollector (live Windows events via EvtQueryW)
+Resolve channels from rules (logsource → channel mapping)
     ↓
-Sigma engine evaluates every event against all rules
+Continuous collector (live Windows events via EvtQueryW) → mpsc
     ↓
-Aggregate matches by rule_id → generate regression triplet
+Sigma engine evaluates every event against all loaded rules
     ↓
-regression_data/<rule_rel_path>/
+Every 30s: generate regression triplet for each matched rule
+    ↓
+sigma/regression_data/<rule_rel_path>/
     ├── <rule_id>.json    ← flat event (Sigma keys)
     ├── <rule_id>.evtx    ← valid EVTX (via EvtExportLog) or .xml fallback
     └── info.yml          ← SigmaHQ-compatible metadata
+    ↓
+commit + push to fork (continuous until Ctrl+C)
 ```
 
 ## Quick start
@@ -96,16 +100,20 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 
 ## Workspace
 
-The project is a cargo workspace of 7 crates:
+The project is a cargo workspace of 10 crates (9 lib crates + 1 binary):
 
 | Crate | Purpose |
 |---|---|
-| `sigmacatch` | Binary + pipeline, all orchestration |
-| `detection-engine` | Thin wrapper around rsigma-eval for loading pipelines and rules, then evaluating events |
-| `input-windows-channels` | LogSource resolution, taxonomy tables, channel mappings |
+| `sigmacatch` | Binary + orchestration (continuous loop) |
+| `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml + dry-run git diagnostics |
+| `sigmacatch-logger` | Two-layer tracing subscriber (stderr info + daily rolling file debug) |
+| `sigmacatch-rule` | `SigmahqRules`: rule loading, filter, dedupe, channel resolution |
+| `sigmacatch-detection` | Thin wrapper around rsigma-eval (pipelines, bloom, LogSourceExtractor) |
+| `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) |
+| `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, regression triplet generation |
+| `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
+| `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, GitHub fork detection, commit workflow |
 | `input-evtx` | Parse EVTX files into `Event` objects for the detection engine |
-| `sigma-regression` | SigmaHQ regression data format (`InfoYml`, `SkipSet`, triplet) |
-| `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML/JSON parsing |
 
 ## Built with
 

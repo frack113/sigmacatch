@@ -59,7 +59,7 @@ Features identified as useful but out of current scope. No timeline — document
 
 ## 5. Optimize DetectionEngine
 
-**Status:** partial. `RuleIndex` maps rule IDs by `Product` for product-scoped access. Pipelines are loaded dynamically from `crates/detection-engine/pipelines/`.
+**Status:** partial. Pipelines are embedded via `include_str!` from `crates/sigmacatch-detection/pipelines/` and applied to every rule at engine init.
 
 **What's missing:**
 - Per-event: only push events whose logsource matches at least one loaded rule's `logsource` — skip evaluation entirely for irrelevant rules
