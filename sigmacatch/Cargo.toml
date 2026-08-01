@@ -45,7 +45,6 @@ sigmacatch-rule = { path = "../crates/sigmacatch-rule" }
 sigmacatch-repo = { path = "../crates/sigmacatch-repo" }
 
 # Sérialisation
-serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = { package = "yaml_serde", version = "0.10" }
 
@@ -54,13 +53,9 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", 
 
 # Logs
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tracing-appender = "0.2"
 
 # Utilitaires
 anyhow = "1.0"
-phf = { version = "0.14", features = ["macros"] }
-chrono = "0.4"
 
 uuid = { version = "1", features = ["v4"] }
 
@@ -71,7 +66,6 @@ evtx = "0.12"
 tempfile = "3.12"
 
 [target.'cfg(windows)'.dependencies]
-dunce = "1.0"
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_System_Com",
