@@ -14,6 +14,7 @@ members = [
     "crates/input-windows-channels",
     "crates/sigmacatch-rule",
     "crates/sigmacatch-repo",
+    "localcheck",
 ]
 
 [profile.release]

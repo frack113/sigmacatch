@@ -12,10 +12,6 @@ license = "MIT"
 name = "sigmacatch"
 path = "src/main.rs"
 
-[[bin]]
-name = "evtx_check"
-path = "src/bin/evtx_check.rs"
-
 [dependencies]
 # Crate workspace — application configuration
 sigmacatch-config = { path = "../crates/sigmacatch-config" }
@@ -56,9 +52,6 @@ tracing = "0.1"
 anyhow = "1.0"
 
 uuid = { version = "1", features = ["v4"] }
-
-# EVTX parsing (for evtx_check tool)
-evtx = "0.12"
 
 [dev-dependencies]
 tempfile = "3.12"

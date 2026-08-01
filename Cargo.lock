@@ -1444,6 +1444,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
+name = "localcheck"
+version = "0.1.0"
+dependencies = [
+ "evtx",
+ "input-evtx",
+ "serde_json",
+ "sigmacatch-detection",
+ "sigmacatch-regression",
+ "sigmacatch-rule",
+ "uuid",
+]
+
+[[package]]
 name = "log"
 version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2395,7 +2408,6 @@ name = "sigmacatch"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "evtx",
  "input-evtx",
  "input-windows-channels",
  "serde_json",
