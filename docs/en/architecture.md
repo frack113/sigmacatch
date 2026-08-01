@@ -60,23 +60,22 @@ depends on `rsigma-parser`. `sigmacatch-config` depends on `sigmacatch-repo` + `
 1. parse_args() + Config::load_with_cli("config.yaml", cli)
    └── --dry-run → dry_run_git() (git diagnostics) + exit
 2. init_logger() → tracing (stderr info + file debug)
-3. detect_fork() → fork URL + branch name
-4. ensure_dirs() → sigma repo dir + logs/
-5. SigmaRepo init (remote_url = fork, fork branch, token) → init() [clone/fetch]
-6. SigmahqRegression::new() → loads existing info.yml from ./sigma/regression_data
+3. ensure_dirs() → sigma repo dir + logs/
+4. SigmaRepo init (remote_url = fork, working branch, token) → init() [clone/fetch]
+5. SigmahqRegression::new() → loads existing info.yml from ./sigma/regression_data
    └── existing_rules = regression.get_sigma_id() → HashSet<Uuid> (empty with --all-rules)
-7. SigmahqRules::new() → load + dedupe; remove_id() per skipped rule
+6. SigmahqRules::new() → load + dedupe; remove_id() per skipped rule
    └── filter(product, min_status, min_level); 0 rules → bail
-8. custom_map = load_custom_channel_mapping("custom_channels.yaml")
+7. custom_map = load_custom_channel_mapping("custom_channels.yaml")
    └── cycle_channels = rules.channels(&custom_map); 0 channels → warn + return
-9. DetectionEngine::new(&rules)  (pipelines + bloom + LogSourceExtractor)
+8. DetectionEngine::new(&rules)  (pipelines + bloom + LogSourceExtractor)
    └── --channels-only → print channels + exit
 10. output_base = <sigma_repo_path>/regression_data; clean_partial_artifacts()
 11. EventCollector::new(cycle_channels).run(tx, stop) → tokio task
 12. Loop: tokio::select!
     ├── shutdown_rx (Ctrl+C) → break
     ├── event from rx → engine.put_events(vec![event])
-    └── generate_interval (30s) → process_and_generate() → commit_all_rules() if files
+    └── generate_interval (30s) → process_and_generate() → commit_files() if files
 13. Final flush: drain remaining events → process_and_generate() → commit → push() fork
 ```
 

@@ -99,23 +99,18 @@ Config::load_with_cli("config.yaml", cli)
 init_logger(&config) → tracing (stderr info + daily rolling file debug)
 ```
 
-### Step 2 — Fork detection + repo acquisition
+### Step 2 — Repo acquisition
 
 ```
-detect_fork(author, branch_name) → ForkConfig { fork_url, branch_name }
-    ↓
 ensure_dirs() → create <sigma_repo_path>/ and logs/
     ↓
-SigmaRepo::new(<sigma_repo_path>)
-    ├── with_transport(http|ssh) + with_ssh_key_path
-    ├── with_remote_url(fork_url + ".git")
-    ├── with_fork_branch(branch_name)
-    └── with_token(github_token)  [if set]
+fork_url = "https://github.com/{author}/sigma"
     ↓
-sigma_repo.init() [async]
-    ├── NO .git → grit-lib clone <fork_url>
-    └── .git EXISTS → set remote origin URL → grit-lib fetch
-    └── switch HEAD to branch_name
+SigmaRepo::new()
+    ├── set_info_user(author, email)
+    ├── set_info_http(token) | set_info_ssh(key_path)
+    ├── set_remote_url(fork_url) → init() [async]
+    └── set_working_branch(branch_name) → switch_to_working_branch()
 ```
 
 ### Step 3 — Skip set (existing regression)
@@ -208,7 +203,7 @@ loop:
         shutdown_rx.changed()            → info "Shutting down" → break
         Some(event) = rx.recv()          → engine.put_events(vec![event])
         _ = generate_interval.tick()     → process_and_generate()
-                                              → commit_all_rules() if files created
+                                               → commit_files() if files created
     }
 ```
 
@@ -252,7 +247,7 @@ Final flush:
     await collector task (stops → drops Sender clones)
     drain remaining rx → engine.put_events
     ↓
-process_and_generate() → commit_all_rules() if files
+process_and_generate() → commit_files() if files
     ↓
 push(sigma_repo_path, branch_name, transport, token) → fork
     └── success → "Next step: create PR at https://github.com/SigmaHQ/sigma/pulls"

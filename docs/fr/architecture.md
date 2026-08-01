@@ -60,23 +60,22 @@ dépend de `rsigma-parser`. `sigmacatch-config` dépend de `sigmacatch-repo` + `
 1. parse_args() + Config::load_with_cli("config.yaml", cli)
    └── --dry-run → dry_run_git() (diagnostics git) + sortie
 2. init_logger() → tracing (stderr info + fichier debug)
-3. detect_fork() → URL du fork + nom de branche
-4. ensure_dirs() → dossier repo sigma + logs/
-5. Init SigmaRepo (remote_url = fork, branche fork, token) → init() [clone/fetch]
-6. SigmahqRegression::new() → charge les info.yml existants depuis ./sigma/regression_data
+3. ensure_dirs() → dossier repo sigma + logs/
+4. SigmaRepo init (remote_url = fork, branche de travail, token) → init() [clone/fetch]
+5. SigmahqRegression::new() → charge les info.yml existants depuis ./sigma/regression_data
    └── existing_rules = regression.get_sigma_id() → HashSet<Uuid> (vide avec --all-rules)
-7. SigmahqRules::new() → chargement + dédupe ; remove_id() par règle skipée
+6. SigmahqRules::new() → chargement + dédupe ; remove_id() par règle skipée
    └── filter(product, min_status, min_level) ; 0 règles → bail
-8. custom_map = load_custom_channel_mapping("custom_channels.yaml")
+7. custom_map = load_custom_channel_mapping("custom_channels.yaml")
    └── cycle_channels = rules.channels(&custom_map) ; 0 channels → warn + return
-9. DetectionEngine::new(&rules)  (pipelines + bloom + LogSourceExtractor)
+8. DetectionEngine::new(&rules)  (pipelines + bloom + LogSourceExtractor)
    └── --channels-only → affiche les channels + sortie
 10. output_base = <sigma_repo_path>/regression_data ; clean_partial_artifacts()
 11. EventCollector::new(cycle_channels).run(tx, stop) → task tokio
 12. Boucle : tokio::select!
     ├── shutdown_rx (Ctrl+C) → break
     ├── event depuis rx → engine.put_events(vec![event])
-    └── generate_interval (30s) → process_and_generate() → commit_all_rules() si fichiers
+    └── generate_interval (30s) → process_and_generate() → commit_files() si fichiers
 13. Flush final : drain des events restants → process_and_generate() → commit → push() fork
 ```
 
