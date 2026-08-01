@@ -5,7 +5,7 @@ use anyhow::Result;
 use sigmacatch_config::{self, dry_run_git, parse_args, Config};
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_logger::init as init_logger;
-use sigmacatch_regression::RegressionData;
+use sigmacatch_regression::SigmahqRegression;
 use sigmacatch_repo::{self, github, SigmaRepo};
 use sigmacatch_rule::SigmahqRules;
 use sigmacatch_types::{Event, EventProducer};
@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use tokio::signal;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 #[cfg(windows)]
 fn setup_console() {
@@ -35,30 +36,7 @@ async fn main() -> Result<()> {
     let cli = parse_args();
 
     let config_path = PathBuf::from("config.yaml");
-    let mut config = Config::load(&config_path)?;
-
-    if let Some(ref author) = cli.author {
-        config.git.author.clone_from(author);
-        if !config
-            .git
-            .author
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-')
-        {
-            anyhow::bail!(
-                "--author must be a valid GitHub username (alphanumeric + hyphens), got {:?}",
-                config.git.author
-            );
-        }
-    }
-
-    if config.git.author == "sigmacatch" {
-        eprintln!("── config.yaml not configured ──────────────");
-        eprintln!("  Update the 'author' field in config.yaml");
-        eprintln!("  before running.");
-        eprintln!("──────────────────────────────────────────────");
-        std::process::exit(1);
-    }
+    let config = Config::load_with_cli(&config_path, &cli)?;
 
     if cli.all_rules {
         info!("All-rules mode enabled — skip set will be empty");
@@ -103,19 +81,23 @@ async fn main() -> Result<()> {
         sigma_repo.init().await?;
     }
 
-    let existing_rules: HashSet<String> = if cli.all_rules {
+    let mut regression = match SigmahqRegression::new() {
+        Ok(r) => r,
+        Err(e) => anyhow::bail!("Failed to load regression data: {e}"),
+    };
+    regression.set_author(config.git.author.clone());
+
+    let existing_rules: HashSet<Uuid> = if cli.all_rules {
         HashSet::new()
     } else {
-        let sigma_regression_dir =
-            PathBuf::from(&config.git.sigma_repo_path).join("regression_data");
-        let existing = sigmacatch_regression::list_sigma_id(&sigma_regression_dir);
+        let existing: HashSet<Uuid> = regression.get_sigma_id().into_iter().collect();
         if !existing.is_empty() {
             info!(
                 "{} rules with existing regression data (skipped)",
                 existing.len()
             );
         }
-        existing.into_iter().collect()
+        existing
     };
 
     let mut rules = SigmahqRules::new()?;
@@ -216,13 +198,7 @@ async fn main() -> Result<()> {
                 engine.put_events(vec![event]);
             }
             _ = generate_interval.tick() => {
-                let created_files = process_and_generate(
-                    &mut engine,
-                    &mut rules,
-                    &output_base,
-                    &config.git.author,
-                    sigma_repo_path,
-                );
+                let created_files = process_and_generate(&mut engine, &mut rules, &mut regression);
 
                 if !created_files.is_empty() {
                     if let Err(e) = sigmacatch_repo::github::commit::commit_all_rules(
@@ -250,13 +226,7 @@ async fn main() -> Result<()> {
     }
     drop(rx);
 
-    let created_files = process_and_generate(
-        &mut engine,
-        &mut rules,
-        &output_base,
-        &config.git.author,
-        sigma_repo_path,
-    );
+    let created_files = process_and_generate(&mut engine, &mut rules, &mut regression);
 
     if !created_files.is_empty() {
         if let Err(e) = sigmacatch_repo::github::commit::commit_all_rules(
@@ -293,9 +263,7 @@ async fn main() -> Result<()> {
 fn process_and_generate(
     engine: &mut DetectionEngine,
     rules: &mut SigmahqRules,
-    output_base: &Path,
-    author: &str,
-    sigma_repo_path: &Path,
+    regression: &mut SigmahqRegression,
 ) -> Vec<String> {
     engine.process_events();
     let alerts = engine.get_alerts();
@@ -305,8 +273,7 @@ fn process_and_generate(
     }
 
     let unique_match_count = {
-        let ids: std::collections::HashSet<&str> =
-            alerts.iter().map(|a| a.rule_id.as_str()).collect();
+        let ids: std::collections::HashSet<&Uuid> = alerts.iter().map(|a| &a.rule_id).collect();
         ids.len()
     };
 
@@ -317,19 +284,13 @@ fn process_and_generate(
         "evaluation complete"
     );
 
-    let mut reg = RegressionData::new(output_base);
-    reg.set_author(author);
-    reg.set_sigma_repo_path(sigma_repo_path);
-    let is_contrib = sigma_repo_path.file_name().is_some_and(|n| n == "sigma");
-    reg.set_is_contrib(is_contrib);
-
     let mut created_files: Vec<String> = Vec::new();
-    let mut retired_ids: Vec<String> = Vec::new();
+    let mut retired_ids: Vec<Uuid> = Vec::new();
     for alert in alerts {
-        if let Some(files) = reg.generate_from_alert(&alert) {
+        if let Some(files) = regression.add(&alert) {
             created_files.extend(files);
             // AD-4: retire the rule once its regression data is generated
-            retired_ids.push(alert.rule_id.clone());
+            retired_ids.push(alert.rule_id);
         }
     }
 

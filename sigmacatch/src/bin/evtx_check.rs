@@ -19,6 +19,7 @@ use sigmacatch_regression::SigmahqRegression;
 use sigmacatch_rule::SigmahqRules;
 use std::collections::HashSet;
 use std::process;
+use uuid::Uuid;
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
 
@@ -103,6 +104,10 @@ fn main() {
             process::exit(1);
         }
     };
+    if regression.is_empty() {
+        eprintln!("No regression entries found — nothing to validate");
+        process::exit(1);
+    }
     println!("Found {} regression entry(ies)", regression.len());
     println!();
 
@@ -187,9 +192,9 @@ fn main() {
         engine.process_events();
         let alerts = engine.get_alerts();
 
-        let matched_ids: HashSet<&str> = alerts.iter().map(|a| a.rule_id.as_str()).collect();
+        let matched_ids: HashSet<Uuid> = alerts.iter().map(|a| a.rule_id).collect();
 
-        if !matched_ids.contains(entry.rule_id.as_str()) {
+        if !matched_ids.contains(&entry.rule_id) {
             let matched: Vec<String> = matched_ids.iter().map(|s| s.to_string()).collect();
             stats.total += 1;
             stats.add_fail(

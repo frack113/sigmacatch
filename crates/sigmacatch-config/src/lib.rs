@@ -161,7 +161,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
+    fn load_unvalidated(path: &PathBuf) -> anyhow::Result<Self> {
         if !path.exists() {
             let default = Config::default();
             default.save(path)?;
@@ -188,11 +188,22 @@ impl Config {
 
         let yaml = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("Failed to read config file: {}", e))?;
-        let config: Config = serde_yaml::from_str(&yaml)
-            .map_err(|e| anyhow::anyhow!("Failed to parse config file: {}", e))?;
+        serde_yaml::from_str(&yaml)
+            .map_err(|e| anyhow::anyhow!("Failed to parse config file: {}", e))
+    }
 
+    pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
+        let config = Self::load_unvalidated(path)?;
         config.validate()?;
+        Ok(config)
+    }
 
+    pub fn load_with_cli(path: &PathBuf, cli: &CliArgs) -> anyhow::Result<Self> {
+        let mut config = Self::load_unvalidated(path)?;
+        if let Some(author) = &cli.author {
+            config.git.author.clone_from(author);
+        }
+        config.validate()?;
         Ok(config)
     }
 
@@ -213,8 +224,13 @@ impl Config {
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
+        if self.git.author == "sigmacatch" {
+            anyhow::bail!(
+                "config: 'git.author' is the placeholder 'sigmacatch'. \
+                 Set 'author' to your GitHub username in config.yaml"
+            );
+        }
         if !self.git.author.is_empty()
-            && self.git.author != "sigmacatch"
             && !self
                 .git
                 .author

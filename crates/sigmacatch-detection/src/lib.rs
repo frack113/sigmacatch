@@ -12,6 +12,7 @@ use rsigma_eval::pipeline::parse_pipeline;
 use rsigma_eval::{Engine, LogSourceExtractor};
 use sigmacatch_rule::SigmahqRules;
 use sigmacatch_types::{Alert, Event};
+use uuid::Uuid;
 
 /// Embedded pipeline for flattening Winevt XML event structure.
 pub const FLATTEN_WINEVT_PIPELINE: &str = include_str!("../pipelines/flatten_winevt.yml");
@@ -103,12 +104,13 @@ impl DetectionEngine {
         self.stats.clone()
     }
 
-    pub fn explain_rule(&self, rule_id: &str, event: &Event) -> Option<serde_json::Value> {
+    pub fn explain_rule(&self, rule_id: &Uuid, event: &Event) -> Option<serde_json::Value> {
+        let rule_id_str = rule_id.to_string();
         let compiled = self
             .engine
             .rules()
             .iter()
-            .find(|r| r.id.as_deref() == Some(rule_id))?;
+            .find(|r| r.id.as_deref() == Some(rule_id_str.as_str()))?;
         let json_event = JsonEvent::borrow(&event.event_json);
         let explanation = rsigma_eval::explain_rule(compiled, &json_event);
         serde_json::to_value(explanation).ok()
@@ -140,8 +142,9 @@ impl DetectionEngine {
                     rule_id: result
                         .header
                         .rule_id
-                        .clone()
-                        .unwrap_or_else(|| "unknown".to_string()),
+                        .as_deref()
+                        .and_then(|id| Uuid::parse_str(id).ok())
+                        .unwrap_or(Uuid::nil()),
                     rule_title: result.header.rule_title.clone(),
                     description: None,
                     rule_path: None,
@@ -181,7 +184,7 @@ mod tests {
     use std::fs;
 
     const MINIMAL_RULE_YAML: &str = r#"title: Test Rule
-id: test-rule-001
+id: 11111111-1111-1111-1111-111111111111
 status: stable
 description: A minimal test rule
 author: Test Author
@@ -255,7 +258,8 @@ detection:
         let mut engine = DetectionEngine::new(&rules).unwrap();
         assert_eq!(engine.rule_count(), 1);
 
-        rules.remove_id("test-rule-001");
+        let rule_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+        rules.remove_id(&rule_id);
         engine.reload_rules(&rules).unwrap();
         assert_eq!(engine.rule_count(), 0);
     }

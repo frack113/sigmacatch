@@ -6,26 +6,22 @@
 mod evtx;
 mod info;
 pub mod logtype;
-pub mod validate;
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
-use serde_json::Value;
 use sigmacatch_types::{Alert, RegressionHeader};
 use std::collections::HashSet;
-use std::ffi::OsStr;
 use tracing::{error, info, info_span, warn};
 use uuid::Uuid;
 
 use crate::evtx::write_evtx;
 use crate::info::InfoYml;
 use crate::logtype::LogType;
-use crate::validate::validate_rule_id;
 
 #[derive(Debug, Clone)]
 pub struct RegressionEntry {
-    pub rule_id: String,
+    pub rule_id: Uuid,
     pub rule_name: String,
     pub logtype: LogType,
 }
@@ -35,8 +31,8 @@ impl RegressionEntry {
         let rule_id = info
             .rule_metadata
             .first()
-            .map(|m| m.id.clone())
-            .unwrap_or_default();
+            .map(|m| m.id)
+            .unwrap_or(Uuid::nil());
         let rule_name = info_path
             .parent()
             .and_then(|p| p.file_name())
@@ -65,9 +61,12 @@ impl RegressionEntry {
     }
 }
 
+#[derive(Default)]
 pub struct SigmahqRegression {
     entries: Vec<(PathBuf, InfoYml, RegressionEntry)>,
     author: String,
+    output_path: Option<PathBuf>,
+    retired: HashSet<Uuid>,
 }
 
 impl SigmahqRegression {
@@ -76,29 +75,21 @@ impl SigmahqRegression {
     }
 
     pub fn new_from_path(regression_path: &Path) -> Result<Self> {
-        if !regression_path.exists() {
-            anyhow::bail!(
-                "Regression data directory does not exist: {:?}",
-                regression_path
-            );
-        }
-        let info_paths = list_all(regression_path);
-        if info_paths.is_empty() {
-            anyhow::bail!("No regression entries found in {:?}", regression_path);
-        }
-        let mut entries = Vec::with_capacity(info_paths.len());
-        for path in &info_paths {
-            if let Ok(info) = InfoYml::load(path) {
-                let entry = RegressionEntry::from_info(&info, path);
-                entries.push((path.clone(), info, entry));
+        let mut entries = Vec::new();
+        if regression_path.exists() {
+            let info_paths = list_all(regression_path);
+            for path in &info_paths {
+                if let Ok(info) = InfoYml::load(path) {
+                    let entry = RegressionEntry::from_info(&info, path);
+                    entries.push((path.clone(), info, entry));
+                }
             }
-        }
-        if entries.is_empty() {
-            anyhow::bail!("No valid regression entries found in {:?}", regression_path);
         }
         Ok(Self {
             entries,
             author: String::new(),
+            output_path: Some(regression_path.to_path_buf()),
+            retired: HashSet::new(),
         })
     }
 
@@ -130,100 +121,56 @@ impl SigmahqRegression {
         self.entries.iter().map(|(_, _, entry)| entry)
     }
 
-    pub fn list_sigma_id(regression_path: &Path) -> Vec<Uuid> {
-        let string_ids = list_sigma_id(regression_path);
-        string_ids
-            .into_iter()
-            .filter_map(|id| Uuid::parse_str(&id).ok())
-            .collect()
-    }
-
     pub fn get_entry(&self, index: usize) -> Option<&RegressionEntry> {
         self.entries.get(index).map(|(_, _, entry)| entry)
     }
 
-    pub fn find_by_rule_id(&self, rule_id: &str) -> Option<usize> {
+    pub fn get_sigma_id(&self) -> Vec<Uuid> {
         self.entries
             .iter()
-            .position(|(_, _, entry)| entry.rule_id == rule_id)
+            .filter_map(|(_, info, _)| info.rule_metadata.first().map(|m| m.id))
+            .collect()
     }
 
     pub fn get_raw_data(&self, index: usize) -> Option<Vec<u8>> {
         let (info_path, info, _) = self.entries.get(index)?;
-        let rule_id = info.rule_metadata.first()?.id.as_str();
+        let rule_id = info.rule_metadata.first()?.id;
         let dir = info_path.parent()?;
-        let data_path = resolve_data_file(dir, rule_id)?;
+        let data_path = resolve_data_file(dir, &rule_id)?;
         std::fs::read(&data_path).ok()
     }
-}
 
-pub struct RegressionData {
-    header: RegressionHeader,
-    alerts: Vec<Alert>,
-    output_path: PathBuf,
-    sigma_repo_path: PathBuf,
-    rule_rel_path: Option<PathBuf>,
-    author: Option<String>,
-    description: Option<String>,
-    is_contrib: bool,
-    retired: HashSet<String>,
-    info: InfoYml,
-    info_path: PathBuf,
-    raw_data: Option<Vec<u8>>,
-    logtype: LogType,
-}
-
-impl RegressionData {
-    pub fn new(output_path: &Path) -> Self {
-        Self {
-            header: RegressionHeader::new(String::new(), String::new()),
-            alerts: Vec::new(),
-            output_path: output_path.to_path_buf(),
-            sigma_repo_path: PathBuf::new(),
-            rule_rel_path: None,
-            author: None,
-            description: None,
-            is_contrib: false,
-            retired: HashSet::new(),
-            info: InfoYml::new("", "", 0, "", "", "", ""),
-            info_path: PathBuf::new(),
-            raw_data: None,
-            logtype: LogType::Json,
-        }
-    }
-
-    pub fn set_author(&mut self, author: &str) {
-        self.author = Some(author.to_string());
-    }
-
-    pub fn set_is_contrib(&mut self, is_contrib: bool) {
-        self.is_contrib = is_contrib;
-    }
-
-    pub fn set_sigma_repo_path(&mut self, path: &Path) {
-        self.sigma_repo_path = path.to_path_buf();
-    }
-
-    pub fn generate_from_alert(&mut self, alert: &Alert) -> Option<Vec<String>> {
+    pub fn add(&mut self, alert: &Alert) -> Option<Vec<String>> {
+        let output_path = self.output_path.as_ref()?;
         let rule_id = &alert.rule_id;
         if self.retired.contains(rule_id) {
             return None;
         }
+        if rule_id.is_nil() {
+            warn!(
+                "Skipping regression for rule without a valid id: {:?}",
+                alert.rule_title
+            );
+            return None;
+        }
 
+        let sigma_repo_path = Path::new("sigma");
         let rule_rel_path = alert.rule_path.as_ref().and_then(|p| {
-            p.strip_prefix(&self.sigma_repo_path)
+            p.strip_prefix(sigma_repo_path)
                 .ok()
                 .map(|rel| rel.with_extension(""))
         });
 
         let mut reg = RegressionData::for_rule(
-            &RegressionHeader::new(rule_id.clone(), alert.rule_title.clone()),
-            &self.output_path,
+            &RegressionHeader::new(*rule_id, alert.rule_title.clone()),
+            output_path,
             rule_rel_path.as_deref(),
-            self.author.as_deref(),
+            if self.author.is_empty() {
+                None
+            } else {
+                Some(self.author.as_str())
+            },
             alert.description.as_deref(),
-            self.is_contrib,
-            &self.sigma_repo_path,
         );
 
         if reg.exists() {
@@ -242,7 +189,7 @@ impl RegressionData {
                 let rule_yaml_rel = alert
                     .rule_path
                     .as_ref()
-                    .and_then(|p| p.strip_prefix(&self.sigma_repo_path).ok())
+                    .and_then(|p| p.strip_prefix(sigma_repo_path).ok())
                     .and_then(|p| p.to_str())
                     .map(|s| s.to_string().replace('\\', "/"));
 
@@ -251,7 +198,7 @@ impl RegressionData {
                     update_regression_tests_path(rule_yaml_path, &tests_path);
                 }
 
-                self.retired.insert(rule_id.clone());
+                self.retired.insert(*rule_id);
                 info!("Rule {rule_id} retired from detection engine");
 
                 let mut files = vec![
@@ -271,124 +218,61 @@ impl RegressionData {
             }
         }
     }
+}
 
+struct RegressionData {
+    header: RegressionHeader,
+    alerts: Vec<Alert>,
+    output_path: PathBuf,
+    rule_rel_path: Option<PathBuf>,
+    author: Option<String>,
+    description: Option<String>,
+}
+
+impl RegressionData {
     fn for_rule(
         header: &RegressionHeader,
         output_path: &Path,
         rule_rel_path: Option<&Path>,
         author: Option<&str>,
         description: Option<&str>,
-        is_contrib: bool,
-        sigma_repo_path: &Path,
     ) -> Self {
         Self {
             header: header.clone(),
             alerts: Vec::new(),
             output_path: output_path.to_path_buf(),
-            sigma_repo_path: sigma_repo_path.to_path_buf(),
             rule_rel_path: rule_rel_path.map(|p| p.to_path_buf()),
             author: author.map(|s| s.to_string()),
             description: description.map(|s| s.to_string()),
-            is_contrib,
-            retired: HashSet::new(),
-            info: InfoYml::new("", "", 0, "", "", "", ""),
-            info_path: PathBuf::new(),
-            raw_data: None,
-            logtype: LogType::Json,
         }
     }
 
-    pub fn from_info(info_path: &Path) -> Result<Self> {
-        let info =
-            InfoYml::load(info_path).map_err(|e| anyhow!("Failed to load info.yml: {}", e))?;
-
-        let rule_id = info
-            .rule_metadata
-            .first()
-            .ok_or_else(|| anyhow!("No rule_metadata in {}", info_path.display()))?
-            .id
-            .clone();
-
-        let logtype = match info
-            .regression_tests_info
-            .first()
-            .map(|t| t.test_type.as_str())
-        {
-            Some("evtx") => LogType::Evtx,
-            Some("json") => LogType::Json,
-            Some("raw") => LogType::Raw,
-            Some("log") => LogType::Log,
-            Some(other) => {
-                warn!("Unknown logtype '{}', defaulting to Json", other);
-                LogType::Json
-            }
-            None => LogType::Json,
-        };
-
-        let dir = info_path
-            .parent()
-            .ok_or_else(|| anyhow!("info.yml has no parent dir: {}", info_path.display()))?;
-
-        let data_path = resolve_data_file(dir, &rule_id)
-            .ok_or_else(|| anyhow!("No data file for rule '{}' in {}", rule_id, dir.display()))?;
-
-        let raw_data = std::fs::read(&data_path).ok();
-
-        Ok(Self {
-            header: RegressionHeader::new(rule_id.clone(), String::new()),
-            alerts: Vec::new(),
-            output_path: dir.to_path_buf(),
-            sigma_repo_path: PathBuf::new(),
-            rule_rel_path: None,
-            author: None,
-            description: None,
-            is_contrib: false,
-            retired: HashSet::new(),
-            info,
-            info_path: info_path.to_path_buf(),
-            raw_data,
-            logtype,
-        })
-    }
-
-    pub fn add_alert(&mut self, alert: Alert) {
+    fn add_alert(&mut self, alert: Alert) {
         self.alerts.push(alert);
     }
 
-    pub fn rule_dir(&self) -> Result<PathBuf> {
+    fn rule_dir(&self) -> Result<PathBuf> {
         if let Some(rel_path) = &self.rule_rel_path {
             return Ok(self.output_path.join(rel_path));
         }
-        let rule_id = &self.header.rule_id;
-        if rule_id.contains('/')
-            || rule_id.contains('\\')
-            || rule_id.contains("..")
-            || rule_id.contains('\0')
-        {
-            anyhow::bail!(
-                "Invalid rule_id '{}': contains forbidden characters",
-                rule_id
-            );
-        }
-        Ok(self.output_path.join("rules").join(rule_id))
+        Ok(self
+            .output_path
+            .join("rules")
+            .join(self.header.rule_id.to_string()))
     }
 
-    pub fn sigma_rel_dir(&self) -> Option<String> {
+    fn sigma_rel_dir(&self) -> Option<String> {
         self.rule_rel_path.as_ref().map(|rel_path| {
             let rel = rel_path.display().to_string().replace('\\', "/");
-            if self.is_contrib {
-                format!("sigma/regression_data/{}", rel)
-            } else {
-                format!("regression_data/{}", rel)
-            }
+            format!("regression_data/{}", rel)
         })
     }
 
-    pub fn exists(&self) -> bool {
+    fn exists(&self) -> bool {
         self.rule_dir().is_ok_and(|d| d.join("info.yml").exists())
     }
 
-    pub fn generate<F>(&self, write_fn: F) -> Result<()>
+    fn generate<F>(&self, write_fn: F) -> Result<()>
     where
         F: Fn(&str, &str, Option<u64>, &Path) -> Result<()>,
     {
@@ -455,233 +339,11 @@ impl RegressionData {
         );
         Ok(())
     }
-
-    pub fn save_log(&self, path: &Path) -> Result<()> {
-        let data = match &self.raw_data {
-            Some(d) => d.as_slice(),
-            None => &std::fs::read(self.get_data_path())?,
-        };
-        std::fs::write(path, data).map_err(|e| anyhow!("Failed to write log to {:?}: {}", path, e))
-    }
-
-    pub fn export_json(&self) -> Result<String> {
-        let json = match self.logtype {
-            LogType::Json => {
-                let text = std::fs::read_to_string(self.get_data_path())?;
-                let value: Value = serde_json::from_str(&text)?;
-                serde_json::to_string_pretty(&value)?
-            }
-            _ => {
-                let text = std::fs::read_to_string(self.get_data_path()).or_else(|_| {
-                    self.raw_data
-                        .as_ref()
-                        .map(|d| String::from_utf8_lossy(d).to_string())
-                        .ok_or_else(|| anyhow!("No raw data available"))
-                })?;
-                format!(
-                    "{{\n  \"type\": \"{}\",\n  \"raw\": {}\n}}",
-                    self.logtype.as_str(),
-                    serde_json::to_string(&text).unwrap_or_default()
-                )
-            }
-        };
-        Ok(json)
-    }
-
-    // ─── Accessors ────────────────────────────────────────────────────
-
-    pub fn rule_id(&self) -> &str {
-        self.header.rule_id.as_str()
-    }
-
-    pub fn rule_title(&self) -> &str {
-        self.header.rule_title.as_str()
-    }
-
-    pub fn expected_match_count(&self) -> usize {
-        self.info
-            .regression_tests_info
-            .first()
-            .map(|t| t.match_count)
-            .unwrap_or(1)
-            .max(1)
-    }
-
-    pub fn is_valid(&self) -> bool {
-        self.info_path.exists() && self.get_data_path().exists()
-    }
-
-    pub fn get_raw_data(&self) -> Option<&[u8]> {
-        self.raw_data.as_deref()
-    }
-
-    pub fn get_logtype(&self) -> LogType {
-        self.logtype
-    }
-
-    pub fn is_contrib(&self) -> bool {
-        self.is_contrib
-    }
-
-    // ─── Internal helpers ─────────────────────────────────────────────
-
-    fn get_data_path(&self) -> PathBuf {
-        let rule_dir = self.rule_dir().unwrap_or_default();
-        let rule_id = self.rule_id();
-        for ext in ["evtx", "json"] {
-            let candidate = rule_dir.join(format!("{}.{}", rule_id, ext));
-            if candidate.exists() {
-                return candidate;
-            }
-        }
-        rule_dir.join(format!("{}.json", rule_id))
-    }
-}
-
-// ─── Tests ─────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_list_sigma_id_returns_uuids() {
-        let regression_dir = std::env::current_dir().ok().and_then(|cwd| {
-            cwd.parent()
-                .map(|p| p.join("sigma").join("regression_data"))
-        });
-        if let Some(ref dir) = regression_dir {
-            let ids = SigmahqRegression::list_sigma_id(dir);
-            if !ids.is_empty() {
-                let first = &ids[0];
-                let first_str = first.to_string();
-                assert!(
-                    first_str.contains('-'),
-                    "UUID should contain hyphens: {}",
-                    first_str
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_sigmahq_regression_len() {
-        let regression_dir = std::env::current_dir().ok().and_then(|cwd| {
-            cwd.parent()
-                .map(|p| p.join("sigma").join("regression_data"))
-        });
-        if let Some(ref dir) = regression_dir {
-            if let Ok(reg) = SigmahqRegression::new_from_path(dir) {
-                assert!(reg.len() > 0, "should have regression entries");
-            }
-        }
-    }
-
-    #[test]
-    fn test_sigmahq_regression_is_empty() {
-        let regression_dir = std::env::current_dir().ok().and_then(|cwd| {
-            cwd.parent()
-                .map(|p| p.join("sigma").join("regression_data"))
-        });
-        if let Some(ref dir) = regression_dir {
-            if let Ok(reg) = SigmahqRegression::new_from_path(dir) {
-                assert!(!reg.is_empty(), "should not be empty");
-            }
-        }
-    }
-
-    #[test]
-    fn test_sigmahq_regression_iter() {
-        let regression_dir = std::env::current_dir().ok().and_then(|cwd| {
-            cwd.parent()
-                .map(|p| p.join("sigma").join("regression_data"))
-        });
-        if let Some(ref dir) = regression_dir {
-            if let Ok(reg) = SigmahqRegression::new_from_path(dir) {
-                let entries: Vec<(&PathBuf, &InfoYml)> = reg.iter().collect();
-                assert_eq!(entries.len(), reg.len());
-                for (path, info) in &entries {
-                    assert!(
-                        path.to_string_lossy().ends_with("info.yml"),
-                        "path should end with info.yml: {:?}",
-                        path
-                    );
-                    assert!(
-                        !info.rule_metadata.is_empty(),
-                        "info should have rule_metadata"
-                    );
-                }
-            }
-        }
-    }
 }
 
 // ─── Free functions ────────────────────────────────────────────────────
 
-pub fn list_sigma_id(output_base: &Path) -> Vec<String> {
-    if !output_base.exists() {
-        warn!(
-            "list_sigma_id: directory does not exist: {}",
-            output_base.display()
-        );
-        return Vec::new();
-    }
-
-    let rules_dir = output_base.join("rules");
-    if !rules_dir.exists() {
-        return Vec::new();
-    }
-
-    let mut ids = Vec::new();
-    collect_ids(&rules_dir, &mut ids, 0);
-    ids.sort();
-    ids
-}
-
-fn collect_ids(dir: &Path, ids: &mut Vec<String>, depth: u32) {
-    if depth > 64 {
-        warn!("collect_ids: depth limit at {:?}", dir);
-        return;
-    }
-
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-
-    for entry in entries.filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if let Ok(metadata) = path.symlink_metadata() {
-            if metadata.file_type().is_symlink() {
-                continue;
-            }
-        }
-        if path.is_dir() {
-            collect_ids(&path, ids, depth + 1);
-        } else if path.file_name() == Some(OsStr::new("info.yml")) {
-            match try_read_rule_id(&path) {
-                Ok(rule_id) => {
-                    if validate_rule_id(&rule_id) {
-                        ids.push(rule_id);
-                    } else {
-                        warn!(
-                            "list_sigma_id: invalid rule_id '{}' at {}",
-                            rule_id,
-                            path.display()
-                        );
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        "list_sigma_id: failed to read rule_id from {:?}: {}",
-                        path, e
-                    );
-                }
-            }
-        }
-    }
-}
-
-fn resolve_data_file(dir: &Path, rule_id: &str) -> Option<PathBuf> {
+fn resolve_data_file(dir: &Path, rule_id: &Uuid) -> Option<PathBuf> {
     for ext in ["evtx", "json"] {
         let candidate = dir.join(format!("{}.{}", rule_id, ext));
         if candidate.exists() {
@@ -720,11 +382,11 @@ pub(crate) fn update_regression_tests_path(rule_yaml_path: &Path, tests_path: &s
     }
 }
 
-pub(crate) fn try_read_rule_id(info_path: &Path) -> Result<String> {
+pub(crate) fn try_read_rule_id(info_path: &Path) -> Result<Uuid> {
     let info = InfoYml::load(info_path)?;
     info.rule_metadata
         .first()
-        .map(|m| m.id.clone())
+        .map(|m| m.id)
         .ok_or_else(|| anyhow!("No rule_metadata in {}", info_path.display()))
 }
 
@@ -815,6 +477,67 @@ fn clean_recursive(dir: &Path, depth: u32) {
                 }
             } else {
                 clean_recursive(&path, depth + 1);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_sigma_id_returns_uuids() {
+        let regression_dir = std::env::current_dir().ok().and_then(|cwd| {
+            cwd.parent()
+                .map(|p| p.join("sigma").join("regression_data"))
+        });
+        if let Some(ref dir) = regression_dir {
+            if let Ok(reg) = SigmahqRegression::new_from_path(dir) {
+                let ids = reg.get_sigma_id();
+                if !ids.is_empty() {
+                    let first = &ids[0];
+                    let first_str = first.to_string();
+                    assert!(
+                        first_str.contains('-'),
+                        "UUID should contain hyphens: {}",
+                        first_str
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_new_from_path_missing_dir_is_empty() {
+        let missing = std::env::temp_dir().join("sigmacatch-regression-missing-xyz");
+        let reg = SigmahqRegression::new_from_path(&missing)
+            .expect("lenient constructor: missing dir returns Ok");
+        assert_eq!(reg.len(), 0);
+        assert!(reg.is_empty());
+    }
+
+    #[test]
+    fn test_sigmahq_regression_iter() {
+        let regression_dir = std::env::current_dir().ok().and_then(|cwd| {
+            cwd.parent()
+                .map(|p| p.join("sigma").join("regression_data"))
+        });
+        if let Some(ref dir) = regression_dir {
+            if let Ok(reg) = SigmahqRegression::new_from_path(dir) {
+                let entries: Vec<(&PathBuf, &InfoYml)> = reg.iter().collect();
+                assert_eq!(entries.len(), reg.len());
+                for (path, info) in &entries {
+                    assert!(
+                        path.to_string_lossy().ends_with("info.yml"),
+                        "path should end with info.yml: {:?}",
+                        path
+                    );
+                    assert!(
+                        !info.rule_metadata.is_empty(),
+                        "info should have rule_metadata"
+                    );
+                }
             }
         }
     }

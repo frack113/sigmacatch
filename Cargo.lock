@@ -2254,6 +2254,7 @@ dependencies = [
  "sigmacatch-types",
  "tempfile",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -2309,6 +2310,7 @@ dependencies = [
  "serde",
  "tempfile",
  "tracing",
+ "uuid",
  "yaml_serde",
 ]
 
@@ -2323,6 +2325,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

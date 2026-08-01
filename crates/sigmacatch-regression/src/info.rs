@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleMetadata {
-    pub id: String,
+    pub id: Uuid,
     pub title: String,
 }
 
@@ -35,7 +35,7 @@ pub struct InfoYml {
 
 impl InfoYml {
     pub fn new(
-        rule_id: &str,
+        rule_id: &Uuid,
         rule_title: &str,
         event_count: usize,
         sigma_evtx_path: &str,
@@ -49,7 +49,7 @@ impl InfoYml {
             date: chrono::Utc::now().format("%Y-%m-%d").to_string(),
             author: author.to_string(),
             rule_metadata: vec![RuleMetadata {
-                id: rule_id.to_string(),
+                id: *rule_id,
                 title: rule_title.to_string(),
             }],
             regression_tests_info: vec![RegressionTestInfo {
@@ -86,8 +86,9 @@ mod tests {
 
     #[test]
     fn info_yml_serializes_correctly() {
+        let rule_id = Uuid::parse_str("7595ba94-cf3b-4471-aa03-4f6baa9e5fad").unwrap();
         let info = InfoYml::new(
-            "7595ba94-cf3b-4471-aa03-4f6baa9e5fad",
+            &rule_id,
             "Important Scheduled Task Deleted/Disabled",
             1,
             "regression_data/rules/windows/builtin/security/win_security_susp_scheduled_task_delete_or_disable/7595ba94-cf3b-4471-aa03-4f6baa9e5fad.evtx",
@@ -107,10 +108,7 @@ mod tests {
             "Swachchhanda Shrawan Poudel (Nextron Systems)"
         );
         assert_eq!(parsed.rule_metadata.len(), 1);
-        assert_eq!(
-            parsed.rule_metadata[0].id,
-            "7595ba94-cf3b-4471-aa03-4f6baa9e5fad"
-        );
+        assert_eq!(parsed.rule_metadata[0].id, rule_id);
         assert_eq!(
             parsed.rule_metadata[0].title,
             "Important Scheduled Task Deleted/Disabled"

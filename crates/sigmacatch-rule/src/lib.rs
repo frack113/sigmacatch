@@ -19,6 +19,7 @@ use crate::channel_resolver::resolve_channels;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Default)]
 pub struct SigmahqRules {
@@ -177,13 +178,18 @@ impl SigmahqRules {
         self.rules.is_empty()
     }
 
-    pub fn get(&self, id: &str) -> Option<&SigmaRule> {
-        self.rules.iter().find(|r| r.id.as_deref() == Some(id))
+    pub fn get(&self, id: &Uuid) -> Option<&SigmaRule> {
+        let id_str = id.to_string();
+        self.rules
+            .iter()
+            .find(|r| r.id.as_deref() == Some(id_str.as_str()))
     }
 
-    pub fn remove_id(&mut self, id: &str) -> bool {
+    pub fn remove_id(&mut self, id: &Uuid) -> bool {
+        let id_str = id.to_string();
         let before = self.rules.len();
-        self.rules.retain(|r| r.id.as_deref() != Some(id));
+        self.rules
+            .retain(|r| r.id.as_deref() != Some(id_str.as_str()));
         self.rules.len() != before
     }
 
@@ -280,7 +286,8 @@ detection:
         write_rules(&rules_dir, &[("win.yml", MINIMAL_RULE)]);
 
         let mut set = SigmahqRules::new_from_path(&sigma).unwrap();
-        set.remove_id("11111111-1111-1111-1111-111111111111");
+        let rule_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+        set.remove_id(&rule_id);
 
         assert!(set.is_empty());
     }
@@ -295,8 +302,9 @@ detection:
 
         let set = SigmahqRules::new_from_path(&sigma).unwrap();
 
-        assert!(set.get("11111111-1111-1111-1111-111111111111").is_some());
-        assert!(set.get("unknown-id").is_none());
+        let rule_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+        assert!(set.get(&rule_id).is_some());
+        assert!(set.get(&Uuid::nil()).is_none());
     }
 
     #[test]
@@ -470,11 +478,14 @@ detection:
         let mut set = SigmahqRules::new_from_path(&sigma).unwrap();
         assert_eq!(set.len(), 2);
 
-        assert!(set.remove_id("11111111-1111-1111-1111-111111111111"));
+        let id1 = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+        let id2 = Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap();
+        let id_absent = Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap();
+        assert!(set.remove_id(&id1));
         assert_eq!(set.len(), 1);
-        assert!(set.get("22222222-2222-2222-2222-222222222222").is_some());
+        assert!(set.get(&id2).is_some());
 
-        assert!(!set.remove_id("00000000-0000-0000-0000-000000000000"));
+        assert!(!set.remove_id(&id_absent));
         assert_eq!(set.len(), 1);
     }
 

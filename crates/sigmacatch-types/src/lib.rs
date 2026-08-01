@@ -14,6 +14,7 @@ use serde_json::{Map, Value};
 use std::fmt;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 /// Product identifier for rule filtering.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Hash, Serialize, Deserialize)]
@@ -445,7 +446,7 @@ impl std::error::Error for ParseError {}
 /// An alert produced when an event matches a Sigma rule.
 #[derive(Debug, Clone)]
 pub struct Alert {
-    pub rule_id: String,
+    pub rule_id: Uuid,
     pub rule_title: String,
     pub description: Option<String>,
     pub rule_path: Option<PathBuf>,
@@ -497,12 +498,12 @@ impl Alert {
 /// Evolutive — add fields here without touching rsigma internals.
 #[derive(Debug, Clone)]
 pub struct RegressionHeader {
-    pub rule_id: String,
+    pub rule_id: Uuid,
     pub rule_title: String,
 }
 
 impl RegressionHeader {
-    pub fn new(rule_id: String, rule_title: String) -> Self {
+    pub fn new(rule_id: Uuid, rule_title: String) -> Self {
         Self {
             rule_id,
             rule_title,
