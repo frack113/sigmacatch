@@ -65,11 +65,10 @@ sigma:
   product: windows            # windows, linux, or macos
   min_status: "stable"        # minimum rule status (inclusive): unsupported < deprecated < experimental < test < stable
   min_level: "critical"       # minimum rule level (inclusive): informational < low < medium < high < critical
-  max_rules: 0                # 0 = unlimited
   max_rule_size: 1048576      # bytes (1MB default, min 1024, max 10MB)
 ```
 
-**Rule filtering:** `product`, `min_status` and `min_level` are applied by `SigmahqRules::filter()`.
+**Rule filtering:** `product`, `min_status`, `min_level` and `authors` are applied by `SigmahqRules::filter()`.
 Rules whose `status`/`level` is below the threshold are excluded (only if the field is present);
 rules without `status`/`level` are always accepted. If 0 rules remain, the program bails out.
 
@@ -129,8 +128,8 @@ SigmahqRules::new()                 # loads ./sigma
     ├── cross-file dedupe by rule id (first occurrence wins)
     └── for each id in existing_rules → rules.remove_id(&id)
     ↓
-rules = rules.filter(product, min_status, min_level)
-    ├── stats() → rules_loaded, filtered_product/status/level
+rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, authors, max_rule_size })
+    ├── stats() → rules_loaded, filtered_product/status/level/author
     └── 0 rules loaded → bail with a clear error message
 ```
 
@@ -333,7 +332,7 @@ regression_tests_info:
 ### SigmahqRules (`crates/sigmacatch-rule/src/lib.rs`)
 
 - `new()` (hardcoded `./sigma`) / `new_from_path()` — walk + parse + dedupe
-- `filter(product, min_status, min_level)` → LoadStats
+- `filter(SigmaFilterConfig { product, min_status, min_level, authors, max_rule_size })` → LoadStats
 - `remove_id(&Uuid)`, `get(&Uuid)`, `channels(&custom_map)`, `to_collection()`
 
 ### EventCollector (`crates/input-windows-channels/src/collector.rs`)
