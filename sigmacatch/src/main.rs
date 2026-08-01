@@ -122,12 +122,12 @@ async fn main() -> Result<()> {
 
     if stats.rules_loaded == 0 {
         anyhow::bail!(
-            "0 rules loaded — the filter config (product={}, min_status={:?}, min_level={:?}, authors={:?}) is too restrictive. \
+            "0 rules loaded — the filter config (product={}, min_status={:?}, min_level={:?}, author={:?}) is too restrictive. \
              Adjust sigma.* filters in config.yaml or load rules with matching metadata.",
             config.sigma.product,
             config.sigma.min_status,
             config.sigma.min_level,
-            config.sigma.authors,
+            config.sigma.author,
         );
     }
 

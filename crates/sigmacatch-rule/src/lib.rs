@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use uuid::Uuid;
 
-/// Rule loading filters. All fields are optional — empty `authors` means no author filtering.
+/// Rule loading filters. All fields are optional — `None` means no filtering.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default, rename_all = "snake_case")]
 pub struct SigmaFilterConfig {
@@ -29,7 +29,7 @@ pub struct SigmaFilterConfig {
     pub min_status: Option<MinStatus>,
     pub min_level: Option<MinLevel>,
     pub max_rule_size: usize,
-    pub authors: Vec<String>,
+    pub author: Option<String>,
 }
 
 impl Default for SigmaFilterConfig {
@@ -39,7 +39,7 @@ impl Default for SigmaFilterConfig {
             min_status: None,
             min_level: None,
             max_rule_size: 1024 * 1024,
-            authors: Vec::new(),
+            author: None,
         }
     }
 }
@@ -49,12 +49,11 @@ impl SigmaFilterConfig {
         Self::default()
     }
 
-    /// Normalize authors: trim, lowercase, remove empty strings.
+    /// Normalize author: trim, lowercase.
     pub fn normalize(&mut self) {
-        self.authors
-            .iter_mut()
-            .for_each(|a| *a = a.trim().to_lowercase());
-        self.authors.retain(|a| !a.is_empty());
+        if let Some(a) = &mut self.author {
+            *a = a.trim().to_lowercase();
+        }
     }
 }
 
@@ -172,19 +171,16 @@ impl SigmahqRules {
                 filtered_level += 1;
                 continue;
             }
-            let author_ok = if filters.authors.is_empty() {
-                true
-            } else {
-                match &rule.author {
-                    Some(rule_author) => {
-                        let rule_author_lower = rule_author.to_lowercase();
-                        filters.authors.iter().any(|fw| {
-                            let fw_lower = fw.trim().to_lowercase();
-                            rule_author_lower.split(',').any(|a| a.trim() == fw_lower)
-                        })
-                    }
-                    None => false,
+            let author_ok = match (&filters.author, &rule.author) {
+                (Some(filter_author), Some(rule_author)) => {
+                    let filter_lower = filter_author.trim().to_lowercase();
+                    rule_author
+                        .to_lowercase()
+                        .split(',')
+                        .any(|a| a.trim() == filter_lower)
                 }
+                (Some(_), None) => false,
+                _ => true,
             };
             if !author_ok {
                 filtered_author += 1;
@@ -318,7 +314,7 @@ detection:
                 product: "windows".to_string(),
                 min_status: Some(MinStatus(Status::Stable)),
                 min_level: Some(MinLevel(Level::Critical)),
-                authors: Vec::new(),
+                author: None,
                 max_rule_size: 1024 * 1024,
             });
 
@@ -441,7 +437,7 @@ detection:
             product: "windows".to_string(),
             min_status: Some(MinStatus(Status::Stable)),
             min_level: Some(MinLevel(Level::Critical)),
-            authors: Vec::new(),
+            author: None,
             max_rule_size: 1024 * 1024,
         });
         assert_eq!(filtered.len(), 1);
@@ -628,7 +624,7 @@ detection:
                 product: "windows".to_string(),
                 min_status: Some(MinStatus(Status::Stable)),
                 min_level: Some(MinLevel(Level::Critical)),
-                authors: Vec::new(),
+                author: None,
                 max_rule_size: 1024 * 1024,
             });
 
@@ -688,7 +684,7 @@ detection:
             product: "windows".to_string(),
             min_status: Some(MinStatus(Status::Stable)),
             min_level: Some(MinLevel(Level::Critical)),
-            authors: vec!["frack113".to_string()],
+            author: Some("frack113".to_string()),
             max_rule_size: 1024 * 1024,
         });
         assert_eq!(filtered.len(), 1);
@@ -700,7 +696,7 @@ detection:
             product: "windows".to_string(),
             min_status: Some(MinStatus(Status::Stable)),
             min_level: Some(MinLevel(Level::Critical)),
-            authors: vec!["Test Author".to_string()],
+            author: Some("Test Author".to_string()),
             max_rule_size: 1024 * 1024,
         });
         assert_eq!(filtered2.len(), 1);
@@ -710,7 +706,7 @@ detection:
             product: "windows".to_string(),
             min_status: Some(MinStatus(Status::Stable)),
             min_level: Some(MinLevel(Level::Critical)),
-            authors: vec!["FRACK113".to_string()],
+            author: Some("FRACK113".to_string()),
             max_rule_size: 1024 * 1024,
         });
         assert_eq!(filtered_case.len(), 1);
@@ -723,7 +719,7 @@ detection:
             product: "windows".to_string(),
             min_status: Some(MinStatus(Status::Stable)),
             min_level: Some(MinLevel(Level::Critical)),
-            authors: vec![" frack113 ".to_string()],
+            author: Some(" frack113 ".to_string()),
             max_rule_size: 1024 * 1024,
         });
         assert_eq!(filtered_whitespace.len(), 1);
@@ -732,10 +728,10 @@ detection:
             product: "windows".to_string(),
             min_status: Some(MinStatus(Status::Stable)),
             min_level: Some(MinLevel(Level::Critical)),
-            authors: vec!["frack113".to_string(), "Test Author".to_string()],
+            author: Some("frack113".to_string()),
             max_rule_size: 1024 * 1024,
         });
-        assert_eq!(filtered3.len(), 2);
-        assert_eq!(filtered3.stats().rules_filtered_author, 2);
+        assert_eq!(filtered3.len(), 1);
+        assert_eq!(filtered3.stats().rules_filtered_author, 3);
     }
 }

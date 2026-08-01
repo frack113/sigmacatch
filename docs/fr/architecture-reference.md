@@ -68,7 +68,7 @@ sigma:
   max_rule_size: 1048576      # octets (1MB par défaut, min 1024, max 10MB)
 ```
 
-**Filtrage des règles :** `product`, `min_status`, `min_level` et `authors` sont appliqués par `SigmahqRules::filter()`.
+**Filtrage des règles :** `product`, `min_status`, `min_level` et `author` sont appliqués par `SigmahqRules::filter()`.
 Les règles dont `status`/`level` est inférieur au seuil sont exclues (seulement si le champ est présent) ;
 les règles sans `status`/`level` sont toujours acceptées. Si 0 règle reste, le programme bail.
 
@@ -128,7 +128,7 @@ SigmahqRules::new()                 # charge ./sigma
     ├── dédupe cross-file par id de règle (première occurrence gagne)
     └── pour chaque id dans existing_rules → rules.remove_id(&id)
     ↓
-rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, authors, max_rule_size })
+rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size })
     ├── stats() → rules_loaded, filtered_product/status/level/author
     └── 0 règle chargée → bail avec un message d'erreur clair
 ```
@@ -332,7 +332,7 @@ regression_tests_info:
 ### SigmahqRules (`crates/sigmacatch-rule/src/lib.rs`)
 
 - `new()` (hardcodé `./sigma`) / `new_from_path()` — walk + parse + dédupe
-- `filter(SigmaFilterConfig { product, min_status, min_level, authors, max_rule_size })` → LoadStats
+- `filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size })` → LoadStats
 - `remove_id(&Uuid)`, `get(&Uuid)`, `channels(&custom_map)`, `to_collection()`
 
 ### EventCollector (`crates/input-windows-channels/src/collector.rs`)
