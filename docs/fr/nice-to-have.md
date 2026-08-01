@@ -19,7 +19,7 @@ Fonctionnalités identifiées comme utiles mais hors périmètre actuel. Pas de 
 
 ## 2. Mode sans contrib
 
-**État :** contrib est maintenant **toujours actif** — fork detection, branch, commit, push tournent à chaque run. L'option `contrib` a été supprimée de la config.
+**État :** contrib est maintenant **toujours actif** — branch, commit, push tournent à chaque run. L'option `contrib` a été supprimée de la config.
 
 **Ce qui manque :**
 - Option `--no-contrib` ou config pour désactiver le workflow contrib (clone upstream local uniquement)
@@ -59,7 +59,7 @@ Fonctionnalités identifiées comme utiles mais hors périmètre actuel. Pas de 
 
 ## 5. Optimiser DetectionEngine
 
-**État :** partielle. Le `RuleIndex` mappe les rule IDs par `Product` pour un accès filtré. Les pipelines sont chargées dynamiquement depuis `crates/detection-engine/pipelines/`.
+**État :** partielle. Les pipelines sont embarquées via `include_str!` depuis `crates/sigmacatch-detection/pipelines/` et appliquées à chaque règle à l'init du moteur.
 
 **Ce qui manque :**
 - Pré-filtrage par event : seulement push dans le moteur les events dont le logsource matche au moins une rule chargée

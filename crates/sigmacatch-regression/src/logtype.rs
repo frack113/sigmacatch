@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-/// Data format of a regression entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogType {
     Evtx,

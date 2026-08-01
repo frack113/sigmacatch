@@ -32,6 +32,14 @@ const IDLE_POLL_MS: u64 = 1_000;
 #[cfg(windows)]
 const ROLLOVER_CHECK_CYCLES: u32 = 30;
 
+/// Minimum interval between per-channel collection progress logs.
+#[cfg(windows)]
+const COLLECT_LOG_INTERVAL_MS: u64 = 10_000;
+
+/// Interval between "still alive" heartbeats when a channel has no new events.
+#[cfg(windows)]
+const IDLE_LOG_INTERVAL_SECS: u64 = 60;
+
 /// Multi-channel Windows Event Log collector.
 ///
 /// Spawns one task per channel. Each task continuously polls for new events
@@ -114,6 +122,11 @@ impl EventCollector {
 
         let mut last_record_id: u64 = 0;
         let mut empty_cycles: u32 = 0;
+        let mut sent_lifetime: u64 = 0;
+        let mut is_initial_drain = true;
+        let drain_start = std::time::Instant::now();
+        let mut last_log = std::time::Instant::now();
+        let mut last_idle_log = std::time::Instant::now();
 
         while !*stop.borrow() {
             let channel_wide = str_to_wide(channel);
@@ -126,6 +139,12 @@ impl EventCollector {
             let query_handle = match Self::evt_query(&channel_wide, &query_wide) {
                 Ok(h) => h,
                 Err(e) => {
+                    if Self::is_channel_not_found(&e) {
+                        tracing::error!(
+                            "Channel '{channel}' not found — excluding permanently (role/service not installed)"
+                        );
+                        return;
+                    }
                     tracing::warn!("EvtQuery failed for channel '{channel}': {e}");
                     std::thread::sleep(std::time::Duration::from_millis(ERROR_BACKOFF_MS));
                     continue;
@@ -134,6 +153,7 @@ impl EventCollector {
 
             let mut event_handles: Vec<isize> = vec![0; 32];
             let mut total_sent: usize = 0;
+            let mut cycle_fetched: usize = 0;
             loop {
                 if *stop.borrow() {
                     break;
@@ -153,6 +173,7 @@ impl EventCollector {
                 if events_fetched == 0 {
                     break; // timeout with no new events — re-query
                 }
+                cycle_fetched += events_fetched as usize;
 
                 for i in 0..events_fetched as usize {
                     let handle_value = event_handles[i];
@@ -210,6 +231,22 @@ impl EventCollector {
 
             if total_sent == 0 {
                 empty_cycles += 1;
+                if cycle_fetched > 0 {
+                    tracing::warn!(
+                        "Channel '{channel}': fetched {cycle_fetched} events but 0 sent — events dropped during render/parse"
+                    );
+                }
+                if is_initial_drain {
+                    tracing::info!(
+                        "Channel '{channel}': initial query OK — 0 events (channel exists but empty)"
+                    );
+                    is_initial_drain = false;
+                } else if last_idle_log.elapsed()
+                    >= std::time::Duration::from_secs(IDLE_LOG_INTERVAL_SECS)
+                {
+                    tracing::info!("Channel '{channel}': still alive — 0 new events since startup");
+                    last_idle_log = std::time::Instant::now();
+                }
                 if empty_cycles >= ROLLOVER_CHECK_CYCLES {
                     empty_cycles = 0;
                     let max_record_id = Self::probe_max_record_id(channel);
@@ -223,11 +260,33 @@ impl EventCollector {
                 std::thread::sleep(std::time::Duration::from_millis(IDLE_POLL_MS));
             } else {
                 empty_cycles = 0;
+                sent_lifetime += total_sent as u64;
+                if is_initial_drain {
+                    tracing::info!(
+                        "Channel '{channel}': initial drain collected {total_sent} events in {:?}",
+                        drain_start.elapsed()
+                    );
+                    is_initial_drain = false;
+                    last_log = std::time::Instant::now();
+                } else if last_log.elapsed()
+                    >= std::time::Duration::from_millis(COLLECT_LOG_INTERVAL_MS)
+                {
+                    tracing::info!(
+                        "Channel '{channel}': {sent_lifetime} events collected so far (recent cycle: {total_sent})"
+                    );
+                    last_log = std::time::Instant::now();
+                }
             }
 
             if *stop.borrow() {
                 break;
             }
+        }
+
+        if sent_lifetime > 0 {
+            tracing::info!(
+                "Channel '{channel}': collector stopped after collecting {sent_lifetime} events"
+            );
         }
     }
 
@@ -240,6 +299,17 @@ impl EventCollector {
         let code = e.code().0;
         code == windows::core::HRESULT::from_win32(ERROR_TIMEOUT.0).0
             || code == windows::core::HRESULT::from_win32(ERROR_NO_MORE_ITEMS.0).0
+    }
+
+    /// ERROR_EVT_CHANNEL_NOT_FOUND — the channel does not exist on this
+    /// machine (the corresponding role/service is not installed). This is
+    /// permanent, so the channel should be excluded rather than retried.
+    #[cfg(windows)]
+    fn is_channel_not_found(e: &windows::core::Error) -> bool {
+        use windows::Win32::Foundation::ERROR_EVT_CHANNEL_NOT_FOUND;
+
+        let code = e.code().0;
+        code == windows::core::HRESULT::from_win32(ERROR_EVT_CHANNEL_NOT_FOUND.0).0
     }
 
     /// Extract the event record id directly from the raw rendered XML as a
@@ -309,7 +379,7 @@ impl EventCollector {
     fn evt_query(
         channel_wide: &[u16],
         query_wide: &[u16],
-    ) -> Result<windows::Win32::System::EventLog::EVT_HANDLE, String> {
+    ) -> Result<windows::Win32::System::EventLog::EVT_HANDLE, windows::core::Error> {
         use windows::Win32::System::EventLog::EvtQueryChannelPath;
         Self::evt_query_flags(channel_wide, query_wide, EvtQueryChannelPath.0)
     }
@@ -320,19 +390,14 @@ impl EventCollector {
         channel_wide: &[u16],
         query_wide: &[u16],
         flags: u32,
-    ) -> Result<windows::Win32::System::EventLog::EVT_HANDLE, String> {
+    ) -> Result<windows::Win32::System::EventLog::EVT_HANDLE, windows::core::Error> {
         use windows::core::PCWSTR;
         use windows::Win32::System::EventLog::EvtQuery;
 
         let path = PCWSTR::from_raw(channel_wide.as_ptr());
         let query = PCWSTR::from_raw(query_wide.as_ptr());
 
-        let handle = unsafe { EvtQuery(None, path, query, flags) };
-
-        match handle {
-            Ok(h) => Ok(h),
-            Err(e) => Err(format!("EvtQuery failed: {e}")),
-        }
+        unsafe { EvtQuery(None, path, query, flags) }
     }
 
     /// Initialize COM apartment for the current thread.

@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use sigmacatch_repo::DEFAULT_SIGMA_REPO_URL;
-use sigmacatch_rule::{MinLevel, MinStatus};
+use sigmacatch_rule::{Level, MinLevel, MinStatus, Status};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -109,11 +109,11 @@ fn default_max_rule_size() -> usize {
 }
 
 fn default_min_status() -> MinStatus {
-    MinStatus::Stable
+    MinStatus(Status::Stable)
 }
 
 fn default_min_level() -> MinLevel {
-    MinLevel::Critical
+    MinLevel(Level::Critical)
 }
 
 impl Default for SigmaFilterConfig {
@@ -161,7 +161,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
+    fn load_unvalidated(path: &PathBuf) -> anyhow::Result<Self> {
         if !path.exists() {
             let default = Config::default();
             default.save(path)?;
@@ -188,11 +188,22 @@ impl Config {
 
         let yaml = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("Failed to read config file: {}", e))?;
-        let config: Config = serde_yaml::from_str(&yaml)
-            .map_err(|e| anyhow::anyhow!("Failed to parse config file: {}", e))?;
+        serde_yaml::from_str(&yaml)
+            .map_err(|e| anyhow::anyhow!("Failed to parse config file: {}", e))
+    }
 
+    pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
+        let config = Self::load_unvalidated(path)?;
         config.validate()?;
+        Ok(config)
+    }
 
+    pub fn load_with_cli(path: &PathBuf, cli: &CliArgs) -> anyhow::Result<Self> {
+        let mut config = Self::load_unvalidated(path)?;
+        if let Some(author) = &cli.author {
+            config.git.author.clone_from(author);
+        }
+        config.validate()?;
         Ok(config)
     }
 
@@ -213,8 +224,13 @@ impl Config {
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
+        if self.git.author == "sigmacatch" {
+            anyhow::bail!(
+                "config: 'git.author' is the placeholder 'sigmacatch'. \
+                 Set 'author' to your GitHub username in config.yaml"
+            );
+        }
         if !self.git.author.is_empty()
-            && self.git.author != "sigmacatch"
             && !self
                 .git
                 .author
@@ -364,13 +380,13 @@ impl Config {
             );
         }
 
-        if self.sigma.min_status >= MinStatus::Stable {
+        if self.sigma.min_status >= MinStatus(Status::Stable) {
             tracing::warn!(
                 "sigma.min_status = {} — very restrictive, only stable rules will be loaded",
                 self.sigma.min_status
             );
         }
-        if self.sigma.min_level >= MinLevel::High {
+        if self.sigma.min_level >= MinLevel(Level::High) {
             tracing::warn!(
                 "sigma.min_level = {} — very restrictive, only {} and higher rules will be loaded",
                 self.sigma.min_level,

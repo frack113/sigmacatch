@@ -10,13 +10,15 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1.0"
+phf = { version = "0.14", features = ["macros"] }
 rsigma-parser = "0.20"
 serde = { version = "1.0", features = ["derive"] }
 tracing = "0.1"
-sigmacatch-types = { path = "../sigmacatch-types" }
+uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(not(unix))'.dependencies]
 dunce = "1.0"
 
 [dev-dependencies]
 tempfile = "3"
+serde_yaml = { package = "yaml_serde", version = "0.10" }

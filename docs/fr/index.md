@@ -4,17 +4,20 @@ Outil headless qui capture de vrais événements Windows via l'**API Windows Eve
 
 ## Workspace
 
-Le projet est un cargo workspace de 7 crates :
+Le projet est un cargo workspace de 10 packages (1 binaire + 9 bibliothèques) :
 
 | Crate | Rôle |
 |---|---|
-| `sigmacatch` | Binaire + pipeline, toute l'orchestration |
-| `detection-engine` | Wrapper fin autour de rsigma-eval pour charger pipelines et règles, puis évaluer les events |
-| `input-windows-channels` | Collecteur multi-channels Windows Event Log (EvtQueryW, EvtNext, EvtRender) |
+| `sigmacatch` | Binaire + orchestration (boucle continue) |
+| `sigmacatch-config` | Config YAML + parsing CLI + custom_channels.yaml + diagnostics git dry-run |
+| `sigmacatch-logger` | Abonnement tracing à deux couches (stderr info + fichier journal rolling debug) |
+| `sigmacatch-rule` | `SigmahqRules` : chargement de règles, filtre, dédupe, résolution de channels |
+| `sigmacatch-detection` | Wrapper fin autour de rsigma-eval (pipelines, bloom, LogSourceExtractor) |
+| `input-windows-channels` | Collecteur Windows Event Log multi-channel (EvtQueryW/EvtNext/EvtRender) |
+| `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, génération de triplets de régression |
+| `sigmacatch-types` | Types partagés : `Event`, `Alert`, `RegressionHeader`, parsing XML, tables logsource |
+| `sigmacatch-repo` | wrapper grit-lib : SigmaRepo, opérations git |
 | `input-evtx` | Parse les fichiers EVTX en objets `Event` pour le moteur de détection |
-| `input-windows-channels` | Résolution LogSource, tables de taxonomie, mappings custom |
-| `sigma-regression` | Format de régression SigmaHQ (InfoYml, SkipSet, triplet) |
-| `sigmacatch-types` | Types partagés : Event, Alert, RegressionHeader, parsing XML/JSON |
 
 ## Démarrage rapide
 

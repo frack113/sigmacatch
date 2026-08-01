@@ -2,86 +2,105 @@
 
 ## Cargo workspace
 
-Le projet est un cargo workspace de 7 crates :
+Le projet est un cargo workspace de 10 packages (1 binaire + 9 bibliothèques) :
 
 ```
 sigmacatch/
-├── Cargo.toml           # Racine workspace
+├── Cargo.toml                    # Racine workspace
 ├── crates/
-│   ├── detection-engine/      # Wrapper fin autour de rsigma-eval pour pipelines et règles
-│   ├── input-evtx/            # Parse les fichiers EVTX en objets Event
-│   ├── input-windows-channels/ # Collecteur Winevt (EventProducer) + taxonomie via sigmacatch-types
-│   ├── sigma-regression/      # InfoYml, SkipSet, validation triplet (format régression SigmaHQ)
-│   └── sigmacatch-types/      # Types partagés : Event, Alert, RegressionHeader + parsing XML
-└── sigmacatch/          # Binaire + pipeline
+│   ├── sigmacatch-config/        # Config YAML + parsing CLI + custom_channels.yaml + diagnostics git dry-run
+│   ├── sigmacatch-logger/        # Abonnement tracing à deux couches (stderr info + fichier journal rolling debug)
+│   ├── sigmacatch-rule/          # SigmahqRules : chargement de règles (parse_sigma_yaml), filtre, dédupe, channels()
+│   ├── sigmacatch-detection/     # Wrapper DetectionEngine + pipelines embarquées (windows.yml, flatten_winevt.yml)
+│   ├── input-windows-channels/   # Résolution LogSource, taxonomie (tables phf), collecteur Winevt (cfg(windows))
+│   ├── sigmacatch-regression/    # SigmahqRegression (get_sigma_id, add, retire), InfoYml, triplet
+│   ├── sigmacatch-types/         # Types partagés : Event, Alert, RegressionHeader + parsing XML + tables de mapping logsource
+ │   ├── sigmacatch-repo/          # wrapper grit-lib + SigmaRepo + opérations git
+│   └── input-evtx/               # Parser fichiers EVTX → Event
+└── sigmacatch/                   # Binaire + orchestration
     └── src/
-        ├── main.rs
-        ├── bin/evtx_check.rs
-        └── ...
+        ├── main.rs               # Config + init repo + boucle continue + process_and_generate + commit/push
+        └── bin/evtx_check.rs     # Validation batch du moteur Sigma contre les données .evtx
 ```
 
 ## Arborescence (`sigmacatch/src/`)
 
 ```
 sigmacatch/src/
-├── main.rs              # Binaire + pipeline (run_pipeline, Stats, AggregatedRule)
-├── lib.rs               # Déclarations pub mod
-├── config.rs            # Config YAML (Config, SigmaFilterConfig, MinStatus, MinLevel)
-├── logger.rs            # Abonnement tracing à deux couches (stderr info + fichier debug)
-├── repo.rs              # wrapper grit-lib + SigmaRepo (clone/fetch/push/commit/branch)
-├── github/
-│   ├── mod.rs           # pub mod commit, fork
-│   ├── commit.rs        # Workflow de commit avec validation author/email
-│   └── fork.rs          # Détection de fork via API GitHub
+├── main.rs              # Binaire : orchestration, boucle continue, process_and_generate
 └── bin/
-    └── evtx_check.rs    # Outil de validation batch
+    └── evtx_check.rs    # Outil de validation batch (exit 1 sur entrée vide / aucun match)
 ```
+
+Il n'y a pas de `config.rs` / `logger.rs` / `repo.rs` dans le binaire — ces modules ont été
+déplacés dans les crates `sigmacatch-config`, `sigmacatch-logger` et `sigmacatch-repo`.
 
 ## Graphe de dépendances
 
 ```
-sigmacatch ──┬── detection-engine        (wrapper rsigma-eval + pipelines + bloom/logsource optimizations)
-             ├── input-windows-channels  (collecteur Winevt + inject_logsource_fields via Event)
-             ├── input-evtx              (parser fichiers EVTX → Event + inject_logsource_fields)
-             ├── sigmacatch-types        (Event, Alert, RegressionHeader, Product, parsing XML, tables de mapping logsource)
-             └── sigma-regression        (InfoYml, SkipSet, triplet)
+sigmacatch ──┬── sigmacatch-config       (Config, CliArgs, diagnostics dry-run)
+             ├── sigmacatch-logger       (init tracing)
+             ├── sigmacatch-rule         (SigmahqRules : load/filter/remove_id/channels)
+             ├── sigmacatch-detection    (DetectionEngine : pipelines + bloom + LogSourceExtractor)
+             ├── input-windows-channels  (EventCollector : Winevt multi-channel)
+             ├── sigmacatch-regression   (SigmahqRegression : skip set + génération triplet)
+             ├── sigmacatch-types        (Event, Alert, RegressionHeader, Product, EventProducer, parsing XML)
+             ├── sigmacatch-repo         (SigmaRepo, wrapper grit-lib)
+             └── input-evtx              (parser EVTX, utilisé par evtx_check)
 ```
 
-`detection-engine` est indépendant (dépend uniquement de `sigmacatch-types` + `rsigma-eval`). `input-windows-channels` dépend de `sigmacatch-types` pour les types partagés et les tables de mapping. `sigmacatch` dépend des 5 crates, ainsi que de crates externes (`rsigma-eval`, `grit-lib`, `tokio`, `windows`, etc.).
+`sigmacatch-detection` dépend de `sigmacatch-rule` + `sigmacatch-types` + `rsigma-eval`.
+`input-windows-channels` dépend de `sigmacatch-types` pour les types partagés et les tables de
+mapping logsource. `sigmacatch-regression` dépend de `sigmacatch-types`. `sigmacatch-rule`
+dépend de `rsigma-parser`. `sigmacatch-config` dépend de `sigmacatch-repo` + `sigmacatch-rule`.
 
-## Pipeline (single run, sequential)
+## Pipeline (boucle continue)
 
-1. Load config (create `config.yaml` with defaults if missing)
-2. Create directories: `regression_data/`, `regression_data/rules/`
-3. Acquire SigmaHQ rules via `grit-lib` (clone); exit error if no rules found
-4. `find_rules_dirs()` scans `sigma/` for `rules` / `rules-*` dirs (excludes `rules-compliance`)
-5. Build skip set by scanning `regression_data/rules/` + `sigma/regression_data/` for existing `info.yml` → `HashSet<String>` of rule IDs
-6. Load Sigma rules from all `rules*` dirs, **excluding skipped rule IDs**; post-parse filter via `rule.logsource.product` filters non-Windows rules; status/level filter via `config.sigma.min_status`/`min_level` (seule optimisation autorisée) — une table de règles est affichée au démarrage (chargées / skipées / services actifs). Le `RuleIndex` mappe chaque rule ID à son `Product` pour un accès filtré par produit.
-7. Collect events via les collectors (`EventCollector`, `EVTXCollector`) → `Vec<Event>`:
-   - Chaque event porte `event_json: Value` (pré-parsé par le collector, fallback `parse_winevt_xml`)
-   - Les collectors injectent `product`, `service`, `category` via `Event::inject_logsource_fields()` avant l'envoi
-   - Le moteur utilise `LogSourceExtractor` + bloom pre-filter de rsigma-eval pour elaguer les regles incompatibles
-   - Evaluate against **all loaded rules** via FIFO API: `engine.put_events(events) → engine.process_events() → engine.get_alerts()` — **aucun event perdu**
-   - Aggregate matches by `rule_id` in `HashMap<String, AggregatedRule>`
-8. Generate regression for rules without existing `info.yml` (skip at generate time too)
-9. Write: `<output>/<rule_rel_path>/<rule_id>.json` (first matched event) + `<rule_id>.evtx` + `info.yml`; append `regression_tests_path` line to the source rule YAML
+```
+1. parse_args() + Config::load_with_cli("config.yaml", cli)
+   └── --dry-run → dry_run_git() (diagnostics git) + sortie
+2. init_logger() → tracing (stderr info + fichier debug)
+3. ensure_dirs() → dossier repo sigma + logs/
+4. SigmaRepo init (remote_url = fork, branche de travail, token) → init() [clone/fetch]
+5. SigmahqRegression::new() → charge les info.yml existants depuis ./sigma/regression_data
+   └── existing_rules = regression.get_sigma_id() → HashSet<Uuid> (vide avec --all-rules)
+6. SigmahqRules::new() → chargement + dédupe ; remove_id() par règle skipée
+   └── filter(product, min_status, min_level) ; 0 règles → bail
+7. custom_map = load_custom_channel_mapping("custom_channels.yaml")
+   └── cycle_channels = rules.channels(&custom_map) ; 0 channels → warn + return
+8. DetectionEngine::new(&rules)  (pipelines + bloom + LogSourceExtractor)
+   └── --channels-only → affiche les channels + sortie
+10. output_base = <sigma_repo_path>/regression_data ; clean_partial_artifacts()
+11. EventCollector::new(cycle_channels).run(tx, stop) → task tokio
+12. Boucle : tokio::select!
+    ├── shutdown_rx (Ctrl+C) → break
+    ├── event depuis rx → engine.put_events(vec![event])
+    └── generate_interval (30s) → process_and_generate() → commit_files() si fichiers
+13. Flush final : drain des events restants → process_and_generate() → commit → push() fork
+```
 
-## Invariants architecturaux (fondations non négociables)
+`process_and_generate()` :
 
-- Pipeline 100% séquentiel : acquérir règles → charger moteur → collecter events → matcher → générer
-- Tout en RAM : aggregation en mémoire avant écriture (pas de DB intermédiaire)
-- Un run = cycle complet (pas de mode "juste collect" ou "juste generate")
-- Collecte Windows via **Winevt API** (`windows` crate, `EvtQueryW`/`EvtNext`/`EvtRender`) — pas d'ETW, pas de ferrisetw
-- Output = `regression_data/<rule_rel_path>/` (triplet: `<rule_id>.json` + `<rule_id>.evtx` + `info.yml` format SigmaHQ)
-- **Moteur temps réel** : `rsigma-eval` chargé une fois avec toutes les règles non skipées ; chaque event est évalué contre toutes les règles chargées. Aucun event perdu. Le skip-at-load est l'unique optimisation.
-- **LogSource injectée par le collector** : `Event::inject_logsource_fields()` injecte `product`/`service`/`category` dans `event_json` au moment de la création de l'Event. Le `LogSourceExtractor` de rsigma-eval lit ces champs pour elaguer les règles incompatibles.
-  - Les tables de mapping (channel → service, provider → service, category) sont dans `sigmacatch-types` (source unique de vérité)
-  - Priority: channel → service > provider → service > default
-  - Fail-open : un event sans champs logsource est évalué contre toutes les règles
-- **Bloom pre-filter** : activé dans `DetectionEngine::new()`, elague les matchers de sous-chaîne (Contains, StartsWith, EndsWith) via extraction de trigrammes (~1µs par probe).
-- **EVTX via `EvtExportLog`** : re-queries l'event par RecordID depuis le live log. Si succès → `.evtx` binaire valide. Si échec (event purgé) ou non-Windows → fallback `.xml` (raw XML, pas de binaire invalide).
-  - **Known limitation** : race condition avec la rétention du log — si l'event a été purgé entre la collecte et l'export, `EvtExportLog` échoue silencieusement (`ERROR_EVT_QUERY_RESULT_STALE`).
-- **Pipelines dynamiques** : les pipelines Sigma sont chargées depuis `crates/detection-engine/pipelines/` au démarrage de l'engine (pas de `include_str!` embarqué). L'ordre alphabétique par nom de fichier garantit la déterministicité (flatten_winevt avant windows, etc.).
-- **RuleIndex** : mappe les rule IDs par `Product` pour un accès filtré. Peuplé pendant le chargement des règles, consultable via `engine.rule_index()`.
+```
+engine.process_events() → get_alerts()
+    ├── alerts vides → return (pas de log "evaluation complete")
+    ├── log stats (events_processed, matches_found, alerts_count)
+    └── pour chaque alert : regression.add(&alert) → Option<Vec<String>>
+         ├── None si règle déjà retirée / pas d'id valide / info.yml existant
+         └── Some(files) → écrit le triplet + regression_tests_path + retire la règle
+    └── règles retirées → rules.remove_id() → engine.reload_rules() (un seul reload batch)
+```
 
-> Skip set details, key design decisions, and skip set construction logic are in [`architecture-reference.md`](architecture-reference.md) (Stages 2, 5, 6, 7).
+## Notes de conception
+
+- **Skip set** = `HashSet<Uuid>` depuis `SigmahqRegression::get_sigma_id()` (info.yml existants),
+  construit une seule fois au démarrage. `--all-rules` le désactive. Après génération, une règle
+  est retirée et le moteur est rechargé en un seul batch (`engine.reload_rules`).
+- **Output toujours dans le repo sigma** : `<sigma_repo_path>/regression_data/<rule_rel_path>/`
+  (triplet `info.yml` + `<rule_id>.json` + `<rule_id>.evtx`), commité sur le fork.
+- **Collecteur observable** : les channels inexistants sont exclus une fois pour toutes sur
+  `ERROR_EVT_CHANNEL_NOT_FOUND` (un seul `error!`) ; chaque channel vivant log « initial query OK »
+  puis un heartbeat « still alive » (60s) ; `warn!` quand des events sont fetchés mais perdus au
+  render/parse.
+
+> Les détails du skip set et les décisions de conception clés sont dans [`architecture-reference.md`](architecture-reference.md).

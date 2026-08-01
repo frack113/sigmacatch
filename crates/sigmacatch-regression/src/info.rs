@@ -4,14 +4,15 @@
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleMetadata {
-    pub id: String,
+    pub id: Uuid,
     pub title: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegressionTestInfo {
     pub name: String,
     #[serde(rename = "type")]
@@ -22,9 +23,9 @@ pub struct RegressionTestInfo {
     pub path: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InfoYml {
-    pub id: String,
+    pub id: Uuid,
     pub description: String,
     pub date: String,
     pub author: String,
@@ -34,7 +35,7 @@ pub struct InfoYml {
 
 impl InfoYml {
     pub fn new(
-        rule_id: &str,
+        rule_id: &Uuid,
         rule_title: &str,
         event_count: usize,
         sigma_evtx_path: &str,
@@ -43,12 +44,12 @@ impl InfoYml {
         provider: &str,
     ) -> Self {
         Self {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: Uuid::new_v4(),
             description: description.to_string(),
             date: chrono::Utc::now().format("%Y-%m-%d").to_string(),
             author: author.to_string(),
             rule_metadata: vec![RuleMetadata {
-                id: rule_id.to_string(),
+                id: *rule_id,
                 title: rule_title.to_string(),
             }],
             regression_tests_info: vec![RegressionTestInfo {
@@ -61,14 +62,12 @@ impl InfoYml {
         }
     }
 
-    /// Serialize to YAML using serde_yaml.
     pub fn save(&self, path: &Path) -> anyhow::Result<()> {
         let file = std::fs::File::create(path)?;
         serde_yaml::to_writer(file, self)?;
         Ok(())
     }
 
-    /// Load from YAML file.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let mut content =
             std::fs::read_to_string(path).map_err(|e| anyhow!("Failed to read info.yml: {}", e))?;
@@ -87,8 +86,9 @@ mod tests {
 
     #[test]
     fn info_yml_serializes_correctly() {
+        let rule_id = Uuid::parse_str("7595ba94-cf3b-4471-aa03-4f6baa9e5fad").unwrap();
         let info = InfoYml::new(
-            "7595ba94-cf3b-4471-aa03-4f6baa9e5fad",
+            &rule_id,
             "Important Scheduled Task Deleted/Disabled",
             1,
             "regression_data/rules/windows/builtin/security/win_security_susp_scheduled_task_delete_or_disable/7595ba94-cf3b-4471-aa03-4f6baa9e5fad.evtx",
@@ -108,10 +108,7 @@ mod tests {
             "Swachchhanda Shrawan Poudel (Nextron Systems)"
         );
         assert_eq!(parsed.rule_metadata.len(), 1);
-        assert_eq!(
-            parsed.rule_metadata[0].id,
-            "7595ba94-cf3b-4471-aa03-4f6baa9e5fad"
-        );
+        assert_eq!(parsed.rule_metadata[0].id, rule_id);
         assert_eq!(
             parsed.rule_metadata[0].title,
             "Important Scheduled Task Deleted/Disabled"

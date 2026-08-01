@@ -14,6 +14,7 @@ use serde_json::{Map, Value};
 use std::fmt;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 /// Product identifier for rule filtering.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Hash, Serialize, Deserialize)]
@@ -79,7 +80,7 @@ impl Event {
     }
 
     /// EventID extracted from the parsed JSON.
-    pub fn event_id(&self) -> u32 {
+    fn event_id(&self) -> u32 {
         self.event_json
             .get("Event")
             .and_then(|v| v.get("System"))
@@ -89,7 +90,7 @@ impl Event {
     }
 
     /// Provider extracted from the parsed JSON (System.Provider.Name).
-    pub fn provider(&self) -> &str {
+    fn provider(&self) -> &str {
         self.event_json
             .get("Event")
             .and_then(|v| v.get("System"))
@@ -104,7 +105,7 @@ impl Event {
     ///
     /// Checks `Event.System.Channel` first (Winevt XML), then `Channel` at the
     /// top level (evtx crate output).
-    pub fn channel(&self) -> &str {
+    fn channel(&self) -> &str {
         self.event_json
             .get("Event")
             .and_then(|v| v.get("System"))
@@ -159,7 +160,7 @@ impl Event {
 // ─── LogSource mapping tables ───────────────────────────────────────────────
 
 /// Channel → Sigma service name.
-pub static CHANNEL_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_map! {
+static CHANNEL_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_map! {
     "Application" => "application",
     "System" => "system",
     "Security" => "security",
@@ -217,7 +218,7 @@ pub static CHANNEL_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_m
 };
 
 /// Channel:EventID → Sigma category.
-pub static CHANNEL_EVENT_TO_CATEGORY: phf::Map<&'static str, &'static str> = phf::phf_map! {
+static CHANNEL_EVENT_TO_CATEGORY: phf::Map<&'static str, &'static str> = phf::phf_map! {
     "Microsoft-Windows-Sysmon/Operational:1" => "process_creation",
     "Microsoft-Windows-Sysmon/Operational:2" => "file_change",
     "Microsoft-Windows-Sysmon/Operational:3" => "network_connection",
@@ -264,14 +265,14 @@ pub static CHANNEL_EVENT_TO_CATEGORY: phf::Map<&'static str, &'static str> = phf
 };
 
 /// Sub-category overrides (higher specificity than CHANNEL_EVENT_TO_CATEGORY).
-pub static CHANNEL_EVENT_TO_SUBCATEGORY: phf::Map<&'static str, &'static str> = phf::phf_map! {
+static CHANNEL_EVENT_TO_SUBCATEGORY: phf::Map<&'static str, &'static str> = phf::phf_map! {
     "Microsoft-Windows-Sysmon/Operational:12" => "registry_add",
     "Microsoft-Windows-Sysmon/Operational:13" => "registry_set",
     "Microsoft-Windows-Sysmon/Operational:14" => "registry_rename",
 };
 
 /// Provider → Sigma service fallback (when channel lookup fails).
-pub static PROVIDER_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_map! {
+static PROVIDER_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_map! {
     "Microsoft-Windows-Sysmon" => "sysmon",
     "Microsoft-Windows-Security-Auditing" => "security",
     "Microsoft-Windows-PowerShell" => "powershell",
@@ -286,7 +287,7 @@ pub static PROVIDER_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_
 };
 
 /// Resolve category from channel + event_id (subcategory overrides take precedence).
-pub fn get_category(channel: &str, event_id: u32) -> Option<&'static str> {
+fn get_category(channel: &str, event_id: u32) -> Option<&'static str> {
     let key = format!("{}:{}", channel, event_id);
     CHANNEL_EVENT_TO_SUBCATEGORY
         .get(&key)
@@ -440,44 +441,12 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-/// Validate and coerce EventID to integer in a nested event JSON.
-///
-/// The evtx crate and some Winevt paths may produce `Event.System.EventID` as
-/// a string (`"1"`) instead of a number (`1`). The `windows.yml` pipeline
-/// injects integer conditions (`Event.System.EventID: 13`), so a string
-/// value silently fails the match. This function coerces the field to a
-/// number when possible, and returns the original value unchanged otherwise.
-pub fn validate_event_id(event: &Value) -> Value {
-    let Some(obj) = event.as_object() else {
-        return event.clone();
-    };
-
-    let mut result = obj.clone();
-
-    let needs_fix = result
-        .get("Event")
-        .and_then(|e| e.get("System"))
-        .and_then(|s| s.get("EventID"))
-        .and_then(|v| v.as_str())
-        .and_then(|s| s.parse::<u64>().ok());
-
-    if let Some(n) = needs_fix {
-        if let Some(Value::Object(system)) =
-            result.get_mut("Event").and_then(|e| e.get_mut("System"))
-        {
-            system.insert("EventID".into(), Value::Number(n.into()));
-        }
-    }
-
-    Value::Object(result)
-}
-
 // ─── Alert ─────────────────────────────────────────────────────────────────
 
 /// An alert produced when an event matches a Sigma rule.
 #[derive(Debug, Clone)]
 pub struct Alert {
-    pub rule_id: String,
+    pub rule_id: Uuid,
     pub rule_title: String,
     pub description: Option<String>,
     pub rule_path: Option<PathBuf>,
@@ -487,18 +456,6 @@ pub struct Alert {
 }
 
 impl Alert {
-    pub fn new(rule_id: String, rule_title: String, severity: String, event: &Event) -> Self {
-        Self {
-            rule_id,
-            rule_title,
-            description: None,
-            rule_path: None,
-            severity,
-            event_json: event.event_json.clone(),
-            event_raw: event.event_raw.clone(),
-        }
-    }
-
     pub fn channel(&self) -> &str {
         self.event_json
             .get("Event")
@@ -541,12 +498,12 @@ impl Alert {
 /// Evolutive — add fields here without touching rsigma internals.
 #[derive(Debug, Clone)]
 pub struct RegressionHeader {
-    pub rule_id: String,
+    pub rule_id: Uuid,
     pub rule_title: String,
 }
 
 impl RegressionHeader {
-    pub fn new(rule_id: String, rule_title: String) -> Self {
+    pub fn new(rule_id: Uuid, rule_title: String) -> Self {
         Self {
             rule_id,
             rule_title,
@@ -561,51 +518,6 @@ impl From<Alert> for RegressionHeader {
             rule_title: a.rule_title,
         }
     }
-}
-
-// ─── EventSource ──────────────────────────────────────────────────────────
-
-/// Event source type that determines which collector to use.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
-)]
-pub enum EventSource {
-    /// Windows Winevt (Event Log API).
-    #[default]
-    Winevt,
-    /// Linux log files (journald, syslog, etc.).
-    LogFile,
-    /// macOS Unified Logging / Console.
-    Console,
-    /// External EVTX files.
-    EvtxFile,
-    /// Raw JSON events (for testing / external adapters).
-    RawJson,
-}
-
-impl std::fmt::Display for EventSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Winevt => write!(f, "winevt"),
-            Self::LogFile => write!(f, "logfile"),
-            Self::Console => write!(f, "console"),
-            Self::EvtxFile => write!(f, "evtx_file"),
-            Self::RawJson => write!(f, "raw_json"),
-        }
-    }
-}
-
-// ─── Stats ────────────────────────────────────────────────────────────────
-
-/// Statistics for input/output tracking.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct Stats {
-    /// Total events processed against rules.
-    pub events_processed: u64,
-    /// Total rule matches found.
-    pub matches_found: u64,
-    /// Total regression data generated.
-    pub regression_data_generated: u64,
 }
 
 // ─── EventProducer ────────────────────────────────────────────────────────
@@ -684,36 +596,6 @@ mod tests {
         let result = parse_winevt_xml(xml).unwrap();
         let event_data = result["Event"]["EventData"].as_object().unwrap();
         assert_eq!(event_data["TargetUserName"].as_str().unwrap(), "admin");
-    }
-
-    #[test]
-    fn test_validate_event_id_string_to_number() {
-        let json = serde_json::json!({
-            "Event": {
-                "System": {
-                    "EventID": "13",
-                    "Channel": "Security"
-                }
-            },
-            "_source": "winevt"
-        });
-        let result = validate_event_id(&json);
-        assert_eq!(result["Event"]["System"]["EventID"].as_u64(), Some(13));
-    }
-
-    #[test]
-    fn test_validate_event_id_already_number() {
-        let json = serde_json::json!({
-            "Event": {
-                "System": {
-                    "EventID": 13,
-                    "Channel": "Security"
-                }
-            },
-            "_source": "winevt"
-        });
-        let result = validate_event_id(&json);
-        assert_eq!(result["Event"]["System"]["EventID"].as_u64(), Some(13));
     }
 
     #[test]
@@ -822,24 +704,6 @@ mod tests {
             .as_object()
             .unwrap()
             .contains_key("EventData"));
-    }
-
-    #[test]
-    fn test_validate_event_id_non_object() {
-        let json = serde_json::json!("string");
-        let result = validate_event_id(&json);
-        assert_eq!(result, serde_json::json!("string"));
-    }
-
-    #[test]
-    fn test_validate_event_id_no_system() {
-        let json = serde_json::json!({
-            "Event": {
-                "EventID": "13"
-            }
-        });
-        let result = validate_event_id(&json);
-        assert_eq!(result["Event"]["EventID"].as_str().unwrap(), "13");
     }
 
     #[test]

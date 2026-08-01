@@ -13,3 +13,4 @@ roxmltree = "0.21"
 tokio = { version = "1", features = ["rt", "sync"] }
 async-trait = "0.1"
 phf = { version = "0.14", features = ["macros"] }
+uuid = { version = "1", features = ["v4"] }
