@@ -16,7 +16,7 @@ The project is a cargo workspace of 10 packages (1 binary + 9 libraries):
 | `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) |
 | `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, regression triplet generation |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
-| `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, GitHub fork detection, commit workflow |
+| `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, git operations |
 | `input-evtx` | Parse EVTX files into `Event` objects for the detection engine |
 
 ## Quick start

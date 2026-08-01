@@ -10,7 +10,7 @@ Headless tool that captures real Windows events via **Windows Event Log API** (w
 
 **Continuous run (one process until Ctrl+C):**
 1. Load config + init logger
-2. Acquire SigmaHQ rules (grit-lib clone/fetch) + detect fork + create branch
+2. Acquire SigmaHQ rules (grit-lib clone/fetch) + create branch
 3. Build the skip set from existing regression data
 4. Load the Sigma engine (rsigma-eval) with bloom pre-filter + LogSourceExtractor
 5. Resolve channels from the loaded rules
@@ -40,7 +40,7 @@ sigmacatch/
     ├── input-windows-channels/    # Multi-channel Winevt collector (EventProducer) + logsource resolution
     ├── sigmacatch-regression/     # SigmahqRegression, InfoYml, RegressionData, triplet validation
     ├── sigmacatch-types/          # Shared types: Event, Alert, RegressionHeader, Product + XML parsing + logsource mapping tables
-    ├── sigmacatch-repo/           # grit-lib wrapper: SigmaRepo, GitHub fork detection, commit workflow
+    ├── sigmacatch-repo/           # grit-lib wrapper: SigmaRepo, git operations
     └── input-evtx/                # EVTX file parser → Event (used by evtx_check)
 ```
 
@@ -367,7 +367,7 @@ regression_tests_info:
 | Dependency | Usage |
 |---|---|
 | `grit-lib` | all git operations (clone, fetch, push, branch, commit, checkout) via HTTP, pure Rust |
-| `reqwest` (blocking + async) | HTTP client for git transport + fork detection (GitHub API) |
+| `reqwest` (blocking + async) | HTTP client for git transport |
 | `rsigma-eval` + `rsigma-parser` | Sigma rule loading/evaluation |
 | `tokio` | async runtime |
 | `tracing` + `tracing-subscriber` | logging |

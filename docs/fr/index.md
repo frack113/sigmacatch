@@ -16,7 +16,7 @@ Le projet est un cargo workspace de 10 packages (1 binaire + 9 bibliothèques) :
 | `input-windows-channels` | Collecteur Windows Event Log multi-channel (EvtQueryW/EvtNext/EvtRender) |
 | `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, génération de triplets de régression |
 | `sigmacatch-types` | Types partagés : `Event`, `Alert`, `RegressionHeader`, parsing XML, tables logsource |
-| `sigmacatch-repo` | wrapper grit-lib : SigmaRepo, détection de fork GitHub, workflow commit |
+| `sigmacatch-repo` | wrapper grit-lib : SigmaRepo, opérations git |
 | `input-evtx` | Parse les fichiers EVTX en objets `Event` pour le moteur de détection |
 
 ## Démarrage rapide

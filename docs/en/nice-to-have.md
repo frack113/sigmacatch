@@ -19,7 +19,7 @@ Features identified as useful but out of current scope. No timeline — document
 
 ## 2. No-Contrib Mode
 
-**Status:** contrib is now **always active** — fork detection, branch, commit, push run every cycle. The `contrib` option has been removed from config.
+**Status:** contrib is now **always active** — branch, commit, push run every cycle. The `contrib` option has been removed from config.
 
 **What's missing:**
 - `--no-contrib` flag or config option to disable contrib workflow (local upstream clone only)

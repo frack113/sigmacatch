@@ -15,7 +15,7 @@ sigmacatch/
 │   ├── input-windows-channels/   # Résolution LogSource, taxonomie (tables phf), collecteur Winevt (cfg(windows))
 │   ├── sigmacatch-regression/    # SigmahqRegression (get_sigma_id, add, retire), InfoYml, triplet
 │   ├── sigmacatch-types/         # Types partagés : Event, Alert, RegressionHeader + parsing XML + tables de mapping logsource
-│   ├── sigmacatch-repo/          # wrapper grit-lib + SigmaRepo + détection de fork GitHub + workflow commit
+ │   ├── sigmacatch-repo/          # wrapper grit-lib + SigmaRepo + opérations git
 │   └── input-evtx/               # Parser fichiers EVTX → Event
 └── sigmacatch/                   # Binaire + orchestration
     └── src/
@@ -45,7 +45,7 @@ sigmacatch ──┬── sigmacatch-config       (Config, CliArgs, diagnostics
              ├── input-windows-channels  (EventCollector : Winevt multi-channel)
              ├── sigmacatch-regression   (SigmahqRegression : skip set + génération triplet)
              ├── sigmacatch-types        (Event, Alert, RegressionHeader, Product, EventProducer, parsing XML)
-             ├── sigmacatch-repo         (SigmaRepo, github::commit, github::fork)
+             ├── sigmacatch-repo         (SigmaRepo, wrapper grit-lib)
              └── input-evtx              (parser EVTX, utilisé par evtx_check)
 ```
 

@@ -19,7 +19,7 @@ Fonctionnalités identifiées comme utiles mais hors périmètre actuel. Pas de 
 
 ## 2. Mode sans contrib
 
-**État :** contrib est maintenant **toujours actif** — fork detection, branch, commit, push tournent à chaque run. L'option `contrib` a été supprimée de la config.
+**État :** contrib est maintenant **toujours actif** — branch, commit, push tournent à chaque run. L'option `contrib` a été supprimée de la config.
 
 **Ce qui manque :**
 - Option `--no-contrib` ou config pour désactiver le workflow contrib (clone upstream local uniquement)
