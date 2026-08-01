@@ -40,12 +40,13 @@ pub fn fetch_remote(
 pub fn fetch_remote_ssh(
     git_dir: &Path,
     repo_url: &str,
-    ssh_shell_cmd: Option<&str>,
+    ssh_shell_cmd: &str,
 ) -> Result<(usize, Option<String>)> {
     info!("Fetching via SSH from {}", repo_url);
-    let transport = match ssh_shell_cmd {
-        Some(cmd) => SshTransport::with_shell_command(cmd),
-        None => SshTransport::new(),
+    let transport = if ssh_shell_cmd.is_empty() {
+        SshTransport::new()
+    } else {
+        SshTransport::with_shell_command(ssh_shell_cmd)
     };
     let mut conn = transport.connect(
         repo_url,

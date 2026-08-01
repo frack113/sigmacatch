@@ -6,7 +6,7 @@ use sigmacatch_config::{self, dry_run_git, parse_args, Config};
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_logger::init as init_logger;
 use sigmacatch_regression::SigmahqRegression;
-use sigmacatch_repo::{self, github, SigmaRepo};
+use sigmacatch_repo::SigmaRepo;
 use sigmacatch_rule::SigmahqRules;
 use sigmacatch_types::{Event, EventProducer};
 use std::collections::HashSet;
@@ -62,24 +62,24 @@ async fn main() -> Result<()> {
         "Sigmacatch started for {} <{}>",
         config.git.author, config.git.email
     );
-    let branch_name = sigmacatch_repo::create_branch_name();
+    let branch_name = format!("sigmacatch-contrib/{}", config.git.author);
     info!("Branch name: {branch_name}");
-    let fork_config = github::fork::detect_fork(&config.git.author, &branch_name).await?;
+    let push_branch = branch_name.clone();
 
     config.ensure_dirs()?;
-    {
-        let mut sigma_repo = SigmaRepo::new(std::path::Path::new(&config.git.sigma_repo_path))
-            .with_transport(config.git.transport)
-            .with_ssh_key_path(config.git.ssh_key_path.clone());
-        let url = fork_config.fork_url.trim_end_matches(".git").to_string() + ".git";
-        sigma_repo = sigma_repo
-            .with_remote_url(url)
-            .with_fork_branch(fork_config.branch_name.clone());
-        if !config.git.github_token.trim().is_empty() {
-            sigma_repo = sigma_repo.with_token(config.git.github_token.trim().to_string());
+    let fork_url = format!("https://github.com/{}/sigma", config.git.author);
+    let mut sigma_repo = SigmaRepo::new();
+    sigma_repo.set_info_user(&config.git.author, &config.git.email);
+
+    match config.git.transport {
+        sigmacatch_config::GitTransport::Http => sigma_repo.set_info_http(&config.git.github_token),
+        sigmacatch_config::GitTransport::Ssh => {
+            sigma_repo.set_info_ssh(config.git.ssh_key_path.as_deref())
         }
-        sigma_repo.init().await?;
-    }
+    };
+
+    sigma_repo.set_remote_url(fork_url.clone()).await?;
+    sigma_repo.set_working_branch(branch_name)?;
 
     let mut regression = match SigmahqRegression::new() {
         Ok(r) => r,
@@ -201,12 +201,7 @@ async fn main() -> Result<()> {
                 let created_files = process_and_generate(&mut engine, &mut rules, &mut regression);
 
                 if !created_files.is_empty() {
-                    if let Err(e) = sigmacatch_repo::github::commit::commit_all_rules(
-                        sigma_repo_path,
-                        &created_files,
-                        &config.git.author,
-                        &config.git.email,
-                    ) {
+                    if let Err(e) = sigma_repo.commit_files(&created_files) {
                         warn!("Failed to commit regression data: {}", e);
                     }
                 }
@@ -229,30 +224,17 @@ async fn main() -> Result<()> {
     let created_files = process_and_generate(&mut engine, &mut rules, &mut regression);
 
     if !created_files.is_empty() {
-        if let Err(e) = sigmacatch_repo::github::commit::commit_all_rules(
-            sigma_repo_path,
-            &created_files,
-            &config.git.author,
-            &config.git.email,
-        ) {
+        if let Err(e) = sigma_repo.commit_files(&created_files) {
             warn!("Failed to commit regression data: {}", e);
         }
     }
 
-    let github_token =
-        (!config.git.github_token.trim().is_empty()).then(|| config.git.github_token.trim());
-    if let Err(e) = sigmacatch_repo::push(
-        sigma_repo_path,
-        &fork_config.branch_name,
-        config.git.transport,
-        github_token,
-        config.git.ssh_key_path.as_deref(),
-    ) {
+    if let Err(e) = sigma_repo.push() {
         warn!("Failed to push branch: {}", e);
     } else {
         info!(
             "Branch '{}' pushed to origin. Next step: create PR at https://github.com/SigmaHQ/sigma/pulls",
-            fork_config.branch_name
+            push_branch
         );
     }
 

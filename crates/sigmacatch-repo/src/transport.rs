@@ -50,9 +50,9 @@ pub fn https_to_ssh_url(url: &str) -> Option<String> {
     if rest.contains("..") || rest.contains([' ', '\t', '\n', '\r']) {
         return None;
     }
-    // Allow exactly one '/' for the user/repo pattern (e.g. "frack113/sigma")
+    // Allow one or two '/' for user/repo or org/subgroup/repo patterns
     let slash_count = rest.split('/').count() - 1;
-    if slash_count != 1 {
+    if !(1..=2).contains(&slash_count) {
         return None;
     }
     let repo = rest.strip_suffix(".git").unwrap_or(rest);
@@ -84,33 +84,34 @@ fn shell_quote_arg(arg: &str) -> String {
     arg.to_string()
 }
 
-/// Get the SSH shell command string from config or environment.
+/// Build the SSH shell command string from config or environment.
 ///
 /// Priority: `GIT_SSH_COMMAND` env > `GIT_SSH` env > `ssh_key_path` in config > default `ssh`.
 /// Environment variables take precedence so the user can override config at runtime without
 /// modifying `config.yaml` (e.g. for testing different keys or proxies).
-pub(crate) fn get_ssh_shell_command(ssh_key_path: Option<&str>) -> Option<String> {
+/// Returns an empty string when no custom command is configured (use default `ssh`).
+pub(crate) fn build_ssh_shell_command(ssh_key_path: Option<&str>) -> String {
     if let Ok(cmd) = std::env::var("GIT_SSH_COMMAND") {
         if !cmd.is_empty() {
             debug!("Using GIT_SSH_COMMAND from environment");
-            return Some(cmd);
+            return cmd;
         }
     }
     if let Ok(cmd) = std::env::var("GIT_SSH") {
         if !cmd.is_empty() {
             debug!("Using GIT_SSH from environment");
-            return Some(cmd);
+            return cmd;
         }
     }
     if let Some(key_path) = ssh_key_path {
         if !key_path.is_empty() {
             let quoted = shell_quote_arg(key_path);
-            let cmd = format!("ssh -i {}", quoted);
-            debug!("Constructed SSH command with key path: {}", cmd);
-            return Some(cmd);
+            let cmd = format!("ssh -i {quoted}");
+            debug!("Constructed SSH command with key path: {cmd}");
+            return cmd;
         }
     }
-    None
+    String::new()
 }
 
 /// HTTP client implementing grit-lib's `HttpClient` trait with GitHub token auth.
@@ -138,16 +139,7 @@ impl AuthHttpClient {
         if let Some(ref t) = *token {
             if url.starts_with("https://") {
                 if let Some(rest) = url.strip_prefix("https://") {
-                    let encoded: String = t
-                        .bytes()
-                        .map(|b| match b {
-                            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                                (b as char).to_string()
-                            }
-                            _ => format!("%{:02X}", b),
-                        })
-                        .collect();
-                    return format!("https://x-access-token:{}@{}", encoded, rest);
+                    return format!("https://x-access-token:{t}@{rest}");
                 }
             }
         }

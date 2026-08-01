@@ -46,10 +46,11 @@ fn lookup_parent_mode(git_dir: &Path, rel_path: &str) -> Option<u32> {
     None
 }
 
-pub(crate) fn add_tree_to_index(
+pub(crate) fn add_tree_to_index_filtered(
     odb: &Odb,
     tree_oid: ObjectId,
     prefix: &str,
+    staged_paths: &std::collections::HashSet<Vec<u8>>,
     index: &mut grit_lib::index::Index,
 ) -> Result<()> {
     let obj = odb
@@ -68,8 +69,11 @@ pub(crate) fn add_tree_to_index(
             format!("{}/{}", prefix, name)
         };
         if entry.mode == 0o040000 {
-            add_tree_to_index(odb, entry.oid, &rel_path, index)?;
+            add_tree_to_index_filtered(odb, entry.oid, &rel_path, staged_paths, index)?;
         } else {
+            if !staged_paths.is_empty() && !staged_paths.contains(&rel_path.as_bytes().to_vec()) {
+                continue;
+            }
             let mode = match entry.mode {
                 0o100755 => 0o100755,
                 0o120000 => 0o120000,

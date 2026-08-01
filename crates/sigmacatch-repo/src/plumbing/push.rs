@@ -102,7 +102,7 @@ pub fn push_branch_ssh(
     git_dir: &Path,
     remote_url: &str,
     branch_name: &str,
-    ssh_shell_cmd: Option<&str>,
+    ssh_shell_cmd: &str,
 ) -> Result<()> {
     let ref_name = format!("refs/heads/{}", branch_name);
     let oid_str = read_loose_or_packed_ref(git_dir, &ref_name)
@@ -122,9 +122,10 @@ pub fn push_branch_ssh(
         dry_run: false,
         push_options: Vec::new(),
     };
-    let transport = match ssh_shell_cmd {
-        Some(cmd) => SshTransport::with_shell_command(cmd),
-        None => SshTransport::new(),
+    let transport = if ssh_shell_cmd.is_empty() {
+        SshTransport::new()
+    } else {
+        SshTransport::with_shell_command(ssh_shell_cmd)
     };
     let mut conn = transport.connect(
         remote_url,

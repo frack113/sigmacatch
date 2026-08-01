@@ -39,7 +39,7 @@ fn validate_branch_name(name: &str) -> Result<()> {
 /// If the branch already exists locally, it is deleted and recreated from the
 /// current HEAD so that a stale/dirty local branch (e.g. from a previous run
 /// whose push failed) cannot diverge from the freshly pulled upstream.
-pub fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
+pub(crate) fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
     validate_branch_name(branch_name)?;
     let full_ref_name = format!("refs/heads/{}", branch_name);
     let ref_path = git_dir.join(&full_ref_name);
@@ -68,7 +68,7 @@ pub fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
 }
 
 /// Switch HEAD to an existing local branch.
-pub fn switch_head(git_dir: &Path, branch_name: &str) -> Result<()> {
+pub(crate) fn switch_head(git_dir: &Path, branch_name: &str) -> Result<()> {
     validate_branch_name(branch_name)?;
     let local_ref = format!("refs/heads/{}", branch_name);
     if read_loose_or_packed_ref(git_dir, &local_ref).is_none() {
