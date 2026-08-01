@@ -107,9 +107,9 @@ The project is a cargo workspace of 10 crates (9 lib crates + 1 binary):
 | `sigmacatch` | Binary + orchestration (continuous loop) |
 | `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml + dry-run git diagnostics |
 | `sigmacatch-logger` | Two-layer tracing subscriber (stderr info + daily rolling file debug) |
-| `sigmacatch-rule` | `SigmahqRules`: rule loading, filter, dedupe, channel resolution |
+| `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication |
 | `sigmacatch-detection` | Thin wrapper around rsigma-eval (pipelines, bloom, LogSourceExtractor) |
-| `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) |
+| `input-windows-channels` | Channel/logsource mapping + multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) |
 | `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, regression triplet generation |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
 | `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, GitHub fork detection, commit workflow |
@@ -121,7 +121,7 @@ The project is a cargo workspace of 10 crates (9 lib crates + 1 binary):
 - [grit-lib](https://github.com/anoma/grit-lib) — pure Rust git, no CLI needed
 - [tokio](https://crates.io/crates/tokio) — async runtime
 - [windows](https://crates.io/crates/windows) — Windows Event Log API, cfg-gated
-- [serde](https://crates.io/crates/serde) / [serde_json](https://crates.io/crates/serde_json) / [serde_yaml](https://crates.io/crates/yaml_serde) — serialization
+- [serde](https://crates.io/crates/serde) / [serde_json](https://crates.io/crates/serde_json) / [yaml_serde](https://crates.io/crates/yaml_serde) — serialization
 - [roxmltree](https://crates.io/crates/roxmltree) — XML parsing for Winevt events
 - [evtx](https://crates.io/crates/evtx) — EVTX file parsing
 
