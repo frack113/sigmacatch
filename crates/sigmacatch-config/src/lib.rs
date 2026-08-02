@@ -80,53 +80,8 @@ impl LogLevel {
 /// Re-export Product from sigmacatch_types for rule filtering.
 pub use sigmacatch_types::Product;
 
-/// Configuration for rule loading filters.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct SigmaFilterConfig {
-    /// Target product for rule filtering: windows, linux, or macos.
-    pub product: Product,
-    /// Minimum rule status (inclusive): unsupported < deprecated < experimental < test < stable.
-    #[serde(default = "default_min_status")]
-    pub min_status: MinStatus,
-    /// Minimum rule level (inclusive): informational < low < medium < high < critical.
-    #[serde(default = "default_min_level")]
-    pub min_level: MinLevel,
-    /// Maximum number of rules to load (0 = unlimited).
-    #[serde(default = "default_max_rules")]
-    pub max_rules: u64,
-    /// Maximum size of a single rule file in bytes (default 1MB).
-    #[serde(default = "default_max_rule_size")]
-    pub max_rule_size: usize,
-}
-
-fn default_max_rules() -> u64 {
-    0
-}
-
-fn default_max_rule_size() -> usize {
-    1024 * 1024
-}
-
-fn default_min_status() -> MinStatus {
-    MinStatus(Status::Stable)
-}
-
-fn default_min_level() -> MinLevel {
-    MinLevel(Level::Critical)
-}
-
-impl Default for SigmaFilterConfig {
-    fn default() -> Self {
-        Self {
-            product: Product::default(),
-            min_status: default_min_status(),
-            min_level: default_min_level(),
-            max_rules: default_max_rules(),
-            max_rule_size: default_max_rule_size(),
-        }
-    }
-}
+/// Re-export rule filter config from sigmacatch_rule.
+pub use sigmacatch_rule::SigmaFilterConfig;
 
 /// Log configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,7 +110,7 @@ impl Default for LogConfig {
 pub struct Config {
     pub log: LogConfig,
     #[serde(default)]
-    pub sigma: SigmaFilterConfig,
+    pub filter: SigmaFilterConfig,
     #[serde(default)]
     pub git: GitConfig,
 }
@@ -336,24 +291,17 @@ impl Config {
             }
         }
 
-        if self.sigma.max_rules > 100000 {
+        if self.filter.max_rule_size < 1024 {
             anyhow::bail!(
-                "config: 'sigma.max_rules' exceeds maximum allowed value (100000), got {}",
-                self.sigma.max_rules
+                "config: 'filter.max_rule_size' must be at least 1024 bytes, got {}",
+                self.filter.max_rule_size
             );
         }
 
-        if self.sigma.max_rule_size < 1024 {
+        if self.filter.max_rule_size > 10 * 1024 * 1024 {
             anyhow::bail!(
-                "config: 'sigma.max_rule_size' must be at least 1024 bytes, got {}",
-                self.sigma.max_rule_size
-            );
-        }
-
-        if self.sigma.max_rule_size > 10 * 1024 * 1024 {
-            anyhow::bail!(
-                "config: 'sigma.max_rule_size' exceeds maximum allowed value (10MB), got {}",
-                self.sigma.max_rule_size
+                "config: 'filter.max_rule_size' exceeds maximum allowed value (10MB), got {}",
+                self.filter.max_rule_size
             );
         }
 
@@ -380,17 +328,27 @@ impl Config {
             );
         }
 
-        if self.sigma.min_status >= MinStatus(Status::Stable) {
+        if self
+            .filter
+            .min_status
+            .as_ref()
+            .is_some_and(|s| *s >= MinStatus(Status::Stable))
+        {
             tracing::warn!(
-                "sigma.min_status = {} — very restrictive, only stable rules will be loaded",
-                self.sigma.min_status
+                "filter.min_status = {} — very restrictive, only stable rules will be loaded",
+                self.filter.min_status.as_ref().unwrap()
             );
         }
-        if self.sigma.min_level >= MinLevel(Level::High) {
+        if self
+            .filter
+            .min_level
+            .as_ref()
+            .is_some_and(|l| *l >= MinLevel(Level::High))
+        {
             tracing::warn!(
-                "sigma.min_level = {} — very restrictive, only {} and higher rules will be loaded",
-                self.sigma.min_level,
-                self.sigma.min_level
+                "filter.min_level = {} — very restrictive, only {} and higher rules will be loaded",
+                self.filter.min_level.as_ref().unwrap(),
+                self.filter.min_level.as_ref().unwrap()
             );
         }
         Ok(())

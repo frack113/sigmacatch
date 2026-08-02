@@ -2,7 +2,7 @@
 
 ## Cargo workspace
 
-Le projet est un cargo workspace de 10 packages (1 binaire + 9 bibliothèques) :
+Le projet est un cargo workspace de 11 packages (1 crate binaire avec 2 binaires + 10 bibliothèques) :
 
 ```
 sigmacatch/
@@ -15,21 +15,26 @@ sigmacatch/
 │   ├── input-windows-channels/   # Résolution LogSource, taxonomie (tables phf), collecteur Winevt (cfg(windows))
 │   ├── sigmacatch-regression/    # SigmahqRegression (get_sigma_id, add, retire), InfoYml, triplet
 │   ├── sigmacatch-types/         # Types partagés : Event, Alert, RegressionHeader + parsing XML + tables de mapping logsource
- │   ├── sigmacatch-repo/          # wrapper grit-lib + SigmaRepo + opérations git
+│   ├── sigmacatch-repo/          # wrapper grit-lib + SigmaRepo + opérations git
 │   └── input-evtx/               # Parser fichiers EVTX → Event
-└── sigmacatch/                   # Binaire + orchestration
+├── sigmacatch/                   # Binaire + orchestration
+│   └── src/
+│       └── main.rs               # Config + init repo + boucle continue + process_and_generate + commit/push
+└── localcheck/                   # Outils de dev (hors du crate principal)
     └── src/
-        ├── main.rs               # Config + init repo + boucle continue + process_and_generate + commit/push
-        └── bin/evtx_check.rs     # Validation batch du moteur Sigma contre les données .evtx
+        ├── check_filter.rs       # Valide SigmaFilterConfig contre les vraies règles Sigma (comptage ground-truth)
+        └── check_evtx.rs         # Validation batch du moteur Sigma contre les données .evtx
 ```
 
-## Arborescence (`sigmacatch/src/`)
+## Arborescence
 
 ```
 sigmacatch/src/
-├── main.rs              # Binaire : orchestration, boucle continue, process_and_generate
-└── bin/
-    └── evtx_check.rs    # Outil de validation batch (exit 1 sur entrée vide / aucun match)
+└── main.rs              # Binaire : orchestration, boucle continue, process_and_generate
+
+localcheck/src/
+├── check_filter.rs      # Outil de validation des filtres (pas d'args CLI, charge ./sigma lui-même)
+└── check_evtx.rs        # Outil de validation batch (exit 1 sur entrée vide / aucun match)
 ```
 
 Il n'y a pas de `config.rs` / `logger.rs` / `repo.rs` dans le binaire — ces modules ont été
@@ -45,8 +50,12 @@ sigmacatch ──┬── sigmacatch-config       (Config, CliArgs, diagnostics
              ├── input-windows-channels  (EventCollector : Winevt multi-channel)
              ├── sigmacatch-regression   (SigmahqRegression : skip set + génération triplet)
              ├── sigmacatch-types        (Event, Alert, RegressionHeader, Product, EventProducer, parsing XML)
-             ├── sigmacatch-repo         (SigmaRepo, wrapper grit-lib)
-             └── input-evtx              (parser EVTX, utilisé par evtx_check)
+             └── sigmacatch-repo         (SigmaRepo, wrapper grit-lib)
+
+localcheck ──┬── sigmacatch-rule         (SigmahqRules + SigmaFilterConfig)
+             ├── sigmacatch-detection    (DetectionEngine)
+             ├── sigmacatch-regression   (SigmahqRegression)
+             └── input-evtx              (parse_evtx_bytes)
 ```
 
 `sigmacatch-detection` dépend de `sigmacatch-rule` + `sigmacatch-types` + `rsigma-eval`.
@@ -65,7 +74,7 @@ dépend de `rsigma-parser`. `sigmacatch-config` dépend de `sigmacatch-repo` + `
 5. SigmahqRegression::new() → charge les info.yml existants depuis ./sigma/regression_data
    └── existing_rules = regression.get_sigma_id() → HashSet<Uuid> (vide avec --all-rules)
 6. SigmahqRules::new() → chargement + dédupe ; remove_id() par règle skipée
-   └── filter(product, min_status, min_level) ; 0 règles → bail
+    └── filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size }) ; 0 règles → bail
 7. custom_map = load_custom_channel_mapping("custom_channels.yaml")
    └── cycle_channels = rules.channels(&custom_map) ; 0 channels → warn + return
 8. DetectionEngine::new(&rules)  (pipelines + bloom + LogSourceExtractor)

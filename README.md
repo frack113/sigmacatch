@@ -49,11 +49,11 @@ git:
   sigma_repo_path: "sigma"
 log:
   level_file: "debug"
-sigma:
+filter:
   product: windows          # windows, linux, or macos
   min_status: "stable"      # load rules with status >= this threshold
   min_level: "critical"     # load rules with level >= this threshold
-  max_rules: 0              # 0 = unlimited
+  author: ""                # filter rules by author (optional, empty = no filter)
   max_rule_size: 1048576    # bytes (1MB default)
 ```
 
@@ -97,23 +97,25 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 | Output format | [EN](docs/en/output-format.md) | [FR](docs/fr/output-format.md) |
 | Regression data format | [EN](docs/en/regression-data-format.md) | [FR](docs/fr/regression-data-format.md) |
 | Nice-to-have | [EN](docs/en/nice-to-have.md) | [FR](docs/fr/nice-to-have.md) |
+| Tools | [EN](docs/en/tools.md) | [FR](docs/fr/tools.md) |
 
 ## Workspace
 
-The project is a cargo workspace of 10 crates (9 lib crates + 1 binary):
+The project is a cargo workspace of 11 crates (10 lib crates + 1 binary crate with 2 bins):
 
 | Crate | Purpose |
 |---|---|
 | `sigmacatch` | Binary + orchestration (continuous loop) |
 | `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml + dry-run git diagnostics |
 | `sigmacatch-logger` | Two-layer tracing subscriber (stderr info + daily rolling file debug) |
-| `sigmacatch-rule` | `SigmahqRules`: rule loading, filter, dedupe, channel resolution |
+| `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication |
 | `sigmacatch-detection` | Thin wrapper around rsigma-eval (pipelines, bloom, LogSourceExtractor) |
-| `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) |
+| `input-windows-channels` | Channel/logsource mapping + multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) |
 | `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, regression triplet generation |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
 | `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, GitHub fork detection, commit workflow |
 | `input-evtx` | Parse EVTX files into `Event` objects for the detection engine |
+| `localcheck` | Dev tools: `check_filter` (filter validation) + `check_evtx` (regression validation) |
 
 ## Built with
 
@@ -121,7 +123,7 @@ The project is a cargo workspace of 10 crates (9 lib crates + 1 binary):
 - [grit-lib](https://github.com/anoma/grit-lib) — pure Rust git, no CLI needed
 - [tokio](https://crates.io/crates/tokio) — async runtime
 - [windows](https://crates.io/crates/windows) — Windows Event Log API, cfg-gated
-- [serde](https://crates.io/crates/serde) / [serde_json](https://crates.io/crates/serde_json) / [serde_yaml](https://crates.io/crates/yaml_serde) — serialization
+- [serde](https://crates.io/crates/serde) / [serde_json](https://crates.io/crates/serde_json) / [yaml_serde](https://crates.io/crates/yaml_serde) — serialization
 - [roxmltree](https://crates.io/crates/roxmltree) — XML parsing for Winevt events
 - [evtx](https://crates.io/crates/evtx) — EVTX file parsing
 

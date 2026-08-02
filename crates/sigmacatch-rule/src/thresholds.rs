@@ -9,6 +9,7 @@ pub struct LoadStats {
     pub rules_filtered_product: u64,
     pub rules_filtered_status: u64,
     pub rules_filtered_level: u64,
+    pub rules_filtered_author: u64,
     pub rules_total_candidate: u64,
 }
 

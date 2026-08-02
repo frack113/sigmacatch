@@ -13,15 +13,12 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = { package = "yaml_serde", version = "0.10" }
 anyhow = "1.0"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 tracing = "0.1"
 
 sigmacatch-repo = { path = "../sigmacatch-repo" }
 sigmacatch-rule = { path = "../sigmacatch-rule" }
 sigmacatch-types = { path = "../sigmacatch-types" }
-
-[target.'cfg(unix)'.dependencies]
-dunce = "1.0"
 
 [dev-dependencies]
 tempfile = "3.12"

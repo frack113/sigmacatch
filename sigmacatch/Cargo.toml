@@ -3,7 +3,7 @@
 
 [package]
 name = "sigmacatch"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Capture real Windows events and match them against Sigma rules to produce regression data"
 license = "MIT"
@@ -11,10 +11,6 @@ license = "MIT"
 [[bin]]
 name = "sigmacatch"
 path = "src/main.rs"
-
-[[bin]]
-name = "evtx_check"
-path = "src/bin/evtx_check.rs"
 
 [dependencies]
 # Crate workspace — application configuration
@@ -35,18 +31,11 @@ input-windows-channels = { path = "../crates/input-windows-channels" }
 # Crate workspace — SigmaHQ regression data format
 sigmacatch-regression = { path = "../crates/sigmacatch-regression" }
 
-# Crate workspace — EVTX parsing
-input-evtx = { path = "../crates/input-evtx" }
-
 # Crate workspace — Sigma rule management
 sigmacatch-rule = { path = "../crates/sigmacatch-rule" }
 
 # Crate workspace — Git operations
 sigmacatch-repo = { path = "../crates/sigmacatch-repo" }
-
-# Sérialisation
-serde_json = "1.0"
-serde_yaml = { package = "yaml_serde", version = "0.10" }
 
 # Async
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "signal"] }
@@ -58,9 +47,6 @@ tracing = "0.1"
 anyhow = "1.0"
 
 uuid = { version = "1", features = ["v4"] }
-
-# EVTX parsing (for evtx_check tool)
-evtx = "0.12"
 
 [dev-dependencies]
 tempfile = "3.12"

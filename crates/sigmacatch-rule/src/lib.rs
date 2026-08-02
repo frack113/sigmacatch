@@ -21,6 +21,45 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use uuid::Uuid;
 
+/// Rule loading filters. All fields are optional — `None` means no filtering.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "snake_case")]
+pub struct SigmaFilterConfig {
+    pub product: String,
+    pub min_status: Option<MinStatus>,
+    pub min_level: Option<MinLevel>,
+    pub max_rule_size: usize,
+    pub author: Option<String>,
+}
+
+impl Default for SigmaFilterConfig {
+    fn default() -> Self {
+        Self {
+            product: String::from("windows"),
+            min_status: None,
+            min_level: None,
+            max_rule_size: 1024 * 1024,
+            author: None,
+        }
+    }
+}
+
+impl SigmaFilterConfig {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Normalize author: trim, lowercase, and treat empty string as no filter.
+    pub fn normalize(&mut self) {
+        if let Some(a) = self.author.as_mut() {
+            *a = a.trim().to_lowercase();
+        }
+        if self.author.as_deref() == Some("") {
+            self.author = None;
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SigmahqRules {
     rules: Vec<SigmaRule>,
@@ -101,28 +140,25 @@ impl SigmahqRules {
         Ok(set)
     }
 
-    pub fn filter(
-        self,
-        product: Option<&str>,
-        min_status: Option<MinStatus>,
-        min_level: Option<MinLevel>,
-    ) -> Self {
+    pub fn filter(self, filters: SigmaFilterConfig) -> Self {
         let total = self.rules.len() as u64;
         let mut filtered_product = 0u64;
         let mut filtered_status = 0u64;
         let mut filtered_level = 0u64;
+        let mut filtered_author = 0u64;
         let mut rules = Vec::new();
 
         for rule in self.rules {
-            let product_ok = match product {
-                Some(p) => rule.logsource.product.as_deref() == Some(p),
-                None => true,
-            };
+            let product_ok = rule
+                .logsource
+                .product
+                .as_deref()
+                .is_some_and(|p| p == filters.product);
             if !product_ok {
                 filtered_product += 1;
                 continue;
             }
-            let status_ok = match (&min_status, &rule.status) {
+            let status_ok = match (&filters.min_status, &rule.status) {
                 (Some(threshold), Some(s)) => threshold.accepts(s),
                 _ => true,
             };
@@ -130,12 +166,27 @@ impl SigmahqRules {
                 filtered_status += 1;
                 continue;
             }
-            let level_ok = match (&min_level, &rule.level) {
+            let level_ok = match (&filters.min_level, &rule.level) {
                 (Some(threshold), Some(l)) => threshold.accepts(l),
                 _ => true,
             };
             if !level_ok {
                 filtered_level += 1;
+                continue;
+            }
+            let author_ok = match (&filters.author, &rule.author) {
+                (Some(filter_author), Some(rule_author)) => {
+                    let filter_lower = filter_author.trim().to_lowercase();
+                    rule_author
+                        .to_lowercase()
+                        .split(',')
+                        .any(|a| a.trim() == filter_lower)
+                }
+                (Some(_), None) => false,
+                _ => true,
+            };
+            if !author_ok {
+                filtered_author += 1;
                 continue;
             }
             rules.push(rule);
@@ -149,6 +200,7 @@ impl SigmahqRules {
                 rules_filtered_product: filtered_product,
                 rules_filtered_status: filtered_status,
                 rules_filtered_level: filtered_level,
+                rules_filtered_author: filtered_author,
                 rules_total_candidate: total,
             },
         }
@@ -259,11 +311,15 @@ detection:
             ],
         );
 
-        let set = SigmahqRules::new_from_path(&sigma).unwrap().filter(
-            Some("windows"),
-            Some(MinStatus(Status::Stable)),
-            Some(MinLevel(Level::Critical)),
-        );
+        let set = SigmahqRules::new_from_path(&sigma)
+            .unwrap()
+            .filter(SigmaFilterConfig {
+                product: "windows".to_string(),
+                min_status: Some(MinStatus(Status::Stable)),
+                min_level: Some(MinLevel(Level::Critical)),
+                author: None,
+                max_rule_size: 1024 * 1024,
+            });
 
         assert_eq!(set.len(), 1);
         assert_eq!(
@@ -380,11 +436,13 @@ detection:
         let set = SigmahqRules::new_from_path(&sigma_dir).unwrap();
         assert_eq!(set.len(), 2);
 
-        let filtered = set.filter(
-            Some("windows"),
-            Some(MinStatus(Status::Stable)),
-            Some(MinLevel(Level::Critical)),
-        );
+        let filtered = set.filter(SigmaFilterConfig {
+            product: "windows".to_string(),
+            min_status: Some(MinStatus(Status::Stable)),
+            min_level: Some(MinLevel(Level::Critical)),
+            author: None,
+            max_rule_size: 1024 * 1024,
+        });
         assert_eq!(filtered.len(), 1);
         assert_eq!(
             filtered.rules()[0].id.as_deref(),
@@ -407,7 +465,7 @@ detection:
 
         let set = SigmahqRules::new_from_path(&sigma_dir).unwrap();
 
-        let filtered = set.filter(None, None, None);
+        let filtered = set.filter(SigmaFilterConfig::new());
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered.stats().rules_loaded, 1);
         assert_eq!(filtered.stats().rules_total_candidate, 1);
@@ -433,7 +491,10 @@ detection:
 
         let all = SigmahqRules::new_from_path(&sigma).unwrap();
 
-        let windows = all.clone().filter(Some("windows"), None, None);
+        let windows = all.clone().filter(SigmaFilterConfig {
+            product: "windows".to_string(),
+            ..Default::default()
+        });
         assert_eq!(windows.len(), 1);
         assert_eq!(
             windows.rules()[0].id.as_deref(),
@@ -443,12 +504,18 @@ detection:
         assert_eq!(windows.stats().rules_total_candidate, 2);
         assert_eq!(windows.stats().rules_filtered_product, 1);
 
-        let linux = all.clone().filter(Some("linux"), None, None);
+        let linux = all.clone().filter(SigmaFilterConfig {
+            product: "linux".to_string(),
+            ..Default::default()
+        });
         assert_eq!(linux.len(), 1);
         assert_eq!(linux.stats().rules_total_candidate, 2);
         assert_eq!(linux.stats().rules_filtered_product, 1);
 
-        let none = all.filter(Some("macos"), None, None);
+        let none = all.filter(SigmaFilterConfig {
+            product: "macos".to_string(),
+            ..Default::default()
+        });
         assert!(none.is_empty());
         assert_eq!(none.stats().rules_total_candidate, 2);
         assert_eq!(none.stats().rules_filtered_product, 2);
@@ -554,19 +621,144 @@ detection:
             ],
         );
 
-        let set = SigmahqRules::new_from_path(&sigma_dir).unwrap().filter(
-            Some("windows"),
-            Some(MinStatus(Status::Stable)),
-            Some(MinLevel(Level::Critical)),
-        );
+        let set = SigmahqRules::new_from_path(&sigma_dir)
+            .unwrap()
+            .filter(SigmaFilterConfig {
+                product: "windows".to_string(),
+                min_status: Some(MinStatus(Status::Stable)),
+                min_level: Some(MinLevel(Level::Critical)),
+                author: None,
+                max_rule_size: 1024 * 1024,
+            });
 
         let s = set.stats();
         assert_eq!(
             s.rules_loaded
                 + s.rules_filtered_product
                 + s.rules_filtered_status
-                + s.rules_filtered_level,
+                + s.rules_filtered_level
+                + s.rules_filtered_author,
             s.rules_total_candidate
         );
+    }
+
+    #[test]
+    fn test_ruleset_filter_author() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sigma_dir = tmp.path().join("sigma");
+        let rules_dir = sigma_dir.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+
+        let other_author = MINIMAL_RULE
+            .replace(
+                "id: 11111111-1111-1111-1111-111111111111",
+                "id: 22222222-2222-2222-2222-222222222222",
+            )
+            .replace("author: Test Author", "author: Other Author");
+
+        let multi_author = MINIMAL_RULE
+            .replace(
+                "id: 11111111-1111-1111-1111-111111111111",
+                "id: 33333333-3333-3333-3333-333333333333",
+            )
+            .replace("author: Test Author", "author: frack113, Other Author");
+
+        let no_author = MINIMAL_RULE
+            .replace(
+                "id: 11111111-1111-1111-1111-111111111111",
+                "id: 44444444-4444-4444-4444-444444444444",
+            )
+            .replace("author: Test Author", "");
+
+        write_rules(
+            &rules_dir,
+            &[
+                ("a.yml", MINIMAL_RULE),
+                ("b.yml", &other_author),
+                ("c.yml", &multi_author),
+                ("d.yml", &no_author),
+            ],
+        );
+
+        let set = SigmahqRules::new_from_path(&sigma_dir).unwrap();
+        assert_eq!(set.len(), 4);
+
+        let filtered = set.clone().filter(SigmaFilterConfig {
+            product: "windows".to_string(),
+            min_status: Some(MinStatus(Status::Stable)),
+            min_level: Some(MinLevel(Level::Critical)),
+            author: Some("frack113".to_string()),
+            max_rule_size: 1024 * 1024,
+        });
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered.stats().rules_loaded, 1);
+        assert_eq!(filtered.stats().rules_total_candidate, 4);
+        assert_eq!(filtered.stats().rules_filtered_author, 3);
+
+        let filtered2 = set.clone().filter(SigmaFilterConfig {
+            product: "windows".to_string(),
+            min_status: Some(MinStatus(Status::Stable)),
+            min_level: Some(MinLevel(Level::Critical)),
+            author: Some("Test Author".to_string()),
+            max_rule_size: 1024 * 1024,
+        });
+        assert_eq!(filtered2.len(), 1);
+        assert_eq!(filtered2.stats().rules_filtered_author, 3);
+
+        let filtered_case = set.clone().filter(SigmaFilterConfig {
+            product: "windows".to_string(),
+            min_status: Some(MinStatus(Status::Stable)),
+            min_level: Some(MinLevel(Level::Critical)),
+            author: Some("FRACK113".to_string()),
+            max_rule_size: 1024 * 1024,
+        });
+        assert_eq!(filtered_case.len(), 1);
+        assert_eq!(
+            filtered_case.rules()[0].id.as_deref(),
+            Some("33333333-3333-3333-3333-333333333333")
+        );
+
+        let filtered_whitespace = set.clone().filter(SigmaFilterConfig {
+            product: "windows".to_string(),
+            min_status: Some(MinStatus(Status::Stable)),
+            min_level: Some(MinLevel(Level::Critical)),
+            author: Some(" frack113 ".to_string()),
+            max_rule_size: 1024 * 1024,
+        });
+        assert_eq!(filtered_whitespace.len(), 1);
+
+        let filtered3 = set.filter(SigmaFilterConfig {
+            product: "windows".to_string(),
+            min_status: Some(MinStatus(Status::Stable)),
+            min_level: Some(MinLevel(Level::Critical)),
+            author: Some("frack113".to_string()),
+            max_rule_size: 1024 * 1024,
+        });
+        assert_eq!(filtered3.len(), 1);
+        assert_eq!(filtered3.stats().rules_filtered_author, 3);
+    }
+
+    #[test]
+    fn test_filter_config_normalize_author() {
+        let mut config = SigmaFilterConfig {
+            author: Some("  Frack113  ".to_string()),
+            ..Default::default()
+        };
+        config.normalize();
+        assert_eq!(config.author, Some("frack113".to_string()));
+
+        let mut config = SigmaFilterConfig {
+            author: Some("   ".to_string()),
+            ..Default::default()
+        };
+        config.normalize();
+        assert_eq!(config.author, None);
+
+        let mut config = SigmaFilterConfig {
+            author: Some(String::new()),
+            ..Default::default()
+        };
+        config.normalize();
+        assert_eq!(config.author, None);
     }
 }

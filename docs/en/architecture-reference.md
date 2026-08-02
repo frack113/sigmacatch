@@ -27,11 +27,11 @@ Headless tool that captures real Windows events via **Windows Event Log API** (w
 
 ```
 sigmacatch/
-├── Cargo.toml                     # Workspace root (10 packages)
+├── Cargo.toml                     # Workspace root (11 packages)
 ├── sigmacatch/                    # Binary crate
 │   └── src/
-│       ├── main.rs                # Orchestration: continuous loop + process_and_generate + commit/push
-│       └── bin/evtx_check.rs      # Batch validation of Sigma engine against .evtx regression data
+│       └── main.rs                # Orchestration: continuous loop + process_and_generate + commit/push
+├── localcheck/                    # Dev tools (check_filter, check_evtx)
 └── crates/
     ├── sigmacatch-config/         # Config YAML, CLI parsing, custom_channels.yaml, dry-run git diagnostics
     ├── sigmacatch-logger/         # Two-layer tracing subscriber (stderr info + daily rolling file debug)
@@ -41,7 +41,7 @@ sigmacatch/
     ├── sigmacatch-regression/     # SigmahqRegression, InfoYml, RegressionData, triplet validation
     ├── sigmacatch-types/          # Shared types: Event, Alert, RegressionHeader, Product + XML parsing + logsource mapping tables
     ├── sigmacatch-repo/           # grit-lib wrapper: SigmaRepo, git operations
-    └── input-evtx/                # EVTX file parser → Event (used by evtx_check)
+    └── input-evtx/                # EVTX file parser → Event (used by localcheck)
 ```
 
 ---
@@ -61,15 +61,15 @@ git:
   sigma_repo_path: "sigma"    # local path to the sigma repo (relative, no '..' traversal, not absolute)
 log:
   level_file: "debug"
-sigma:
+filter:
   product: windows            # windows, linux, or macos
   min_status: "stable"        # minimum rule status (inclusive): unsupported < deprecated < experimental < test < stable
   min_level: "critical"       # minimum rule level (inclusive): informational < low < medium < high < critical
-  max_rules: 0                # 0 = unlimited
+  author: ""                  # filter rules by author (optional, empty = no filter)
   max_rule_size: 1048576      # bytes (1MB default, min 1024, max 10MB)
 ```
 
-**Rule filtering:** `product`, `min_status` and `min_level` are applied by `SigmahqRules::filter()`.
+**Rule filtering:** `product`, `min_status`, `min_level` and `author` are applied by `SigmahqRules::filter()`.
 Rules whose `status`/`level` is below the threshold are excluded (only if the field is present);
 rules without `status`/`level` are always accepted. If 0 rules remain, the program bails out.
 
@@ -129,8 +129,8 @@ SigmahqRules::new()                 # loads ./sigma
     ├── cross-file dedupe by rule id (first occurrence wins)
     └── for each id in existing_rules → rules.remove_id(&id)
     ↓
-rules = rules.filter(product, min_status, min_level)
-    ├── stats() → rules_loaded, filtered_product/status/level
+rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size })
+    ├── stats() → rules_loaded, filtered_product/status/level/author
     └── 0 rules loaded → bail with a clear error message
 ```
 
@@ -333,7 +333,7 @@ regression_tests_info:
 ### SigmahqRules (`crates/sigmacatch-rule/src/lib.rs`)
 
 - `new()` (hardcoded `./sigma`) / `new_from_path()` — walk + parse + dedupe
-- `filter(product, min_status, min_level)` → LoadStats
+- `filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size })` → LoadStats
 - `remove_id(&Uuid)`, `get(&Uuid)`, `channels(&custom_map)`, `to_collection()`
 
 ### EventCollector (`crates/input-windows-channels/src/collector.rs`)
@@ -377,7 +377,7 @@ regression_tests_info:
 | `uuid` | UUID v4 for info.yml + rule IDs |
 | `rayon` | parallel rule file parsing |
 | `phf` | static hash maps for taxonomy tables (in `sigmacatch-types`) |
-| `evtx` | EVTX file parsing (evtx_check binary + input-evtx crate) |
+| `evtx` | EVTX file parsing (input-evtx crate, used by localcheck/check_evtx) |
 | `roxmltree` | XML parsing for Winevt events (in `sigmacatch-types`) |
 | `windows` | Winevt API (cfg-gated: windows only, features: Foundation, System, Security, Com, Console, Threading) |
 | `tempfile` (dev) | integration tests |

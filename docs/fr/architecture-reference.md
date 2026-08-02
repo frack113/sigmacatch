@@ -27,11 +27,11 @@ Outil headless qui capture des événements Windows réels via **Windows Event L
 
 ```
 sigmacatch/
-├── Cargo.toml                     # Racine workspace (10 packages)
+├── Cargo.toml                     # Racine workspace (11 packages)
 ├── sigmacatch/                    # Crate binaire
 │   └── src/
-│       ├── main.rs                # Orchestration : boucle continue + process_and_generate + commit/push
-│       └── bin/evtx_check.rs      # Validation batch du moteur Sigma contre les données .evtx
+│       └── main.rs                # Orchestration : boucle continue + process_and_generate + commit/push
+├── localcheck/                    # Outils de dev (check_filter, check_evtx)
 └── crates/
     ├── sigmacatch-config/         # Config YAML, parsing CLI, custom_channels.yaml, diagnostics git dry-run
     ├── sigmacatch-logger/         # Abonnement tracing à deux couches (stderr info + fichier journal rolling debug)
@@ -41,7 +41,7 @@ sigmacatch/
     ├── sigmacatch-regression/     # SigmahqRegression, InfoYml, RegressionData, validation triplet
     ├── sigmacatch-types/          # Types partagés : Event, Alert, RegressionHeader, Product + parsing XML + tables de mapping logsource
     ├── sigmacatch-repo/           # wrapper grit-lib : SigmaRepo, opérations git
-    └── input-evtx/                # Parser fichiers EVTX → Event (utilisé par evtx_check)
+    └── input-evtx/                # Parser fichiers EVTX → Event (utilisé par localcheck)
 ```
 
 ---
@@ -61,15 +61,15 @@ git:
   sigma_repo_path: "sigma"    # chemin local du repo sigma (relatif, pas de '..', pas absolu)
 log:
   level_file: "debug"
-sigma:
+filter:
   product: windows            # windows, linux, ou macos
   min_status: "stable"        # status minimum des règles (inclusif) : unsupported < deprecated < experimental < test < stable
   min_level: "critical"       # niveau minimum des règles (inclusif) : informational < low < medium < high < critical
-  max_rules: 0                # 0 = illimité
+  author: ""                  # filtre par author (optionnel, vide = pas de filtre)
   max_rule_size: 1048576      # octets (1MB par défaut, min 1024, max 10MB)
 ```
 
-**Filtrage des règles :** `product`, `min_status` et `min_level` sont appliqués par `SigmahqRules::filter()`.
+**Filtrage des règles :** `product`, `min_status`, `min_level` et `author` sont appliqués par `SigmahqRules::filter()`.
 Les règles dont `status`/`level` est inférieur au seuil sont exclues (seulement si le champ est présent) ;
 les règles sans `status`/`level` sont toujours acceptées. Si 0 règle reste, le programme bail.
 
@@ -129,8 +129,8 @@ SigmahqRules::new()                 # charge ./sigma
     ├── dédupe cross-file par id de règle (première occurrence gagne)
     └── pour chaque id dans existing_rules → rules.remove_id(&id)
     ↓
-rules = rules.filter(product, min_status, min_level)
-    ├── stats() → rules_loaded, filtered_product/status/level
+rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size })
+    ├── stats() → rules_loaded, filtered_product/status/level/author
     └── 0 règle chargée → bail avec un message d'erreur clair
 ```
 
@@ -333,7 +333,7 @@ regression_tests_info:
 ### SigmahqRules (`crates/sigmacatch-rule/src/lib.rs`)
 
 - `new()` (hardcodé `./sigma`) / `new_from_path()` — walk + parse + dédupe
-- `filter(product, min_status, min_level)` → LoadStats
+- `filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size })` → LoadStats
 - `remove_id(&Uuid)`, `get(&Uuid)`, `channels(&custom_map)`, `to_collection()`
 
 ### EventCollector (`crates/input-windows-channels/src/collector.rs`)
@@ -377,7 +377,7 @@ regression_tests_info:
 | `uuid` | UUID v4 pour info.yml + ids de règles |
 | `rayon` | parsing parallèle des fichiers de règles |
 | `phf` | hash maps statiques pour les tables de taxonomie (dans `sigmacatch-types`) |
-| `evtx` | parsing de fichiers EVTX (binaire evtx_check + crate input-evtx) |
+| `evtx` | parsing de fichiers EVTX (crate input-evtx, utilisé par localcheck/check_evtx) |
 | `roxmltree` | parsing XML pour les events Winevt (dans `sigmacatch-types`) |
 | `windows` | API Winevt (cfg-gated : windows uniquement, features : Foundation, System, Security, Com, Console, Threading) |
 | `tempfile` (dev) | tests d'intégration |

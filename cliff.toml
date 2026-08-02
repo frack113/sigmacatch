@@ -18,8 +18,7 @@ body = """
 {% for contributor in contributors | filter(attribute="is_first_contribution", value=true) %}
     - {{ contributor.username }} (first contribution)
 {% endfor %}
-{% endfor %}
-{% endfor %}
+{%- endif %}
 """
 trim = true
 footer = """
