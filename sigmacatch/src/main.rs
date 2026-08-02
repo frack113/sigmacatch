@@ -79,7 +79,12 @@ async fn main() -> Result<()> {
     };
 
     sigma_repo.set_remote_url(fork_url.clone()).await?;
-    sigma_repo.set_working_branch(branch_name)?;
+    sigma_repo.set_working_branch(branch_name.clone())?;
+
+    // Fail fast: if a prior run pushed a corrupted (amputated) branch to the
+    // fork, detect it now — before collecting events — and stop with a clear
+    // fix. Re-running on a dead tree only yields push failures every 30s.
+    sigma_repo.check_remote_working_branch()?;
 
     let mut regression = match SigmahqRegression::new() {
         Ok(r) => r,
