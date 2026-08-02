@@ -1447,7 +1447,6 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 name = "localcheck"
 version = "0.1.0"
 dependencies = [
- "evtx",
  "input-evtx",
  "serde_json",
  "sigmacatch-detection",
@@ -2408,9 +2407,7 @@ name = "sigmacatch"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "input-evtx",
  "input-windows-channels",
- "serde_json",
  "sigmacatch-config",
  "sigmacatch-detection",
  "sigmacatch-logger",
@@ -2491,7 +2488,6 @@ dependencies = [
  "grit-lib",
  "reqwest",
  "serde",
- "sigmacatch-regression",
  "tempfile",
  "tokio",
  "tracing",
