@@ -61,10 +61,11 @@ git:
   sigma_repo_path: "sigma"    # chemin local du repo sigma (relatif, pas de '..', pas absolu)
 log:
   level_file: "debug"
-sigma:
+filter:
   product: windows            # windows, linux, ou macos
   min_status: "stable"        # status minimum des règles (inclusif) : unsupported < deprecated < experimental < test < stable
   min_level: "critical"       # niveau minimum des règles (inclusif) : informational < low < medium < high < critical
+  author: ""                  # filtre par author (optionnel, vide = pas de filtre)
   max_rule_size: 1048576      # octets (1MB par défaut, min 1024, max 10MB)
 ```
 

@@ -49,10 +49,11 @@ git:
   sigma_repo_path: "sigma"
 log:
   level_file: "debug"
-sigma:
+filter:
   product: windows          # windows, linux, or macos
   min_status: "stable"      # load rules with status >= this threshold
   min_level: "critical"     # load rules with level >= this threshold
+  author: ""                # filter rules by author (optional, empty = no filter)
   max_rule_size: 1048576    # bytes (1MB default)
 ```
 
