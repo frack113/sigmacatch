@@ -84,82 +84,6 @@ impl SigmaRepo {
         self.switch_to_working_branch()
     }
 
-    /// At startup, inspect the remote-tracking ref of the working branch.
-    ///
-    /// A prior buggy run could have pushed a commit whose tree deleted the whole
-    /// repository content (leaving only `regression_data/`). Re-running on top
-    /// of that branch produces commits the remote can't fast-forward, so pushes
-    /// keep failing. Detect this early — before collecting any events — and
-    /// bail with an actionable message so the user deletes the corrupted branch.
-    ///
-    /// Detection is `fail-open`: if the remote-tracking ref is absent (first
-    /// run) or its objects can't be read, we proceed. Only a tree that is
-    /// readable yet missing the canonical `rules/` directory is treated as
-    /// corruption.
-    pub fn check_remote_working_branch(&self) -> Result<()> {
-        let branch = match &self.working_branch {
-            Some(b) => b.as_str(),
-            None => return Ok(()),
-        };
-        let git_dir = self.repo_path.join(".git");
-        let remote_ref = format!("refs/remotes/origin/{branch}");
-        let Some(oid_str) = crate::plumbing::read_loose_or_packed_ref(&git_dir, &remote_ref) else {
-            info!("No existing remote working branch '{branch}' — proceeding (first run)");
-            return Ok(());
-        };
-        let oid = grit_lib::objects::ObjectId::from_hex(&oid_str)
-            .map_err(|e| anyhow::anyhow!("Invalid OID for remote branch '{branch}': {e}"))?;
-        let odb = crate::plumbing::open_odb(&git_dir);
-        let commit_obj = match odb.read(&oid) {
-            Ok(o) => o,
-            Err(e) => {
-                warn!(
-                    "Could not read remote branch commit for '{branch}' ({e}) — \
-                     unable to verify health, proceeding"
-                );
-                return Ok(());
-            }
-        };
-        let commit = grit_lib::objects::parse_commit(&commit_obj.data)
-            .map_err(|e| anyhow::anyhow!("Failed to parse remote branch commit: {e}"))?;
-        let tree_obj = match odb.read(&commit.tree) {
-            Ok(o) => o,
-            Err(e) => {
-                warn!(
-                    "Could not read remote branch tree for '{branch}' ({e}) — \
-                     unable to verify health, proceeding"
-                );
-                return Ok(());
-            }
-        };
-        let entries = grit_lib::objects::parse_tree(&tree_obj.data)
-            .map_err(|e| anyhow::anyhow!("Failed to parse remote branch tree: {e}"))?;
-        let has_rules = entries.iter().any(|e| {
-            e.mode == 0o040000
-                && std::str::from_utf8(&e.name)
-                    .map(|n| n == "rules")
-                    .unwrap_or(false)
-        });
-        if !has_rules {
-            let top_entries: Vec<String> = entries
-                .iter()
-                .filter_map(|e| std::str::from_utf8(&e.name).ok().map(|n| n.to_string()))
-                .collect();
-            anyhow::bail!(
-                "Remote working branch '{branch}' is corrupted — its root tree is missing \
-                 the `rules/` directory (top-level entries: {:?}). \
-                 A prior buggy commit deleted the repository content, and re-running on top \
-                 of it would only produce push failures. \
-                 Fix: delete the '{branch}' branch on your fork \
-                 ({fork}) and re-run sigmacatch.",
-                top_entries,
-                fork = self.remote_url.as_deref().unwrap_or("<fork-url>")
-            );
-        }
-        info!("Remote working branch '{branch}' is healthy — proceeding");
-        Ok(())
-    }
-
     pub async fn init(&mut self) -> Result<()> {
         let git_dir = self.repo_path.join(".git");
 
@@ -298,9 +222,6 @@ impl SigmaRepo {
             .collect()
     }
 
-    /// Stage, commit, and push `files` with `message` in one call. Each commit
-    /// is published immediately (creating/updating the contrib branch on the
-    /// remote), so a run interrupted after a commit can no longer strand it.
     pub fn git_upload(&self, files: Vec<String>, message: String) -> Result<()> {
         let git_dir = self.repo_path.join(".git");
         let name = self.author.trim();
@@ -324,8 +245,7 @@ impl SigmaRepo {
         Ok(())
     }
 
-    /// Push the working branch to the remote.
-    pub fn push(&self) -> Result<()> {
+    fn push(&self) -> Result<()> {
         let branch = self
             .working_branch
             .as_deref()
@@ -488,146 +408,5 @@ mod tests {
         repo.set_info_ssh(None);
         assert_eq!(repo.transport, GitTransport::Ssh);
         assert_eq!(repo.ssh_key_path, None);
-    }
-
-    fn write_commit(
-        git_dir: &Path,
-        work_tree: &Path,
-        files: &[(&str, &str)],
-        parents: &[grit_lib::objects::ObjectId],
-    ) -> grit_lib::objects::ObjectId {
-        let odb = crate::plumbing::checkout::open_odb(git_dir);
-        let mut index = grit_lib::index::Index::new();
-        for (rel, content) in files {
-            let full = work_tree.join(rel);
-            if let Some(p) = full.parent() {
-                std::fs::create_dir_all(p).unwrap();
-            }
-            std::fs::write(&full, content).unwrap();
-            crate::plumbing::index::add_file_to_index(git_dir, &full, work_tree, &mut index)
-                .unwrap();
-        }
-        let tree_oid = grit_lib::write_tree::write_tree_from_index(&odb, &index, "").unwrap();
-        let commit = grit_lib::objects::CommitData {
-            tree: tree_oid,
-            parents: parents.to_vec(),
-            author: "test <test@example.com> 0 +0000".to_string(),
-            committer: "test <test@example.com> 0 +0000".to_string(),
-            message: "commit\n".to_string(),
-            encoding: None,
-            author_raw: Vec::new(),
-            committer_raw: Vec::new(),
-            raw_message: None,
-        };
-        let raw = grit_lib::objects::serialize_commit(&commit);
-        odb.write(grit_lib::objects::ObjectKind::Commit, &raw)
-            .unwrap()
-    }
-
-    fn set_loose_ref(git_dir: &Path, ref_name: &str, oid: grit_lib::objects::ObjectId) {
-        let path = git_dir.join(ref_name);
-        if let Some(p) = path.parent() {
-            std::fs::create_dir_all(p).unwrap();
-        }
-        std::fs::write(path, format!("{}\n", oid)).unwrap();
-    }
-
-    fn branch_name() -> String {
-        "sigmacatch-contrib/frack113".to_string()
-    }
-
-    #[test]
-    fn test_check_remote_working_branch_ok_when_absent() {
-        let tmp = tempfile::tempdir().unwrap();
-        let work_tree = tmp.path().to_path_buf();
-        let git_dir = work_tree.join(".git");
-        crate::plumbing::init::init_repo(&git_dir, &work_tree, "https://example.com/sigma.git")
-            .unwrap();
-        // No refs/remotes/origin/* exists yet → first run → must not stop.
-        let mut repo = SigmaRepo::new();
-        repo.repo_path = work_tree;
-        repo.remote_url = Some("https://github.com/frack113/sigma".to_string());
-        repo.working_branch = Some(branch_name());
-        assert!(repo.check_remote_working_branch().is_ok());
-    }
-
-    #[test]
-    fn test_check_remote_working_branch_ok_when_healthy() {
-        let tmp = tempfile::tempdir().unwrap();
-        let work_tree = tmp.path().to_path_buf();
-        let git_dir = work_tree.join(".git");
-        crate::plumbing::init::init_repo(&git_dir, &work_tree, "https://example.com/sigma.git")
-            .unwrap();
-
-        let main_oid = write_commit(
-            &git_dir,
-            &work_tree,
-            &[("rules/windows/foo.yml", "title: Foo\n")],
-            &[],
-        );
-        set_loose_ref(&git_dir, "refs/heads/main", main_oid);
-
-        // A healthy working branch: its tree still carries `rules/` plus the
-        // new regression file.
-        let healthy_oid = write_commit(
-            &git_dir,
-            &work_tree,
-            &[
-                ("rules/windows/foo.yml", "title: Foo\n"),
-                ("regression_data/rules/1234/info.yml", "id: 1234\n"),
-            ],
-            &[main_oid],
-        );
-        set_loose_ref(
-            &git_dir,
-            &format!("refs/remotes/origin/{}", branch_name()),
-            healthy_oid,
-        );
-
-        let mut repo = SigmaRepo::new();
-        repo.repo_path = work_tree;
-        repo.remote_url = Some("https://github.com/frack113/sigma".to_string());
-        repo.working_branch = Some(branch_name());
-        assert!(repo.check_remote_working_branch().is_ok());
-    }
-
-    #[test]
-    fn test_check_remote_working_branch_bails_when_corrupted() {
-        let tmp = tempfile::tempdir().unwrap();
-        let work_tree = tmp.path().to_path_buf();
-        let git_dir = work_tree.join(".git");
-        crate::plumbing::init::init_repo(&git_dir, &work_tree, "https://example.com/sigma.git")
-            .unwrap();
-
-        let main_oid = write_commit(
-            &git_dir,
-            &work_tree,
-            &[("rules/windows/foo.yml", "title: Foo\n")],
-            &[],
-        );
-        set_loose_ref(&git_dir, "refs/heads/main", main_oid);
-
-        // Corrupted working branch: a commit whose tree contains ONLY
-        // regression_data/ (the `rules/` directory is gone).
-        let corrupted_oid = write_commit(
-            &git_dir,
-            &work_tree,
-            &[("regression_data/rules/1234/info.yml", "id: 1234\n")],
-            &[main_oid],
-        );
-        set_loose_ref(
-            &git_dir,
-            &format!("refs/remotes/origin/{}", branch_name()),
-            corrupted_oid,
-        );
-
-        let mut repo = SigmaRepo::new();
-        repo.repo_path = work_tree;
-        repo.remote_url = Some("https://github.com/frack113/sigma".to_string());
-        repo.working_branch = Some(branch_name());
-        let err = repo.check_remote_working_branch().unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("corrupted"), "msg: {msg}");
-        assert!(msg.contains(branch_name().as_str()), "msg: {msg}");
     }
 }
