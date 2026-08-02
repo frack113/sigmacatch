@@ -71,7 +71,9 @@ pub(crate) fn add_tree_to_index_filtered(
         if entry.mode == 0o040000 {
             add_tree_to_index_filtered(odb, entry.oid, &rel_path, staged_paths, index)?;
         } else {
-            if !staged_paths.is_empty() && !staged_paths.contains(&rel_path.as_bytes().to_vec()) {
+            // Skip paths staged in the new commit (they are overlaid below from
+            // the staged index); keep every other parent-tree entry.
+            if !staged_paths.is_empty() && staged_paths.contains(&rel_path.as_bytes().to_vec()) {
                 continue;
             }
             let mode = match entry.mode {
@@ -209,4 +211,128 @@ pub(crate) fn add_directory_to_index(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plumbing::init::init_repo;
+    use crate::porcelain::{git_add, git_commit};
+    use grit_lib::objects::ObjectKind;
+
+    /// Create an initial commit containing `rel_path` (content `content`) on
+    /// branch `main`, so HEAD resolves for subsequent `git_commit` calls.
+    fn make_initial_commit(
+        git_dir: &Path,
+        work_tree: &Path,
+        rel_path: &str,
+        content: &str,
+    ) -> Result<()> {
+        let file = work_tree.join(rel_path);
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&file, content)?;
+
+        let odb = open_odb(git_dir);
+        let mut index = grit_lib::index::Index::new();
+        add_file_to_index(git_dir, &file, work_tree, &mut index)?;
+        let tree_oid = grit_lib::write_tree::write_tree_from_index(&odb, &index, "")?;
+
+        let commit = grit_lib::objects::CommitData {
+            tree: tree_oid,
+            parents: vec![],
+            author: "test <test@example.com> 0 +0000".to_string(),
+            committer: "test <test@example.com> 0 +0000".to_string(),
+            message: "initial commit\n".to_string(),
+            encoding: None,
+            author_raw: Vec::new(),
+            committer_raw: Vec::new(),
+            raw_message: None,
+        };
+        let raw = grit_lib::objects::serialize_commit(&commit);
+        let commit_oid = odb.write(ObjectKind::Commit, &raw)?;
+        std::fs::create_dir_all(git_dir.join("refs/heads"))?;
+        std::fs::write(git_dir.join("refs/heads/main"), format!("{}\n", commit_oid))?;
+        std::fs::write(git_dir.join("HEAD"), b"ref: refs/heads/main\n")?;
+        Ok(())
+    }
+
+    /// Walk a tree and collect all blob paths, so a test can assert which files
+    /// ended up in a commit.
+    fn collect_tree_paths(
+        odb: &Odb,
+        tree_oid: grit_lib::objects::ObjectId,
+        prefix: &str,
+        out: &mut Vec<String>,
+    ) -> Result<()> {
+        let obj = odb.read(&tree_oid)?;
+        let entries = grit_lib::objects::parse_tree(&obj.data)?;
+        for entry in entries {
+            let name = std::str::from_utf8(&entry.name).unwrap().to_string();
+            let rel = if prefix.is_empty() {
+                name
+            } else {
+                format!("{}/{}", prefix, name)
+            };
+            if entry.mode == 0o040000 {
+                collect_tree_paths(odb, entry.oid, &rel, out)?;
+            } else {
+                out.push(rel);
+            }
+        }
+        Ok(())
+    }
+
+    /// Regression test for the commit-tree amputation bug: staging new
+    /// regression files must NOT drop every other file already in the parent
+    /// tree. The merged commit must contain the parent files AND the staged ones.
+    #[test]
+    fn test_commit_preserves_parent_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let work_tree = tmp.path().to_path_buf();
+        let git_dir = work_tree.join(".git");
+        init_repo(&git_dir, &work_tree, "https://example.com/repo.git").unwrap();
+
+        // Parent commit contains a rules file.
+        let existing = "rules/windows/builtin.yml";
+        make_initial_commit(&git_dir, &work_tree, existing, "title: Test\n").unwrap();
+
+        // Stage a new regression file (the real sigmacatch flow).
+        let new_file = "regression_data/rules/1234/info.yml";
+        let new_path = work_tree.join(new_file);
+        std::fs::create_dir_all(new_path.parent().unwrap()).unwrap();
+        std::fs::write(&new_path, "id: 1234\n").unwrap();
+        git_add(&git_dir, &work_tree, &[new_file]).unwrap();
+        git_commit(
+            &git_dir,
+            &work_tree,
+            "test: add regression data",
+            "test",
+            "test@example.com",
+        )
+        .unwrap();
+
+        // Read the new HEAD commit tree and collect all blob paths.
+        let odb = open_odb(&git_dir);
+        let head_oid = resolve_head(&git_dir).unwrap();
+        let head_obj = odb.read(&head_oid).unwrap();
+        let head_commit = grit_lib::objects::parse_commit(&head_obj.data).unwrap();
+        let mut paths = Vec::new();
+        collect_tree_paths(&odb, head_commit.tree, "", &mut paths).unwrap();
+
+        assert!(
+            paths.contains(&existing.to_string()),
+            "parent file dropped from committed tree: {paths:?}"
+        );
+        assert!(
+            paths.contains(&new_file.to_string()),
+            "staged file missing from committed tree: {paths:?}"
+        );
+        assert_eq!(
+            paths.len(),
+            2,
+            "committed tree should contain exactly the parent + staged files: {paths:?}"
+        );
+    }
 }
