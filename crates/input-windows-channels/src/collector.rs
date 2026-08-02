@@ -440,9 +440,13 @@ impl EventCollector {
     /// Render event handle to XML and parse into an Event.
     #[cfg(windows)]
     fn render_event(event_handle: windows::Win32::System::EventLog::EVT_HANDLE) -> Option<Event> {
+        use windows::Win32::Foundation::ERROR_INSUFFICIENT_BUFFER;
         use windows::Win32::System::EventLog::{EvtRender, EvtRenderEventXml};
 
-        // First call to get required buffer size
+        // First call to determine the required buffer size. `EvtRender` fails
+        // with ERROR_INSUFFICIENT_BUFFER when the buffer is NULL/too small and
+        // reports the required size through `buffer_size` — this is the normal
+        // size-probe outcome, not a rendering failure.
         let mut buffer_size: u32 = 0;
         let result = unsafe {
             EvtRender(
@@ -456,7 +460,12 @@ impl EventCollector {
             )
         };
 
-        if result.is_err() || buffer_size == 0 {
+        let insufficient_buffer = matches!(
+            result.as_ref().err(),
+            Some(e) if e.code() == windows::core::HRESULT::from_win32(ERROR_INSUFFICIENT_BUFFER.0)
+        );
+
+        if (result.is_err() && !insufficient_buffer) || buffer_size == 0 {
             return None;
         }
 
@@ -479,8 +488,16 @@ impl EventCollector {
             return None;
         }
 
-        // Parse XML to Event
-        let xml_str = String::from_utf8(buffer[..bytes_used as usize].to_vec()).ok()?;
+        // Parse XML to Event. `EvtRender` with EvtRenderEventXml writes a
+        // null-terminated UTF-16LE string (not UTF-8), so decode it as such.
+        let mut units: Vec<u16> = buffer[..bytes_used as usize]
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        if units.last() == Some(&0) {
+            units.pop();
+        }
+        let xml_str = String::from_utf16_lossy(&units);
 
         let mut event = Event::from_xml(&xml_str).ok()?;
         event.inject_logsource_fields();
