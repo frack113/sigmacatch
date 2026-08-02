@@ -106,8 +106,8 @@ async fn main() -> Result<()> {
         rules.remove_id(id);
     }
 
-    config.sigma.normalize();
-    let mut rules = rules.filter(config.sigma.clone());
+    config.filter.normalize();
+    let mut rules = rules.filter(config.filter.clone());
     let stats = rules.stats();
 
     info!(
@@ -123,11 +123,11 @@ async fn main() -> Result<()> {
     if stats.rules_loaded == 0 {
         anyhow::bail!(
             "0 rules loaded — the filter config (product={}, min_status={:?}, min_level={:?}, author={:?}) is too restrictive. \
-             Adjust sigma.* filters in config.yaml or load rules with matching metadata.",
-            config.sigma.product,
-            config.sigma.min_status,
-            config.sigma.min_level,
-            config.sigma.author,
+             Adjust filter.* filters in config.yaml or load rules with matching metadata.",
+            config.filter.product,
+            config.filter.min_status,
+            config.filter.min_level,
+            config.filter.author,
         );
     }
 
