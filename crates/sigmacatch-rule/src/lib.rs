@@ -49,10 +49,13 @@ impl SigmaFilterConfig {
         Self::default()
     }
 
-    /// Normalize author: trim, lowercase.
+    /// Normalize author: trim, lowercase, and treat empty string as no filter.
     pub fn normalize(&mut self) {
-        if let Some(a) = &mut self.author {
+        if let Some(a) = self.author.as_mut() {
             *a = a.trim().to_lowercase();
+        }
+        if self.author.as_deref() == Some("") {
+            self.author = None;
         }
     }
 }
@@ -733,5 +736,29 @@ detection:
         });
         assert_eq!(filtered3.len(), 1);
         assert_eq!(filtered3.stats().rules_filtered_author, 3);
+    }
+
+    #[test]
+    fn test_filter_config_normalize_author() {
+        let mut config = SigmaFilterConfig {
+            author: Some("  Frack113  ".to_string()),
+            ..Default::default()
+        };
+        config.normalize();
+        assert_eq!(config.author, Some("frack113".to_string()));
+
+        let mut config = SigmaFilterConfig {
+            author: Some("   ".to_string()),
+            ..Default::default()
+        };
+        config.normalize();
+        assert_eq!(config.author, None);
+
+        let mut config = SigmaFilterConfig {
+            author: Some(String::new()),
+            ..Default::default()
+        };
+        config.normalize();
+        assert_eq!(config.author, None);
     }
 }
