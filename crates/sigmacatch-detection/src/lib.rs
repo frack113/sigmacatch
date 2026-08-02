@@ -160,6 +160,7 @@ impl DetectionEngine {
                         .as_ref()
                         .map(|l| format!("{:?}", l))
                         .unwrap_or_else(|| "unknown".to_string()),
+                    event_json_raw: event.event_json_raw.clone(),
                     event_json: event.event_json.clone(),
                     event_raw: event.event_raw.clone(),
                 };
@@ -221,8 +222,16 @@ detection:
         let rules = SigmahqRules::default();
         let mut engine = DetectionEngine::new(&rules).unwrap();
         engine.put_events(vec![
-            Event::new(serde_json::json!({}), Vec::new()),
-            Event::new(serde_json::json!({}), Vec::new()),
+            Event::new(
+                serde_json::json!({}).clone(),
+                serde_json::json!({}),
+                Vec::new(),
+            ),
+            Event::new(
+                serde_json::json!({}).clone(),
+                serde_json::json!({}),
+                Vec::new(),
+            ),
         ]);
 
         engine.process_events();
@@ -242,7 +251,8 @@ detection:
         let rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
 
         let mut engine = DetectionEngine::new(&rules).unwrap();
-        let event = Event::new(serde_json::json!({"event_id": 1}), Vec::new());
+        let event_json = serde_json::json!({"event_id": 1});
+        let event = Event::new(event_json.clone(), event_json, Vec::new());
         engine.put_events(vec![event]);
         engine.process_events();
 

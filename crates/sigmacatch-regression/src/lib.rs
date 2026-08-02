@@ -292,7 +292,7 @@ impl RegressionData {
         let mut evtx_ext = "evtx";
         if let Some(alert) = first {
             let raw_json_path = rule_dir.join(format!("{}.json", rule_id));
-            let raw_json = serde_json::to_string_pretty(&alert.event_json)?;
+            let raw_json = serde_json::to_string_pretty(&alert.event_json_raw)?;
             std::fs::write(&raw_json_path, raw_json)?;
             tracing::info!("Wrote JSON for rule {:?}", rule_id);
 
