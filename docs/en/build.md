@@ -47,7 +47,7 @@ Applied profile:
 
 ## Workspace
 
-The project is a cargo workspace of 10 packages (1 binary + 9 libraries):
+The project is a cargo workspace of 11 packages (1 binary crate with 2 bins + 10 libraries):
 
 ```bash
 # Build everything
@@ -64,11 +64,13 @@ cargo build -p sigmacatch-regression
 cargo build -p sigmacatch-types
 cargo build -p sigmacatch-repo
 cargo build -p input-evtx
+cargo build -p localcheck
 ```
 
-## Binary
+## Binaries
 
 | Binary | Path | Description |
 |---|---|---|
 | `sigmacatch` | `sigmacatch/src/main.rs` | Headless capture + evaluation + regression generation |
-| `evtx_check` | `sigmacatch/src/bin/evtx_check.rs` | Batch validation of Sigma engine against .evtx regression data |
+| `check_filter` | `localcheck/src/check_filter.rs` | Validates `SigmaFilterConfig` against real Sigma rules (ground-truth counts, no CLI args) |
+| `check_evtx` | `localcheck/src/check_evtx.rs` | Batch validation of Sigma engine against .evtx regression data |

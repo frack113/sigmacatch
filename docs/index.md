@@ -4,7 +4,7 @@ Headless tool that captures real Windows events via the **Windows Event Log API*
 
 ## Workspace
 
-The project is a cargo workspace of 10 packages (1 binary + 9 libraries):
+The project is a cargo workspace of 11 crates (10 lib crates + 1 binary crate with 2 bins):
 
 | Crate | Purpose |
 |---|---|
@@ -18,6 +18,7 @@ The project is a cargo workspace of 10 packages (1 binary + 9 libraries):
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
 | `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, git operations |
 | `input-evtx` | Parse EVTX files into `Event` objects for the detection engine |
+| `localcheck` | Dev tools: `check_filter` + `check_evtx` |
 
 ## Quick start
 
@@ -38,6 +39,7 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 | Output format | [EN](output-format/) | [FR](fr/output-format/) |
 | Regression data format | [EN](regression-data-format/) | [FR](fr/regression-data-format/) |
 | Nice-to-have | [EN](nice-to-have/) | [FR](fr/nice-to-have/) |
+| Tools | [EN](tools/) | [FR](fr/tools/) |
 
 ## License
 

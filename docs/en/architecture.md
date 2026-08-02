@@ -2,7 +2,7 @@
 
 ## Cargo workspace
 
-The project is a cargo workspace of 10 packages (1 binary + 9 libraries):
+The project is a cargo workspace of 11 packages (1 binary crate with 2 bins + 10 libraries):
 
 ```
 sigmacatch/
@@ -15,21 +15,26 @@ sigmacatch/
 │   ├── input-windows-channels/   # LogSource resolution, taxonomy (phf tables), Winevt collector (cfg(windows))
 │   ├── sigmacatch-regression/    # SigmahqRegression (get_sigma_id, add, retire), InfoYml, triplet
 │   ├── sigmacatch-types/         # Shared types: Event, Alert, RegressionHeader + XML parsing + logsource mapping tables
- │   ├── sigmacatch-repo/          # grit-lib wrapper + SigmaRepo + git operations
+│   ├── sigmacatch-repo/          # grit-lib wrapper + SigmaRepo + git operations
 │   └── input-evtx/               # EVTX file parser → Event
-└── sigmacatch/                   # Binary + orchestration
+├── sigmacatch/                   # Binary + orchestration
+│   └── src/
+│       └── main.rs               # Config + repo init + continuous event loop + process_and_generate + commit/push
+└── localcheck/                   # Dev tools (kept out of the main crate)
     └── src/
-        ├── main.rs               # Config + repo init + continuous event loop + process_and_generate + commit/push
-        └── bin/evtx_check.rs     # Batch validation of Sigma engine against .evtx regression data
+        ├── check_filter.rs       # Validates SigmaFilterConfig against real Sigma rules (ground-truth counts)
+        └── check_evtx.rs         # Batch validation of Sigma engine against .evtx regression data
 ```
 
-## Source tree (`sigmacatch/src/`)
+## Source tree
 
 ```
 sigmacatch/src/
-├── main.rs              # Binary: orchestration, continuous loop, process_and_generate
-└── bin/
-    └── evtx_check.rs    # Batch validation tool (exit 1 on empty input / no matches)
+└── main.rs              # Binary: orchestration, continuous loop, process_and_generate
+
+localcheck/src/
+├── check_filter.rs      # Filter validation tool (no CLI args, loads ./sigma itself)
+└── check_evtx.rs        # Batch regression validation tool (exit 1 on empty input / no matches)
 ```
 
 There is no `config.rs` / `logger.rs` / `repo.rs` in the binary — those moved to the
@@ -45,8 +50,12 @@ sigmacatch ──┬── sigmacatch-config       (Config, CliArgs, dry-run dia
              ├── input-windows-channels  (EventCollector: multi-channel Winevt)
              ├── sigmacatch-regression   (SigmahqRegression: skip set + triplet generation)
              ├── sigmacatch-types        (Event, Alert, RegressionHeader, Product, EventProducer, XML parsing)
-             ├── sigmacatch-repo         (SigmaRepo, grit-lib wrapper)
-             └── input-evtx              (EVTX file parser, used by evtx_check)
+             └── sigmacatch-repo         (SigmaRepo, grit-lib wrapper)
+
+localcheck ──┬── sigmacatch-rule         (SigmahqRules + SigmaFilterConfig)
+             ├── sigmacatch-detection    (DetectionEngine)
+             ├── sigmacatch-regression   (SigmahqRegression)
+             └── input-evtx              (parse_evtx_bytes)
 ```
 
 `sigmacatch-detection` depends on `sigmacatch-rule` + `sigmacatch-types` + `rsigma-eval`.

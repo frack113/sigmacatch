@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! evtx_check: validate SigmaHQ regression data against the detection engine.
+//! check_evtx: validate SigmaHQ regression data against the detection engine.
 //!
 //! Pipeline:
 //!   1. Load all Sigma rules from `./sigma` into a single DetectionEngine
@@ -10,7 +10,7 @@
 //!   4. Report per-rule pass/fail + summary
 //!
 //! Usage:
-//!   cargo run --release --bin evtx_check
+//!   cargo run --release --bin check_evtx
 
 use input_evtx::parse_evtx_bytes;
 use sigmacatch_detection::DetectionEngine;

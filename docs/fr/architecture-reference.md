@@ -27,11 +27,11 @@ Outil headless qui capture des événements Windows réels via **Windows Event L
 
 ```
 sigmacatch/
-├── Cargo.toml                     # Racine workspace (10 packages)
+├── Cargo.toml                     # Racine workspace (11 packages)
 ├── sigmacatch/                    # Crate binaire
 │   └── src/
-│       ├── main.rs                # Orchestration : boucle continue + process_and_generate + commit/push
-│       └── bin/evtx_check.rs      # Validation batch du moteur Sigma contre les données .evtx
+│       └── main.rs                # Orchestration : boucle continue + process_and_generate + commit/push
+├── localcheck/                    # Outils de dev (check_filter, check_evtx)
 └── crates/
     ├── sigmacatch-config/         # Config YAML, parsing CLI, custom_channels.yaml, diagnostics git dry-run
     ├── sigmacatch-logger/         # Abonnement tracing à deux couches (stderr info + fichier journal rolling debug)
@@ -41,7 +41,7 @@ sigmacatch/
     ├── sigmacatch-regression/     # SigmahqRegression, InfoYml, RegressionData, validation triplet
     ├── sigmacatch-types/          # Types partagés : Event, Alert, RegressionHeader, Product + parsing XML + tables de mapping logsource
     ├── sigmacatch-repo/           # wrapper grit-lib : SigmaRepo, opérations git
-    └── input-evtx/                # Parser fichiers EVTX → Event (utilisé par evtx_check)
+    └── input-evtx/                # Parser fichiers EVTX → Event (utilisé par localcheck)
 ```
 
 ---
@@ -376,7 +376,7 @@ regression_tests_info:
 | `uuid` | UUID v4 pour info.yml + ids de règles |
 | `rayon` | parsing parallèle des fichiers de règles |
 | `phf` | hash maps statiques pour les tables de taxonomie (dans `sigmacatch-types`) |
-| `evtx` | parsing de fichiers EVTX (binaire evtx_check + crate input-evtx) |
+| `evtx` | parsing de fichiers EVTX (crate input-evtx, utilisé par localcheck/check_evtx) |
 | `roxmltree` | parsing XML pour les events Winevt (dans `sigmacatch-types`) |
 | `windows` | API Winevt (cfg-gated : windows uniquement, features : Foundation, System, Security, Com, Console, Threading) |
 | `tempfile` (dev) | tests d'intégration |

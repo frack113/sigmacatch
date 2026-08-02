@@ -4,7 +4,7 @@ Outil headless qui capture de vrais événements Windows via l'**API Windows Eve
 
 ## Workspace
 
-Le projet est un cargo workspace de 10 packages (1 binaire + 9 bibliothèques) :
+Le projet est un cargo workspace de 11 crates (10 bibliothèques + 1 crate binaire avec 2 binaires) :
 
 | Crate | Rôle |
 |---|---|
@@ -18,6 +18,7 @@ Le projet est un cargo workspace de 10 packages (1 binaire + 9 bibliothèques) :
 | `sigmacatch-types` | Types partagés : `Event`, `Alert`, `RegressionHeader`, parsing XML, tables logsource |
 | `sigmacatch-repo` | wrapper grit-lib : SigmaRepo, opérations git |
 | `input-evtx` | Parse les fichiers EVTX en objets `Event` pour le moteur de détection |
+| `localcheck` | Outils de dev : `check_filter` + `check_evtx` |
 
 ## Démarrage rapide
 
@@ -38,6 +39,7 @@ Une version compilée de cette documentation est publiée sur GitHub Pages : **h
 | Output format | [EN](output-format/) | [FR](fr/output-format/) |
 | Regression data format | [EN](regression-data-format/) | [FR](fr/regression-data-format/) |
 | Nice-to-have | [EN](nice-to-have/) | [FR](fr/nice-to-have/) |
+| Outils | [EN](tools/) | [FR](fr/tools/) |
 
 ## Licence
 

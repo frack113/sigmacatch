@@ -96,10 +96,11 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 | Output format | [EN](docs/en/output-format.md) | [FR](docs/fr/output-format.md) |
 | Regression data format | [EN](docs/en/regression-data-format.md) | [FR](docs/fr/regression-data-format.md) |
 | Nice-to-have | [EN](docs/en/nice-to-have.md) | [FR](docs/fr/nice-to-have.md) |
+| Tools | [EN](docs/en/tools.md) | [FR](docs/fr/tools.md) |
 
 ## Workspace
 
-The project is a cargo workspace of 10 crates (9 lib crates + 1 binary):
+The project is a cargo workspace of 11 crates (10 lib crates + 1 binary crate with 2 bins):
 
 | Crate | Purpose |
 |---|---|
@@ -113,6 +114,7 @@ The project is a cargo workspace of 10 crates (9 lib crates + 1 binary):
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
 | `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, GitHub fork detection, commit workflow |
 | `input-evtx` | Parse EVTX files into `Event` objects for the detection engine |
+| `localcheck` | Dev tools: `check_filter` (filter validation) + `check_evtx` (regression validation) |
 
 ## Built with
 
