@@ -4,13 +4,17 @@
 //! Commit object creation.
 
 use anyhow::Result;
-use grit_lib::objects::ObjectId;
+use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
+use grit_lib::refs;
 use std::path::Path;
 use tracing::info;
 
-use crate::plumbing::refs::resolve_head;
+use crate::plumbing::refs::{map_grit, resolve_head, symbolic_ref_target};
 
+/// Write a new commit object pointing at `tree_oid` with HEAD as its parent,
+/// then advance the ref currently pointed to by HEAD (or detach HEAD if it is
+/// detached). Uses grit-lib's `refs` module for ref/HEAD writes.
 pub(crate) fn commit_tree(
     git_dir: &Path,
     odb: &Odb,
@@ -38,32 +42,29 @@ pub(crate) fn commit_tree(
 
     let raw = grit_lib::objects::serialize_commit(&commit);
     let commit_oid = odb
-        .write(grit_lib::objects::ObjectKind::Commit, &raw)
+        .write(ObjectKind::Commit, &raw)
         .map_err(|e| anyhow::anyhow!("Failed to write commit object: {}", e))?;
 
-    let head_path = git_dir.join("HEAD");
-    let head_content = std::fs::read_to_string(&head_path)?;
-    let head_ref = head_content
-        .trim()
-        .strip_prefix("ref: ")
-        .map(|s| s.trim().to_string());
-
-    if let Some(ref_name) = head_ref {
-        let full_path = git_dir.join(&ref_name);
-        std::fs::write(&full_path, format!("{}\n", commit_oid))?;
-        info!(
-            "Committed {} to {}: {}",
-            commit_oid,
-            ref_name,
-            message.trim()
-        );
-    } else {
-        std::fs::write(&head_path, format!("{}\n", commit_oid))?;
-        info!(
-            "Committed {} to detached HEAD: {}",
-            commit_oid,
-            message.trim()
-        );
+    // Advance the symbolic target of HEAD (e.g. refs/heads/main), or write
+    // HEAD directly if detached.
+    match symbolic_ref_target(git_dir, "HEAD")? {
+        Some(ref_name) => {
+            map_grit(refs::write_ref(git_dir, &ref_name, &commit_oid))?;
+            info!(
+                "Committed {} to {}: {}",
+                commit_oid,
+                ref_name,
+                message.trim()
+            );
+        }
+        None => {
+            map_grit(refs::write_ref(git_dir, "HEAD", &commit_oid))?;
+            info!(
+                "Committed {} to detached HEAD: {}",
+                commit_oid,
+                message.trim()
+            );
+        }
     }
 
     Ok(())

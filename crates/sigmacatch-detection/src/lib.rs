@@ -12,6 +12,7 @@ use rsigma_eval::pipeline::parse_pipeline;
 use rsigma_eval::{Engine, LogSourceExtractor};
 use sigmacatch_rule::SigmahqRules;
 use sigmacatch_types::{Alert, Event};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Embedded pipeline for flattening Winevt XML event structure.
@@ -25,6 +26,7 @@ pub struct DetectionEngine {
     events: Vec<Event>,
     alerts: Vec<Alert>,
     stats: EngineStats,
+    rule_paths: HashMap<Uuid, std::path::PathBuf>,
 }
 
 impl DetectionEngine {
@@ -39,6 +41,7 @@ impl DetectionEngine {
             events: Vec::new(),
             alerts: Vec::new(),
             stats: EngineStats::default(),
+            rule_paths: rules.rule_paths().clone(),
         })
     }
 
@@ -48,6 +51,7 @@ impl DetectionEngine {
             .add_collection(&rules.to_collection())
             .map_err(|e| anyhow!("Engine reload_rules failed: {e}"))?;
         self.engine = engine;
+        self.rule_paths = rules.rule_paths().clone();
         Ok(())
     }
 
@@ -138,22 +142,25 @@ impl DetectionEngine {
             let json_event = JsonEvent::borrow(&event.event_json);
             let matches = self.engine.evaluate(&json_event);
             for result in matches {
+                let rule_id = result
+                    .header
+                    .rule_id
+                    .as_deref()
+                    .and_then(|id| Uuid::parse_str(id).ok())
+                    .unwrap_or(Uuid::nil());
+                let rule_path = self.rule_paths.get(&rule_id).cloned();
                 let alert = Alert {
-                    rule_id: result
-                        .header
-                        .rule_id
-                        .as_deref()
-                        .and_then(|id| Uuid::parse_str(id).ok())
-                        .unwrap_or(Uuid::nil()),
+                    rule_id,
                     rule_title: result.header.rule_title.clone(),
                     description: None,
-                    rule_path: None,
+                    rule_path,
                     severity: result
                         .header
                         .level
                         .as_ref()
                         .map(|l| format!("{:?}", l))
                         .unwrap_or_else(|| "unknown".to_string()),
+                    event_json_raw: event.event_json_raw.clone(),
                     event_json: event.event_json.clone(),
                     event_raw: event.event_raw.clone(),
                 };
@@ -215,8 +222,16 @@ detection:
         let rules = SigmahqRules::default();
         let mut engine = DetectionEngine::new(&rules).unwrap();
         engine.put_events(vec![
-            Event::new(serde_json::json!({}), Vec::new()),
-            Event::new(serde_json::json!({}), Vec::new()),
+            Event::new(
+                serde_json::json!({}).clone(),
+                serde_json::json!({}),
+                Vec::new(),
+            ),
+            Event::new(
+                serde_json::json!({}).clone(),
+                serde_json::json!({}),
+                Vec::new(),
+            ),
         ]);
 
         engine.process_events();
@@ -236,7 +251,8 @@ detection:
         let rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
 
         let mut engine = DetectionEngine::new(&rules).unwrap();
-        let event = Event::new(serde_json::json!({"event_id": 1}), Vec::new());
+        let event_json = serde_json::json!({"event_id": 1});
+        let event = Event::new(event_json.clone(), event_json, Vec::new());
         engine.put_events(vec![event]);
         engine.process_events();
 

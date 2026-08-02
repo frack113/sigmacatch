@@ -2,12 +2,17 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 //! Branch and HEAD management: validation, creation, switching.
+//!
+//! All ref mutations go through `grit_lib::refs` (atomic lock writes, packed +
+//! loose + reftable). Creating/switching a branch is therefore two native calls
+//! rather than hand-rolled file/path handling.
 
 use anyhow::Result;
+use grit_lib::refs;
 use std::path::Path;
 use tracing::info;
 
-use crate::plumbing::refs::{read_loose_or_packed_ref, resolve_head};
+use crate::plumbing::refs::{map_grit, read_loose_or_packed_ref, resolve_head};
 
 fn validate_branch_name(name: &str) -> Result<()> {
     if name.is_empty() {
@@ -36,30 +41,15 @@ fn validate_branch_name(name: &str) -> Result<()> {
 }
 
 /// Create a new branch from the current HEAD and switch to it.
-/// If the branch already exists locally, it is deleted and recreated from the
-/// current HEAD so that a stale/dirty local branch (e.g. from a previous run
-/// whose push failed) cannot diverge from the freshly pulled upstream.
+/// If the branch already exists locally, `write_ref` atomically replaces it
+/// from the current HEAD, so a stale/dirty local branch (e.g. from a previous
+/// run whose push failed) cannot diverge from the freshly pulled upstream.
 pub(crate) fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
     validate_branch_name(branch_name)?;
     let full_ref_name = format!("refs/heads/{}", branch_name);
-    let ref_path = git_dir.join(&full_ref_name);
-
     let head_oid = resolve_head(git_dir)?;
-
-    if ref_path.exists() {
-        info!(
-            "Branch '{}' already exists locally, recreating from HEAD ({})",
-            branch_name, head_oid
-        );
-        std::fs::remove_file(&ref_path)?;
-    }
-
-    if let Some(parent) = ref_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&ref_path, format!("{}\n", head_oid))?;
+    map_grit(refs::write_ref(git_dir, &full_ref_name, &head_oid))?;
     switch_head(git_dir, branch_name)?;
-
     info!(
         "Created and switched to branch '{}' from HEAD ({})",
         branch_name, head_oid
@@ -67,7 +57,7 @@ pub(crate) fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Switch HEAD to an existing local branch.
+/// Switch HEAD to an existing local branch (symbolic ref).
 pub(crate) fn switch_head(git_dir: &Path, branch_name: &str) -> Result<()> {
     validate_branch_name(branch_name)?;
     let local_ref = format!("refs/heads/{}", branch_name);
@@ -78,7 +68,7 @@ pub(crate) fn switch_head(git_dir: &Path, branch_name: &str) -> Result<()> {
             local_ref
         );
     }
-    std::fs::write(git_dir.join("HEAD"), format!("ref: {}\n", local_ref))?;
+    map_grit(refs::write_symbolic_ref(git_dir, "HEAD", &local_ref))?;
     info!("Switched HEAD to branch '{}'", branch_name);
     Ok(())
 }
@@ -86,6 +76,7 @@ pub(crate) fn switch_head(git_dir: &Path, branch_name: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plumbing::refs::symbolic_ref_target;
 
     #[test]
     fn test_validate_branch_name_valid() {
@@ -181,5 +172,21 @@ mod tests {
             .to_string()
             .to_lowercase()
             .contains("invalid '/' placement"));
+    }
+
+    // `symbolic_ref_target` is exercised indirectly via commit_tree/branch tests
+    // elsewhere; here we assert the resolution fallback used by `switch_head`.
+    #[test]
+    fn test_switch_head_missing_branch_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = tmp.path().join(".git");
+        crate::plumbing::init::init_repo(&git_dir, tmp.path(), "https://example.com/sigma.git")
+            .unwrap();
+        // HEAD points at refs/heads/main (symbolic) but the ref doesn't exist yet.
+        let err = switch_head(&git_dir, "sigmacatch-contrib/me").unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("not found"));
+        // sanity: symbolic ref resolves to the target.
+        let target = symbolic_ref_target(&git_dir, "HEAD").unwrap();
+        assert_eq!(target.as_deref(), Some("refs/heads/main"));
     }
 }

@@ -57,23 +57,32 @@ impl std::fmt::Display for Product {
 /// A generic event for the detection engine: parsed JSON + raw source bytes.
 #[derive(Debug, Clone)]
 pub struct Event {
+    /// Raw JSON as collected from Winevt (preserves original EventData key names).
+    /// Used for regression data generation — must match the EVTX content exactly.
+    pub event_json_raw: Value,
+    /// Transformed JSON for Sigma detection (EventData keys have spaces stripped).
+    /// Used by the detection engine — makes field paths easier in Sigma rules.
     pub event_json: Value,
     pub event_raw: Vec<u8>,
 }
 
 impl Event {
-    pub fn new(event_json: Value, event_raw: Vec<u8>) -> Self {
+    pub fn new(event_json_raw: Value, event_json: Value, event_raw: Vec<u8>) -> Self {
         Self {
+            event_json_raw,
             event_json,
             event_raw,
         }
     }
 
     /// Parse a Winevt XML string into an Event.
+    /// Stores both raw JSON (for regression) and transformed JSON (for detection).
     pub fn from_xml(xml: &str) -> Result<Self, ParseError> {
+        let json_raw = parse_winevt_xml_raw(xml)?;
         let json = parse_winevt_xml(xml)?;
         let raw = xml.as_bytes().to_vec();
         Ok(Self {
+            event_json_raw: json_raw,
             event_json: json,
             event_raw: raw,
         })
@@ -303,6 +312,47 @@ fn get_category(channel: &str, event_id: u32) -> Option<&'static str> {
 /// memory exhaustion from malformed or excessively large input.
 const MAX_XML_SIZE: usize = 1024 * 1024;
 
+/// Parse a Winevt XML string into nested JSON (raw — preserves original EventData key names).
+/// Used for regression data generation where exact fidelity to the source event is required.
+pub fn parse_winevt_xml_raw(xml: &str) -> Result<Value, ParseError> {
+    if xml.len() > MAX_XML_SIZE {
+        return Err(ParseError {
+            message: format!(
+                "XML input too large: {} bytes (max {} bytes)",
+                xml.len(),
+                MAX_XML_SIZE
+            ),
+        });
+    }
+
+    let doc = roxmltree::Document::parse(xml).map_err(|e| ParseError {
+        message: format!("XML parse error: {}", e),
+    })?;
+
+    let root = doc.root();
+    let event = root
+        .descendants()
+        .find(|n| n.tag_name().name() == "Event")
+        .ok_or_else(|| ParseError {
+            message: "no <Event> element found in XML".to_string(),
+        })?;
+
+    let mut event_map = Map::new();
+    for child in event.children() {
+        if child.is_element() {
+            let name = child.tag_name().name().to_string();
+            let value = node_to_value_raw(child, true);
+            event_map.insert(name, value);
+        }
+    }
+
+    let mut result = Map::new();
+    result.insert("Event".into(), Value::Object(event_map));
+    result.insert("_source".into(), Value::String("winevt".to_string()));
+
+    Ok(Value::Object(result))
+}
+
 /// Parse a Winevt XML string into nested JSON.
 pub fn parse_winevt_xml(xml: &str) -> Result<Value, ParseError> {
     if xml.len() > MAX_XML_SIZE {
@@ -408,6 +458,71 @@ fn node_to_value(node: Node, _is_root: bool) -> Value {
     Value::Object(map)
 }
 
+fn node_to_value_raw(node: Node, _is_root: bool) -> Value {
+    let tag = node.tag_name().name();
+
+    if tag == "EventData" {
+        return handle_event_data_raw(node);
+    }
+
+    let child_elements: Vec<Node> = node.children().filter(|c| c.is_element()).collect();
+    let text = node
+        .text()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+
+    let attrs: Vec<_> = node.attributes().filter(|a| a.name() != "xmlns").collect();
+
+    if child_elements.is_empty() && attrs.is_empty() {
+        if let Some(t) = text {
+            if let Ok(n) = t.parse::<u64>() {
+                return Value::Number(n.into());
+            }
+            return Value::String(t);
+        }
+    }
+
+    if child_elements.is_empty() && !attrs.is_empty() && text.is_none() {
+        let mut attr_map = Map::new();
+        for a in attrs {
+            attr_map.insert(a.name().to_string(), Value::String(a.value().to_string()));
+        }
+        return Value::Object({
+            let mut m = Map::new();
+            m.insert("#attributes".into(), Value::Object(attr_map));
+            m
+        });
+    }
+
+    if child_elements.is_empty() && attrs.is_empty() && text.is_none() {
+        return Value::Object(Map::new());
+    }
+
+    let mut map = Map::new();
+
+    if !attrs.is_empty() {
+        let mut attr_map = Map::new();
+        for a in attrs {
+            attr_map.insert(a.name().to_string(), Value::String(a.value().to_string()));
+        }
+        map.insert("#attributes".into(), Value::Object(attr_map));
+    }
+
+    for child in &child_elements {
+        let child_name = child.tag_name().name().to_string();
+        let child_value = node_to_value_raw(*child, false);
+        map.insert(child_name, child_value);
+    }
+
+    if let Some(t) = text {
+        if !map.contains_key("#text") {
+            map.insert("#text".into(), Value::String(t));
+        }
+    }
+
+    Value::Object(map)
+}
+
 fn handle_event_data(node: Node) -> Value {
     let mut map = Map::new();
     for child in node.children() {
@@ -422,6 +537,24 @@ fn handle_event_data(node: Node) -> Value {
                     .map(|t| t.trim().to_string())
                     .unwrap_or_default();
                 map.insert(key, Value::String(value));
+            }
+        }
+    }
+    Value::Object(map)
+}
+
+fn handle_event_data_raw(node: Node) -> Value {
+    let mut map = Map::new();
+    for child in node.children() {
+        if child.is_element() && child.tag_name().name() == "Data" {
+            let name = child.attribute("Name").unwrap_or("");
+            if !name.is_empty() {
+                // Preserve original key names (with spaces) for regression data.
+                let value = child
+                    .text()
+                    .map(|t| t.trim().to_string())
+                    .unwrap_or_default();
+                map.insert(name.to_string(), Value::String(value));
             }
         }
     }
@@ -451,6 +584,11 @@ pub struct Alert {
     pub description: Option<String>,
     pub rule_path: Option<PathBuf>,
     pub severity: String,
+    /// Raw JSON as collected from Winevt (preserves original EventData key names).
+    /// Used for regression data generation — must match the EVTX content exactly.
+    pub event_json_raw: Value,
+    /// Transformed JSON for Sigma detection (EventData keys have spaces stripped).
+    /// Used by the detection engine.
     pub event_json: Value,
     pub event_raw: Vec<u8>,
 }
@@ -794,7 +932,7 @@ mod tests {
                 }
             }
         });
-        let mut event = Event::new(json, Vec::new());
+        let mut event = Event::new(json.clone(), json, Vec::new());
         event.inject_logsource_fields();
 
         assert_eq!(event.event_json["product"].as_str().unwrap(), "windows");
@@ -816,7 +954,7 @@ mod tests {
                 }
             }
         });
-        let mut event = Event::new(json, Vec::new());
+        let mut event = Event::new(json.clone(), json, Vec::new());
         event.inject_logsource_fields();
 
         assert_eq!(event.event_json["product"].as_str().unwrap(), "windows");
@@ -835,7 +973,7 @@ mod tests {
                 }
             }
         });
-        let mut event = Event::new(json, Vec::new());
+        let mut event = Event::new(json.clone(), json, Vec::new());
         event.inject_logsource_fields();
 
         assert_eq!(event.event_json["service"].as_str().unwrap(), "sysmon");
@@ -857,7 +995,7 @@ mod tests {
                 }
             }
         });
-        let mut event = Event::new(json, Vec::new());
+        let mut event = Event::new(json.clone(), json, Vec::new());
         event.inject_logsource_fields();
 
         assert_eq!(event.event_json["product"].as_str().unwrap(), "windows");
@@ -865,5 +1003,245 @@ mod tests {
         assert_eq!(event.event_json["service"].as_str().unwrap(), "sysmon");
         // Category absent because get_category uses unknown channel
         assert!(event.event_json.get("category").is_none());
+    }
+
+    #[test]
+    fn test_parse_winevt_xml_raw_preserves_spaces() {
+        let xml = r#"<Event>
+            <System>
+                <Provider Name="Microsoft-Windows-Sysmon"/>
+                <EventID>1</EventID>
+                <Channel>Microsoft-Windows-Sysmon/Operational</Channel>
+            </System>
+            <EventData>
+                <Data Name="Image">C:\\Windows\\System32\\cmd.exe</Data>
+                <Data Name="CommandLine">cmd /c whoami</Data>
+                <Data Name="User">DOMAIN\\user</Data>
+            </EventData>
+        </Event>"#;
+
+        let result = parse_winevt_xml_raw(xml).unwrap();
+        let event_data = result["Event"]["EventData"].as_object().unwrap();
+        assert_eq!(
+            event_data["Image"].as_str().unwrap(),
+            "C:\\\\Windows\\\\System32\\\\cmd.exe"
+        );
+        assert_eq!(event_data["CommandLine"].as_str().unwrap(), "cmd /c whoami");
+        assert_eq!(event_data["User"].as_str().unwrap(), "DOMAIN\\\\user");
+    }
+
+    #[test]
+    fn test_parse_winevt_xml_raw_diverges_from_transformed() {
+        let xml = r#"<Event>
+            <System>
+                <Provider Name="Microsoft-Windows-Sysmon"/>
+                <EventID>1</EventID>
+                <Channel>Microsoft-Windows-Sysmon/Operational</Channel>
+            </System>
+            <EventData>
+                <Data Name="Command Line">cmd /c whoami</Data>
+                <Data Name="Target Image">C:\\Windows\\System32\\calc.exe</Data>
+            </EventData>
+        </Event>"#;
+
+        let raw = parse_winevt_xml_raw(xml).unwrap();
+        let transformed = parse_winevt_xml(xml).unwrap();
+
+        let raw_data = raw["Event"]["EventData"].as_object().unwrap();
+        let transformed_data = transformed["Event"]["EventData"].as_object().unwrap();
+
+        assert!(
+            raw_data.contains_key("Command Line"),
+            "raw should preserve 'Command Line' with space"
+        );
+        assert!(
+            transformed_data.contains_key("CommandLine"),
+            "transformed should have 'CommandLine' without space"
+        );
+        assert!(
+            !raw_data.contains_key("CommandLine"),
+            "raw should NOT have 'CommandLine'"
+        );
+        assert!(
+            !transformed_data.contains_key("Command Line"),
+            "transformed should NOT have 'Command Line'"
+        );
+
+        assert!(
+            raw_data.contains_key("Target Image"),
+            "raw should preserve 'Target Image' with space"
+        );
+        assert!(
+            transformed_data.contains_key("TargetImage"),
+            "transformed should have 'TargetImage' without space"
+        );
+    }
+
+    #[test]
+    fn test_event_from_xml_raw_preserved_after_inject() {
+        let xml = r#"<Event>
+            <System>
+                <Provider Name="Microsoft-Windows-Sysmon"/>
+                <EventID>1</EventID>
+                <Channel>Microsoft-Windows-Sysmon/Operational</Channel>
+            </System>
+            <EventData>
+                <Data Name="Command Line">cmd.exe</Data>
+            </EventData>
+        </Event>"#;
+
+        let mut event = Event::from_xml(xml).unwrap();
+
+        let raw_before = event.event_json_raw.clone();
+        let raw_has_space = raw_before["Event"]["EventData"]["Command Line"]
+            .as_str()
+            .is_some();
+        assert!(
+            raw_has_space,
+            "event_json_raw should have 'Command Line' before inject"
+        );
+
+        event.inject_logsource_fields();
+
+        let raw_after = &event.event_json_raw;
+        assert_eq!(
+            raw_after["Event"]["EventData"]["Command Line"]
+                .as_str()
+                .unwrap(),
+            "cmd.exe"
+        );
+        assert!(
+            !raw_after["Event"]["EventData"]
+                .as_object()
+                .unwrap()
+                .contains_key("CommandLine"),
+            "event_json_raw should NOT have 'CommandLine' after inject"
+        );
+        assert!(
+            raw_after["Event"]["System"]["Provider"]["#attributes"]["Name"]
+                .as_str()
+                .is_some(),
+            "event_json_raw should preserve Provider attributes"
+        );
+
+        assert_eq!(
+            event.event_json.get("product").map(|v| v.as_str().unwrap()),
+            Some("windows")
+        );
+        assert_eq!(
+            event.event_json.get("service").map(|v| v.as_str().unwrap()),
+            Some("sysmon")
+        );
+    }
+
+    #[test]
+    fn test_handle_event_data_raw_empty_name() {
+        let xml = r#"<Event>
+            <System><EventID>1</EventID></System>
+            <EventData>
+                <Data Name="">empty_name</Data>
+                <Data Name="ValidName">valid_value</Data>
+            </EventData>
+        </Event>"#;
+
+        let result = parse_winevt_xml_raw(xml).unwrap();
+        let event_data = result["Event"]["EventData"].as_object().unwrap();
+        assert!(
+            !event_data.contains_key(""),
+            "empty Name attribute should be skipped"
+        );
+        assert_eq!(event_data["ValidName"].as_str().unwrap(), "valid_value");
+    }
+
+    #[test]
+    fn test_parse_winevt_xml_raw_unicode() {
+        let xml = r#"<Event>
+            <System><EventID>1</EventID></System>
+            <EventData>
+                <Data Name="Message">Hello world: 世界 🌍</Data>
+                <Data Name="Command Line">cmd /c echo 你好</Data>
+            </EventData>
+        </Event>"#;
+
+        let result = parse_winevt_xml_raw(xml).unwrap();
+        let event_data = result["Event"]["EventData"].as_object().unwrap();
+        assert_eq!(
+            event_data["Message"].as_str().unwrap(),
+            "Hello world: 世界 🌍"
+        );
+        assert_eq!(
+            event_data["Command Line"].as_str().unwrap(),
+            "cmd /c echo 你好"
+        );
+    }
+
+    #[test]
+    fn test_parse_winevt_xml_raw_empty_eventdata() {
+        let xml = r#"<Event>
+            <System><EventID>1</EventID></System>
+            <EventData></EventData>
+        </Event>"#;
+
+        let result = parse_winevt_xml_raw(xml).unwrap();
+        let event_data = result["Event"]["EventData"].as_object().unwrap();
+        assert!(event_data.is_empty());
+    }
+
+    #[test]
+    fn test_parse_winevt_xml_raw_no_eventdata() {
+        let xml = r#"<Event>
+            <System><EventID>1</EventID></System>
+        </Event>"#;
+
+        let result = parse_winevt_xml_raw(xml).unwrap();
+        assert!(!result["Event"]
+            .as_object()
+            .unwrap()
+            .contains_key("EventData"));
+    }
+
+    #[test]
+    fn test_parse_winevt_xml_raw_too_large() {
+        let large = "A".repeat(MAX_XML_SIZE + 1);
+        let xml = format!(
+            "<Event><System><EventID>1</EventID></System><Data>{}</Data></Event>",
+            large
+        );
+        let result = parse_winevt_xml_raw(&xml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("too large"));
+    }
+
+    #[test]
+    fn test_alert_event_json_raw_populated() {
+        let xml = r#"<Event>
+            <System>
+                <Provider Name="Microsoft-Windows-Sysmon"/>
+                <EventID>1</EventID>
+                <Channel>Microsoft-Windows-Sysmon/Operational</Channel>
+            </System>
+            <EventData>
+                <Data Name="Command Line">cmd.exe</Data>
+            </EventData>
+        </Event>"#;
+
+        let event = Event::from_xml(xml).unwrap();
+        let alert = Alert {
+            rule_id: Uuid::nil(),
+            rule_title: "Test Rule".to_string(),
+            description: None,
+            rule_path: None,
+            severity: "medium".to_string(),
+            event_json_raw: event.event_json_raw.clone(),
+            event_json: event.event_json.clone(),
+            event_raw: event.event_raw.clone(),
+        };
+
+        assert!(alert.event_json_raw["Event"]["EventData"]["Command Line"]
+            .as_str()
+            .is_some());
+        assert!(alert.event_json["Event"]["EventData"]["CommandLine"]
+            .as_str()
+            .is_some());
     }
 }

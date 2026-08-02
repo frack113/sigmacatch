@@ -207,13 +207,8 @@ impl SigmaRepo {
 
     /// Stage files (relative to `work_tree`) into the git index and commit them
     /// in a single batch.
-    pub fn commit_files(&self, files: &[String]) -> Result<()> {
-        if files.is_empty() {
-            info!("No files to commit");
-            return Ok(());
-        }
-
-        let valid: Vec<&str> = files
+    fn valid_commit_paths(files: &[String]) -> Vec<&str> {
+        files
             .iter()
             .filter(|f| {
                 if f.contains('\0') || f.contains("..") {
@@ -223,44 +218,53 @@ impl SigmaRepo {
                     true
                 }
             })
-            .map(|s| s.as_str())
-            .collect();
+            .map(String::as_str)
+            .collect()
+    }
 
-        if valid.is_empty() {
-            info!("No valid files to commit");
-            return Ok(());
-        }
-
+    pub fn git_upload(&self, files: Vec<String>, message: String) -> Result<()> {
         let git_dir = self.repo_path.join(".git");
         let name = self.author.trim();
         let addr = self.email.trim();
 
-        git_add(&git_dir, &self.repo_path, &valid)?;
+        let valid = Self::valid_commit_paths(&files);
 
-        let message = format!(
-            "✨ feat(sigma): add regression data for {} file(s)",
-            valid.len()
-        );
-        git_commit(&git_dir, &self.repo_path, &message, name, addr)?;
-        info!("Committed {} file(s) in batch", valid.len());
+        if valid.is_empty() {
+            if files.is_empty() {
+                info!("No files to commit");
+            } else {
+                info!("No valid files to commit");
+            }
+        } else {
+            git_add(&git_dir, &self.repo_path, &valid)?;
+            git_commit(&git_dir, &self.repo_path, message.as_str(), name, addr)?;
+            info!("Committed {} file(s)", valid.len());
+        }
+
+        self.push()?;
         Ok(())
     }
 
-    /// Push the working branch to the remote.
-    pub fn push(&self) -> Result<()> {
+    fn push(&self) -> Result<()> {
         let branch = self
             .working_branch
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("No working branch configured"))?;
         let git_dir = self.repo_path.join(".git");
 
-        let head_content = std::fs::read_to_string(git_dir.join("HEAD"))?;
-        let expected_ref = format!("ref: refs/heads/{branch}");
-        if head_content.trim() != expected_ref {
+        let head_target =
+            crate::plumbing::symbolic_ref_target(&git_dir, "HEAD")?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "HEAD is detached (not on a branch) — refusing to push branch '{}'",
+                    branch
+                )
+            })?;
+        let expected_ref = format!("refs/heads/{branch}");
+        if head_target != expected_ref {
             anyhow::bail!(
-                "HEAD is not on branch '{}' (HEAD: {}). Refusing to push.",
+                "HEAD is not on branch '{}' (HEAD → {}). Refusing to push.",
                 branch,
-                head_content.trim()
+                head_target
             );
         }
 

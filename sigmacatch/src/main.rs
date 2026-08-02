@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
     };
 
     sigma_repo.set_remote_url(fork_url.clone()).await?;
-    sigma_repo.set_working_branch(branch_name)?;
+    sigma_repo.set_working_branch(branch_name.clone())?;
 
     let mut regression = match SigmahqRegression::new() {
         Ok(r) => r,
@@ -186,6 +186,8 @@ async fn main() -> Result<()> {
     let mut generate_interval = tokio::time::interval(std::time::Duration::from_secs(30));
     generate_interval.tick().await; // skip immediate first tick
 
+    let mut branch_pushed = false;
+
     // ─── Continuous event loop ───────────────────────────────────────────
 
     loop {
@@ -201,8 +203,18 @@ async fn main() -> Result<()> {
                 let created_files = process_and_generate(&mut engine, &mut rules, &mut regression);
 
                 if !created_files.is_empty() {
-                    if let Err(e) = sigma_repo.commit_files(&created_files) {
-                        warn!("Failed to commit regression data: {}", e);
+                    let message = format!(
+                        "✨ feat(sigma): add regression data for {} file(s)",
+                        created_files.len()
+                    );
+                    if let Err(e) = sigma_repo.git_upload(created_files, message) {
+                        warn!("Failed to commit/push regression data: {}", e);
+                    } else if !branch_pushed {
+                        branch_pushed = true;
+                        info!(
+                            "Branch '{}' pushed to origin. Next step: create PR at https://github.com/SigmaHQ/sigma/pulls",
+                            push_branch
+                        );
                     }
                 }
             }
@@ -224,18 +236,18 @@ async fn main() -> Result<()> {
     let created_files = process_and_generate(&mut engine, &mut rules, &mut regression);
 
     if !created_files.is_empty() {
-        if let Err(e) = sigma_repo.commit_files(&created_files) {
-            warn!("Failed to commit regression data: {}", e);
-        }
-    }
-
-    if let Err(e) = sigma_repo.push() {
-        warn!("Failed to push branch: {}", e);
-    } else {
-        info!(
-            "Branch '{}' pushed to origin. Next step: create PR at https://github.com/SigmaHQ/sigma/pulls",
-            push_branch
+        let message = format!(
+            "✨ feat(sigma): add regression data for {} file(s)",
+            created_files.len()
         );
+        if let Err(e) = sigma_repo.git_upload(created_files, message) {
+            warn!("Failed to commit/push regression data: {}", e);
+        } else if !branch_pushed {
+            info!(
+                "Branch '{}' pushed to origin. Next step: create PR at https://github.com/SigmaHQ/sigma/pulls",
+                push_branch
+            );
+        }
     }
 
     info!("Sigmacatch finished");

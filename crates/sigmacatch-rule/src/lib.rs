@@ -18,7 +18,7 @@ pub(crate) mod thresholds;
 use crate::channel_resolver::resolve_channels;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Rule loading filters. All fields are optional — `None` means no filtering.
@@ -63,6 +63,7 @@ impl SigmaFilterConfig {
 #[derive(Debug, Clone, Default)]
 pub struct SigmahqRules {
     rules: Vec<SigmaRule>,
+    rule_paths: HashMap<Uuid, PathBuf>,
     stats: LoadStats,
 }
 
@@ -106,6 +107,9 @@ impl SigmahqRules {
                                                 format!("no-id-{}", path.display())
                                             });
                                             if seen_ids.insert(id.clone()) {
+                                                if let Ok(uuid) = Uuid::parse_str(&id) {
+                                                    set.rule_paths.insert(uuid, path.clone());
+                                                }
                                                 set.rules.push(rule);
                                             } else {
                                                 skipped_dupes += 1;
@@ -147,6 +151,7 @@ impl SigmahqRules {
         let mut filtered_level = 0u64;
         let mut filtered_author = 0u64;
         let mut rules = Vec::new();
+        let mut kept_ids: Vec<Uuid> = Vec::new();
 
         for rule in self.rules {
             let product_ok = rule
@@ -189,12 +194,24 @@ impl SigmahqRules {
                 filtered_author += 1;
                 continue;
             }
+            let rule_id = rule.id.as_deref().and_then(|id| Uuid::parse_str(id).ok());
+            if let Some(uuid) = rule_id {
+                kept_ids.push(uuid);
+            }
             rules.push(rule);
+        }
+
+        let mut rule_paths = HashMap::new();
+        for id in &kept_ids {
+            if let Some(path) = self.rule_paths.get(id) {
+                rule_paths.insert(*id, path.clone());
+            }
         }
 
         let rules_loaded = rules.len() as u64;
         Self {
             rules,
+            rule_paths,
             stats: LoadStats {
                 rules_loaded,
                 rules_filtered_product: filtered_product,
@@ -212,6 +229,14 @@ impl SigmahqRules {
 
     pub fn into_rules(self) -> Vec<SigmaRule> {
         self.rules
+    }
+
+    pub fn rule_paths(&self) -> &HashMap<Uuid, PathBuf> {
+        &self.rule_paths
+    }
+
+    pub fn get_rule_path(&self, id: &Uuid) -> Option<&Path> {
+        self.rule_paths.get(id).map(|p| p.as_path())
     }
 
     pub fn stats(&self) -> &LoadStats {
@@ -242,6 +267,7 @@ impl SigmahqRules {
         let before = self.rules.len();
         self.rules
             .retain(|r| r.id.as_deref() != Some(id_str.as_str()));
+        self.rule_paths.remove(id);
         self.rules.len() != before
     }
 

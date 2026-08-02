@@ -156,7 +156,8 @@ impl SigmahqRegression {
 
         let sigma_repo_path = Path::new("sigma");
         let rule_rel_path = alert.rule_path.as_ref().and_then(|p| {
-            p.strip_prefix(sigma_repo_path)
+            clean_path(p)
+                .strip_prefix(sigma_repo_path)
                 .ok()
                 .map(|rel| rel.with_extension(""))
         });
@@ -180,43 +181,47 @@ impl SigmahqRegression {
         reg.add_alert(alert.clone());
 
         let _gen_span = info_span!("generate", rule_id = %rule_id).entered();
-        match reg.generate(write_evtx) {
-            Ok(_) => {
-                let rel_dir = reg
-                    .sigma_rel_dir()
-                    .unwrap_or_else(|| format!("regression_data/rules/{rule_id}"));
-
-                let rule_yaml_rel = alert
-                    .rule_path
-                    .as_ref()
-                    .and_then(|p| p.strip_prefix(sigma_repo_path).ok())
-                    .and_then(|p| p.to_str())
-                    .map(|s| s.to_string().replace('\\', "/"));
-
-                let tests_path = format!("{}/info.yml", rel_dir.replace('\\', "/"));
-                if let Some(ref rule_yaml_path) = alert.rule_path {
-                    update_regression_tests_path(rule_yaml_path, &tests_path);
-                }
-
-                self.retired.insert(*rule_id);
-                info!("Rule {rule_id} retired from detection engine");
-
-                let mut files = vec![
-                    format!("{}/{}.json", rel_dir, rule_id),
-                    format!("{}/{}.evtx", rel_dir, rule_id),
-                    format!("{}/info.yml", rel_dir),
-                ];
-                if let Some(ref yaml_rel) = rule_yaml_rel {
-                    files.push(yaml_rel.clone());
-                }
-
-                Some(files)
-            }
+        let evtx_ext = match reg.generate(write_evtx) {
+            Ok(ext) => ext,
             Err(e) => {
                 error!("Failed to generate regression for {}: {}", rule_id, e);
-                None
+                return None;
             }
+        };
+        let rel_dir = reg
+            .sigma_rel_dir()
+            .unwrap_or_else(|| format!("regression_data/rules/{rule_id}"));
+
+        let rule_yaml_rel = alert
+            .rule_path
+            .as_ref()
+            .and_then(|p| {
+                clean_path(p)
+                    .strip_prefix(sigma_repo_path)
+                    .ok()
+                    .map(|p| p.to_path_buf())
+            })
+            .and_then(|p| p.to_str().map(|s| s.to_string()))
+            .map(|s| s.to_string().replace('\\', "/"));
+
+        let tests_path = format!("{}/info.yml", rel_dir.replace('\\', "/"));
+        if let Some(ref rule_yaml_path) = alert.rule_path {
+            update_regression_tests_path(rule_yaml_path, &tests_path);
         }
+
+        self.retired.insert(*rule_id);
+        info!("Rule {rule_id} retired from detection engine");
+
+        let mut files = vec![
+            format!("{}/{}.json", rel_dir, rule_id),
+            format!("{}/{}.{}", rel_dir, rule_id, evtx_ext),
+            format!("{}/info.yml", rel_dir),
+        ];
+        if let Some(ref yaml_rel) = rule_yaml_rel {
+            files.push(yaml_rel.clone());
+        }
+
+        Some(files)
     }
 }
 
@@ -272,7 +277,7 @@ impl RegressionData {
         self.rule_dir().is_ok_and(|d| d.join("info.yml").exists())
     }
 
-    fn generate<F>(&self, write_fn: F) -> Result<()>
+    fn generate<F>(&self, write_fn: F) -> Result<String>
     where
         F: Fn(&str, &str, Option<u64>, &Path) -> Result<()>,
     {
@@ -284,9 +289,10 @@ impl RegressionData {
         let first = self.alerts.first();
         let match_count = if first.is_some() { 1 } else { 0 };
 
+        let mut evtx_ext = "evtx";
         if let Some(alert) = first {
             let raw_json_path = rule_dir.join(format!("{}.json", rule_id));
-            let raw_json = serde_json::to_string_pretty(&alert.event_json)?;
+            let raw_json = serde_json::to_string_pretty(&alert.event_json_raw)?;
             std::fs::write(&raw_json_path, raw_json)?;
             tracing::info!("Wrote JSON for rule {:?}", rule_id);
 
@@ -298,12 +304,30 @@ impl RegressionData {
                 &evtx_path,
             )
             .with_context(|| format!("Failed to write EVTX for rule {:?}", rule_id))?;
-            tracing::info!("Wrote EVTX for rule {:?}", rule_id);
+            evtx_ext = if evtx_path.exists() {
+                "evtx"
+            } else if evtx_path.with_extension("xml").exists() {
+                tracing::warn!(
+                    "EVTX write fell back to XML for rule {:?}, using .xml extension",
+                    rule_id
+                );
+                "xml"
+            } else {
+                tracing::warn!(
+                    "Neither .evtx nor .xml was written for rule {:?}, defaulting to .evtx",
+                    rule_id
+                );
+                "evtx"
+            };
+            tracing::info!("Wrote EVTX/XML for rule {:?}", rule_id);
         }
 
         let sigma_evtx_path = if first.is_some() {
-            let evtx_name = format!("{}.evtx", rule_id);
-            format!("{}/{}", self.sigma_rel_dir().unwrap_or_default(), evtx_name)
+            let evtx_name = format!("{}.{}", rule_id, evtx_ext);
+            let rel_dir = self
+                .sigma_rel_dir()
+                .unwrap_or_else(|| format!("regression_data/rules/{rule_id}"));
+            format!("{}/{}", rel_dir, evtx_name)
         } else {
             String::new()
         };
@@ -337,11 +361,22 @@ impl RegressionData {
             self.alerts.len(),
             self.header.rule_id
         );
-        Ok(())
+        Ok(evtx_ext.to_string())
     }
 }
 
-// ─── Free functions ────────────────────────────────────────────────────
+// ─── Free functions ─────────────────────────────────────────────────────
+
+fn clean_path(p: &Path) -> PathBuf {
+    p.components()
+        .filter(|c| {
+            !matches!(
+                c,
+                std::path::Component::CurDir | std::path::Component::ParentDir
+            )
+        })
+        .collect()
+}
 
 fn resolve_data_file(dir: &Path, rule_id: &Uuid) -> Option<PathBuf> {
     for ext in ["evtx", "json"] {

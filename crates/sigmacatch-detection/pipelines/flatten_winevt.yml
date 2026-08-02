@@ -93,6 +93,20 @@ transformations:
       - type: logsource
         product: windows
 
+  # ─── Firewall-AS-specific field name mapping ───
+  # Microsoft-Windows-Windows Firewall With Advanced Security/Firewall channel
+  # EventData keys: ModifyingApplication, ApplicationPath, Action
+  - id: firewall_as_fields
+    type: field_name_mapping
+    mapping:
+      ModifyingApplication: Event.EventData.ModifyingApplication
+      ApplicationPath: Event.EventData.ApplicationPath
+      Action: Event.EventData.Action
+    rule_conditions:
+      - type: logsource
+        service: firewall-as
+        product: windows
+
   # ─── WinDefend-specific field name mapping ───
   # WinDefend EventData keys have spaces (e.g. "Source Name", "Product Name").
   # handle_event_data strips spaces → "SourceName", "ProductName", etc.
