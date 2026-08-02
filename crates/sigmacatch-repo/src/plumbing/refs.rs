@@ -1,68 +1,39 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Reference and HEAD management: loose/packed refs, HEAD resolution,
-//! remote tracking, and fast-forward updates.
+//! Reference and HEAD management: resolution, HEAD switching, remote tracking,
+//! and fast-forward updates — all delegated to `grit_lib::refs` (loose/packed/
+//! reftable, atomic lock writes, reflogs).
 
 use anyhow::Result;
 use grit_lib::objects::ObjectId;
+use grit_lib::refs;
 use std::path::Path;
 use tracing::{info, warn};
 
-fn read_packed_ref(git_dir: &Path, ref_name: &str) -> Option<String> {
-    let packed_path = git_dir.join("packed-refs");
-    let content = std::fs::read_to_string(packed_path).ok()?;
-    for line in content.lines() {
-        let line = line.trim();
-        if line.starts_with('#') || line.starts_with('^') || line.is_empty() {
-            continue;
-        }
-        if let Some((oid, name)) = line.split_once(' ') {
-            if name == ref_name {
-                return Some(oid.to_string());
-            }
-        }
-    }
-    None
+/// Bridge grit-lib's `error::Error` into `anyhow::Error` (no blanket `From` exists).
+pub(crate) fn map_grit<T>(r: std::result::Result<T, grit_lib::error::Error>) -> Result<T> {
+    r.map_err(|e| anyhow::anyhow!("{}", e))
 }
 
-pub fn read_loose_or_packed_ref(git_dir: &Path, ref_name: &str) -> Option<String> {
-    let loose_path = git_dir.join(ref_name);
-    match std::fs::read_to_string(&loose_path) {
-        Ok(content) => {
-            let trimmed = content.trim().to_string();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed)
-            }
-        }
-        Err(_) => read_packed_ref(git_dir, ref_name),
-    }
-}
-
+/// Resolve a ref name (or `"HEAD"`) to its object id, following symbolic refs.
 pub(crate) fn resolve_head(git_dir: &Path) -> Result<ObjectId> {
-    let head_path = git_dir.join("HEAD");
-    let content = std::fs::read_to_string(&head_path)?;
-    let content = content.trim();
-    if let Some(ref_str) = content.strip_prefix("ref: ") {
-        let ref_path_str = ref_str.trim();
-        let full_ref = format!(
-            "refs/heads/{}",
-            ref_path_str.trim_start_matches("refs/heads/")
-        );
-        if let Some(oid_str) = read_loose_or_packed_ref(git_dir, &full_ref) {
-            return ObjectId::from_hex(&oid_str)
-                .map_err(|e| anyhow::anyhow!("Invalid OID '{}': {}", oid_str, e));
-        }
-        anyhow::bail!(
-            "Cannot resolve HEAD ref '{}' — branch not found locally",
-            ref_path_str
-        );
-    } else {
-        ObjectId::from_hex(content.trim())
-            .map_err(|e| anyhow::anyhow!("Invalid detached HEAD OID '{}': {}", content, e))
-    }
+    map_grit(refs::resolve_ref(git_dir, "HEAD"))
+}
+
+/// Resolve a ref name to its oid, returning `None` when absent (packed or loose).
+/// Mirrors grit-lib's `resolve_ref` but as an `Option` for callers that treat a
+/// missing ref as a valid "first run" case.
+pub fn read_loose_or_packed_ref(git_dir: &Path, ref_name: &str) -> Option<String> {
+    refs::resolve_ref(git_dir, ref_name)
+        .ok()
+        .map(|oid| oid.to_string())
+}
+
+/// Read a symbolic ref's target (e.g. HEAD -> "refs/heads/main"), or `None` for a
+/// direct/detached ref.
+pub(crate) fn symbolic_ref_target(git_dir: &Path, refname: &str) -> Result<Option<String>> {
+    map_grit(refs::read_symbolic_ref(git_dir, refname))
 }
 
 /// Parse remote URL from `.git/config` for a given remote name.
@@ -88,59 +59,58 @@ pub(crate) fn read_remote_url_from_config(git_dir: &Path, remote: &str) -> Resul
     )
 }
 
-/// Resolve a default branch name from remote tracking refs.
-/// Tries `origin/<branch_name>` first, then falls back to `origin/main` / `origin/master`.
-fn resolve_default_head(git_dir: &Path, default_branch: Option<&str>) -> Option<(String, String)> {
-    if let Some(branch_name) = default_branch {
-        let remote_ref = format!("refs/remotes/origin/{}", branch_name);
-        if let Some(oid_str) = read_loose_or_packed_ref(git_dir, &remote_ref) {
-            return Some((format!("refs/heads/{}", branch_name), oid_str));
-        }
-    }
-    for fallback in &["main", "master"] {
-        let remote_ref = format!("refs/remotes/origin/{}", fallback);
-        if let Some(oid_str) = read_loose_or_packed_ref(git_dir, &remote_ref) {
-            return Some((format!("refs/heads/{}", fallback), oid_str));
-        }
-    }
-    None
-}
-
-/// Configure HEAD and create local tracking ref after a fetch (both HTTP and SSH).
+/// Configure HEAD and create the local tracking ref after a fetch (HTTP and SSH).
+/// Resolves the default branch from `refs/remotes/origin/<branch>`, falling back
+/// to `main`/`master`.
 pub(crate) fn set_head_after_fetch(git_dir: &Path, default_branch: Option<&str>) {
+    let candidates: Vec<String> = default_branch
+        .map(|b| vec![b.to_string()])
+        .unwrap_or_else(|| vec!["main".to_string(), "master".to_string()]);
+
     let head_file = git_dir.join("HEAD");
-    if let Some((local_ref, oid_str)) = resolve_default_head(git_dir, default_branch) {
-        let head_content = format!("ref: {}\n", local_ref);
-        std::fs::write(git_dir.join("HEAD"), &head_content).ok();
-        let loose_path = git_dir.join(&local_ref);
-        if let Some(parent) = loose_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+    for branch in &candidates {
+        let remote_ref = format!("refs/remotes/origin/{}", branch);
+        if let Some(oid_str) = read_loose_or_packed_ref(git_dir, &remote_ref) {
+            let local_ref = format!("refs/heads/{}", branch);
+            if let Err(e) = refs::write_symbolic_ref(git_dir, "HEAD", &local_ref) {
+                warn!("Failed to set HEAD symbolic ref: {}", e);
+                return;
+            }
+            let oid = match ObjectId::from_hex(&oid_str) {
+                Ok(o) => o,
+                Err(e) => {
+                    warn!("Invalid OID for '{}': {}", remote_ref, e);
+                    return;
+                }
+            };
+            let _ = refs::write_ref(git_dir, &local_ref, &oid);
+            info!(
+                "HEAD set to {} (→ {})",
+                local_ref,
+                &oid_str[..12.min(oid_str.len())]
+            );
+            return;
         }
-        let _ = std::fs::write(&loose_path, format!("{}\n", oid_str));
-        info!(
-            "HEAD set to {} (→ {})",
-            local_ref,
-            &oid_str[..12.min(oid_str.len())]
-        );
-    } else if !head_file.exists() {
+    }
+    if !head_file.exists() {
         warn!("No default branch found — HEAD not set");
     }
 }
 
-/// After a fetch, update the local branch ref to match its remote tracking ref.
+/// After a fetch, fast-forward the local branch under HEAD to its remote
+/// tracking ref (`refs/remotes/origin/<branch>`).
 pub(crate) fn fast_forward_branch(git_dir: &Path) -> Result<()> {
-    let head_content = std::fs::read_to_string(git_dir.join("HEAD"))?;
-    let head_content = head_content.trim();
-
-    let Some(ref_str) = head_content.strip_prefix("ref: ") else {
-        warn!("Detached HEAD — cannot fast-forward");
-        return Ok(());
+    let remote_branch = match symbolic_ref_target(git_dir, "HEAD")? {
+        Some(target) => {
+            let stripped = target.strip_prefix("refs/heads/").unwrap_or(&target);
+            stripped.to_string()
+        }
+        None => {
+            warn!("Detached HEAD — cannot fast-forward");
+            return Ok(());
+        }
     };
-
-    let ref_name = ref_str.trim();
-    let branch_name = ref_name.strip_prefix("refs/heads/").unwrap_or(ref_name);
-
-    let remote_ref = format!("refs/remotes/origin/{}", branch_name);
+    let remote_ref = format!("refs/remotes/origin/{}", remote_branch);
     let Some(remote_oid) = read_loose_or_packed_ref(git_dir, &remote_ref) else {
         warn!(
             "Remote tracking ref '{}' not found — cannot fast-forward",
@@ -148,12 +118,13 @@ pub(crate) fn fast_forward_branch(git_dir: &Path) -> Result<()> {
         );
         return Ok(());
     };
-
-    let local_path = git_dir.join(ref_name);
-    std::fs::write(&local_path, format!("{}\n", remote_oid))?;
+    let local_ref = format!("refs/heads/{}", remote_branch);
+    let oid = ObjectId::from_hex(&remote_oid)
+        .map_err(|e| anyhow::anyhow!("Invalid OID for '{}': {}", remote_ref, e))?;
+    map_grit(refs::write_ref(git_dir, &local_ref, &oid))?;
     info!(
         "Fast-forwarded '{}' to {}",
-        branch_name,
+        remote_branch,
         &remote_oid[..12.min(remote_oid.len())]
     );
     Ok(())

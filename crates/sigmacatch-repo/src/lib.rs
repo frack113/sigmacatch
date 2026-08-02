@@ -330,13 +330,19 @@ impl SigmaRepo {
             .ok_or_else(|| anyhow::anyhow!("No working branch configured"))?;
         let git_dir = self.repo_path.join(".git");
 
-        let head_content = std::fs::read_to_string(git_dir.join("HEAD"))?;
-        let expected_ref = format!("ref: refs/heads/{branch}");
-        if head_content.trim() != expected_ref {
+        let head_target =
+            crate::plumbing::symbolic_ref_target(&git_dir, "HEAD")?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "HEAD is detached (not on a branch) — refusing to push branch '{}'",
+                    branch
+                )
+            })?;
+        let expected_ref = format!("refs/heads/{branch}");
+        if head_target != expected_ref {
             anyhow::bail!(
-                "HEAD is not on branch '{}' (HEAD: {}). Refusing to push.",
+                "HEAD is not on branch '{}' (HEAD → {}). Refusing to push.",
                 branch,
-                head_content.trim()
+                head_target
             );
         }
 

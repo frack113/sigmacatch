@@ -46,11 +46,17 @@ fn lookup_parent_mode(git_dir: &Path, rel_path: &str) -> Option<u32> {
     None
 }
 
-pub(crate) fn add_tree_to_index_filtered(
+/// Recursively copy every entry of `tree_oid` into `index` at stage 0,
+/// prefix-prefixed by `prefix`.
+///
+/// This is the primitive used by `git_commit` to merge the **full** HEAD
+/// tree under the staged entries. Unlike a filtered variant, it has no
+/// branch on `staged_paths`, so there is no inversion-prone condition to get
+/// wrong — staged paths are simply overlaid afterwards by `add_or_replace`.
+pub(crate) fn add_tree_to_index(
     odb: &Odb,
     tree_oid: ObjectId,
     prefix: &str,
-    staged_paths: &std::collections::HashSet<Vec<u8>>,
     index: &mut grit_lib::index::Index,
 ) -> Result<()> {
     let obj = odb
@@ -69,13 +75,8 @@ pub(crate) fn add_tree_to_index_filtered(
             format!("{}/{}", prefix, name)
         };
         if entry.mode == 0o040000 {
-            add_tree_to_index_filtered(odb, entry.oid, &rel_path, staged_paths, index)?;
+            add_tree_to_index(odb, entry.oid, &rel_path, index)?;
         } else {
-            // Skip paths staged in the new commit (they are overlaid below from
-            // the staged index); keep every other parent-tree entry.
-            if !staged_paths.is_empty() && staged_paths.contains(&rel_path.as_bytes().to_vec()) {
-                continue;
-            }
             let mode = match entry.mode {
                 0o100755 => 0o100755,
                 0o120000 => 0o120000,

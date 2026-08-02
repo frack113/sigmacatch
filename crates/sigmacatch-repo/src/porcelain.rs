@@ -8,7 +8,7 @@ use std::path::Path;
 use tracing::{info, warn};
 
 use crate::plumbing::{
-    add_directory_to_index, add_file_to_index, add_tree_to_index_filtered, checkout_main_branch,
+    add_directory_to_index, add_file_to_index, add_tree_to_index, checkout_main_branch,
     commit_tree, fast_forward_branch, fetch_remote, fetch_remote_ssh, init_repo, open_odb,
     read_remote_url_from_config, resolve_head, set_head_after_fetch, write_index,
 };
@@ -133,21 +133,13 @@ pub(crate) fn git_commit(
     let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)
         .map_err(|e| anyhow::anyhow!("Failed to parse HEAD commit: {}", e))?;
 
-    // Build a set of staged paths to handle deletions
-    let staged_paths: std::collections::HashSet<Vec<u8>> = staged_index
-        .entries
-        .iter()
-        .map(|e| e.path.clone())
-        .collect();
-
+    // Merge the full parent (HEAD) tree under the staged entries. The parent
+    // tree is added at stage 0 unconditionally; staged entries are then overlaid
+    // with `add_or_replace`, so the staged blob content wins. There is no
+    // staged-paths filtering step — that was the site of a prior tree-amputation
+    // bug (inverted condition) and is no longer needed.
     let mut merged_index = grit_lib::index::Index::new();
-    add_tree_to_index_filtered(
-        &odb,
-        parent_commit.tree,
-        "",
-        &staged_paths,
-        &mut merged_index,
-    )?;
+    add_tree_to_index(&odb, parent_commit.tree, "", &mut merged_index)?;
     for entry in &staged_index.entries {
         merged_index.add_or_replace(grit_lib::index::IndexEntry { ..entry.clone() });
     }
