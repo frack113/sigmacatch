@@ -156,7 +156,8 @@ impl SigmahqRegression {
 
         let sigma_repo_path = Path::new("sigma");
         let rule_rel_path = alert.rule_path.as_ref().and_then(|p| {
-            p.strip_prefix(sigma_repo_path)
+            clean_path(p)
+                .strip_prefix(sigma_repo_path)
                 .ok()
                 .map(|rel| rel.with_extension(""))
         });
@@ -194,8 +195,13 @@ impl SigmahqRegression {
         let rule_yaml_rel = alert
             .rule_path
             .as_ref()
-            .and_then(|p| p.strip_prefix(sigma_repo_path).ok())
-            .and_then(|p| p.to_str())
+            .and_then(|p| {
+                clean_path(p)
+                    .strip_prefix(sigma_repo_path)
+                    .ok()
+                    .map(|p| p.to_path_buf())
+            })
+            .and_then(|p| p.to_str().map(|s| s.to_string()))
             .map(|s| s.to_string().replace('\\', "/"));
 
         let tests_path = format!("{}/info.yml", rel_dir.replace('\\', "/"));
@@ -359,7 +365,18 @@ impl RegressionData {
     }
 }
 
-// ─── Free functions ────────────────────────────────────────────────────
+// ─── Free functions ─────────────────────────────────────────────────────
+
+fn clean_path(p: &Path) -> PathBuf {
+    p.components()
+        .filter(|c| {
+            !matches!(
+                c,
+                std::path::Component::CurDir | std::path::Component::ParentDir
+            )
+        })
+        .collect()
+}
 
 fn resolve_data_file(dir: &Path, rule_id: &Uuid) -> Option<PathBuf> {
     for ext in ["evtx", "json"] {
