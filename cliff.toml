@@ -27,6 +27,10 @@ footer = """
 
 [git]
 conventional_commits = true
+commit_preprocessors = [
+    { pattern = '^(?:fixup|squash|amend)! ', replace = '' },
+    { pattern = '^[\p{So}\u{FE0F}\u{200D}]+ ?', replace = '' },
+]
 filter_unconventional = true
 commit_parsers = [
     { message = "^feat", group = "✨ Features" },
