@@ -283,13 +283,8 @@ impl SigmaRepo {
 
     /// Stage files (relative to `work_tree`) into the git index and commit them
     /// in a single batch.
-    pub fn commit_files(&self, files: &[String]) -> Result<()> {
-        if files.is_empty() {
-            info!("No files to commit");
-            return Ok(());
-        }
-
-        let valid: Vec<&str> = files
+    fn valid_commit_paths(files: &[String]) -> Vec<&str> {
+        files
             .iter()
             .filter(|f| {
                 if f.contains('\0') || f.contains("..") {
@@ -299,26 +294,33 @@ impl SigmaRepo {
                     true
                 }
             })
-            .map(|s| s.as_str())
-            .collect();
+            .map(String::as_str)
+            .collect()
+    }
 
-        if valid.is_empty() {
-            info!("No valid files to commit");
-            return Ok(());
-        }
-
+    /// Stage, commit, and push `files` with `message` in one call. Each commit
+    /// is published immediately (creating/updating the contrib branch on the
+    /// remote), so a run interrupted after a commit can no longer strand it.
+    pub fn git_upload(&self, files: Vec<String>, message: String) -> Result<()> {
         let git_dir = self.repo_path.join(".git");
         let name = self.author.trim();
         let addr = self.email.trim();
 
-        git_add(&git_dir, &self.repo_path, &valid)?;
+        let valid = Self::valid_commit_paths(&files);
 
-        let message = format!(
-            "✨ feat(sigma): add regression data for {} file(s)",
-            valid.len()
-        );
-        git_commit(&git_dir, &self.repo_path, &message, name, addr)?;
-        info!("Committed {} file(s) in batch", valid.len());
+        if valid.is_empty() {
+            if files.is_empty() {
+                info!("No files to commit");
+            } else {
+                info!("No valid files to commit");
+            }
+        } else {
+            git_add(&git_dir, &self.repo_path, &valid)?;
+            git_commit(&git_dir, &self.repo_path, message.as_str(), name, addr)?;
+            info!("Committed {} file(s)", valid.len());
+        }
+
+        self.push()?;
         Ok(())
     }
 
