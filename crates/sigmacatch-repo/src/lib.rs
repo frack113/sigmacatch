@@ -261,6 +261,40 @@ impl SigmaRepo {
         Ok(())
     }
 
+    /// Object id the working branch currently points at locally.
+    /// Returns an error if the branch ref is missing or its oid is malformed.
+    pub fn working_branch_oid(&self) -> Result<ObjectId> {
+        let branch = self
+            .working_branch
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("No working branch configured"))?;
+        let git_dir = self.repo_path.join(".git");
+        let local_ref = format!("refs/heads/{}", branch);
+        let oid_str = crate::plumbing::read_loose_or_packed_ref(&git_dir, &local_ref)
+            .ok_or_else(|| anyhow::anyhow!("Working branch '{}' not found locally", branch))?;
+        ObjectId::from_hex(&oid_str)
+            .map_err(|e| anyhow::anyhow!("Invalid OID for branch '{}': {}", branch, e))
+    }
+
+    /// Roll the working branch ref back to `oid` after a push failure that left
+    /// an orphaned local commit behind, so the local branch tip stays consistent
+    /// with the remote (no dangling commits). The worktree is left untouched;
+    /// the next `checkout_main_branch` reconciles it against the restored tip.
+    pub fn reset_working_branch_to_commit(&self, oid: ObjectId) -> Result<()> {
+        let branch = self
+            .working_branch
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("No working branch configured"))?;
+        let git_dir = self.repo_path.join(".git");
+        let local_ref = format!("refs/heads/{}", branch);
+        crate::plumbing::refs::map_grit(grit_lib::refs::write_ref(&git_dir, &local_ref, &oid))?;
+        info!(
+            "Reset working branch '{}' back to {} after a failed push",
+            branch, oid
+        );
+        Ok(())
+    }
+
     fn switch_to_tracking_branch(&self) -> Result<()> {
         let git_dir = self.repo_path.join(".git");
         for candidate in &["master", "main"] {
