@@ -6,6 +6,7 @@
 use anyhow::Result;
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
+use std::collections::HashSet;
 use std::path::Path;
 use tracing::{info, warn};
 
@@ -15,6 +16,12 @@ pub(crate) fn open_odb(git_dir: &Path) -> Odb {
     Odb::new(&git_dir.join("objects")).with_config_git_dir(git_dir.to_path_buf())
 }
 
+/// Check out the HEAD commit's tree into `work_tree`, then reconcile the
+/// worktree so it is an exact mirror of the checked-out commit: any file
+/// present on disk but absent from the tree is removed. `.git` is never
+/// touched. Reconciliation makes the on-disk state deterministic across runs —
+/// stale files from a previous run whose push failed cannot accumulate and
+/// skew the skip-set (`existing info.yml` reads) on later runs.
 pub(crate) fn checkout_main_branch(git_dir: &Path, work_tree: &Path) -> Result<()> {
     let head_path = git_dir.join("HEAD");
     let head_content = std::fs::read_to_string(&head_path)?;
@@ -43,6 +50,7 @@ pub(crate) fn checkout_main_branch(git_dir: &Path, work_tree: &Path) -> Result<(
         .map_err(|e| anyhow::anyhow!("Failed to parse HEAD commit: {}", e))?;
 
     checkout_tree(&odb, commit.tree, work_tree, "")?;
+    reconcile_worktree(&odb, commit.tree, work_tree)?;
     info!("Checked out working tree at {:?}", work_tree);
     Ok(())
 }
@@ -96,6 +104,95 @@ fn checkout_tree(odb: &Odb, tree_oid: ObjectId, base_path: &Path, prefix: &str) 
                 set_executable(&full_path, entry.mode)?;
             }
         }
+    }
+    Ok(())
+}
+
+/// Collect every blob path reachable from `tree_oid` as forward-slash separated
+/// relative paths (directories are recursed, not recorded).
+fn collect_tree_paths(
+    odb: &Odb,
+    tree_oid: ObjectId,
+    prefix: &str,
+    out: &mut HashSet<String>,
+) -> Result<()> {
+    let obj = odb
+        .read(&tree_oid)
+        .map_err(|e| anyhow::anyhow!("Failed to read tree {}: {}", tree_oid, e))?;
+    let entries = grit_lib::objects::parse_tree(&obj.data)
+        .map_err(|e| anyhow::anyhow!("Failed to parse tree: {}", e))?;
+    for entry in entries {
+        let name = match std::str::from_utf8(&entry.name) {
+            Ok(s) => s.to_string(),
+            Err(_) => continue,
+        };
+        let rel = if prefix.is_empty() {
+            name
+        } else {
+            format!("{}/{}", prefix, name)
+        };
+        if entry.mode == 0o040000 {
+            collect_tree_paths(odb, entry.oid, &rel, out)?;
+        } else {
+            out.insert(rel);
+        }
+    }
+    Ok(())
+}
+
+/// Remove files present in `work_tree` but absent from the commit tree, so the
+/// worktree mirrors the checked-out commit exactly. `.git` is skipped. Returns
+/// true when this directory still contains tracked content.
+fn remove_untracked(
+    dir: &Path,
+    prefix: &str,
+    tracked: &HashSet<String>,
+    removed: &mut usize,
+) -> Result<bool> {
+    let mut has_tracked = false;
+    let mut child_dirs = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if prefix.is_empty() && name == ".git" {
+            continue;
+        }
+        let rel = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{}/{}", prefix, name)
+        };
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            child_dirs.push((rel, entry.path()));
+        } else if tracked.contains(&rel) {
+            has_tracked = true;
+        } else {
+            std::fs::remove_file(entry.path())?;
+            *removed += 1;
+        }
+    }
+    for (rel, path) in child_dirs {
+        let keep = remove_untracked(&path, &rel, tracked, removed)?;
+        if keep {
+            has_tracked = true;
+        } else if std::fs::read_dir(&path)?.next().is_none() {
+            std::fs::remove_dir(&path)?;
+        }
+    }
+    Ok(has_tracked)
+}
+
+fn reconcile_worktree(odb: &Odb, tree_oid: ObjectId, work_tree: &Path) -> Result<()> {
+    let mut tracked = HashSet::new();
+    collect_tree_paths(odb, tree_oid, "", &mut tracked)?;
+    let mut removed = 0usize;
+    remove_untracked(work_tree, "", &tracked, &mut removed)?;
+    if removed > 0 {
+        info!(
+            "Reconciled worktree at {:?}: removed {} file(s) not in the checked-out tree",
+            work_tree, removed
+        );
     }
     Ok(())
 }

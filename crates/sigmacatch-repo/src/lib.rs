@@ -19,6 +19,7 @@ pub(crate) mod transport;
 mod regression_tests;
 
 use anyhow::Result;
+use grit_lib::objects::ObjectId;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
@@ -152,7 +153,10 @@ impl SigmaRepo {
     }
 
     /// Switch to the contribution working branch.
-    /// Creates it from HEAD if it doesn't exist locally, switches otherwise.
+    /// Creates it from the remote tracking ref (or HEAD for a fresh branch),
+    /// then materializes and reconciles the working tree so the on-disk state
+    /// is an exact mirror of the branch (files already pushed to the fork are
+    /// present; stale local files are removed).
     pub fn switch_to_working_branch(&mut self) -> Result<()> {
         let branch_name = self.working_branch.clone().ok_or_else(|| {
             anyhow::anyhow!(
@@ -161,6 +165,99 @@ impl SigmaRepo {
         })?;
         let git_dir = self.repo_path.join(".git");
         create_branch(&git_dir, &branch_name)?;
+        crate::plumbing::checkout_main_branch(&git_dir, &self.repo_path)?;
+        Ok(())
+    }
+
+    /// Validate the remote tracking branch for the working branch, if present.
+    ///
+    /// Runs once at startup right after the working branch is set. A branch
+    /// already pushed to the fork (same-day re-run) must be usable as the base
+    /// for the next commit: the commit must be readable, have at least one
+    /// parent (a child of master, never an orphan/root), and its tree must
+    /// contain the `rules/` directory. A corrupt/amputated remote branch is
+    /// rejected with an actionable message so the loop never commits onto it.
+    /// Returns `Ok` when the branch does not exist on the fork yet (fresh day).
+    pub fn check_remote_working_branch(&self) -> Result<()> {
+        let branch = self
+            .working_branch
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("No working branch configured"))?;
+        let git_dir = self.repo_path.join(".git");
+        let remote_ref = format!("refs/remotes/origin/{}", branch);
+
+        let Some(oid_str) = crate::plumbing::read_loose_or_packed_ref(&git_dir, &remote_ref) else {
+            info!(
+                "No remote tracking ref '{}' — fresh working branch",
+                remote_ref
+            );
+            return Ok(());
+        };
+
+        let oid = ObjectId::from_hex(&oid_str)
+            .map_err(|e| anyhow::anyhow!("Invalid OID for '{}': {}", remote_ref, e))?;
+        let odb = crate::plumbing::open_odb(&git_dir);
+        let obj = odb.read(&oid).map_err(|e| {
+            anyhow::anyhow!(
+                "Remote working branch '{}' commit {} is unreadable: {}. \
+                 Delete the branch on GitHub and re-run.",
+                branch,
+                oid,
+                e
+            )
+        })?;
+        let commit = grit_lib::objects::parse_commit(&obj.data).map_err(|e| {
+            anyhow::anyhow!(
+                "Remote working branch '{}' commit {} is not a valid commit: {}. \
+                 Delete the branch on GitHub and re-run.",
+                branch,
+                oid,
+                e
+            )
+        })?;
+        if commit.parents.is_empty() {
+            anyhow::bail!(
+                "Remote working branch '{}' commit {} is an orphan/root commit (no parent). \
+                 Expected a child of master. Delete the branch on GitHub and re-run.",
+                branch,
+                oid
+            );
+        }
+
+        let tree_obj = odb.read(&commit.tree).map_err(|e| {
+            anyhow::anyhow!(
+                "Remote working branch '{}' tree {} is unreadable: {}. \
+                 Delete the branch on GitHub and re-run.",
+                branch,
+                commit.tree,
+                e
+            )
+        })?;
+        let entries = grit_lib::objects::parse_tree(&tree_obj.data).map_err(|e| {
+            anyhow::anyhow!(
+                "Remote working branch '{}' tree {} is not a valid tree: {}. \
+                 Delete the branch on GitHub and re-run.",
+                branch,
+                commit.tree,
+                e
+            )
+        })?;
+        let has_rules = entries
+            .iter()
+            .any(|e| e.mode == 0o040000 && e.name.as_slice() == b"rules");
+        if !has_rules {
+            anyhow::bail!(
+                "Remote working branch '{}' tree is missing the 'rules/' directory — \
+                 the branch is amputated/corrupt. Delete the branch on GitHub and re-run.",
+                branch
+            );
+        }
+
+        info!(
+            "Remote working branch '{}' is valid (commit {} with rules/ tree)",
+            branch,
+            &oid_str[..12.min(oid_str.len())]
+        );
         Ok(())
     }
 

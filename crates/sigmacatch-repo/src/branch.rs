@@ -9,6 +9,7 @@
 
 use anyhow::Result;
 use grit_lib::refs;
+use grit_lib::refs::{read_raw_ref, RawRefLookup};
 use std::path::Path;
 use tracing::info;
 
@@ -40,19 +41,51 @@ fn validate_branch_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Create a new branch from the current HEAD and switch to it.
+/// Create the working branch and switch to it.
+///
+/// The base is the remote tracking ref `refs/remotes/origin/<branch>` when it
+/// exists (the branch was already pushed to the fork, e.g. a same-day re-run),
+/// falling back to HEAD (master after pull) for a fresh branch. Basing on the
+/// remote ref makes a new commit a fast-forward; basing on HEAD would create a
+/// sibling commit and the push would be rejected with `RejectNonFastForward`.
 /// If the branch already exists locally, `write_ref` atomically replaces it
-/// from the current HEAD, so a stale/dirty local branch (e.g. from a previous
-/// run whose push failed) cannot diverge from the freshly pulled upstream.
+/// from the chosen base, so a stale/dirty local branch cannot diverge.
 pub(crate) fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
     validate_branch_name(branch_name)?;
     let full_ref_name = format!("refs/heads/{}", branch_name);
-    let head_oid = resolve_head(git_dir)?;
-    map_grit(refs::write_ref(git_dir, &full_ref_name, &head_oid))?;
+    let remote_ref = format!("refs/remotes/origin/{}", branch_name);
+
+    let (base_oid, base_desc) = match read_raw_ref(git_dir, &remote_ref) {
+        // The branch exists on the fork (same-day re-run): base on it so the
+        // next commit is a fast-forward. A present-but-unresolvable ref must
+        // fail loudly rather than silently fall back to HEAD (which would
+        // create a sibling commit rejected as RejectNonFastForward).
+        Ok(RawRefLookup::Exists) => {
+            let oid = map_grit(refs::resolve_ref(git_dir, &remote_ref)).map_err(|e| {
+                anyhow::anyhow!(
+                    "Remote tracking ref '{}' exists but cannot be resolved: {}. \
+                     Delete the branch on GitHub and re-run.",
+                    remote_ref,
+                    e
+                )
+            })?;
+            (oid, format!("remote tracking ref '{}'", remote_ref))
+        }
+        Ok(_) => (resolve_head(git_dir)?, "HEAD".to_string()),
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "Failed to read remote tracking ref '{}': {}",
+                remote_ref,
+                e
+            ))
+        }
+    };
+
+    map_grit(refs::write_ref(git_dir, &full_ref_name, &base_oid))?;
     switch_head(git_dir, branch_name)?;
     info!(
-        "Created and switched to branch '{}' from HEAD ({})",
-        branch_name, head_oid
+        "Created and switched to branch '{}' from {} ({})",
+        branch_name, base_desc, base_oid
     );
     Ok(())
 }
