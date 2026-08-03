@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn test_validate_branch_name_valid() {
-        assert!(validate_branch_name("sigmacatch-contrib/20250701").is_ok());
+        assert!(validate_branch_name("sigmacatch/20250701").is_ok());
         assert!(validate_branch_name("feature/test").is_ok());
         assert!(validate_branch_name("a").is_ok());
     }
@@ -183,7 +183,7 @@ mod tests {
         crate::plumbing::init::init_repo(&git_dir, tmp.path(), "https://example.com/sigma.git")
             .unwrap();
         // HEAD points at refs/heads/main (symbolic) but the ref doesn't exist yet.
-        let err = switch_head(&git_dir, "sigmacatch-contrib/me").unwrap_err();
+        let err = switch_head(&git_dir, "sigmacatch/me").unwrap_err();
         assert!(err.to_string().to_lowercase().contains("not found"));
         // sanity: symbolic ref resolves to the target.
         let target = symbolic_ref_target(&git_dir, "HEAD").unwrap();

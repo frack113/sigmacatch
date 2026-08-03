@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
         "Sigmacatch started for {} <{}>",
         config.git.author, config.git.email
     );
-    let branch_name = format!("sigmacatch-contrib/{}", config.git.author);
+    let branch_name = format!("sigmacatch/{}", chrono::Local::now().format("%Y%m%d"));
     info!("Branch name: {branch_name}");
     let push_branch = branch_name.clone();
 
