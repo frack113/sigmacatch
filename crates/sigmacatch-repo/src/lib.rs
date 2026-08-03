@@ -465,6 +465,97 @@ mod tests {
         assert!(!is_repo_complete(&git_dir));
     }
 
+    fn write_commit(odb: &grit_lib::odb::Odb, tree: ObjectId, parents: Vec<ObjectId>) -> ObjectId {
+        let commit = CommitData {
+            tree,
+            parents,
+            author: "t <t@example.com> 0 +0000".to_string(),
+            committer: "t <t@example.com> 0 +0000".to_string(),
+            message: "remote\n".to_string(),
+            encoding: None,
+            author_raw: Vec::new(),
+            committer_raw: Vec::new(),
+            raw_message: None,
+        };
+        let raw = grit_lib::objects::serialize_commit(&commit);
+        odb.write(ObjectKind::Commit, &raw).unwrap()
+    }
+
+    /// Set up a committed repo whose remote tracking ref `sigmacatch/20260803`
+    /// points at a commit with (`has_parent`) / (`has_rules`) characteristics.
+    /// Returns a SigmaRepo configured on that working branch.
+    fn setup_remote_branch(
+        tmp: &tempfile::TempDir,
+        has_parent: bool,
+        has_rules: bool,
+    ) -> SigmaRepo {
+        make_committed_repo(tmp);
+        let git_dir = tmp.path().join(".git");
+        let odb = crate::plumbing::open_odb(&git_dir);
+        let mut index = grit_lib::index::Index::new();
+        if has_rules {
+            std::fs::create_dir_all(tmp.path().join("rules")).unwrap();
+            let f = tmp.path().join("rules/x.yml");
+            std::fs::write(&f, "title: x\n").unwrap();
+            crate::plumbing::add_file_to_index(&git_dir, &f, tmp.path(), &mut index).unwrap();
+        } else {
+            let f = tmp.path().join("a.txt");
+            std::fs::write(&f, "a\n").unwrap();
+            crate::plumbing::add_file_to_index(&git_dir, &f, tmp.path(), &mut index).unwrap();
+        }
+        let tree = write_tree_from_index(&odb, &index, "").unwrap();
+        let parent = crate::plumbing::resolve_head(&git_dir).unwrap();
+        let parents = if has_parent { vec![parent] } else { Vec::new() };
+        let remote_oid = write_commit(&odb, tree, parents);
+        let remote_ref = git_dir.join("refs/remotes/origin/sigmacatch/20260803");
+        std::fs::create_dir_all(remote_ref.parent().unwrap()).unwrap();
+        std::fs::write(&remote_ref, format!("{remote_oid}\n")).unwrap();
+
+        let mut repo = SigmaRepo::new();
+        repo.repo_path = tmp.path().to_path_buf();
+        repo.working_branch = Some("sigmacatch/20260803".to_string());
+        repo
+    }
+
+    #[test]
+    fn test_check_remote_working_branch_absent_is_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_committed_repo(&tmp);
+        let mut repo = SigmaRepo::new();
+        repo.repo_path = tmp.path().to_path_buf();
+        repo.working_branch = Some("sigmacatch/20260803".to_string());
+        assert!(repo.check_remote_working_branch().is_ok());
+    }
+
+    #[test]
+    fn test_check_remote_working_branch_valid_is_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = setup_remote_branch(&tmp, true, true);
+        assert!(repo.check_remote_working_branch().is_ok());
+    }
+
+    #[test]
+    fn test_check_remote_working_branch_orphan_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = setup_remote_branch(&tmp, false, true);
+        let err = repo.check_remote_working_branch().unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("parent"),
+            "orphan commit must be rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn test_check_remote_working_branch_missing_rules_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = setup_remote_branch(&tmp, true, false);
+        let err = repo.check_remote_working_branch().unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("rules"),
+            "amputated tree must be rejected: {err}"
+        );
+    }
+
     #[test]
     fn test_is_repo_complete_empty() {
         let tmp = tempfile::tempdir().unwrap();

@@ -226,3 +226,93 @@ pub(crate) fn is_exec_file(metadata: &std::fs::Metadata) -> bool {
 pub(crate) fn is_exec_file(_metadata: &std::fs::Metadata) -> bool {
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use grit_lib::index::Index;
+    use grit_lib::objects::{CommitData, ObjectKind};
+    use grit_lib::write_tree::write_tree_from_index;
+
+    /// Init a repo whose HEAD commit contains `rules/a.yml` and `keep.txt`.
+    fn build_committed_repo(tmp: &tempfile::TempDir) {
+        let git_dir = tmp.path().join(".git");
+        crate::plumbing::init::init_repo(&git_dir, tmp.path(), "https://example.com/sigma.git")
+            .unwrap();
+        std::fs::create_dir_all(tmp.path().join("rules")).unwrap();
+        std::fs::write(tmp.path().join("rules/a.yml"), "title: a\n").unwrap();
+        std::fs::write(tmp.path().join("keep.txt"), "keep\n").unwrap();
+        let odb = open_odb(&git_dir);
+        let mut index = Index::new();
+        crate::plumbing::add_file_to_index(
+            &git_dir,
+            &tmp.path().join("rules/a.yml"),
+            tmp.path(),
+            &mut index,
+        )
+        .unwrap();
+        crate::plumbing::add_file_to_index(
+            &git_dir,
+            &tmp.path().join("keep.txt"),
+            tmp.path(),
+            &mut index,
+        )
+        .unwrap();
+        let tree = write_tree_from_index(&odb, &index, "").unwrap();
+        let commit = CommitData {
+            tree,
+            parents: Vec::new(),
+            author: "t <t@example.com> 0 +0000".to_string(),
+            committer: "t <t@example.com> 0 +0000".to_string(),
+            message: "init\n".to_string(),
+            encoding: None,
+            author_raw: Vec::new(),
+            committer_raw: Vec::new(),
+            raw_message: None,
+        };
+        let raw = grit_lib::objects::serialize_commit(&commit);
+        let cid = odb.write(ObjectKind::Commit, &raw).unwrap();
+        std::fs::create_dir_all(git_dir.join("refs/heads")).unwrap();
+        std::fs::write(git_dir.join("refs/heads/main"), format!("{cid}\n")).unwrap();
+        std::fs::write(git_dir.join("HEAD"), b"ref: refs/heads/main\n").unwrap();
+    }
+
+    /// The worktree must mirror the checked-out tree exactly: stale files from
+    /// a previous run (never pushed) are deleted, tracked files survive, and
+    /// `.git` is never touched.
+    #[test]
+    fn test_checkout_reconciles_stale_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        build_committed_repo(&tmp);
+        let git_dir = tmp.path().join(".git");
+        std::fs::write(tmp.path().join("stale.txt"), "stale\n").unwrap();
+        std::fs::create_dir_all(tmp.path().join("stale_dir")).unwrap();
+        std::fs::write(tmp.path().join("stale_dir/x.txt"), "x\n").unwrap();
+
+        checkout_main_branch(&git_dir, tmp.path()).unwrap();
+
+        assert!(tmp.path().join("rules/a.yml").exists());
+        assert!(tmp.path().join("keep.txt").exists());
+        assert!(
+            !tmp.path().join("stale.txt").exists(),
+            "stale file must be removed"
+        );
+        assert!(
+            !tmp.path().join("stale_dir").exists(),
+            "empty stale dir must be removed"
+        );
+        assert!(git_dir.exists(), ".git must never be touched");
+    }
+
+    /// Reconciliation is a no-op on a clean mirror.
+    #[test]
+    fn test_checkout_clean_mirror_stays_intact() {
+        let tmp = tempfile::tempdir().unwrap();
+        build_committed_repo(&tmp);
+        let git_dir = tmp.path().join(".git");
+        checkout_main_branch(&git_dir, tmp.path()).unwrap();
+        checkout_main_branch(&git_dir, tmp.path()).unwrap();
+        assert!(tmp.path().join("rules/a.yml").exists());
+        assert!(tmp.path().join("keep.txt").exists());
+    }
+}
