@@ -15,6 +15,9 @@ pub(crate) mod plumbing;
 pub(crate) mod porcelain;
 pub(crate) mod transport;
 
+#[cfg(test)]
+mod regression_tests;
+
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
@@ -301,57 +304,68 @@ impl Default for SigmaRepo {
 }
 
 fn is_repo_complete(git_dir: &Path) -> bool {
-    let has_packed_refs = git_dir.join("packed-refs").exists();
-    let has_objects = git_dir
-        .join("objects")
-        .join("pack")
-        .read_dir()
-        .map(|mut dir| dir.next().is_some())
-        .unwrap_or(false);
-    let has_refs = git_dir
-        .join("refs")
-        .join("heads")
-        .read_dir()
-        .map(|mut dir| dir.next().is_some())
-        .unwrap_or(false);
-    (has_packed_refs && (has_objects || has_refs)) || (has_objects && has_refs)
+    // A repository is usable when HEAD resolves to a commit object that is
+    // readable in the ODB. This covers both real-git clones (packed refs +
+    // packs) and grit's unpack_objects-based clones (loose objects only, no
+    // `objects/pack` or `packed-refs`), which the previous check wrongly
+    // treated as incomplete — deleting and re-cloning the repository on every
+    // run.
+    let Ok(head) = crate::plumbing::resolve_head(git_dir) else {
+        return false;
+    };
+    crate::plumbing::open_odb(git_dir).read(&head).is_ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plumbing::init_repo;
+    use grit_lib::objects::{CommitData, ObjectKind};
+    use grit_lib::write_tree::write_tree_from_index;
 
-    #[test]
-    fn test_is_repo_complete_with_packed_refs() {
-        let tmp = tempfile::tempdir().unwrap();
+    /// Build a `.git` with HEAD → refs/heads/main and one committed file
+    /// (loose objects only — exactly what a grit clone produces).
+    fn make_committed_repo(tmp: &tempfile::TempDir) {
         let git_dir = tmp.path().join(".git");
-        std::fs::create_dir(&git_dir).unwrap();
-        std::fs::write(git_dir.join("packed-refs"), "test").unwrap();
-        std::fs::create_dir_all(git_dir.join("objects/pack")).unwrap();
-        std::fs::write(git_dir.join("objects/pack/pack.idx"), "test").unwrap();
-        assert!(is_repo_complete(&git_dir));
+        let work_tree = tmp.path();
+        init_repo(&git_dir, work_tree, "https://example.com/sigma.git").unwrap();
+        let file = work_tree.join("a.txt");
+        std::fs::write(&file, "hello\n").unwrap();
+        let odb = crate::plumbing::open_odb(&git_dir);
+        let mut index = grit_lib::index::Index::new();
+        crate::plumbing::add_file_to_index(&git_dir, &file, work_tree, &mut index).unwrap();
+        let tree = write_tree_from_index(&odb, &index, "").unwrap();
+        let commit = CommitData {
+            tree,
+            parents: Vec::new(),
+            author: "t <t@example.com> 0 +0000".to_string(),
+            committer: "t <t@example.com> 0 +0000".to_string(),
+            message: "init\n".to_string(),
+            encoding: None,
+            author_raw: Vec::new(),
+            committer_raw: Vec::new(),
+            raw_message: None,
+        };
+        let raw = grit_lib::objects::serialize_commit(&commit);
+        let cid = odb.write(ObjectKind::Commit, &raw).unwrap();
+        std::fs::create_dir_all(git_dir.join("refs/heads")).unwrap();
+        std::fs::write(git_dir.join("refs/heads/main"), format!("{cid}\n")).unwrap();
+        std::fs::write(git_dir.join("HEAD"), b"ref: refs/heads/main\n").unwrap();
     }
 
     #[test]
-    fn test_is_repo_complete_with_objects() {
+    fn test_is_repo_complete_with_loose_objects() {
         let tmp = tempfile::tempdir().unwrap();
-        let git_dir = tmp.path().join(".git");
-        std::fs::create_dir_all(git_dir.join("objects/pack")).unwrap();
-        std::fs::write(git_dir.join("objects/pack/pack.idx"), "test").unwrap();
-        std::fs::create_dir_all(git_dir.join("refs/heads")).unwrap();
-        std::fs::write(git_dir.join("refs/heads/main"), "abc123").unwrap();
-        assert!(is_repo_complete(&git_dir));
+        make_committed_repo(&tmp);
+        assert!(is_repo_complete(&tmp.path().join(".git")));
     }
 
     #[test]
-    fn test_is_repo_complete_with_refs() {
+    fn test_is_repo_complete_after_init_only() {
         let tmp = tempfile::tempdir().unwrap();
         let git_dir = tmp.path().join(".git");
-        std::fs::create_dir_all(git_dir.join("refs/heads")).unwrap();
-        std::fs::write(git_dir.join("refs/heads/main"), "abc123").unwrap();
-        std::fs::create_dir_all(git_dir.join("objects/pack")).unwrap();
-        std::fs::write(git_dir.join("objects/pack/pack.idx"), "test").unwrap();
-        assert!(is_repo_complete(&git_dir));
+        init_repo(&git_dir, tmp.path(), "https://example.com/sigma.git").unwrap();
+        assert!(!is_repo_complete(&git_dir));
     }
 
     #[test]
