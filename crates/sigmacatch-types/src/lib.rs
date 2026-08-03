@@ -312,6 +312,91 @@ fn get_category(channel: &str, event_id: u32) -> Option<&'static str> {
 /// memory exhaustion from malformed or excessively large input.
 const MAX_XML_SIZE: usize = 1024 * 1024;
 
+/// Convert a decimal string to a JSON number when it parses cleanly.
+fn maybe_number(s: &str) -> Option<Value> {
+    if let Ok(n) = s.parse::<u64>() {
+        return Some(Value::Number(n.into()));
+    }
+    if let Ok(n) = s.parse::<i64>() {
+        return Some(Value::Number(n.into()));
+    }
+    None
+}
+
+/// True when the string has a GUID/UUID shape (`8-4-4-4-12`, hex with hyphens).
+///
+/// Shape-only check (no RFC 4122 version/variant validation) so that Sysmon
+/// `ProcessGuid` values — whose middle groups encode timestamps — pass too.
+fn looks_like_guid(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() != 36 {
+        return false;
+    }
+    for (i, &c) in b.iter().enumerate() {
+        if i == 8 || i == 13 || i == 18 || i == 23 {
+            if c != b'-' {
+                return false;
+            }
+        } else if !c.is_ascii_hexdigit() {
+            return false;
+        }
+    }
+    true
+}
+
+/// Normalize a scalar value for the SigmaHQ regression JSON format:
+/// decimal strings → JSON numbers, GUIDs → uppercase without braces, else unchanged.
+fn normalize_string(s: &str) -> Value {
+    let t = s.trim();
+    if let Some(n) = maybe_number(t) {
+        return n;
+    }
+    let stripped = t
+        .strip_prefix('{')
+        .and_then(|inner| inner.strip_suffix('}'))
+        .unwrap_or(t);
+    if looks_like_guid(stripped) {
+        return Value::String(stripped.to_uppercase());
+    }
+    Value::String(s.to_string())
+}
+
+/// EventData fields that the provider manifest types as GUIDs.
+///
+/// The Windows XML renderer (`EvtRender`) emits these with braces and lowercase
+/// (`{5aa13a44-...}`) while SigmaHQ's committed format is uppercase without
+/// braces (`5AA13A44-...`). String-typed fields that merely *look* like GUIDs
+/// (e.g. registry `Details` CLSIDs, Defender `Detection ID`) keep braces in the
+/// committed format, so normalization must be field-aware.
+static GUID_TYPED_FIELDS: phf::Set<&'static str> = phf::phf_set! {
+    "ProcessGuid",
+    "ParentProcessGuid",
+    "LogonGuid",
+    "SourceProcessGUID",
+    "TargetProcessGUID",
+    "ImageGuid",
+    "PipeGuid",
+};
+
+/// Normalize an EventData value: numbers to JSON numbers, GUID-typed fields to
+/// uppercase without braces, all other strings verbatim.
+fn normalize_eventdata_value(field: &str, value: &str) -> Value {
+    let t = value.trim();
+    if let Some(n) = maybe_number(t) {
+        return n;
+    }
+    if GUID_TYPED_FIELDS.contains(field) {
+        let stripped = t
+            .strip_prefix('{')
+            .and_then(|inner| inner.strip_suffix('}'))
+            .unwrap_or(t);
+        if looks_like_guid(stripped) {
+            return Value::String(stripped.to_uppercase());
+        }
+    }
+    Value::String(value.to_string())
+}
+
 /// Parse a Winevt XML string into nested JSON (raw — preserves original EventData key names).
 /// Used for regression data generation where exact fidelity to the source event is required.
 pub fn parse_winevt_xml_raw(xml: &str) -> Result<Value, ParseError> {
@@ -338,6 +423,28 @@ pub fn parse_winevt_xml_raw(xml: &str) -> Result<Value, ParseError> {
         })?;
 
     let mut event_map = Map::new();
+
+    let mut event_attrs = Map::new();
+    for ns in event.namespaces() {
+        match ns.name() {
+            None => {
+                event_attrs.insert("xmlns".into(), Value::String(ns.uri().to_string()));
+            }
+            Some(prefix) => {
+                event_attrs.insert(
+                    format!("xmlns:{prefix}"),
+                    Value::String(ns.uri().to_string()),
+                );
+            }
+        }
+    }
+    for a in event.attributes() {
+        event_attrs.insert(a.name().to_string(), Value::String(a.value().to_string()));
+    }
+    if !event_attrs.is_empty() {
+        event_map.insert("#attributes".into(), Value::Object(event_attrs));
+    }
+
     for child in event.children() {
         if child.is_element() {
             let name = child.tag_name().name().to_string();
@@ -346,11 +453,11 @@ pub fn parse_winevt_xml_raw(xml: &str) -> Result<Value, ParseError> {
         }
     }
 
-    let mut result = Map::new();
-    result.insert("Event".into(), Value::Object(event_map));
-    result.insert("_source".into(), Value::String("winevt".to_string()));
-
-    Ok(Value::Object(result))
+    Ok(Value::Object({
+        let mut result = Map::new();
+        result.insert("Event".into(), Value::Object(event_map));
+        result
+    }))
 }
 
 /// Parse a Winevt XML string into nested JSON.
@@ -458,6 +565,26 @@ fn node_to_value(node: Node, _is_root: bool) -> Value {
     Value::Object(map)
 }
 
+/// Attributes of an element for the raw format: its own namespace declaration
+/// (resolved URI differs from the parent element, e.g. a `<UserData>` child that
+/// switches to a provider manifest namespace) plus its regular attributes.
+fn collect_element_attrs(node: Node) -> Vec<(String, String)> {
+    let mut attrs = Vec::new();
+    if let Some(uri) = node.tag_name().namespace() {
+        let parent_ns = node
+            .parent()
+            .filter(|p| p.is_element())
+            .and_then(|p| p.tag_name().namespace());
+        if parent_ns != Some(uri) {
+            attrs.push(("xmlns".to_string(), uri.to_string()));
+        }
+    }
+    for a in node.attributes() {
+        attrs.push((a.name().to_string(), a.value().to_string()));
+    }
+    attrs
+}
+
 fn node_to_value_raw(node: Node, _is_root: bool) -> Value {
     let tag = node.tag_name().name();
 
@@ -471,12 +598,12 @@ fn node_to_value_raw(node: Node, _is_root: bool) -> Value {
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty());
 
-    let attrs: Vec<_> = node.attributes().filter(|a| a.name() != "xmlns").collect();
+    let attrs: Vec<(String, String)> = collect_element_attrs(node);
 
     if child_elements.is_empty() && attrs.is_empty() {
         if let Some(t) = text {
-            if let Ok(n) = t.parse::<u64>() {
-                return Value::Number(n.into());
+            if let Some(n) = maybe_number(&t) {
+                return n;
             }
             return Value::String(t);
         }
@@ -484,8 +611,8 @@ fn node_to_value_raw(node: Node, _is_root: bool) -> Value {
 
     if child_elements.is_empty() && !attrs.is_empty() && text.is_none() {
         let mut attr_map = Map::new();
-        for a in attrs {
-            attr_map.insert(a.name().to_string(), Value::String(a.value().to_string()));
+        for (name, value) in &attrs {
+            attr_map.insert(name.clone(), normalize_string(value));
         }
         return Value::Object({
             let mut m = Map::new();
@@ -495,15 +622,15 @@ fn node_to_value_raw(node: Node, _is_root: bool) -> Value {
     }
 
     if child_elements.is_empty() && attrs.is_empty() && text.is_none() {
-        return Value::Object(Map::new());
+        return Value::Null;
     }
 
     let mut map = Map::new();
 
     if !attrs.is_empty() {
         let mut attr_map = Map::new();
-        for a in attrs {
-            attr_map.insert(a.name().to_string(), Value::String(a.value().to_string()));
+        for (name, value) in &attrs {
+            attr_map.insert(name.clone(), normalize_string(value));
         }
         map.insert("#attributes".into(), Value::Object(attr_map));
     }
@@ -545,6 +672,16 @@ fn handle_event_data(node: Node) -> Value {
 
 fn handle_event_data_raw(node: Node) -> Value {
     let mut map = Map::new();
+
+    let attrs = collect_element_attrs(node);
+    if !attrs.is_empty() {
+        let mut attr_map = Map::new();
+        for (name, value) in &attrs {
+            attr_map.insert(name.clone(), normalize_string(value));
+        }
+        map.insert("#attributes".into(), Value::Object(attr_map));
+    }
+
     for child in node.children() {
         if child.is_element() && child.tag_name().name() == "Data" {
             let name = child.attribute("Name").unwrap_or("");
@@ -554,7 +691,7 @@ fn handle_event_data_raw(node: Node) -> Value {
                     .text()
                     .map(|t| t.trim().to_string())
                     .unwrap_or_default();
-                map.insert(name.to_string(), Value::String(value));
+                map.insert(name.to_string(), normalize_eventdata_value(name, &value));
             }
         }
     }
@@ -1243,5 +1380,132 @@ mod tests {
         assert!(alert.event_json["Event"]["EventData"]["CommandLine"]
             .as_str()
             .is_some());
+    }
+
+    #[test]
+    fn test_parse_winevt_xml_raw_sigmahq_format() {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+            <System>
+                <Provider Name="Microsoft-Windows-Sysmon" Guid="{5770385f-c22a-43e0-bf4c-06f5698ffbd9}"/>
+                <EventID>1</EventID>
+                <TimeCreated SystemTime="2025-10-25T16:56:16.019794Z"/>
+                <Correlation/>
+                <Execution ProcessID="3308" ThreadID="4008"/>
+                <Channel>Microsoft-Windows-Sysmon/Operational</Channel>
+                <EventRecordID>11418519</EventRecordID>
+            </System>
+            <EventData>
+                <Data Name="ProcessId">5112</Data>
+                <Data Name="ProcessGuid">{5aa13a44-0130-68fd-4e35-000000004002}</Data>
+                <Data Name="Image">C:\\Windows\\System32\\certutil.exe</Data>
+                <Data Name="LogonId">0x529ae3</Data>
+            </EventData>
+        </Event>"#;
+
+        let result = parse_winevt_xml_raw(xml).unwrap();
+        let event = result["Event"].as_object().unwrap();
+
+        assert!(
+            !result.as_object().unwrap().contains_key("_source"),
+            "raw JSON should not carry _source (SigmaHQ format has none)"
+        );
+
+        let event_attrs = event["#attributes"].as_object().unwrap();
+        assert_eq!(
+            event_attrs["xmlns"].as_str().unwrap(),
+            "http://schemas.microsoft.com/win/2004/08/events/event"
+        );
+
+        let system = event["System"].as_object().unwrap();
+        assert_eq!(system["EventID"].as_u64().unwrap(), 1);
+        assert_eq!(system["EventRecordID"].as_u64().unwrap(), 11418519);
+        assert_eq!(system["Correlation"].is_null(), true);
+
+        let provider_attrs = system["Provider"]["#attributes"].as_object().unwrap();
+        assert_eq!(
+            provider_attrs["Guid"].as_str().unwrap(),
+            "5770385F-C22A-43E0-BF4C-06F5698FFBD9",
+            "GUID should be uppercase without braces"
+        );
+
+        let execution_attrs = system["Execution"]["#attributes"].as_object().unwrap();
+        assert_eq!(execution_attrs["ProcessID"].as_u64().unwrap(), 3308);
+        assert_eq!(execution_attrs["ThreadID"].as_u64().unwrap(), 4008);
+
+        let event_data = event["EventData"].as_object().unwrap();
+        assert_eq!(event_data["ProcessId"].as_u64().unwrap(), 5112);
+        assert_eq!(
+            event_data["ProcessGuid"].as_str().unwrap(),
+            "5AA13A44-0130-68FD-4E35-000000004002",
+            "ProcessGuid should be uppercase without braces"
+        );
+        assert_eq!(
+            event_data["LogonId"].as_str().unwrap(),
+            "0x529ae3",
+            "hex values stay strings"
+        );
+        assert_eq!(
+            event_data["Image"].as_str().unwrap(),
+            "C:\\\\Windows\\\\System32\\\\certutil.exe"
+        );
+    }
+
+    #[test]
+    fn test_parse_winevt_xml_raw_string_guids_and_attrs() {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+            <System>
+                <Provider Name="Microsoft-Windows-Sysmon" Guid="{5770385f-c22a-43e0-bf4c-06f5698ffbd9}"/>
+                <EventID>13</EventID>
+            </System>
+            <EventData Name="SetValue">
+                <Data Name="ProcessGuid">{5aa13a44-62e7-68fd-c13e-000000004002}</Data>
+                <Data Name="Details">{00000001-0000-0000-0000-0000FEEDACDC}</Data>
+            </EventData>
+            <UserData>
+                <Operation_ClientFailure xmlns="http://manifests.microsoft.com/win/2006/windows/WMI">
+                    <Id>{00000000-0000-0000-0000-000000000000}</Id>
+                </Operation_ClientFailure>
+            </UserData>
+        </Event>"#;
+
+        let result = parse_winevt_xml_raw(xml).unwrap();
+        let event = result["Event"].as_object().unwrap();
+
+        let event_data = event["EventData"].as_object().unwrap();
+        assert_eq!(
+            event_data["#attributes"]["Name"].as_str().unwrap(),
+            "SetValue",
+            "EventData attributes must be preserved"
+        );
+        assert_eq!(
+            event_data["ProcessGuid"].as_str().unwrap(),
+            "5AA13A44-62E7-68FD-C13E-000000004002",
+            "GUID-typed field: braces stripped + uppercase"
+        );
+        assert_eq!(
+            event_data["Details"].as_str().unwrap(),
+            "{00000001-0000-0000-0000-0000FEEDACDC}",
+            "string-typed GUID: braces kept verbatim"
+        );
+
+        let failure = event["UserData"]["Operation_ClientFailure"]
+            .as_object()
+            .unwrap();
+        assert_eq!(
+            failure["#attributes"]["xmlns"].as_str().unwrap(),
+            "http://manifests.microsoft.com/win/2006/windows/WMI",
+            "own namespace declaration preserved"
+        );
+        assert_eq!(
+            failure["Id"].as_str().unwrap(),
+            "{00000000-0000-0000-0000-000000000000}",
+            "non-GUID-typed Id kept verbatim"
+        );
+
+        let system = event["System"].as_object().unwrap();
+        assert!(
+            !system.contains_key("#attributes"),
+            "inherited namespace must not be re-emitted on children"
+        );
     }
 }
