@@ -590,6 +590,43 @@ mod tests {
         );
     }
 
+    /// `working_branch_oid` must reflect the local branch tip and
+    /// `reset_working_branch_to_commit` must move it (rollback after a failed
+    /// push).
+    #[test]
+    fn test_working_branch_oid_and_reset() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_committed_repo(&tmp);
+        let git_dir = tmp.path().join(".git");
+        let head_oid = crate::plumbing::resolve_head(&git_dir).unwrap();
+
+        crate::branch::create_branch(&git_dir, "sigmacatch/20260803").unwrap();
+        let mut repo = SigmaRepo::new();
+        repo.repo_path = tmp.path().to_path_buf();
+        repo.working_branch = Some("sigmacatch/20260803".to_string());
+
+        assert_eq!(
+            repo.working_branch_oid().unwrap(),
+            head_oid,
+            "branch tip must match HEAD after creation"
+        );
+
+        let odb = crate::plumbing::open_odb(&git_dir);
+        let empty_tree = write_tree_from_index(&odb, &grit_lib::index::Index::new(), "").unwrap();
+        let other_oid = write_commit(&odb, empty_tree, vec![head_oid]);
+
+        repo.reset_working_branch_to_commit(other_oid).unwrap();
+        assert_eq!(
+            repo.working_branch_oid().unwrap(),
+            other_oid,
+            "reset must move the local branch ref"
+        );
+
+        // Roll back to the original tip (simulating a failed-push rollback).
+        repo.reset_working_branch_to_commit(head_oid).unwrap();
+        assert_eq!(repo.working_branch_oid().unwrap(), head_oid);
+    }
+
     #[test]
     fn test_is_repo_complete_empty() {
         let tmp = tempfile::tempdir().unwrap();
