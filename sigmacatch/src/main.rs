@@ -131,6 +131,36 @@ async fn main() -> Result<()> {
         );
     }
 
+    if cli.list_rules {
+        let sigma_repo_path = Path::new("sigma");
+        let mut count = 0;
+        for rule in rules.rules() {
+            let id = rule.id.as_deref().unwrap_or("no-id");
+            let path = rule
+                .id
+                .as_deref()
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .and_then(|u| rules.get_rule_path(&u))
+                .map(|p| {
+                    p.strip_prefix(sigma_repo_path)
+                        .unwrap_or(p)
+                        .display()
+                        .to_string()
+                        .replace('\\', "/")
+                })
+                .unwrap_or_default();
+            println!(
+                "{id}  {title}  {status:?}  {level:?}  {path}",
+                title = rule.title,
+                status = rule.status,
+                level = rule.level,
+            );
+            count += 1;
+        }
+        info!("{} rules without regression data", count);
+        return Ok(());
+    }
+
     let custom_map = sigmacatch_config::load_custom_channel_mapping(
         PathBuf::from("custom_channels.yaml").as_path(),
     );
