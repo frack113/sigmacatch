@@ -77,7 +77,7 @@ les règles sans `status`/`level` sont toujours acceptées. Si 0 règle reste, l
 est requis, le transport HTTP exige un token (config ou env), et `sigma_repo_path` est validé contre
 le traversal/les chemins absolus.
 
-**CLI flags :** `--author <name>`, `--dry-run`, `--channels-only`, `--all-rules`.
+**CLI flags :** `--author <name>`, `--dry-run`, `--channels-only`, `--all-rules`, `--list-rules`.
 
 ---
 
@@ -131,7 +131,8 @@ SigmahqRules::new()                 # charge ./sigma
     ↓
 rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size })
     ├── stats() → rules_loaded, filtered_product/status/level/author
-    └── 0 règle chargée → bail avec un message d'erreur clair
+    ├── 0 règle chargée → bail avec un message d'erreur clair
+    └── --list-rules → affiche id, titre, status/level, chemin relatif par règle + exit
 ```
 
 > Les règles avec des données de régression existantes sont exclues du moteur Sigma — ce
@@ -406,6 +407,7 @@ sigmacatch
     [--dry-run]            # diagnostics git uniquement (pas de collecte)
     [--channels-only]      # affiche les channels résolus et exit
     [--all-rules]          # désactive le skip set (charge toutes les règles)
+    [--list-rules]         # affiche les règles sans data-regression et exit
 ```
 
 La config est auto-créée au premier run avec des défauts. Éditez `config.yaml` avant de lancer.

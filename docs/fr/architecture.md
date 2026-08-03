@@ -75,6 +75,7 @@ dépend de `rsigma-parser`. `sigmacatch-config` dépend de `sigmacatch-repo` + `
    └── existing_rules = regression.get_sigma_id() → HashSet<Uuid> (vide avec --all-rules)
 6. SigmahqRules::new() → chargement + dédupe ; remove_id() par règle skipée
     └── filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size }) ; 0 règles → bail
+    └── --list-rules → affiche les règles sans data-regression + sortie
 7. custom_map = load_custom_channel_mapping("custom_channels.yaml")
    └── cycle_channels = rules.channels(&custom_map) ; 0 channels → warn + return
 8. DetectionEngine::new(&rules)  (pipelines + bloom + LogSourceExtractor)

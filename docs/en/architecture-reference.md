@@ -77,7 +77,7 @@ rules without `status`/`level` are always accepted. If 0 rules remain, the progr
 is required, HTTP transport requires a token (config or env), and `sigma_repo_path` is validated
 against traversal/absolute paths.
 
-**CLI flags:** `--author <name>`, `--dry-run`, `--channels-only`, `--all-rules`.
+**CLI flags:** `--author <name>`, `--dry-run`, `--channels-only`, `--all-rules`, `--list-rules`.
 
 ---
 
@@ -131,7 +131,8 @@ SigmahqRules::new()                 # loads ./sigma
     ↓
 rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size })
     ├── stats() → rules_loaded, filtered_product/status/level/author
-    └── 0 rules loaded → bail with a clear error message
+    ├── 0 rules loaded → bail with a clear error message
+    └── --list-rules → print id, title, status/level, relative path per rule + exit
 ```
 
 > Rules with existing regression data are excluded from the Sigma engine — this skip-at-load
@@ -406,6 +407,7 @@ sigmacatch
     [--dry-run]            # git diagnostics only (no collection)
     [--channels-only]      # print resolved channels and exit
     [--all-rules]          # disable the skip set (load every rule)
+    [--list-rules]         # print rules without regression data and exit
 ```
 
 Config is auto-created on first run with defaults. Edit `config.yaml` before running.

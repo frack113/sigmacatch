@@ -68,6 +68,7 @@ Rules missing a `status` or `level` field are always accepted.
 | `--dry-run` | Git diagnostics only (no collection) |
 | `--channels-only` | List resolved channels and exit (no collection) |
 | `--all-rules` | Load all rules — skip set is disabled |
+| `--list-rules` | List rules without regression data and exit (no collection) |
 
 ## Requirements
 
