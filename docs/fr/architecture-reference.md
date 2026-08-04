@@ -37,7 +37,7 @@ sigmacatch/
     ├── sigmacatch-logger/         # Abonnement tracing à deux couches (stderr info + fichier journal rolling debug)
     ├── sigmacatch-rule/           # SigmahqRules : chargement (parse_sigma_yaml), filtre, dédupe, remove_id, channels()
     ├── sigmacatch-detection/      # Wrapper DetectionEngine + pipelines embarquées (windows.yml, flatten_winevt.yml)
-    ├── input-windows-channels/    # Collecteur Winevt multi-channel (EventProducer) + résolution logsource
+    ├── input-windows-channels/    # Collecteur Winevt multi-channel (EventProducer)
     ├── sigmacatch-regression/     # SigmahqRegression, InfoYml, RegressionData, validation triplet
     ├── sigmacatch-types/          # Types partagés : Event, Alert, RegressionHeader, Product + parsing XML + tables de mapping logsource
     ├── sigmacatch-repo/           # wrapper grit-lib : SigmaRepo, opérations git
@@ -77,7 +77,7 @@ les règles sans `status`/`level` sont toujours acceptées. Si 0 règle reste, l
 est requis, le transport HTTP exige un token (config ou env), et `sigma_repo_path` est validé contre
 le traversal/les chemins absolus.
 
-**CLI flags :** `--author <name>`, `--dry-run`, `--channels-only`, `--all-rules`.
+**CLI flags :** `--author <name>`, `--dry-run`, `--channels-only`, `--all-rules`, `--list-rules`.
 
 ---
 
@@ -110,7 +110,9 @@ SigmaRepo::new()
     ├── set_info_user(author, email)
     ├── set_info_http(token) | set_info_ssh(key_path)
     ├── set_remote_url(fork_url) → init() [async]
-    └── set_working_branch(branch_name) → switch_to_working_branch()
+    ├── set_working_branch(branch_name)
+    ├── check_remote_working_branch()   # garde : rejette une branche du même jour orpheline/amputée
+    └── switch_to_working_branch()      # matérialise l'arbre de la branche
 ```
 
 ### Étape 3 — Skip set (régression existante)
@@ -131,7 +133,8 @@ SigmahqRules::new()                 # charge ./sigma
     ↓
 rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size })
     ├── stats() → rules_loaded, filtered_product/status/level/author
-    └── 0 règle chargée → bail avec un message d'erreur clair
+    ├── 0 règle chargée → bail avec un message d'erreur clair
+    └── --list-rules → affiche id, titre, status/level, chemin relatif par règle + exit
 ```
 
 > Les règles avec des données de régression existantes sont exclues du moteur Sigma — ce
@@ -203,7 +206,7 @@ loop:
         shutdown_rx.changed()            → info "Shutting down" → break
         Some(event) = rx.recv()          → engine.put_events(vec![event])
         _ = generate_interval.tick()     → process_and_generate()
-                                               → commit_files() si fichiers créés
+                                               → upload_regression() si fichiers créés
     }
 ```
 
@@ -218,7 +221,7 @@ engine.process_events() → engine.get_alerts()
             ├── None si règle déjà retirée / Uuid::nil() / info.yml existant
             └── Some(files) :
                 ├── RegressionData::for_rule(header, output_path, rule_rel_path, author, description)
-                ├── écrit <rule_id>.json (premier event matché, JSON pretty)
+                ├── écrit <rule_id>.json (event_json_raw du premier event matché, JSON pretty)
                 ├── écrit <rule_id>.evtx via EvtExportLog (ou fallback .xml)
                 ├── écrit info.yml
                 ├── ajoute "regression_tests_path" au YAML de la règle source
@@ -229,7 +232,7 @@ engine.process_events() → engine.get_alerts()
 **Sortie :**
 ```
 <sigma_repo_path>/regression_data/<rule_rel_path>/
-    ├── <rule_id>.json      # premier event matché (JSON plat)
+    ├── <rule_id>.json      # premier event matché (JSON Winevt brut, noms de clés EventData d'origine)
     ├── <rule_id>.evtx      # EVTX valide via EvtExportLog (ou fallback .xml)
     └── info.yml            # métadonnées compatibles SigmaHQ
 ```
@@ -247,7 +250,7 @@ Flush final :
     await de la task collector (s'arrête → drop des clones de Sender)
     drain du rx restant → engine.put_events
     ↓
-process_and_generate() → commit_files() si fichiers
+process_and_generate() → upload_regression() si fichiers
     ↓
 push(sigma_repo_path, branch_name, transport, token) → fork
     └── succès → "Next step: create PR at https://github.com/SigmaHQ/sigma/pulls"
@@ -261,8 +264,9 @@ push(sigma_repo_path, branch_name, transport, token) → fork
 
 ```rust
 Event {
-    event_json: serde_json::Value,   // event JSON parsé (imbriqué)
-    event_raw: Vec<u8>,              // octets sources bruts (XML)
+    event_json_raw: serde_json::Value,  // JSON Winevt brut (noms de clés EventData d'origine, espaces conservés) — utilisé pour la sortie regression
+    event_json: serde_json::Value,      // JSON transformé pour la détection Sigma (espaces EventData supprimés)
+    event_raw: Vec<u8>,                 // octets sources bruts (XML)
 }
 ```
 
@@ -279,7 +283,8 @@ Alert {
     description: Option<String>,
     rule_path: Option<PathBuf>,  // chemin du YAML de la règle source (relatif au repo sigma)
     severity: String,
-    event_json: serde_json::Value,
+    event_json_raw: serde_json::Value,  // JSON Winevt brut (noms de clés d'origine) — écrit dans <rule_id>.json
+    event_json: serde_json::Value,      // JSON transformé pour la détection Sigma
     event_raw: Vec<u8>,
 }
 ```
@@ -375,8 +380,7 @@ regression_tests_info:
 | `anyhow` | gestion d'erreurs |
 | `chrono` | dates |
 | `uuid` | UUID v4 pour info.yml + ids de règles |
-| `rayon` | parsing parallèle des fichiers de règles |
-| `phf` | hash maps statiques pour les tables de taxonomie (dans `sigmacatch-types`) |
+| `phf` | hash maps statiques pour les tables de taxonomie (dans `sigmacatch-types`) + résolution de channels (dans `sigmacatch-rule`) |
 | `evtx` | parsing de fichiers EVTX (crate input-evtx, utilisé par localcheck/check_evtx) |
 | `roxmltree` | parsing XML pour les events Winevt (dans `sigmacatch-types`) |
 | `windows` | API Winevt (cfg-gated : windows uniquement, features : Foundation, System, Security, Com, Console, Threading) |
@@ -406,6 +410,7 @@ sigmacatch
     [--dry-run]            # diagnostics git uniquement (pas de collecte)
     [--channels-only]      # affiche les channels résolus et exit
     [--all-rules]          # désactive le skip set (charge toutes les règles)
+    [--list-rules]         # affiche les règles sans data-regression et exit
 ```
 
 La config est auto-créée au premier run avec des défauts. Éditez `config.yaml` avant de lancer.

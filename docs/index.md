@@ -4,7 +4,7 @@ Headless tool that captures real Windows events via the **Windows Event Log API*
 
 ## Workspace
 
-The project is a cargo workspace of 11 crates (10 lib crates + 1 binary crate with 2 bins):
+The project is a cargo workspace of 11 crates (9 libraries + 2 binary crates):
 
 | Crate | Purpose |
 |---|---|

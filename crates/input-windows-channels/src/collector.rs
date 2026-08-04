@@ -250,7 +250,7 @@ impl EventCollector {
                 if empty_cycles >= ROLLOVER_CHECK_CYCLES {
                     empty_cycles = 0;
                     let max_record_id = Self::probe_max_record_id(channel);
-                    if max_record_id > 0 && max_record_id <= last_record_id {
+                    if should_reset_after_idle(max_record_id, last_record_id) {
                         tracing::warn!(
                             "Channel '{channel}' record-id rollover detected (last={last_record_id}, max={max_record_id}); resetting to 0"
                         );
@@ -533,4 +533,40 @@ fn str_to_wide(s: &str) -> Vec<u16> {
     let mut v: Vec<u16> = s.encode_utf16().collect();
     v.push(0);
     v
+}
+
+/// Decide whether an idle channel needs its record-id cursor reset.
+///
+/// A genuine rollover (log cleared) means the channel's newest record id is
+/// strictly below the last id we processed — new events restart at low ids.
+/// `max == last` is the normal idle state (no new events) and must NOT reset,
+/// otherwise the whole log is re-fetched on every idle probe.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn should_reset_after_idle(max_record_id: u64, last_record_id: u64) -> bool {
+    max_record_id > 0 && max_record_id < last_record_id
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_no_reset_when_log_grew() {
+        assert!(!should_reset_after_idle(200, 100));
+    }
+
+    #[test]
+    fn test_no_reset_when_idle() {
+        assert!(!should_reset_after_idle(1152, 1152));
+    }
+
+    #[test]
+    fn test_reset_on_genuine_rollover() {
+        assert!(should_reset_after_idle(7, 31545));
+    }
+
+    #[test]
+    fn test_no_reset_when_channel_empty() {
+        assert!(!should_reset_after_idle(0, 31545));
+    }
 }

@@ -13,29 +13,42 @@ main `sigmacatch` binary so its dependency tree stays lean.
 
 ### Pipeline
 
-1. Loads all rules from `./sigma`, filters to Windows
-2. Loads regression entries from `./sigma/regression_data`
-3. Builds the `DetectionEngine` once
+1. Loads all Sigma rules from `./sigma`, filters to Windows
+2. Builds the `DetectionEngine` once
+3. Loads regression entries from `./sigma/regression_data`
 4. For each `info.yml` entry: loads the raw `.evtx`, parses it → events
 5. Evaluates the events against the rule
 6. Validates: the rule MUST match (positive detection test)
-7. Reports pass/fail per rule + summary (exit 1 if any failure)
+7. **JSON conformance check**: when a committed `<rule_id>.json` exists, verifies that
+   `parse_winevt_xml_raw` reproduces it exactly (SigmaHQ format compatibility) — a mismatch
+   is reported separately and does not fail the detection check
+8. Reports pass/fail per rule + summary (exit 1 if any detection failure)
 
 ### Output
 
 ```
-  [  1/100] proc_creation_win_bitsadmin_download ... [PASS] 1 alert(s), rule matched
-  [  2/100] win_security_foo  ... [FAIL] RULE NOT MATCHED — expected '<uuid>' (0 alert(s), matched: ...)
+  [  1/202] proc_creation_win_bitsadmin_download ... [PASS] 1 alert(s), rule matched
+  [  2/202] win_security_foo  ... [FAIL] RULE NOT MATCHED — expected '<uuid>' (0 alert(s), matched: ...)
 
 ============================================================
   VALIDATION SUMMARY
 ============================================================
-  Total rules:     100
-  Passed:          95
-  Failed:          5
-  Pass rate:       95.0%
+  Total entries:   202
+  Passed:          196
+  Skipped:         0
+  Failed:          6
+  Pass rate:       97.0%
+
+  JSON FORMAT CHECKS (parse_winevt_xml_raw vs committed JSON):
+  Checked:         202
+  Matched:         199
+  Mismatch:        3
 ============================================================
 ```
+
+The `check_evtx` run described above matches the current `sigma/regression_data` state
+(202 entries, 196 PASS / 6 FAIL — the 6 failures are the known registry issue pending a
+rsigma update; 3 cosmetic JSON format mismatches remain).
 
 ### Example
 

@@ -13,29 +13,42 @@ binaire principal `sigmacatch` pour garder son arbre de dépendances léger.
 
 ### Pipeline
 
-1. Charge toutes les règles depuis `./sigma`, filtre sur Windows
-2. Charge les entrées de régression depuis `./sigma/regression_data`
-3. Construit le `DetectionEngine` une seule fois
+1. Charge toutes les règles Sigma depuis `./sigma`, filtre sur Windows
+2. Construit le `DetectionEngine` une seule fois
+3. Charge les entrées de régression depuis `./sigma/regression_data`
 4. Pour chaque entrée `info.yml` : charge le `.evtx` brut, le parse → events
 5. Évalue les events contre la règle
 6. Valide : la règle DOIT matcher (test de détection positive)
-7. Rapport pass/fail par règle + résumé (exit 1 si échec)
+7. **Vérification de conformité JSON** : quand un `<rule_id>.json` committé existe, vérifie que
+   `parse_winevt_xml_raw` le reproduit à l'identique (compatibilité du format SigmaHQ) — un écart
+   est rapporté séparément et ne fait pas échouer le test de détection
+8. Rapport pass/fail par règle + résumé (exit 1 en cas d'échec de détection)
 
 ### Sortie
 
 ```
-  [  1/100] proc_creation_win_bitsadmin_download ... [PASS] 1 alert(s), rule matched
-  [  2/100] win_security_foo  ... [FAIL] RULE NOT MATCHED — expected '<uuid>' (0 alert(s), matched: ...)
+  [  1/202] proc_creation_win_bitsadmin_download ... [PASS] 1 alert(s), rule matched
+  [  2/202] win_security_foo  ... [FAIL] RULE NOT MATCHED — expected '<uuid>' (0 alert(s), matched: ...)
 
 ============================================================
   VALIDATION SUMMARY
 ============================================================
-  Total rules:     100
-  Passed:          95
-  Failed:          5
-  Pass rate:       95.0%
+  Total entries:   202
+  Passed:          196
+  Skipped:         0
+  Failed:          6
+  Pass rate:       97.0%
+
+  JSON FORMAT CHECKS (parse_winevt_xml_raw vs committed JSON):
+  Checked:         202
+  Matched:         199
+  Mismatch:        3
 ============================================================
 ```
+
+Le run `check_evtx` ci-dessus correspond à l'état actuel de `sigma/regression_data`
+(202 entrées, 196 PASS / 6 FAIL — les 6 échecs sont le problème registry connu en attente d'une
+maj rsigma ; 3 écarts de format JSON cosmétiques restent).
 
 ### Exemple
 

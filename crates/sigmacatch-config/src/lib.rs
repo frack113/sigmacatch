@@ -377,6 +377,7 @@ pub struct CliArgs {
     pub dry_run: bool,
     pub channels_only: bool,
     pub all_rules: bool,
+    pub list_rules: bool,
 }
 
 /// Parse CLI arguments from environment.
@@ -386,6 +387,7 @@ pub fn parse_args() -> CliArgs {
     let mut dry_run = false;
     let mut channels_only = false;
     let mut all_rules = false;
+    let mut list_rules = false;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -396,6 +398,7 @@ pub fn parse_args() -> CliArgs {
             "--dry-run" => dry_run = true,
             "--channels-only" => channels_only = true,
             "--all-rules" => all_rules = true,
+            "--list-rules" => list_rules = true,
             _ => {}
         }
         i += 1;
@@ -405,6 +408,7 @@ pub fn parse_args() -> CliArgs {
         dry_run,
         channels_only,
         all_rules,
+        list_rules,
     }
 }
 

@@ -37,7 +37,7 @@ The resulting binary is at `target/x86_64-pc-windows-msvc/release/sigmacatch.exe
 
 ## Binary size
 
-Optimized release build: ~12MB (single headless binary).
+Optimized release build: ~10MB (single headless binary).
 
 Applied profile:
 - `strip = true`
@@ -47,7 +47,7 @@ Applied profile:
 
 ## Workspace
 
-The project is a cargo workspace of 11 packages (1 binary crate with 2 bins + 10 libraries):
+The project is a cargo workspace of 11 packages (2 binary crates — `sigmacatch` with 1 bin, `localcheck` with 2 bins — and 9 libraries):
 
 ```bash
 # Build everything

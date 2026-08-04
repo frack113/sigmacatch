@@ -13,6 +13,21 @@ use tracing::info;
 
 use crate::transport::sanitize_url;
 
+/// Fetch options shared by the HTTP and SSH fetch paths (clone + pull).
+///
+/// Full history (no `depth`). A shallow (`depth = 1`) fetch leaves the local
+/// ODB without the ancestors of the fetched tips, so a push whose remote
+/// advanced after the clone cannot build its pack: the want-walk crosses the
+/// shallow boundary and fails with `object not found: <parent oid>` (case of
+/// `f321ac84b7cb0c1e688bb1a6415d0bf73d767d1d` on 2026-08-03).
+fn fetch_options() -> FetchOptions {
+    FetchOptions {
+        refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_string()],
+        tags: TagMode::None,
+        ..Default::default()
+    }
+}
+
 /// Fetch from remote via smart HTTP.
 pub fn fetch_remote(
     http_client: &dyn HttpClient,
@@ -20,12 +35,7 @@ pub fn fetch_remote(
     repo_url: &str,
 ) -> Result<(usize, Option<String>)> {
     info!("Fetching from {}", sanitize_url(repo_url));
-    let opts = FetchOptions {
-        refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_string()],
-        tags: TagMode::None,
-        depth: Some(1),
-        ..Default::default()
-    };
+    let opts = fetch_options();
     let outcome = http_fetch(http_client, git_dir, repo_url, &opts, &mut NoProgress)?;
     let count = outcome.updates.len();
     info!(
@@ -34,6 +44,28 @@ pub fn fetch_remote(
         outcome.default_branch.as_deref().unwrap_or("unknown")
     );
     Ok((count, outcome.default_branch))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A shallow (`depth = 1`) fetch must never be used: the local ODB would
+    /// miss every ancestor of the fetched tips, which breaks the push pack walk
+    /// (`object not found: <parent>`) as soon as the remote advances mid-run.
+    #[test]
+    fn test_fetch_options_are_full_history() {
+        let opts = fetch_options();
+        assert!(
+            opts.depth.is_none(),
+            "fetch must be full-history, not shallow"
+        );
+        assert!(opts
+            .refspecs
+            .iter()
+            .any(|r| r == "+refs/heads/*:refs/remotes/origin/*"));
+        assert_eq!(opts.tags, TagMode::None);
+    }
 }
 
 /// Fetch from remote via SSH.
@@ -53,12 +85,7 @@ pub fn fetch_remote_ssh(
         grit_lib::transport::Service::UploadPack,
         &ConnectOptions::default(),
     )?;
-    let opts = FetchOptions {
-        refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_string()],
-        tags: TagMode::None,
-        depth: Some(1),
-        ..Default::default()
-    };
+    let opts = fetch_options();
     let outcome = grit_lib::fetch::fetch_remote(git_dir, &mut *conn, &opts, &mut NoProgress)?;
     let count = outcome.updates.len();
     info!(

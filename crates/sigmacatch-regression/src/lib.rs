@@ -140,6 +140,22 @@ impl SigmahqRegression {
         std::fs::read(&data_path).ok()
     }
 
+    /// Read the committed raw event JSON (`<rule_id>.json`) for an entry, if present.
+    ///
+    /// Used by `check_evtx` to validate that `parse_winevt_xml_raw` reproduces the
+    /// SigmaHQ-committed JSON format from the EVTX records.
+    pub fn get_json_data(&self, index: usize) -> Option<serde_json::Value> {
+        let (info_path, info, _) = self.entries.get(index)?;
+        let rule_id = info.rule_metadata.first()?.id;
+        let dir = info_path.parent()?;
+        let json_path = dir.join(format!("{}.json", rule_id));
+        if !json_path.exists() {
+            return None;
+        }
+        let content = std::fs::read_to_string(json_path).ok()?;
+        serde_json::from_str(&content).ok()
+    }
+
     pub fn add(&mut self, alert: &Alert) -> Option<Vec<String>> {
         let output_path = self.output_path.as_ref()?;
         let rule_id = &alert.rule_id;

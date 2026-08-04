@@ -2407,6 +2407,7 @@ name = "sigmacatch"
 version = "0.2.2"
 dependencies = [
  "anyhow",
+ "chrono",
  "input-windows-channels",
  "sigmacatch-config",
  "sigmacatch-detection",

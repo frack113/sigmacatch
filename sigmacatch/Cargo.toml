@@ -46,6 +46,8 @@ tracing = "0.1"
 # Utilitaires
 anyhow = "1.0"
 
+chrono = "0.4"
+
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]

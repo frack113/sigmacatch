@@ -15,7 +15,11 @@ pub(crate) mod plumbing;
 pub(crate) mod porcelain;
 pub(crate) mod transport;
 
+#[cfg(test)]
+mod regression_tests;
+
 use anyhow::Result;
+use grit_lib::objects::ObjectId;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
@@ -149,7 +153,10 @@ impl SigmaRepo {
     }
 
     /// Switch to the contribution working branch.
-    /// Creates it from HEAD if it doesn't exist locally, switches otherwise.
+    /// Creates it from the remote tracking ref (or HEAD for a fresh branch),
+    /// then materializes and reconciles the working tree so the on-disk state
+    /// is an exact mirror of the branch (files already pushed to the fork are
+    /// present; stale local files are removed).
     pub fn switch_to_working_branch(&mut self) -> Result<()> {
         let branch_name = self.working_branch.clone().ok_or_else(|| {
             anyhow::anyhow!(
@@ -158,6 +165,133 @@ impl SigmaRepo {
         })?;
         let git_dir = self.repo_path.join(".git");
         create_branch(&git_dir, &branch_name)?;
+        crate::plumbing::checkout_main_branch(&git_dir, &self.repo_path)?;
+        Ok(())
+    }
+
+    /// Validate the remote tracking branch for the working branch, if present.
+    ///
+    /// Runs once at startup right after the working branch is set. A branch
+    /// already pushed to the fork (same-day re-run) must be usable as the base
+    /// for the next commit: the commit must be readable, have at least one
+    /// parent (a child of master, never an orphan/root), and its tree must
+    /// contain the `rules/` directory. A corrupt/amputated remote branch is
+    /// rejected with an actionable message so the loop never commits onto it.
+    /// Returns `Ok` when the branch does not exist on the fork yet (fresh day).
+    pub fn check_remote_working_branch(&self) -> Result<()> {
+        let branch = self
+            .working_branch
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("No working branch configured"))?;
+        let git_dir = self.repo_path.join(".git");
+        let remote_ref = format!("refs/remotes/origin/{}", branch);
+
+        let Some(oid_str) = crate::plumbing::read_loose_or_packed_ref(&git_dir, &remote_ref) else {
+            info!(
+                "No remote tracking ref '{}' — fresh working branch",
+                remote_ref
+            );
+            return Ok(());
+        };
+
+        let oid = ObjectId::from_hex(&oid_str)
+            .map_err(|e| anyhow::anyhow!("Invalid OID for '{}': {}", remote_ref, e))?;
+        let odb = crate::plumbing::open_odb(&git_dir);
+        let obj = odb.read(&oid).map_err(|e| {
+            anyhow::anyhow!(
+                "Remote working branch '{}' commit {} is unreadable: {}. \
+                 Delete the branch on GitHub and re-run.",
+                branch,
+                oid,
+                e
+            )
+        })?;
+        let commit = grit_lib::objects::parse_commit(&obj.data).map_err(|e| {
+            anyhow::anyhow!(
+                "Remote working branch '{}' commit {} is not a valid commit: {}. \
+                 Delete the branch on GitHub and re-run.",
+                branch,
+                oid,
+                e
+            )
+        })?;
+        if commit.parents.is_empty() {
+            anyhow::bail!(
+                "Remote working branch '{}' commit {} is an orphan/root commit (no parent). \
+                 Expected a child of master. Delete the branch on GitHub and re-run.",
+                branch,
+                oid
+            );
+        }
+
+        let tree_obj = odb.read(&commit.tree).map_err(|e| {
+            anyhow::anyhow!(
+                "Remote working branch '{}' tree {} is unreadable: {}. \
+                 Delete the branch on GitHub and re-run.",
+                branch,
+                commit.tree,
+                e
+            )
+        })?;
+        let entries = grit_lib::objects::parse_tree(&tree_obj.data).map_err(|e| {
+            anyhow::anyhow!(
+                "Remote working branch '{}' tree {} is not a valid tree: {}. \
+                 Delete the branch on GitHub and re-run.",
+                branch,
+                commit.tree,
+                e
+            )
+        })?;
+        let has_rules = entries
+            .iter()
+            .any(|e| e.mode == 0o040000 && e.name.as_slice() == b"rules");
+        if !has_rules {
+            anyhow::bail!(
+                "Remote working branch '{}' tree is missing the 'rules/' directory — \
+                 the branch is amputated/corrupt. Delete the branch on GitHub and re-run.",
+                branch
+            );
+        }
+
+        info!(
+            "Remote working branch '{}' is valid (commit {} with rules/ tree)",
+            branch,
+            &oid_str[..12.min(oid_str.len())]
+        );
+        Ok(())
+    }
+
+    /// Object id the working branch currently points at locally.
+    /// Returns an error if the branch ref is missing or its oid is malformed.
+    pub fn working_branch_oid(&self) -> Result<ObjectId> {
+        let branch = self
+            .working_branch
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("No working branch configured"))?;
+        let git_dir = self.repo_path.join(".git");
+        let local_ref = format!("refs/heads/{}", branch);
+        let oid_str = crate::plumbing::read_loose_or_packed_ref(&git_dir, &local_ref)
+            .ok_or_else(|| anyhow::anyhow!("Working branch '{}' not found locally", branch))?;
+        ObjectId::from_hex(&oid_str)
+            .map_err(|e| anyhow::anyhow!("Invalid OID for branch '{}': {}", branch, e))
+    }
+
+    /// Roll the working branch ref back to `oid` after a push failure that left
+    /// an orphaned local commit behind, so the local branch tip stays consistent
+    /// with the remote (no dangling commits). The worktree is left untouched;
+    /// the next `checkout_main_branch` reconciles it against the restored tip.
+    pub fn reset_working_branch_to_commit(&self, oid: ObjectId) -> Result<()> {
+        let branch = self
+            .working_branch
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("No working branch configured"))?;
+        let git_dir = self.repo_path.join(".git");
+        let local_ref = format!("refs/heads/{}", branch);
+        crate::plumbing::refs::map_grit(grit_lib::refs::write_ref(&git_dir, &local_ref, &oid))?;
+        info!(
+            "Reset working branch '{}' back to {} after a failed push",
+            branch, oid
+        );
         Ok(())
     }
 
@@ -301,57 +435,196 @@ impl Default for SigmaRepo {
 }
 
 fn is_repo_complete(git_dir: &Path) -> bool {
-    let has_packed_refs = git_dir.join("packed-refs").exists();
-    let has_objects = git_dir
-        .join("objects")
-        .join("pack")
-        .read_dir()
-        .map(|mut dir| dir.next().is_some())
-        .unwrap_or(false);
-    let has_refs = git_dir
-        .join("refs")
-        .join("heads")
-        .read_dir()
-        .map(|mut dir| dir.next().is_some())
-        .unwrap_or(false);
-    (has_packed_refs && (has_objects || has_refs)) || (has_objects && has_refs)
+    // A repository is usable when HEAD resolves to a commit object that is
+    // readable in the ODB. This covers both real-git clones (packed refs +
+    // packs) and grit's unpack_objects-based clones (loose objects only, no
+    // `objects/pack` or `packed-refs`), which the previous check wrongly
+    // treated as incomplete — deleting and re-cloning the repository on every
+    // run.
+    let Ok(head) = crate::plumbing::resolve_head(git_dir) else {
+        return false;
+    };
+    crate::plumbing::open_odb(git_dir).read(&head).is_ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plumbing::init_repo;
+    use grit_lib::objects::{CommitData, ObjectKind};
+    use grit_lib::write_tree::write_tree_from_index;
 
-    #[test]
-    fn test_is_repo_complete_with_packed_refs() {
-        let tmp = tempfile::tempdir().unwrap();
+    /// Build a `.git` with HEAD → refs/heads/main and one committed file
+    /// (loose objects only — exactly what a grit clone produces).
+    fn make_committed_repo(tmp: &tempfile::TempDir) {
         let git_dir = tmp.path().join(".git");
-        std::fs::create_dir(&git_dir).unwrap();
-        std::fs::write(git_dir.join("packed-refs"), "test").unwrap();
-        std::fs::create_dir_all(git_dir.join("objects/pack")).unwrap();
-        std::fs::write(git_dir.join("objects/pack/pack.idx"), "test").unwrap();
-        assert!(is_repo_complete(&git_dir));
+        let work_tree = tmp.path();
+        init_repo(&git_dir, work_tree, "https://example.com/sigma.git").unwrap();
+        let file = work_tree.join("a.txt");
+        std::fs::write(&file, "hello\n").unwrap();
+        let odb = crate::plumbing::open_odb(&git_dir);
+        let mut index = grit_lib::index::Index::new();
+        crate::plumbing::add_file_to_index(&git_dir, &file, work_tree, &mut index).unwrap();
+        let tree = write_tree_from_index(&odb, &index, "").unwrap();
+        let commit = CommitData {
+            tree,
+            parents: Vec::new(),
+            author: "t <t@example.com> 0 +0000".to_string(),
+            committer: "t <t@example.com> 0 +0000".to_string(),
+            message: "init\n".to_string(),
+            encoding: None,
+            author_raw: Vec::new(),
+            committer_raw: Vec::new(),
+            raw_message: None,
+        };
+        let raw = grit_lib::objects::serialize_commit(&commit);
+        let cid = odb.write(ObjectKind::Commit, &raw).unwrap();
+        std::fs::create_dir_all(git_dir.join("refs/heads")).unwrap();
+        std::fs::write(git_dir.join("refs/heads/main"), format!("{cid}\n")).unwrap();
+        std::fs::write(git_dir.join("HEAD"), b"ref: refs/heads/main\n").unwrap();
     }
 
     #[test]
-    fn test_is_repo_complete_with_objects() {
+    fn test_is_repo_complete_with_loose_objects() {
         let tmp = tempfile::tempdir().unwrap();
-        let git_dir = tmp.path().join(".git");
-        std::fs::create_dir_all(git_dir.join("objects/pack")).unwrap();
-        std::fs::write(git_dir.join("objects/pack/pack.idx"), "test").unwrap();
-        std::fs::create_dir_all(git_dir.join("refs/heads")).unwrap();
-        std::fs::write(git_dir.join("refs/heads/main"), "abc123").unwrap();
-        assert!(is_repo_complete(&git_dir));
+        make_committed_repo(&tmp);
+        assert!(is_repo_complete(&tmp.path().join(".git")));
     }
 
     #[test]
-    fn test_is_repo_complete_with_refs() {
+    fn test_is_repo_complete_after_init_only() {
         let tmp = tempfile::tempdir().unwrap();
         let git_dir = tmp.path().join(".git");
-        std::fs::create_dir_all(git_dir.join("refs/heads")).unwrap();
-        std::fs::write(git_dir.join("refs/heads/main"), "abc123").unwrap();
-        std::fs::create_dir_all(git_dir.join("objects/pack")).unwrap();
-        std::fs::write(git_dir.join("objects/pack/pack.idx"), "test").unwrap();
-        assert!(is_repo_complete(&git_dir));
+        init_repo(&git_dir, tmp.path(), "https://example.com/sigma.git").unwrap();
+        assert!(!is_repo_complete(&git_dir));
+    }
+
+    fn write_commit(odb: &grit_lib::odb::Odb, tree: ObjectId, parents: Vec<ObjectId>) -> ObjectId {
+        let commit = CommitData {
+            tree,
+            parents,
+            author: "t <t@example.com> 0 +0000".to_string(),
+            committer: "t <t@example.com> 0 +0000".to_string(),
+            message: "remote\n".to_string(),
+            encoding: None,
+            author_raw: Vec::new(),
+            committer_raw: Vec::new(),
+            raw_message: None,
+        };
+        let raw = grit_lib::objects::serialize_commit(&commit);
+        odb.write(ObjectKind::Commit, &raw).unwrap()
+    }
+
+    /// Set up a committed repo whose remote tracking ref `sigmacatch/20260803`
+    /// points at a commit with (`has_parent`) / (`has_rules`) characteristics.
+    /// Returns a SigmaRepo configured on that working branch.
+    fn setup_remote_branch(
+        tmp: &tempfile::TempDir,
+        has_parent: bool,
+        has_rules: bool,
+    ) -> SigmaRepo {
+        make_committed_repo(tmp);
+        let git_dir = tmp.path().join(".git");
+        let odb = crate::plumbing::open_odb(&git_dir);
+        let mut index = grit_lib::index::Index::new();
+        if has_rules {
+            std::fs::create_dir_all(tmp.path().join("rules")).unwrap();
+            let f = tmp.path().join("rules/x.yml");
+            std::fs::write(&f, "title: x\n").unwrap();
+            crate::plumbing::add_file_to_index(&git_dir, &f, tmp.path(), &mut index).unwrap();
+        } else {
+            let f = tmp.path().join("a.txt");
+            std::fs::write(&f, "a\n").unwrap();
+            crate::plumbing::add_file_to_index(&git_dir, &f, tmp.path(), &mut index).unwrap();
+        }
+        let tree = write_tree_from_index(&odb, &index, "").unwrap();
+        let parent = crate::plumbing::resolve_head(&git_dir).unwrap();
+        let parents = if has_parent { vec![parent] } else { Vec::new() };
+        let remote_oid = write_commit(&odb, tree, parents);
+        let remote_ref = git_dir.join("refs/remotes/origin/sigmacatch/20260803");
+        std::fs::create_dir_all(remote_ref.parent().unwrap()).unwrap();
+        std::fs::write(&remote_ref, format!("{remote_oid}\n")).unwrap();
+
+        let mut repo = SigmaRepo::new();
+        repo.repo_path = tmp.path().to_path_buf();
+        repo.working_branch = Some("sigmacatch/20260803".to_string());
+        repo
+    }
+
+    #[test]
+    fn test_check_remote_working_branch_absent_is_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_committed_repo(&tmp);
+        let mut repo = SigmaRepo::new();
+        repo.repo_path = tmp.path().to_path_buf();
+        repo.working_branch = Some("sigmacatch/20260803".to_string());
+        assert!(repo.check_remote_working_branch().is_ok());
+    }
+
+    #[test]
+    fn test_check_remote_working_branch_valid_is_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = setup_remote_branch(&tmp, true, true);
+        assert!(repo.check_remote_working_branch().is_ok());
+    }
+
+    #[test]
+    fn test_check_remote_working_branch_orphan_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = setup_remote_branch(&tmp, false, true);
+        let err = repo.check_remote_working_branch().unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("parent"),
+            "orphan commit must be rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn test_check_remote_working_branch_missing_rules_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = setup_remote_branch(&tmp, true, false);
+        let err = repo.check_remote_working_branch().unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("rules"),
+            "amputated tree must be rejected: {err}"
+        );
+    }
+
+    /// `working_branch_oid` must reflect the local branch tip and
+    /// `reset_working_branch_to_commit` must move it (rollback after a failed
+    /// push).
+    #[test]
+    fn test_working_branch_oid_and_reset() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_committed_repo(&tmp);
+        let git_dir = tmp.path().join(".git");
+        let head_oid = crate::plumbing::resolve_head(&git_dir).unwrap();
+
+        crate::branch::create_branch(&git_dir, "sigmacatch/20260803").unwrap();
+        let mut repo = SigmaRepo::new();
+        repo.repo_path = tmp.path().to_path_buf();
+        repo.working_branch = Some("sigmacatch/20260803".to_string());
+
+        assert_eq!(
+            repo.working_branch_oid().unwrap(),
+            head_oid,
+            "branch tip must match HEAD after creation"
+        );
+
+        let odb = crate::plumbing::open_odb(&git_dir);
+        let empty_tree = write_tree_from_index(&odb, &grit_lib::index::Index::new(), "").unwrap();
+        let other_oid = write_commit(&odb, empty_tree, vec![head_oid]);
+
+        repo.reset_working_branch_to_commit(other_oid).unwrap();
+        assert_eq!(
+            repo.working_branch_oid().unwrap(),
+            other_oid,
+            "reset must move the local branch ref"
+        );
+
+        // Roll back to the original tip (simulating a failed-push rollback).
+        repo.reset_working_branch_to_commit(head_oid).unwrap();
+        assert_eq!(repo.working_branch_oid().unwrap(), head_oid);
     }
 
     #[test]

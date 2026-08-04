@@ -4,7 +4,7 @@ Outil headless qui capture de vrais événements Windows via l'**API Windows Eve
 
 ## Workspace
 
-Le projet est un cargo workspace de 11 crates (10 bibliothèques + 1 crate binaire avec 2 binaires) :
+Le projet est un cargo workspace de 11 crates (9 bibliothèques + 2 crates binaires) :
 
 | Crate | Rôle |
 |---|---|

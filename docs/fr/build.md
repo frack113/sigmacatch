@@ -37,7 +37,7 @@ Le binaire résultant est à `target/x86_64-pc-windows-msvc/release/sigmacatch.e
 
 ## Taille du binaire
 
-Build release optimisé : ~12MB (binaire headless unique).
+Build release optimisé : ~10MB (binaire headless unique).
 
 Profil appliqué :
 - `strip = true`
@@ -47,7 +47,7 @@ Profil appliqué :
 
 ## Workspace
 
-Le projet est un cargo workspace de 11 packages (1 crate binaire avec 2 binaires + 10 bibliothèques) :
+Le projet est un cargo workspace de 11 packages (2 crates binaires — `sigmacatch` avec 1 binaire, `localcheck` avec 2 binaires — et 9 bibliothèques) :
 
 ```bash
 # Tout builder

@@ -55,7 +55,7 @@ Chaque règle avec régression contient un dossier (slug) avec exactement trois 
 ```
 <slug>/
 ├── info.yml                    # Métadonnées + résultats du test
-├── <rule_id>.json              # Événement brut (JSON plat)
+├── <rule_id>.json              # Événement brut (JSON Winevt imbriqué, noms de clés EventData d'origine)
 └── <rule_id>.evtx              # EVTX valide via EvtExportLog (ou .xml fallback)
 ```
 
@@ -137,7 +137,7 @@ regression_tests_info:
 | Fichier | Format | Nom | Contenu |
 |---------|--------|-----|---------|
 | `info.yml` | YAML | Toujours `info.yml` | Métadonnées + résultats |
-| `<rule_id>.json` | JSON | UUID v4 | Événement brut (JSON plat, clés Sigma) |
+| `<rule_id>.json` | JSON | UUID v4 | Événement brut (JSON imbriqué, noms de clés EventData d'origine) |
 | `<rule_id>.evtx` | Binaire | UUID v4 | EVTX valide via EvtExportLog (ou .xml fallback si échec) |
 
 Le `<rule_id>` dans les noms de fichiers est toujours le UUID de `rule_metadata[0].id`.

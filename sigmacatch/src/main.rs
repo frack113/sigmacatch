@@ -13,7 +13,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::signal;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 #[cfg(windows)]
@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
         "Sigmacatch started for {} <{}>",
         config.git.author, config.git.email
     );
-    let branch_name = format!("sigmacatch-contrib/{}", config.git.author);
+    let branch_name = format!("sigmacatch/{}", chrono::Local::now().format("%Y%m%d"));
     info!("Branch name: {branch_name}");
     let push_branch = branch_name.clone();
 
@@ -80,6 +80,7 @@ async fn main() -> Result<()> {
 
     sigma_repo.set_remote_url(fork_url.clone()).await?;
     sigma_repo.set_working_branch(branch_name.clone())?;
+    sigma_repo.check_remote_working_branch()?;
 
     let mut regression = match SigmahqRegression::new() {
         Ok(r) => r,
@@ -129,6 +130,36 @@ async fn main() -> Result<()> {
             config.filter.min_level,
             config.filter.author,
         );
+    }
+
+    if cli.list_rules {
+        let sigma_repo_path = Path::new(&config.git.sigma_repo_path);
+        let mut count = 0;
+        for rule in rules.rules() {
+            let id = rule.id.as_deref().unwrap_or("no-id");
+            let path = rule
+                .id
+                .as_deref()
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .and_then(|u| rules.get_rule_path(&u))
+                .map(|p| {
+                    p.strip_prefix(sigma_repo_path)
+                        .unwrap_or(p)
+                        .display()
+                        .to_string()
+                        .replace('\\', "/")
+                })
+                .unwrap_or_default();
+            println!(
+                "{id}  {title}  {status:?}  {level:?}  {path}",
+                title = rule.title,
+                status = rule.status,
+                level = rule.level,
+            );
+            count += 1;
+        }
+        info!("{} rules without regression data", count);
+        return Ok(());
     }
 
     let custom_map = sigmacatch_config::load_custom_channel_mapping(
@@ -207,15 +238,13 @@ async fn main() -> Result<()> {
                         "✨ feat(sigma): add regression data for {} file(s)",
                         created_files.len()
                     );
-                    if let Err(e) = sigma_repo.git_upload(created_files, message) {
-                        warn!("Failed to commit/push regression data: {}", e);
-                    } else if !branch_pushed {
-                        branch_pushed = true;
-                        info!(
-                            "Branch '{}' pushed to origin. Next step: create PR at https://github.com/SigmaHQ/sigma/pulls",
-                            push_branch
-                        );
-                    }
+                    upload_regression(
+                        &sigma_repo,
+                        created_files,
+                        message,
+                        &mut branch_pushed,
+                        &push_branch,
+                    );
                 }
             }
         }
@@ -227,7 +256,18 @@ async fn main() -> Result<()> {
     // the collector exits would never terminate: the collector only stops when
     // the receiver is dropped, and the receiver is needed to drain.
     info!("Final flush — draining remaining events");
-    let _ = collector_handle.await;
+    let collector_stop = std::time::Duration::from_secs(30);
+    match tokio::time::timeout(collector_stop, collector_handle).await {
+        Ok(join_result) => {
+            if let Err(e) = join_result {
+                warn!("Collector task join error: {}", e);
+            }
+        }
+        Err(_) => warn!(
+            "Collector did not stop within {:?} — forcing shutdown",
+            collector_stop
+        ),
+    }
     while let Some(event) = rx.recv().await {
         engine.put_events(vec![event]);
     }
@@ -240,18 +280,57 @@ async fn main() -> Result<()> {
             "✨ feat(sigma): add regression data for {} file(s)",
             created_files.len()
         );
-        if let Err(e) = sigma_repo.git_upload(created_files, message) {
-            warn!("Failed to commit/push regression data: {}", e);
-        } else if !branch_pushed {
-            info!(
-                "Branch '{}' pushed to origin. Next step: create PR at https://github.com/SigmaHQ/sigma/pulls",
-                push_branch
-            );
-        }
+        upload_regression(
+            &sigma_repo,
+            created_files,
+            message,
+            &mut branch_pushed,
+            &push_branch,
+        );
     }
 
     info!("Sigmacatch finished");
     Ok(())
+}
+
+/// Commit + push regression data, rolling the local branch back to its pre-push
+/// tip on failure so an orphaned local commit cannot diverge from the remote
+/// (which would cause `RejectNonFastForward` on the next run). The generated
+/// files remain on disk and are reconciled/regenerated by the next startup.
+fn upload_regression(
+    sigma_repo: &SigmaRepo,
+    created_files: Vec<String>,
+    message: String,
+    branch_pushed: &mut bool,
+    push_branch: &str,
+) {
+    let pre_oid = match sigma_repo.working_branch_oid() {
+        Ok(oid) => oid,
+        Err(e) => {
+            error!("Cannot determine working branch tip before upload: {}", e);
+            return;
+        }
+    };
+
+    if let Err(e) = sigma_repo.git_upload(created_files, message) {
+        error!("Failed to commit/push regression data: {}", e);
+        match sigma_repo.reset_working_branch_to_commit(pre_oid) {
+            Ok(()) => warn!(
+                "Rolled local branch back to the pre-push tip ({pre_oid}); \
+                 regression files remain on disk and will be reconciled/regenerated by the next run"
+            ),
+            Err(rerr) => warn!(
+                "Failed to roll back local commit after push failure: {}",
+                rerr
+            ),
+        }
+    } else if !*branch_pushed {
+        *branch_pushed = true;
+        info!(
+            "Branch '{}' pushed to origin. Next step: create PR at https://github.com/SigmaHQ/sigma/pulls",
+            push_branch
+        );
+    }
 }
 
 fn process_and_generate(
