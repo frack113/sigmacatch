@@ -40,6 +40,8 @@ nav:
     - Build: build.md
     - Output Format: output-format.md
     - Regression Data Format: regression-data-format.md
+    - Tools: tools.md
+    - Nice-to-have: nice-to-have.md
 
 plugins:
   - search
@@ -61,6 +63,8 @@ plugins:
             Build: Build
             Output Format: Format de Sortie
             Regression Data Format: Format des Données de Régression
+            Tools: Outils
+            Nice-to-have: Nice-to-have
 
 markdown_extensions:
   - admonition

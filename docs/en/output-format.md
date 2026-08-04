@@ -8,7 +8,7 @@ The output always lives inside the sigma repo, under `regression_data/`:
 
 ```
 <sigma_repo_path>/regression_data/
-└── <rule_rel_path>/         # mirrors the rule path under sigma/rules/ (or rules/<rule_id>)
+└── <rule_rel_path>/         # mirrors the rule path under sigma/rules/
     ├── info.yml
     ├── <rule_id>.json
     └── <rule_id>.evtx
@@ -28,31 +28,77 @@ sigma/rules/windows/builtin/security/win_security_foo.yml
 
 ### `<rule_id>.json`
 
-A single event, **flat JSON** with keys named according to Sigma (produced by `XmlParser`).
-XML fields are flattened directly into the flat form that Sigma rules expect:
+A single event, serialized from `event_json_raw` — the JSON form of the Winevt XML event
+produced by `sigmacatch-types` (roxmltree). It is **nested**, mirrors the original XML
+structure verbatim, and preserves the original `EventData` key names (including spaces):
 
 ```json
 {
-  "EventID": "1",
-  "SysmonEventID": "1",
-  "ProcessId": "3904",
-  "ThreadId": "4272",
-  "Provider": "Microsoft-Windows-Sysmon",
-  "_source": "etw",
-  "Image": "C:\\Windows\\System32\\cmd.exe",
-  "CommandLine": "C:\\WINDOWS\\system32\\cmd.exe /d /s /c \"whoami\"",
-  "ParentImage": "C:\\Windows\\explorer.exe",
-  "User": "SYSTEM"
+  "Event": {
+    "#attributes": {
+      "xmlns": "http://schemas.microsoft.com/win/2004/08/events/event"
+    },
+    "System": {
+      "Provider": {
+        "#attributes": {
+          "Name": "Microsoft-Windows-Sysmon",
+          "Guid": "5770385F-C22A-43E0-BF4C-06F5698FFBD9"
+        }
+      },
+      "EventID": 1,
+      "Version": 5,
+      "Level": 4,
+      "Task": 1,
+      "Opcode": 0,
+      "Keywords": "0x8000000000000000",
+      "TimeCreated": {
+        "#attributes": {
+          "SystemTime": "2025-12-10T04:33:20.562782Z"
+        }
+      },
+      "EventRecordID": 18463,
+      "Correlation": null,
+      "Execution": {
+        "#attributes": {
+          "ProcessID": 3208,
+          "ThreadID": 1724
+        }
+      },
+      "Channel": "Microsoft-Windows-Sysmon/Operational",
+      "Computer": "swachchhanda",
+      "Security": {
+        "#attributes": {
+          "UserID": "S-1-5-18"
+        }
+      }
+    },
+    "EventData": {
+      "RuleName": "-",
+      "UtcTime": "2025-12-10 04:33:20.557",
+      "ProcessGuid": "0197231E-F810-6938-B710-000000000800",
+      "ProcessId": 7732,
+      "Image": "C:\\Windows\\System32\\bitsadmin.exe",
+      "CommandLine": "bitsadmin  /transfer n https://www.atomicredteam.io/atomic-red-team/atomics/T1218.011 hello.html",
+      "User": "swachchhanda\\xodih",
+      "Hashes": "MD5=4FCFE1D61E6D962F06CE2B61FC11BC0F,SHA256=6FEB16602A2FD1158C6F7E56E3B05A5E9AC01E88089535978C890EC6954A5AFA,IMPHASH=44794EEDDEB70144ABA2F1483E762F30"
+    }
+  }
 }
 ```
+
+Notable conventions:
+- XML attributes are stored under a `#attributes` key (e.g. `Provider`, `TimeCreated`).
+- `EventData` keeps its **original** key names — spaces included (e.g. `"RuleName"`, not `Rule_Name`).
+  `event_json` (the detection-engine form) strips those spaces; `event_json_raw` (this file) does not.
+- Numeric values keep their native JSON type (e.g. `"EventID": 1`, not `"1"`).
 
 ### `info.yml`
 
 ```yaml
 id: <uuid>                                    # UUID v4 unique per info.yml entry
 description: N/A
-date: 2025-07-09
-author: <rule_author_from_yaml>                # extracted from the rule YAML
+date: 2025-12-10
+author: <config.git.author>                   # from config.git.author (fallback: "Sigma Regression Generator")
 rule_metadata:
     - id: <rule_id>
       title: <rule_title>

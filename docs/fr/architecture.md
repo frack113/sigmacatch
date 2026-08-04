@@ -2,7 +2,7 @@
 
 ## Cargo workspace
 
-Le projet est un cargo workspace de 11 packages (1 crate binaire avec 2 binaires + 10 bibliothèques) :
+Le projet est un cargo workspace de 11 packages (2 crates binaires + 9 bibliothèques) :
 
 ```
 sigmacatch/
@@ -12,7 +12,7 @@ sigmacatch/
 │   ├── sigmacatch-logger/        # Abonnement tracing à deux couches (stderr info + fichier journal rolling debug)
 │   ├── sigmacatch-rule/          # SigmahqRules : chargement de règles (parse_sigma_yaml), filtre, dédupe, channels()
 │   ├── sigmacatch-detection/     # Wrapper DetectionEngine + pipelines embarquées (windows.yml, flatten_winevt.yml)
-│   ├── input-windows-channels/   # Résolution LogSource, taxonomie (tables phf), collecteur Winevt (cfg(windows))
+│   ├── input-windows-channels/   # Collecteur Winevt multi-channel (cfg(windows))
 │   ├── sigmacatch-regression/    # SigmahqRegression (get_sigma_id, add, retire), InfoYml, triplet
 │   ├── sigmacatch-types/         # Types partagés : Event, Alert, RegressionHeader + parsing XML + tables de mapping logsource
 │   ├── sigmacatch-repo/          # wrapper grit-lib + SigmaRepo + opérations git
@@ -71,6 +71,7 @@ dépend de `rsigma-parser`. `sigmacatch-config` dépend de `sigmacatch-repo` + `
 2. init_logger() → tracing (stderr info + fichier debug)
 3. ensure_dirs() → dossier repo sigma + logs/
 4. SigmaRepo init (remote_url = fork, branche de travail, token) → init() [clone/fetch]
+   └── set_working_branch() → check_remote_working_branch() (garde sur branche du même jour)
 5. SigmahqRegression::new() → charge les info.yml existants depuis ./sigma/regression_data
    └── existing_rules = regression.get_sigma_id() → HashSet<Uuid> (vide avec --all-rules)
 6. SigmahqRules::new() → chargement + dédupe ; remove_id() par règle skipée
@@ -80,13 +81,13 @@ dépend de `rsigma-parser`. `sigmacatch-config` dépend de `sigmacatch-repo` + `
    └── cycle_channels = rules.channels(&custom_map) ; 0 channels → warn + return
 8. DetectionEngine::new(&rules)  (pipelines + bloom + LogSourceExtractor)
    └── --channels-only → affiche les channels + sortie
-10. output_base = <sigma_repo_path>/regression_data ; clean_partial_artifacts()
-11. EventCollector::new(cycle_channels).run(tx, stop) → task tokio
-12. Boucle : tokio::select!
+9. output_base = <sigma_repo_path>/regression_data ; clean_partial_artifacts()
+10. EventCollector::new(cycle_channels).run(tx, stop) → task tokio
+11. Boucle : tokio::select!
     ├── shutdown_rx (Ctrl+C) → break
     ├── event depuis rx → engine.put_events(vec![event])
-    └── generate_interval (30s) → process_and_generate() → commit_files() si fichiers
-13. Flush final : drain des events restants → process_and_generate() → commit → push() fork
+    └── generate_interval (30s) → process_and_generate() → upload_regression() si fichiers
+12. Flush final : drain des events restants → process_and_generate() → commit → push() fork
 ```
 
 `process_and_generate()` :

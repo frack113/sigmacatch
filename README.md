@@ -102,16 +102,16 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 
 ## Workspace
 
-The project is a cargo workspace of 11 crates (10 lib crates + 1 binary crate with 2 bins):
+The project is a cargo workspace of 11 crates (9 libraries + 2 binary crates):
 
 | Crate | Purpose |
 |---|---|
 | `sigmacatch` | Binary + orchestration (continuous loop) |
 | `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml + dry-run git diagnostics |
 | `sigmacatch-logger` | Two-layer tracing subscriber (stderr info + daily rolling file debug) |
-| `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication |
+| `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication, channel resolution |
 | `sigmacatch-detection` | Thin wrapper around rsigma-eval (pipelines, bloom, LogSourceExtractor) |
-| `input-windows-channels` | Channel/logsource mapping + multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) |
+| `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) |
 | `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, regression triplet generation |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
 | `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, GitHub fork detection, commit workflow |
