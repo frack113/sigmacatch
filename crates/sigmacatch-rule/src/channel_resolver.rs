@@ -121,6 +121,7 @@ static LOGSOURCE_CHANNELS: phf::Map<
     ],
     ("windows", "", "raw_access_thread") => &["Microsoft-Windows-Sysmon/Operational"],
     ("windows", "", "registry_add") => &["Microsoft-Windows-Sysmon/Operational"],
+    ("windows", "", "registry_delete") => &["Microsoft-Windows-Sysmon/Operational"],
     ("windows", "", "registry_event") => &["Microsoft-Windows-Sysmon/Operational"],
     ("windows", "", "registry_rename") => &["Microsoft-Windows-Sysmon/Operational"],
     ("windows", "", "registry_set") => &["Microsoft-Windows-Sysmon/Operational"],
@@ -165,6 +166,7 @@ static LOGSOURCE_CHANNELS: phf::Map<
     ("windows", "sysmon", "process_termination") => &["Microsoft-Windows-Sysmon/Operational"],
     ("windows", "sysmon", "raw_access_thread") => &["Microsoft-Windows-Sysmon/Operational"],
     ("windows", "sysmon", "registry_add") => &["Microsoft-Windows-Sysmon/Operational"],
+    ("windows", "sysmon", "registry_delete") => &["Microsoft-Windows-Sysmon/Operational"],
     ("windows", "sysmon", "registry_event") => &["Microsoft-Windows-Sysmon/Operational"],
     ("windows", "sysmon", "registry_rename") => &["Microsoft-Windows-Sysmon/Operational"],
     ("windows", "sysmon", "registry_set") => &["Microsoft-Windows-Sysmon/Operational"],
@@ -316,6 +318,17 @@ mod tests {
     #[test]
     fn test_resolve_subcategory() {
         let channels = resolve("  product: windows\n  service: sysmon\n  category: registry_add\n");
+        assert_eq!(channels, vec!["Microsoft-Windows-Sysmon/Operational"]);
+    }
+
+    #[test]
+    fn test_resolve_registry_delete() {
+        // (service, category) lookup path
+        let channels =
+            resolve("  product: windows\n  service: sysmon\n  category: registry_delete\n");
+        assert_eq!(channels, vec!["Microsoft-Windows-Sysmon/Operational"]);
+        // category-only lookup path (no service)
+        let channels = resolve("  product: windows\n  category: registry_delete\n");
         assert_eq!(channels, vec!["Microsoft-Windows-Sysmon/Operational"]);
     }
 
