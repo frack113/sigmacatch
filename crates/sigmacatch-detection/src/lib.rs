@@ -13,6 +13,8 @@ use rsigma_eval::{Engine, LogSourceExtractor};
 use sigmacatch_rule::SigmahqRules;
 use sigmacatch_types::{Alert, Event};
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Embedded pipeline for flattening Winevt XML event structure.
@@ -26,7 +28,10 @@ pub struct DetectionEngine {
     events: Vec<Event>,
     alerts: Vec<Alert>,
     stats: EngineStats,
-    rule_paths: HashMap<Uuid, std::path::PathBuf>,
+    /// UUID → file path, shared via Arc to avoid cloning on reload.
+    rule_paths: Arc<HashMap<Uuid, PathBuf>>,
+    /// rule_id string → Uuid, built once for O(1) lookup in the hot path.
+    rule_id_map: HashMap<String, Uuid>,
 }
 
 impl DetectionEngine {
@@ -36,12 +41,23 @@ impl DetectionEngine {
             .add_collection(&rules.to_collection())
             .map_err(|e| anyhow!("Engine add_collection failed: {e}"))?;
 
+        let rule_paths = Arc::new(rules.rule_paths().clone());
+        let mut rule_id_map: HashMap<String, Uuid> = HashMap::with_capacity(rule_paths.len());
+        for (uuid, path) in rule_paths.iter() {
+            if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                if let Ok(uid) = Uuid::parse_str(name) {
+                    rule_id_map.insert(uid.to_string(), *uuid);
+                }
+            }
+        }
+
         Ok(Self {
             engine,
             events: Vec::new(),
             alerts: Vec::new(),
             stats: EngineStats::default(),
-            rule_paths: rules.rule_paths().clone(),
+            rule_paths,
+            rule_id_map,
         })
     }
 
@@ -51,7 +67,16 @@ impl DetectionEngine {
             .add_collection(&rules.to_collection())
             .map_err(|e| anyhow!("Engine reload_rules failed: {e}"))?;
         self.engine = engine;
-        self.rule_paths = rules.rule_paths().clone();
+        let rule_paths = rules.rule_paths().clone();
+        self.rule_id_map.clear();
+        for (uuid, path) in rule_paths.iter() {
+            if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                if let Ok(uid) = Uuid::parse_str(name) {
+                    self.rule_id_map.insert(uid.to_string(), *uuid);
+                }
+            }
+        }
+        self.rule_paths = Arc::new(rule_paths);
         Ok(())
     }
 
@@ -146,7 +171,7 @@ impl DetectionEngine {
                     .header
                     .rule_id
                     .as_deref()
-                    .and_then(|id| Uuid::parse_str(id).ok())
+                    .and_then(|id| self.rule_id_map.get(id).copied())
                     .unwrap_or(Uuid::nil());
                 let rule_path = self.rule_paths.get(&rule_id).cloned();
                 let alert = Alert {
