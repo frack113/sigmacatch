@@ -171,16 +171,15 @@ transformations:
 
 
 
-  # EventID 19: wmi_event
-  - id: win_wmi_event_19
+  # EventID 19/20/21: wmi_event
+  - id: win_wmi_event
     type: add_condition
     conditions:
-      Event.System.EventID: 19
+      Event.System.EventID: [19, 20, 21]
     rule_conditions:
       - type: logsource
         category: wmi_event
         product: windows
-
 
   # EventID 22: dns_query
   - id: win_dns_query
@@ -273,51 +272,32 @@ transformations:
         category: sysmon_error
         product: windows
 
-  # - id: win_registry_event
-  #   type: add_condition
-  #   conditions:
-  #     Event.System.EventID:
-  #       - 12
-  #       - 13
-  #       - 14
-  #   rule_conditions:
-  #     - type: logsource
-  #       category: registry_event
-  #       product: windows
+  # EventID 12/13/14: registry_event (parent category — any registry op)
+  - id: win_registry_event
+    type: add_condition
+    conditions:
+      Event.System.EventID: [12, 13, 14]
+    rule_conditions:
+      - type: logsource
+        category: registry_event
+        product: windows
 
-  # EventID 4: sysmon_status (system status events)
-  # - id: win_sysmon_status_4
-  #   type: add_condition
-  #   conditions:
-  #     Event.System.EventID: 
-  #       - 4
-  #       - 16
-  #   rule_conditions:
-  #     - type: logsource
-  #       category: sysmon_status
-  #       product: windows
+  # EventID 4/16: sysmon_status (system status events)
+  - id: win_sysmon_status
+    type: add_condition
+    conditions:
+      Event.System.EventID: [4, 16]
+    rule_conditions:
+      - type: logsource
+        category: sysmon_status
+        product: windows
 
-
-  # EventID 20: wmi_event
-  # - id: win_wmi_event_20
-  #   type: add_condition
-  #   conditions:
-  #     Event.System.EventID: 
-  #       - 20
-  #       - 21
-  #   rule_conditions:
-  #     - type: logsource
-  #       category: wmi_event
-  #       product: windows
-
-  # EventID 17+18: pipe_created (OR — each event has exactly one EID)
-  # - id: win_pipe_created
-  #   type: add_condition
-  #   conditions:
-  #     Event.System.EventID:
-  #       - 17
-  #       - 18
-  #   rule_conditions:
-  #     - type: logsource
-  #       category: pipe_created
-  #       product: windows
+  # EventID 17/18: pipe_created (OR — each event has exactly one EID)
+  - id: win_pipe_created
+    type: add_condition
+    conditions:
+      Event.System.EventID: [17, 18]
+    rule_conditions:
+      - type: logsource
+        category: pipe_created
+        product: windows
