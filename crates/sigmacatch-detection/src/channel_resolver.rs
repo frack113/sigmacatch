@@ -144,16 +144,21 @@ pub(crate) fn resolve_channels(
 
         let mut targets: Vec<&str> = Vec::new();
         if let Some(s) = service {
-            if let Some(static_targets) = SERVICE_CHANNELS.get(s) {
+            // Sigma `service` is conventionally lowercase, but normalize the
+            // lookup so a mixed-case value (e.g. "Sysmon") still resolves
+            // against the lowercase table instead of being silently skipped.
+            let service_key = s.to_ascii_lowercase();
+            if let Some(static_targets) = SERVICE_CHANNELS.get(service_key.as_str()) {
                 targets.extend(static_targets.iter().copied());
             }
             for (channel, custom_service) in custom_map {
-                if custom_service == s {
+                if custom_service.as_str().eq_ignore_ascii_case(s) {
                     targets.push(channel);
                 }
             }
         } else if let Some(c) = category {
-            if let Some(static_targets) = CATEGORY_CHANNELS.get(c) {
+            let category_key = c.to_ascii_lowercase();
+            if let Some(static_targets) = CATEGORY_CHANNELS.get(category_key.as_str()) {
                 targets.extend(static_targets.iter().copied());
             }
         }

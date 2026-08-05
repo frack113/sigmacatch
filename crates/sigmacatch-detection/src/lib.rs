@@ -520,4 +520,18 @@ detection:
         let channels = channels_for("  product: windows\n  service: nonexistent\n");
         assert!(channels.is_empty());
     }
+
+    #[test]
+    fn test_resolve_channels_service_case_insensitive() {
+        // "Sysmon" (mixed case) must resolve just like "sysmon".
+        let channels = channels_for("  product: windows\n  service: Sysmon\n");
+        assert_eq!(channels, vec!["Microsoft-Windows-Sysmon/Operational"]);
+    }
+
+    #[test]
+    fn test_resolve_channels_category_case_insensitive() {
+        // "Login" (mixed case) must resolve just like "login".
+        let channels = channels_for("  product: windows\n  category: Login\n");
+        assert_eq!(channels, vec!["Security"]);
+    }
 }
