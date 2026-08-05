@@ -304,4 +304,75 @@ detection:
         engine.reload_rules(&rules).unwrap();
         assert_eq!(engine.rule_count(), 0);
     }
+
+    fn rule_with_category(id: &str, category: &str) -> String {
+        format!(
+            r#"title: {category} rule
+id: {id}
+status: stable
+level: critical
+author: Test Author
+logsource:
+  product: windows
+  category: {category}
+detection:
+  selection:
+    foo: bar
+  condition: selection
+"#
+        )
+    }
+
+    fn evaluate_eventid(category: &str, event_id: u32) -> usize {
+        let dir = tempfile::tempdir().unwrap();
+        let sigma_dir = dir.path().join("sigma");
+        let rules_dir = sigma_dir.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("cat_rule.yml"),
+            rule_with_category("11111111-1111-1111-1111-111111111111", category),
+        )
+        .unwrap();
+
+        let rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
+        let mut engine = DetectionEngine::new(&rules).unwrap();
+        let event_json = serde_json::json!({
+            "Event": { "System": { "EventID": event_id } },
+            "foo": "bar"
+        });
+        let event = Event::new(event_json.clone(), event_json, Vec::new());
+        engine.put_events(vec![event]);
+        engine.process_events();
+        engine.get_alerts().len()
+    }
+
+    #[test]
+    fn test_list_valued_add_condition_wmi_event() {
+        assert_eq!(evaluate_eventid("wmi_event", 19), 1);
+        assert_eq!(evaluate_eventid("wmi_event", 20), 1);
+        assert_eq!(evaluate_eventid("wmi_event", 21), 1);
+        assert_eq!(evaluate_eventid("wmi_event", 1), 0);
+    }
+
+    #[test]
+    fn test_list_valued_add_condition_sysmon_status() {
+        assert_eq!(evaluate_eventid("sysmon_status", 4), 1);
+        assert_eq!(evaluate_eventid("sysmon_status", 16), 1);
+        assert_eq!(evaluate_eventid("sysmon_status", 1), 0);
+    }
+
+    #[test]
+    fn test_list_valued_add_condition_pipe_created() {
+        assert_eq!(evaluate_eventid("pipe_created", 17), 1);
+        assert_eq!(evaluate_eventid("pipe_created", 18), 1);
+        assert_eq!(evaluate_eventid("pipe_created", 1), 0);
+    }
+
+    #[test]
+    fn test_list_valued_add_condition_registry_event() {
+        assert_eq!(evaluate_eventid("registry_event", 12), 1);
+        assert_eq!(evaluate_eventid("registry_event", 13), 1);
+        assert_eq!(evaluate_eventid("registry_event", 14), 1);
+        assert_eq!(evaluate_eventid("registry_event", 1), 0);
+    }
 }
