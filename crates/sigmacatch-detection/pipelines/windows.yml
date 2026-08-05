@@ -301,3 +301,204 @@ transformations:
       - type: logsource
         category: pipe_created
         product: windows
+
+  # Rewrite the logsource service for every category routed above so embedders
+  # derive the Windows event channel from the post-pipeline logsource (#437)
+  # instead of duplicating the category → service mapping in the resolver.
+  # Each block uses the same logsource gate as its matching add_condition above.
+  - id: win_route_process_creation
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: process_creation
+        product: windows
+  - id: win_route_file_change
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: file_change
+        product: windows
+  - id: win_route_network_connection
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: network_connection
+        product: windows
+  - id: win_route_process_termination
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: process_termination
+        product: windows
+  - id: win_route_driver_load
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: driver_load
+        product: windows
+  - id: win_route_image_load
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: image_load
+        product: windows
+  - id: win_route_create_remote_thread
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: create_remote_thread
+        product: windows
+  - id: win_route_raw_access_thread
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: raw_access_thread
+        product: windows
+  - id: win_route_process_access
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: process_access
+        product: windows
+  - id: win_route_file_event
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: file_event
+        product: windows
+  - id: win_route_registry_add
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: registry_add
+        product: windows
+  - id: win_route_registry_delete
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: registry_delete
+        product: windows
+  - id: win_route_registry_set
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: registry_set
+        product: windows
+  - id: win_route_registry_rename
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: registry_rename
+        product: windows
+  - id: win_route_create_stream_hash
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: create_stream_hash
+        product: windows
+  - id: win_route_wmi_event
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: wmi_event
+        product: windows
+  - id: win_route_dns_query
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: dns_query
+        product: windows
+  - id: win_route_file_delete
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: file_delete
+        product: windows
+  - id: win_route_clipboard_capture
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: clipboard_capture
+        product: windows
+  - id: win_route_process_tampering
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: process_tampering
+        product: windows
+  - id: win_route_file_delete_detected
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: file_delete_detected
+        product: windows
+  - id: win_route_file_block_executable
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: file_block_executable
+        product: windows
+  - id: win_route_file_block_shredding
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: file_block_shredding
+        product: windows
+  - id: win_route_file_executable_detected
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: file_executable_detected
+        product: windows
+  - id: win_route_sysmon_error
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: sysmon_error
+        product: windows
+  - id: win_route_registry_event
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: registry_event
+        product: windows
+  - id: win_route_sysmon_status
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: sysmon_status
+        product: windows
+  - id: win_route_pipe_created
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: pipe_created
+        product: windows

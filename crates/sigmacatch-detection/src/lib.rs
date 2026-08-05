@@ -23,6 +23,8 @@ pub const FLATTEN_WINEVT_PIPELINE: &str = include_str!("../pipelines/flatten_win
 /// Embedded pipeline for Windows Sigma rule transformation.
 pub const WINDOWS_PIPELINE: &str = include_str!("../pipelines/windows.yml");
 
+mod channel_resolver;
+
 pub struct DetectionEngine {
     engine: Engine,
     events: Vec<Event>,
@@ -107,6 +109,14 @@ impl DetectionEngine {
 
     pub fn rule_count(&self) -> usize {
         self.engine.rule_count()
+    }
+
+    /// Resolve the Windows event channels to collect, reading the
+    /// post-pipeline logsource of the compiled rules (#437). The `windows`
+    /// pipeline rewrites sysmon categories to `service: sysmon`, so this
+    /// needs no duplicated category → service mapping.
+    pub fn resolve_channels(&self, custom_map: &HashMap<String, String>) -> Vec<String> {
+        channel_resolver::resolve_channels(self.engine.rules(), custom_map)
     }
 
     pub fn engine(&self) -> &Engine {
@@ -374,5 +384,140 @@ detection:
         assert_eq!(evaluate_eventid("registry_event", 13), 1);
         assert_eq!(evaluate_eventid("registry_event", 14), 1);
         assert_eq!(evaluate_eventid("registry_event", 1), 0);
+    }
+
+    fn channels_for(logsource: &str) -> Vec<String> {
+        let dir = tempfile::tempdir().unwrap();
+        let sigma_dir = dir.path().join("sigma");
+        let rules_dir = sigma_dir.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        let yaml = format!(
+            r#"title: channel rule
+id: 11111111-1111-1111-1111-111111111111
+status: stable
+author: Test Author
+logsource:
+{logsource}
+detection:
+  selection:
+    foo: bar
+  condition: selection
+"#
+        );
+        fs::write(rules_dir.join("chan_rule.yml"), yaml).unwrap();
+        let rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
+        let engine = DetectionEngine::new(&rules).unwrap();
+        engine.resolve_channels(&HashMap::new())
+    }
+
+    #[test]
+    fn test_resolve_channels_pipeline_rewrites_sysmon_category() {
+        // process_creation is routed to service: sysmon by the windows
+        // pipeline (#437) → the Security channel is no longer collected.
+        let channels = channels_for("  product: windows\n  category: process_creation\n");
+        assert_eq!(channels, vec!["Microsoft-Windows-Sysmon/Operational"]);
+    }
+
+    #[test]
+    fn test_resolve_channels_sysmon_subcategory() {
+        let channels = channels_for("  product: windows\n  category: registry_delete\n");
+        assert_eq!(channels, vec!["Microsoft-Windows-Sysmon/Operational"]);
+    }
+
+    #[test]
+    fn test_resolve_channels_service_only() {
+        let channels = channels_for("  product: windows\n  service: sysmon\n");
+        assert_eq!(channels, vec!["Microsoft-Windows-Sysmon/Operational"]);
+    }
+
+    #[test]
+    fn test_resolve_channels_service_security() {
+        let channels = channels_for("  product: windows\n  service: security\n");
+        assert_eq!(channels, vec!["Security"]);
+    }
+
+    #[test]
+    fn test_resolve_channels_unrouted_category() {
+        // login is not routed by the pipeline → falls back to category.
+        let channels = channels_for("  product: windows\n  category: login\n");
+        assert_eq!(channels, vec!["Security"]);
+    }
+
+    #[test]
+    fn test_resolve_channels_ps_module() {
+        let channels = channels_for("  product: windows\n  category: ps_module\n");
+        assert_eq!(
+            channels,
+            vec![
+                "Microsoft-Windows-PowerShell/Operational".to_string(),
+                "PowerShellCore/Operational".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_resolve_channels_custom_map() {
+        let dir = tempfile::tempdir().unwrap();
+        let sigma_dir = dir.path().join("sigma");
+        let rules_dir = sigma_dir.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("chan_rule.yml"),
+            rule_with_category("11111111-1111-1111-1111-111111111111", "process_creation"),
+        )
+        .unwrap();
+        let rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
+        let engine = DetectionEngine::new(&rules).unwrap();
+        let mut custom_map = HashMap::new();
+        custom_map.insert(
+            "Custom-Channel/Operational".to_string(),
+            "sysmon".to_string(),
+        );
+        let channels = engine.resolve_channels(&custom_map);
+        assert_eq!(
+            channels,
+            vec![
+                "Custom-Channel/Operational".to_string(),
+                "Microsoft-Windows-Sysmon/Operational".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_resolve_channels_union_across_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let sigma_dir = dir.path().join("sigma");
+        let rules_dir = sigma_dir.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("a_proc.yml"),
+            rule_with_category("11111111-1111-1111-1111-111111111111", "process_creation"),
+        )
+        .unwrap();
+        let yaml = rule_with_category("22222222-2222-2222-2222-222222222222", "login")
+            .replace("category: login", "category: login\n  service: security");
+        fs::write(rules_dir.join("b_login.yml"), yaml).unwrap();
+        let rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
+        let engine = DetectionEngine::new(&rules).unwrap();
+        let channels = engine.resolve_channels(&HashMap::new());
+        assert_eq!(
+            channels,
+            vec![
+                "Microsoft-Windows-Sysmon/Operational".to_string(),
+                "Security".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_resolve_channels_ignores_non_windows() {
+        let channels = channels_for("  product: linux\n  category: process_creation\n");
+        assert!(channels.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_channels_unknown_service() {
+        let channels = channels_for("  product: windows\n  service: nonexistent\n");
+        assert!(channels.is_empty());
     }
 }

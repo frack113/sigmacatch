@@ -8,14 +8,12 @@ pub use rsigma_parser::{parse_sigma_yaml, Level, LogSource, SigmaCollection, Sig
 pub(crate) use crate::discover::find_rules_dirs;
 pub use crate::thresholds::{LoadStats, MinLevel, MinStatus};
 
-pub(crate) mod channel_resolver;
 pub(crate) mod discover;
 pub(crate) mod thresholds;
 
 // Note: init_from_sigma_path was removed; use SigmahqRules::new() for production,
 // SigmahqRules::new_from_path() for tests with custom directories.
 
-use crate::channel_resolver::resolve_channels;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -269,10 +267,6 @@ impl SigmahqRules {
             .retain(|r| r.id.as_deref() != Some(id_str.as_str()));
         self.rule_paths.remove(id);
         self.rules.len() != before
-    }
-
-    pub fn channels(&self, custom_map: &HashMap<String, String>) -> Vec<String> {
-        resolve_channels(&self.rules, custom_map)
     }
 
     pub fn to_collection(&self) -> SigmaCollection {
@@ -580,42 +574,6 @@ detection:
 
         assert!(!set.remove_id(&id_absent));
         assert_eq!(set.len(), 1);
-    }
-
-    #[test]
-    fn test_ruleset_channels_dedup() {
-        let tmp = tempfile::tempdir().unwrap();
-        let sigma = tmp.path().join("sigma");
-        let rules_dir = sigma.join("rules");
-        fs::create_dir_all(&rules_dir).unwrap();
-
-        let service_only = MINIMAL_RULE
-            .replace(
-                "id: 11111111-1111-1111-1111-111111111111",
-                "id: 22222222-2222-2222-2222-222222222222",
-            )
-            .replace("  category: process_creation\n", "");
-        let linux = MINIMAL_RULE
-            .replace(
-                "id: 11111111-1111-1111-1111-111111111111",
-                "id: 33333333-3333-3333-3333-333333333333",
-            )
-            .replace("  product: windows", "  product: linux");
-
-        write_rules(
-            &rules_dir,
-            &[
-                ("a_sysmon_proc.yml", MINIMAL_RULE),
-                ("b_sysmon_only.yml", &service_only),
-                ("c_linux.yml", &linux),
-            ],
-        );
-
-        let set = SigmahqRules::new_from_path(&sigma).unwrap();
-        assert_eq!(set.len(), 3);
-
-        let channels = set.channels(&HashMap::new());
-        assert_eq!(channels, vec!["Microsoft-Windows-Sysmon/Operational"]);
     }
 
     #[test]
