@@ -1518,7 +1518,7 @@ mod tests {
         let system = event["System"].as_object().unwrap();
         assert_eq!(system["EventID"].as_u64().unwrap(), 1);
         assert_eq!(system["EventRecordID"].as_u64().unwrap(), 11418519);
-        assert_eq!(system["Correlation"].is_null(), true);
+        assert!(system["Correlation"].is_null());
 
         let provider_attrs = system["Provider"]["#attributes"].as_object().unwrap();
         assert_eq!(
