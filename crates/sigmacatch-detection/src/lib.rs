@@ -8,7 +8,7 @@
 
 use anyhow::{anyhow, Result};
 use rsigma_eval::event::JsonEvent;
-use rsigma_eval::pipeline::parse_pipeline;
+use rsigma_eval::pipeline::{parse_pipeline, Pipeline};
 use rsigma_eval::{Engine, LogSourceExtractor};
 use sigmacatch_rule::SigmahqRules;
 use sigmacatch_types::{Alert, Event};
@@ -27,6 +27,10 @@ mod channel_resolver;
 
 pub struct DetectionEngine {
     engine: Engine,
+    /// Cached parsed pipelines — cloned (not re-parsed) on reload_rules to
+    /// avoid YAML parsing overhead each cycle.
+    flatten_pipeline: Pipeline,
+    windows_pipeline: Pipeline,
     events: Vec<Event>,
     alerts: Vec<Alert>,
     stats: EngineStats,
@@ -38,23 +42,34 @@ pub struct DetectionEngine {
 
 impl DetectionEngine {
     pub fn new(rules: &SigmahqRules) -> Result<Self> {
-        let mut engine = Self::create_engine()?;
-        engine
-            .add_collection(&rules.to_collection())
-            .map_err(|e| anyhow!("Engine add_collection failed: {e}"))?;
+        let flatten = parse_pipeline(FLATTEN_WINEVT_PIPELINE)
+            .map_err(|e| anyhow!("flatten_winevt pipeline: {e}"))?;
+        let windows =
+            parse_pipeline(WINDOWS_PIPELINE).map_err(|e| anyhow!("windows pipeline: {e}"))?;
+        let mut engine = Self::create_engine(&flatten, &windows)?;
+
+        // Use add_rules (references) instead of add_collection(&to_collection())
+        // to avoid cloning the entire Vec<SigmaRule> — add_rules takes &[SigmaRule]
+        // and rebuilds indexes once at the end.
+        let errors = engine.add_rules(rules.rules());
+        if !errors.is_empty() {
+            for (idx, err) in &errors {
+                tracing::error!("Rule at index {idx} failed to compile: {err}");
+            }
+            anyhow::bail!(
+                "Engine add_rules: {} rule(s) failed to compile out of {}",
+                errors.len(),
+                rules.len()
+            );
+        }
 
         let rule_paths = Arc::new(rules.rule_paths().clone());
-        let mut rule_id_map: HashMap<String, Uuid> = HashMap::with_capacity(rule_paths.len());
-        for (uuid, path) in rule_paths.iter() {
-            if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                if let Ok(uid) = Uuid::parse_str(name) {
-                    rule_id_map.insert(uid.to_string(), *uuid);
-                }
-            }
-        }
+        let rule_id_map = Self::build_rule_id_map(&rule_paths);
 
         Ok(Self {
             engine,
+            flatten_pipeline: flatten,
+            windows_pipeline: windows,
             events: Vec::new(),
             alerts: Vec::new(),
             stats: EngineStats::default(),
@@ -64,26 +79,36 @@ impl DetectionEngine {
     }
 
     pub fn reload_rules(&mut self, rules: &SigmahqRules) -> Result<()> {
-        let mut engine = Self::create_engine()?;
-        engine
-            .add_collection(&rules.to_collection())
-            .map_err(|e| anyhow!("Engine reload_rules failed: {e}"))?;
-        self.engine = engine;
-        let rule_paths = rules.rule_paths().clone();
-        self.rule_id_map.clear();
-        for (uuid, path) in rule_paths.iter() {
-            if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                if let Ok(uid) = Uuid::parse_str(name) {
-                    self.rule_id_map.insert(uid.to_string(), *uuid);
-                }
+        // Reuse cached pipelines (clone, not re-parse YAML) for the new engine.
+        let mut engine = Self::create_engine(&self.flatten_pipeline, &self.windows_pipeline)?;
+
+        let errors = engine.add_rules(rules.rules());
+        if !errors.is_empty() {
+            for (idx, err) in &errors {
+                tracing::warn!("Rule at index {idx} failed to compile: {err}");
             }
         }
+
+        self.engine = engine;
+        let rule_paths = rules.rule_paths().clone();
+        self.rule_id_map = Self::build_rule_id_map(&rule_paths);
         self.rule_paths = Arc::new(rule_paths);
         Ok(())
     }
 
+    /// Build the rule_id string → Uuid lookup map directly from the HashMap keys,
+    /// avoiding redundant Uuid::parse_str on file stems. The `rule_paths` keys
+    /// are already parsed UUIDs from `rule.id`, so we just stringify them.
+    fn build_rule_id_map(rule_paths: &HashMap<Uuid, PathBuf>) -> HashMap<String, Uuid> {
+        let mut map: HashMap<String, Uuid> = HashMap::with_capacity(rule_paths.len());
+        for uuid in rule_paths.keys() {
+            map.insert(uuid.to_string(), *uuid);
+        }
+        map
+    }
+
     /// Create a fresh rsigma-eval Engine with pipelines + optimizations.
-    fn create_engine() -> Result<Engine> {
+    fn create_engine(flatten: &Pipeline, windows: &Pipeline) -> Result<Engine> {
         let mut engine = Engine::new();
         engine.set_include_event(true);
 
@@ -97,12 +122,9 @@ impl DetectionEngine {
         // an event without logsource fields evaluates all rules.
         engine.set_logsource_extractor(Some(LogSourceExtractor::new()));
 
-        let flatten =
-            parse_pipeline(FLATTEN_WINEVT_PIPELINE).expect("flatten_winevt pipeline is valid");
-        engine.add_pipeline(flatten);
-
-        let windows = parse_pipeline(WINDOWS_PIPELINE).expect("windows pipeline is valid");
-        engine.add_pipeline(windows);
+        // Clone cached pipelines instead of re-parsing YAML.
+        engine.add_pipeline(flatten.clone());
+        engine.add_pipeline(windows.clone());
 
         Ok(engine)
     }
