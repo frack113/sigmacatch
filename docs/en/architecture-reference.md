@@ -16,8 +16,8 @@ Headless tool that captures real Windows events via **Windows Event Log API** (w
 5. Resolve channels from the loaded rules
 6. Spawn a continuous collector (winevt, one task per channel)
 7. Evaluate every event against all loaded rules (FIFO API)
-8. Every 30s: generate regression output for matched rules, commit to the fork
-9. On Ctrl+C: final flush → commit → push branch to fork
+8. Every 30s: generate regression output for matched rules, commit (per rule) + push (if contrib) to the fork
+9. On Ctrl+C: final flush → commit → push branch to fork (only when `git.contrib: true`)
 
 **Platform:** Windows (winevt + Sysmon required for rich events). Linux/macOS: collector is a no-op stub — the pipeline still runs end-to-end for testing.
 
@@ -239,7 +239,7 @@ engine.process_events() → engine.get_alerts()
 
 `<rule_rel_path>` mirrors the rule path under `sigma/rules/` (e.g.
 `rules/windows/builtin/security/win_security_foo/`). The output always lives inside the sigma
-repo and is committed to the fork.
+repo and is committed to the fork when `git.contrib: true` (local commits otherwise).
 
 ### Step 8 — Shutdown / commit / push
 

@@ -43,10 +43,12 @@ On first run, a `config.yaml` is created with defaults:
 git:
   author: "your-username"
   email: "you@example.com"
-  github_token: ""          # GitHub token (or set GITHUB_TOKEN env var) — required for fork push
+  github_token: ""          # GitHub token (or set GITHUB_TOKEN env var) — required for HTTP transport when network is active
   transport: http           # http or ssh
   sigma_repo_url: "https://github.com/SigmaHQ/sigma.git"
   sigma_repo_path: "sigma"
+  offline: false            # true = skip pull at startup (use existing repo as-is)
+  contrib: true             # true = push commits to remote fork. Default: false (local commits only)
 log:
   level_file: "debug"
 filter:
@@ -60,6 +62,8 @@ filter:
 Rules below the configured `min_status` / `min_level` thresholds are skipped at load time.
 Rules missing a `status` or `level` field are always accepted.
 
+**Contrib is opt-in** (`git.contrib: true` or `--contrib`): pushes regression commits to your fork. By default (`false`) commits stay local. The GitHub token is only required when a network operation is active (`offline: false` or `contrib: true`).
+
 ### CLI flags
 
 | Flag | Description |
@@ -69,6 +73,8 @@ Rules missing a `status` or `level` field are always accepted.
 | `--channels-only` | List resolved channels and exit (no collection) |
 | `--all-rules` | Load all rules — skip set is disabled |
 | `--list-rules` | List rules without regression data and exit (no collection) |
+| `--offline` | Skip pull at startup (use existing repo as-is) |
+| `--contrib` | Enable push to the remote fork for this run |
 
 ## Requirements
 

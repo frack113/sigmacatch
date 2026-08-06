@@ -16,8 +16,8 @@ Outil headless qui capture des événements Windows réels via **Windows Event L
 5. Résoudre les channels depuis les règles chargées
 6. Lancer un collecteur continu (winevt, une task par channel)
 7. Évaluer chaque event contre toutes les règles chargées (API FIFO)
-8. Toutes les 30s : générer la sortie regression pour les règles matchées, commit sur le fork
-9. Sur Ctrl+C : flush final → commit → push de la branche vers le fork
+8. Toutes les 30s : générer la sortie regression pour les règles matchées, commit (par règle) + push (si contrib) sur le fork
+9. Sur Ctrl+C : flush final → commit → push de la branche vers le fork (seulement si `git.contrib: true`)
 
 **Plateforme :** Windows (winevt + Sysmon requis pour des events riches). Linux/macOS : le collecteur est un stub no-op — le pipeline tourne quand même de bout en bout pour les tests.
 
@@ -239,7 +239,7 @@ engine.process_events() → engine.get_alerts()
 
 `<rule_rel_path>` reflète le chemin de la règle sous `sigma/rules/` (ex.
 `rules/windows/builtin/security/win_security_foo/`). La sortie vit toujours dans le repo sigma
-et est commitée sur le fork.
+et est commitée sur le fork si `git.contrib: true` (commits locaux sinon).
 
 ### Étape 8 — Arrêt / commit / push
 

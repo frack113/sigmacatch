@@ -4,31 +4,6 @@ Fonctionnalités identifiées comme utiles mais hors périmètre actuel. Pas de 
 
 ---
 
-## 1. Mode offline
-
-**État :** non implémenté. L'app clone/pull toujours depuis GitHub au démarrage.
-
-**Ce qui manque :**
-- Flag `--offline` pour utiliser le repo sigma/ existant sans fetch réseau
-- Bundle de règles SigmaHQ embarqué dans le binaire (via `include_bytes!` ou fichier shippe avec le release)
-- Pas de dépendance réseau du tout — le binaire fonctionne sur une machine isolée (air-gapped)
-
-**Cas d'usage :** environnements classified/isolés, CI sans accès réseau, tests reproductibles.
-
----
-
-## 2. Mode sans contrib
-
-**État :** contrib est maintenant **toujours actif** — branch, commit, push tournent à chaque run. L'option `contrib` a été supprimée de la config.
-
-**Ce qui manque :**
-- Option `--no-contrib` ou config pour désactiver le workflow contrib (clone upstream local uniquement)
-- Le `regression_tests_path` est quand même ajouté aux fichiers YAML des règles — pourrait être optionnel
-
-**Cas d'usage :** usage interne, audit de rules, génération de données sans intention de contribuer.
-
----
-
 ## 3. Support Linux
 
 **État :** le collector est un stub (`Vec vide`) — la pipeline tourne end-to-end pour les tests, mais ne collecte rien.
@@ -54,20 +29,5 @@ Fonctionnalités identifiées comme utiles mais hors périmètre actuel. Pas de 
 - Gestion des fenêtres temporelles (`timespan`) et des seuils (`field` count)
 
 **Cas d'usage :** détection d'attaques multi-étapes, bruteforce, anomalies comportementales.
-
----
-
-## 5. Optimiser DetectionEngine
-
-**État :** partielle. Les pipelines sont embarquées via `include_str!` depuis `crates/sigmacatch-detection/pipelines/` et appliquées à chaque règle à l'init du moteur.
-
-**Ce qui manque :**
-- Pré-filtrage par event : seulement push dans le moteur les events dont le logsource matche au moins une rule chargée
-- Table de lookup rapide : metadata des rules → logsource keys, construite avant la création de l'engine
-- `rsigma-eval` V2 pipeline : `rsigma-eval 0.30` supporte `set_pipeline` pour switcher les pipelines dynamiquement — router les events vers des engines spécialisés (ex. Sysmon-only, network-only)
-- Évaluation parallèle : `rayon` ou `crossbeam` pour distribuer les events sur plusieurs instances de `engine` pendant `process_events`
-- Caching de compilation des rules : éviter de recompiler la même rule pour chaque event — utiliser le caching interne de `rsigma-eval`
-
-**Cas d'usage :** cycles d'évaluation plus rapides avec des centaines de règles Sigma, empreinte mémoire réduite par évitement du chargement de rules inutiles.
 
 
