@@ -8,11 +8,13 @@
 
 use anyhow::{anyhow, Result};
 use rsigma_eval::event::JsonEvent;
-use rsigma_eval::pipeline::parse_pipeline;
+use rsigma_eval::pipeline::{parse_pipeline, Pipeline};
 use rsigma_eval::{Engine, LogSourceExtractor};
 use sigmacatch_rule::SigmahqRules;
 use sigmacatch_types::{Alert, Event};
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Embedded pipeline for flattening Winevt XML event structure.
@@ -21,42 +23,92 @@ pub const FLATTEN_WINEVT_PIPELINE: &str = include_str!("../pipelines/flatten_win
 /// Embedded pipeline for Windows Sigma rule transformation.
 pub const WINDOWS_PIPELINE: &str = include_str!("../pipelines/windows.yml");
 
+mod channel_resolver;
+
 pub struct DetectionEngine {
     engine: Engine,
+    /// Cached parsed pipelines — cloned (not re-parsed) on reload_rules to
+    /// avoid YAML parsing overhead each cycle.
+    flatten_pipeline: Pipeline,
+    windows_pipeline: Pipeline,
     events: Vec<Event>,
     alerts: Vec<Alert>,
     stats: EngineStats,
-    rule_paths: HashMap<Uuid, std::path::PathBuf>,
+    /// UUID → file path, shared via Arc to avoid cloning on reload.
+    rule_paths: Arc<HashMap<Uuid, PathBuf>>,
+    /// rule_id string → Uuid, built once for O(1) lookup in the hot path.
+    rule_id_map: HashMap<String, Uuid>,
 }
 
 impl DetectionEngine {
     pub fn new(rules: &SigmahqRules) -> Result<Self> {
-        let mut engine = Self::create_engine()?;
-        engine
-            .add_collection(&rules.to_collection())
-            .map_err(|e| anyhow!("Engine add_collection failed: {e}"))?;
+        let flatten = parse_pipeline(FLATTEN_WINEVT_PIPELINE)
+            .map_err(|e| anyhow!("flatten_winevt pipeline: {e}"))?;
+        let windows =
+            parse_pipeline(WINDOWS_PIPELINE).map_err(|e| anyhow!("windows pipeline: {e}"))?;
+        let mut engine = Self::create_engine(&flatten, &windows)?;
+
+        // Use add_rules (references) instead of add_collection(&to_collection())
+        // to avoid cloning the entire Vec<SigmaRule> — add_rules takes &[SigmaRule]
+        // and rebuilds indexes once at the end.
+        let errors = engine.add_rules(rules.rules());
+        if !errors.is_empty() {
+            for (idx, err) in &errors {
+                tracing::error!("Rule at index {idx} failed to compile: {err}");
+            }
+            anyhow::bail!(
+                "Engine add_rules: {} rule(s) failed to compile out of {}",
+                errors.len(),
+                rules.len()
+            );
+        }
+
+        let rule_paths = Arc::new(rules.rule_paths().clone());
+        let rule_id_map = Self::build_rule_id_map(&rule_paths);
 
         Ok(Self {
             engine,
+            flatten_pipeline: flatten,
+            windows_pipeline: windows,
             events: Vec::new(),
             alerts: Vec::new(),
             stats: EngineStats::default(),
-            rule_paths: rules.rule_paths().clone(),
+            rule_paths,
+            rule_id_map,
         })
     }
 
     pub fn reload_rules(&mut self, rules: &SigmahqRules) -> Result<()> {
-        let mut engine = Self::create_engine()?;
-        engine
-            .add_collection(&rules.to_collection())
-            .map_err(|e| anyhow!("Engine reload_rules failed: {e}"))?;
+        // Reuse cached pipelines (clone, not re-parse YAML) for the new engine.
+        let mut engine = Self::create_engine(&self.flatten_pipeline, &self.windows_pipeline)?;
+
+        let errors = engine.add_rules(rules.rules());
+        if !errors.is_empty() {
+            for (idx, err) in &errors {
+                tracing::warn!("Rule at index {idx} failed to compile: {err}");
+            }
+        }
+
         self.engine = engine;
-        self.rule_paths = rules.rule_paths().clone();
+        let rule_paths = rules.rule_paths().clone();
+        self.rule_id_map = Self::build_rule_id_map(&rule_paths);
+        self.rule_paths = Arc::new(rule_paths);
         Ok(())
     }
 
+    /// Build the rule_id string → Uuid lookup map directly from the HashMap keys,
+    /// avoiding redundant Uuid::parse_str on file stems. The `rule_paths` keys
+    /// are already parsed UUIDs from `rule.id`, so we just stringify them.
+    fn build_rule_id_map(rule_paths: &HashMap<Uuid, PathBuf>) -> HashMap<String, Uuid> {
+        let mut map: HashMap<String, Uuid> = HashMap::with_capacity(rule_paths.len());
+        for uuid in rule_paths.keys() {
+            map.insert(uuid.to_string(), *uuid);
+        }
+        map
+    }
+
     /// Create a fresh rsigma-eval Engine with pipelines + optimizations.
-    fn create_engine() -> Result<Engine> {
+    fn create_engine(flatten: &Pipeline, windows: &Pipeline) -> Result<Engine> {
         let mut engine = Engine::new();
         engine.set_include_event(true);
 
@@ -70,18 +122,23 @@ impl DetectionEngine {
         // an event without logsource fields evaluates all rules.
         engine.set_logsource_extractor(Some(LogSourceExtractor::new()));
 
-        let flatten =
-            parse_pipeline(FLATTEN_WINEVT_PIPELINE).expect("flatten_winevt pipeline is valid");
-        engine.add_pipeline(flatten);
-
-        let windows = parse_pipeline(WINDOWS_PIPELINE).expect("windows pipeline is valid");
-        engine.add_pipeline(windows);
+        // Clone cached pipelines instead of re-parsing YAML.
+        engine.add_pipeline(flatten.clone());
+        engine.add_pipeline(windows.clone());
 
         Ok(engine)
     }
 
     pub fn rule_count(&self) -> usize {
         self.engine.rule_count()
+    }
+
+    /// Resolve the Windows event channels to collect, reading the
+    /// post-pipeline logsource of the compiled rules (#437). The `windows`
+    /// pipeline rewrites sysmon categories to `service: sysmon`, so this
+    /// needs no duplicated category → service mapping.
+    pub fn resolve_channels(&self, custom_map: &HashMap<String, String>) -> Vec<String> {
+        channel_resolver::resolve_channels(self.engine.rules(), custom_map)
     }
 
     pub fn engine(&self) -> &Engine {
@@ -146,7 +203,7 @@ impl DetectionEngine {
                     .header
                     .rule_id
                     .as_deref()
-                    .and_then(|id| Uuid::parse_str(id).ok())
+                    .and_then(|id| self.rule_id_map.get(id).copied())
                     .unwrap_or(Uuid::nil());
                 let rule_path = self.rule_paths.get(&rule_id).cloned();
                 let alert = Alert {
@@ -278,5 +335,225 @@ detection:
         rules.remove_id(&rule_id);
         engine.reload_rules(&rules).unwrap();
         assert_eq!(engine.rule_count(), 0);
+    }
+
+    fn rule_with_category(id: &str, category: &str) -> String {
+        format!(
+            r#"title: {category} rule
+id: {id}
+status: stable
+level: critical
+author: Test Author
+logsource:
+  product: windows
+  category: {category}
+detection:
+  selection:
+    foo: bar
+  condition: selection
+"#
+        )
+    }
+
+    fn evaluate_eventid(category: &str, event_id: u32) -> usize {
+        let dir = tempfile::tempdir().unwrap();
+        let sigma_dir = dir.path().join("sigma");
+        let rules_dir = sigma_dir.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("cat_rule.yml"),
+            rule_with_category("11111111-1111-1111-1111-111111111111", category),
+        )
+        .unwrap();
+
+        let rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
+        let mut engine = DetectionEngine::new(&rules).unwrap();
+        let event_json = serde_json::json!({
+            "Event": { "System": { "EventID": event_id } },
+            "foo": "bar"
+        });
+        let event = Event::new(event_json.clone(), event_json, Vec::new());
+        engine.put_events(vec![event]);
+        engine.process_events();
+        engine.get_alerts().len()
+    }
+
+    #[test]
+    fn test_list_valued_add_condition_wmi_event() {
+        assert_eq!(evaluate_eventid("wmi_event", 19), 1);
+        assert_eq!(evaluate_eventid("wmi_event", 20), 1);
+        assert_eq!(evaluate_eventid("wmi_event", 21), 1);
+        assert_eq!(evaluate_eventid("wmi_event", 1), 0);
+    }
+
+    #[test]
+    fn test_list_valued_add_condition_sysmon_status() {
+        assert_eq!(evaluate_eventid("sysmon_status", 4), 1);
+        assert_eq!(evaluate_eventid("sysmon_status", 16), 1);
+        assert_eq!(evaluate_eventid("sysmon_status", 1), 0);
+    }
+
+    #[test]
+    fn test_list_valued_add_condition_pipe_created() {
+        assert_eq!(evaluate_eventid("pipe_created", 17), 1);
+        assert_eq!(evaluate_eventid("pipe_created", 18), 1);
+        assert_eq!(evaluate_eventid("pipe_created", 1), 0);
+    }
+
+    #[test]
+    fn test_list_valued_add_condition_registry_event() {
+        assert_eq!(evaluate_eventid("registry_event", 12), 1);
+        assert_eq!(evaluate_eventid("registry_event", 13), 1);
+        assert_eq!(evaluate_eventid("registry_event", 14), 1);
+        assert_eq!(evaluate_eventid("registry_event", 1), 0);
+    }
+
+    fn channels_for(logsource: &str) -> Vec<String> {
+        let dir = tempfile::tempdir().unwrap();
+        let sigma_dir = dir.path().join("sigma");
+        let rules_dir = sigma_dir.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        let yaml = format!(
+            r#"title: channel rule
+id: 11111111-1111-1111-1111-111111111111
+status: stable
+author: Test Author
+logsource:
+{logsource}
+detection:
+  selection:
+    foo: bar
+  condition: selection
+"#
+        );
+        fs::write(rules_dir.join("chan_rule.yml"), yaml).unwrap();
+        let rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
+        let engine = DetectionEngine::new(&rules).unwrap();
+        engine.resolve_channels(&HashMap::new())
+    }
+
+    #[test]
+    fn test_resolve_channels_pipeline_rewrites_sysmon_category() {
+        // process_creation is routed to service: sysmon by the windows
+        // pipeline (#437) → the Security channel is no longer collected.
+        let channels = channels_for("  product: windows\n  category: process_creation\n");
+        assert_eq!(channels, vec!["Microsoft-Windows-Sysmon/Operational"]);
+    }
+
+    #[test]
+    fn test_resolve_channels_sysmon_subcategory() {
+        let channels = channels_for("  product: windows\n  category: registry_delete\n");
+        assert_eq!(channels, vec!["Microsoft-Windows-Sysmon/Operational"]);
+    }
+
+    #[test]
+    fn test_resolve_channels_service_only() {
+        let channels = channels_for("  product: windows\n  service: sysmon\n");
+        assert_eq!(channels, vec!["Microsoft-Windows-Sysmon/Operational"]);
+    }
+
+    #[test]
+    fn test_resolve_channels_service_security() {
+        let channels = channels_for("  product: windows\n  service: security\n");
+        assert_eq!(channels, vec!["Security"]);
+    }
+
+    #[test]
+    fn test_resolve_channels_unrouted_category() {
+        // login is not routed by the pipeline → falls back to category.
+        let channels = channels_for("  product: windows\n  category: login\n");
+        assert_eq!(channels, vec!["Security"]);
+    }
+
+    #[test]
+    fn test_resolve_channels_ps_module() {
+        let channels = channels_for("  product: windows\n  category: ps_module\n");
+        assert_eq!(
+            channels,
+            vec![
+                "Microsoft-Windows-PowerShell/Operational".to_string(),
+                "PowerShellCore/Operational".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_resolve_channels_custom_map() {
+        let dir = tempfile::tempdir().unwrap();
+        let sigma_dir = dir.path().join("sigma");
+        let rules_dir = sigma_dir.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("chan_rule.yml"),
+            rule_with_category("11111111-1111-1111-1111-111111111111", "process_creation"),
+        )
+        .unwrap();
+        let rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
+        let engine = DetectionEngine::new(&rules).unwrap();
+        let mut custom_map = HashMap::new();
+        custom_map.insert(
+            "Custom-Channel/Operational".to_string(),
+            "sysmon".to_string(),
+        );
+        let channels = engine.resolve_channels(&custom_map);
+        assert_eq!(
+            channels,
+            vec![
+                "Custom-Channel/Operational".to_string(),
+                "Microsoft-Windows-Sysmon/Operational".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_resolve_channels_union_across_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let sigma_dir = dir.path().join("sigma");
+        let rules_dir = sigma_dir.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("a_proc.yml"),
+            rule_with_category("11111111-1111-1111-1111-111111111111", "process_creation"),
+        )
+        .unwrap();
+        let yaml = rule_with_category("22222222-2222-2222-2222-222222222222", "login")
+            .replace("category: login", "category: login\n  service: security");
+        fs::write(rules_dir.join("b_login.yml"), yaml).unwrap();
+        let rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
+        let engine = DetectionEngine::new(&rules).unwrap();
+        let channels = engine.resolve_channels(&HashMap::new());
+        assert_eq!(
+            channels,
+            vec![
+                "Microsoft-Windows-Sysmon/Operational".to_string(),
+                "Security".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_resolve_channels_ignores_non_windows() {
+        let channels = channels_for("  product: linux\n  category: process_creation\n");
+        assert!(channels.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_channels_unknown_service() {
+        let channels = channels_for("  product: windows\n  service: nonexistent\n");
+        assert!(channels.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_channels_service_case_insensitive() {
+        // "Sysmon" (mixed case) must resolve just like "sysmon".
+        let channels = channels_for("  product: windows\n  service: Sysmon\n");
+        assert_eq!(channels, vec!["Microsoft-Windows-Sysmon/Operational"]);
+    }
+
+    #[test]
+    fn test_resolve_channels_category_case_insensitive() {
+        // "Login" (mixed case) must resolve just like "login".
+        let channels = channels_for("  product: windows\n  category: Login\n");
+        assert_eq!(channels, vec!["Security"]);
     }
 }

@@ -214,14 +214,23 @@ impl EventCollector {
                             return;
                         }
                         total_sent += 1;
+                        if total_sent >= MAX_EVENTS {
+                            // Zero out unprocessed handles in the current batch to
+                            // avoid leaking Winevt handles on break.
+                            for j in (i + 1)..events_fetched as usize {
+                                if event_handles[j] != 0 {
+                                    unsafe {
+                                        let _ = EvtClose(EVT_HANDLE(event_handles[j]));
+                                    }
+                                    event_handles[j] = 0;
+                                }
+                            }
+                            tracing::warn!(
+                                "Channel '{channel}' reached MAX_EVENTS ({MAX_EVENTS}), stopping initial drain"
+                            );
+                            break;
+                        }
                     }
-                }
-
-                if total_sent >= MAX_EVENTS {
-                    tracing::warn!(
-                        "Channel '{channel}' reached MAX_EVENTS ({MAX_EVENTS}), stopping initial drain"
-                    );
-                    break;
                 }
             }
 

@@ -152,7 +152,20 @@ impl Event {
                     .map(|s| s.to_string())
             });
 
-        let category = get_category(&channel, event_id).map(|s| s.to_string());
+        let category = get_category(&channel, event_id)
+            .map(|c| {
+                // Sysmon EventID 12 covers both registry add (CreateKey) and
+                // registry delete (DeleteKey/DeleteValue). The subcategory table
+                // can only carry one value per channel:event_id, so refine by
+                // EventType here so `registry_delete` rules are not pruned by a
+                // conflicting injected `registry_add` category.
+                if c == "registry_add" && is_registry_delete_event_type(&self.event_json) {
+                    "registry_delete"
+                } else {
+                    c
+                }
+            })
+            .map(str::to_string);
 
         if let Value::Object(ref mut map) = self.event_json {
             map.insert("product".into(), Value::String("windows".into()));
@@ -302,6 +315,18 @@ fn get_category(channel: &str, event_id: u32) -> Option<&'static str> {
         .get(&key)
         .copied()
         .or_else(|| CHANNEL_EVENT_TO_CATEGORY.get(&key).copied())
+}
+
+/// Whether the event's `EventData.EventType` marks a Sysmon registry deletion
+/// (DeleteKey or DeleteValue), refining EventID 12 to the `registry_delete`
+/// Sigma category instead of `registry_add`.
+fn is_registry_delete_event_type(event_json: &Value) -> bool {
+    matches!(
+        event_json
+            .pointer("/Event/EventData/EventType")
+            .and_then(Value::as_str),
+        Some("DeleteKey") | Some("DeleteValue")
+    )
 }
 
 // ─── XML parsing ────────────────────────────────────────────────────────────
@@ -1122,6 +1147,80 @@ mod tests {
     }
 
     #[test]
+    fn test_inject_logsource_fields_registry_eventid12_eventtype() {
+        let mk = |event_type: Option<&str>| {
+            let mut data = serde_json::Map::new();
+            if let Some(et) = event_type {
+                data.insert("EventType".into(), Value::String(et.into()));
+            }
+            serde_json::json!({
+                "Event": {
+                    "System": {
+                        "Provider": { "#attributes": { "Name": "Microsoft-Windows-Sysmon" } },
+                        "EventID": 12,
+                        "Channel": "Microsoft-Windows-Sysmon/Operational"
+                    },
+                    "EventData": Value::Object(data)
+                }
+            })
+        };
+
+        // CreateKey → registry_add
+        let json = mk(Some("CreateKey"));
+        let mut event = Event::new(json.clone(), json, Vec::new());
+        event.inject_logsource_fields();
+        assert_eq!(
+            event.event_json["category"].as_str().unwrap(),
+            "registry_add"
+        );
+
+        // DeleteKey → registry_delete
+        let json = mk(Some("DeleteKey"));
+        let mut event = Event::new(json.clone(), json, Vec::new());
+        event.inject_logsource_fields();
+        assert_eq!(
+            event.event_json["category"].as_str().unwrap(),
+            "registry_delete"
+        );
+
+        // DeleteValue → registry_delete
+        let json = mk(Some("DeleteValue"));
+        let mut event = Event::new(json.clone(), json, Vec::new());
+        event.inject_logsource_fields();
+        assert_eq!(
+            event.event_json["category"].as_str().unwrap(),
+            "registry_delete"
+        );
+
+        // Missing EventType → fall back to registry_add
+        let json = mk(None);
+        let mut event = Event::new(json.clone(), json, Vec::new());
+        event.inject_logsource_fields();
+        assert_eq!(
+            event.event_json["category"].as_str().unwrap(),
+            "registry_add"
+        );
+
+        // Non-registry events keep their own category
+        let json = serde_json::json!({
+            "Event": {
+                "System": {
+                    "Provider": { "#attributes": { "Name": "Microsoft-Windows-Sysmon" } },
+                    "EventID": 1,
+                    "Channel": "Microsoft-Windows-Sysmon/Operational"
+                },
+                "EventData": { "EventType": "DeleteValue" }
+            }
+        });
+        let mut event = Event::new(json.clone(), json, Vec::new());
+        event.inject_logsource_fields();
+        assert_eq!(
+            event.event_json["category"].as_str().unwrap(),
+            "process_creation"
+        );
+    }
+
+    #[test]
     fn test_inject_logsource_fields_provider_fallback() {
         let json = serde_json::json!({
             "Event": {
@@ -1419,7 +1518,7 @@ mod tests {
         let system = event["System"].as_object().unwrap();
         assert_eq!(system["EventID"].as_u64().unwrap(), 1);
         assert_eq!(system["EventRecordID"].as_u64().unwrap(), 11418519);
-        assert_eq!(system["Correlation"].is_null(), true);
+        assert!(system["Correlation"].is_null());
 
         let provider_attrs = system["Provider"]["#attributes"].as_object().unwrap();
         assert_eq!(

@@ -165,14 +165,13 @@ async fn main() -> Result<()> {
     let custom_map = sigmacatch_config::load_custom_channel_mapping(
         PathBuf::from("custom_channels.yaml").as_path(),
     );
-    let cycle_channels = rules.channels(&custom_map);
+    let mut engine = DetectionEngine::new(&rules)?;
+    let cycle_channels = engine.resolve_channels(&custom_map);
 
     if cycle_channels.is_empty() {
         warn!("0 channels resolved — nothing to collect");
         return Ok(());
     }
-
-    let mut engine = DetectionEngine::new(&rules)?;
 
     if cli.channels_only {
         info!("Channels only mode — listing channels and exiting");
