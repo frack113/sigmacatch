@@ -9,9 +9,13 @@ use std::path::Path;
 use tracing::info;
 
 use crate::plumbing::checkout::checkout_main_branch;
-use crate::plumbing::fetch::fetch_remote;
+use crate::plumbing::fetch::{fetch_options_for_branches, fetch_remote};
 use crate::plumbing::init::init_repo;
 use crate::plumbing::refs::set_head_after_fetch;
+
+/// Default branches fetched on clone. Sigmacatch only ever uses the default
+/// branch; `main` is the alternative in case `master` is not the default.
+const DEFAULT_BRANCHES: &[&str] = &["master", "main"];
 
 /// Full clone: init + fetch + set HEAD + checkout worktree.
 pub fn clone_repo(http_client: &dyn HttpClient, url: &str, dest: &Path) -> Result<()> {
@@ -23,7 +27,8 @@ pub fn clone_repo(http_client: &dyn HttpClient, url: &str, dest: &Path) -> Resul
 
     info!("Cloning into {:?}", dest);
     init_repo(&git_dir, dest, url)?;
-    let (count, default_branch) = match fetch_remote(http_client, &git_dir, url) {
+    let opts = fetch_options_for_branches(DEFAULT_BRANCHES);
+    let (count, default_branch) = match fetch_remote(http_client, &git_dir, url, &opts) {
         Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_dir_all(&git_dir);

@@ -9,10 +9,22 @@ use tracing::{info, warn};
 
 use crate::plumbing::{
     add_directory_to_index, add_file_to_index, add_tree_to_index, checkout_main_branch,
-    commit_tree, fast_forward_branch, fetch_remote, fetch_remote_ssh, init_repo, open_odb,
-    read_remote_url_from_config, resolve_head, set_head_after_fetch, write_index,
+    commit_tree, fast_forward_branch, fetch_options_for_branches, fetch_remote, fetch_remote_ssh,
+    init_repo, open_odb, read_remote_url_from_config, resolve_head, set_head_after_fetch,
+    symbolic_ref_target, write_index,
 };
 use crate::transport::{build_ssh_shell_command, https_to_ssh_url, AuthHttpClient};
+
+/// Default branches fetched on clone. Sigmacatch only ever uses the default
+/// branch; `main` is the alternative in case `master` is not the default.
+const DEFAULT_BRANCHES: &[&str] = &["master", "main"];
+
+/// Branch name (e.g. `master`) that HEAD currently points at, when HEAD is on
+/// a symbolic ref. Returns `None` for a detached HEAD.
+fn current_branch_name(git_dir: &Path) -> Result<Option<String>> {
+    Ok(symbolic_ref_target(git_dir, "HEAD")?
+        .and_then(|target| target.strip_prefix("refs/heads/").map(String::from)))
+}
 
 /// Clone a repository using token auth.
 /// Wraps `clone_repo` by creating an `AuthHttpClient` from token.
@@ -31,10 +43,12 @@ pub(crate) fn git_clone_ssh(url: &str, dest: &Path, ssh_key_path: Option<&str>) 
 
     info!("Cloning via SSH into {:?}", dest);
     init_repo(&git_dir, dest, url)?;
+    let opts = fetch_options_for_branches(DEFAULT_BRANCHES);
     let (count, default_branch) = match fetch_remote_ssh(
         &git_dir,
         url,
         build_ssh_shell_command(ssh_key_path).as_str(),
+        &opts,
     ) {
         Ok(r) => r,
         Err(e) => {
@@ -54,11 +68,17 @@ pub(crate) fn git_clone_ssh(url: &str, dest: &Path, ssh_key_path: Option<&str>) 
 }
 
 /// Fetch from origin and fast-forward the current branch.
+///
+/// Only the current branch is fetched (narrow refspec) — the default branch
+/// after `switch_to_tracking_branch`, never the wildcard `+refs/heads/*`.
 pub(crate) fn git_pull(git_dir: &Path, token: Option<&str>) -> Result<()> {
     let http_client = AuthHttpClient::new(token.map(String::from))?;
     let remote_url = read_remote_url_from_config(git_dir, "origin")?;
+    let branch = current_branch_name(git_dir)?
+        .ok_or_else(|| anyhow::anyhow!("Cannot pull — HEAD is detached"))?;
+    let opts = fetch_options_for_branches(&[branch.as_str()]);
 
-    fetch_remote(&http_client, git_dir, &remote_url)?;
+    fetch_remote(&http_client, git_dir, &remote_url, &opts)?;
     fast_forward_branch(git_dir)?;
 
     // Re-checkout worktree to reflect any changes from fast-forward
@@ -74,8 +94,11 @@ pub(crate) fn git_pull_ssh(git_dir: &Path, ssh_key_path: Option<&str>) -> Result
     let remote_url = read_remote_url_from_config(git_dir, "origin")?;
     let ssh_url = https_to_ssh_url(&remote_url).unwrap_or(remote_url);
     let ssh_cmd = build_ssh_shell_command(ssh_key_path);
+    let branch = current_branch_name(git_dir)?
+        .ok_or_else(|| anyhow::anyhow!("Cannot pull — HEAD is detached"))?;
+    let opts = fetch_options_for_branches(&[branch.as_str()]);
 
-    fetch_remote_ssh(git_dir, &ssh_url, ssh_cmd.as_str())?;
+    fetch_remote_ssh(git_dir, &ssh_url, ssh_cmd.as_str(), &opts)?;
     fast_forward_branch(git_dir)?;
 
     // Re-checkout worktree to reflect any changes from fast-forward

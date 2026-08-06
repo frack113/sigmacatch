@@ -13,16 +13,27 @@ use tracing::info;
 
 use crate::transport::sanitize_url;
 
-/// Fetch options shared by the HTTP and SSH fetch paths (clone + pull).
+/// Fetch options for a specific set of branches.
 ///
 /// Full history (no `depth`). A shallow (`depth = 1`) fetch leaves the local
 /// ODB without the ancestors of the fetched tips, so a push whose remote
 /// advanced after the clone cannot build its pack: the want-walk crosses the
 /// shallow boundary and fails with `object not found: <parent oid>` (case of
 /// `f321ac84b7cb0c1e688bb1a6415d0bf73d767d1d` on 2026-08-03).
-fn fetch_options() -> FetchOptions {
+///
+/// The refspec is narrow (`+refs/heads/{branch}:refs/remotes/origin/{branch}`
+/// per branch) instead of `+refs/heads/*`. Sigmacatch only ever reads the
+/// default branch (plus the `sigmacatch/<date>` working branch on the fork),
+/// so downloading every remote branch wastes bandwidth and time. With protocol
+/// v2 the server turns these refspecs into `ref-prefix` lines and does not even
+/// advertise the other branches.
+pub(crate) fn fetch_options_for_branches(branches: &[&str]) -> FetchOptions {
+    let refspecs = branches
+        .iter()
+        .map(|b| format!("+refs/heads/{}:refs/remotes/origin/{}", b, b))
+        .collect();
     FetchOptions {
-        refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_string()],
+        refspecs,
         tags: TagMode::None,
         ..Default::default()
     }
@@ -33,13 +44,41 @@ pub fn fetch_remote(
     http_client: &dyn HttpClient,
     git_dir: &Path,
     repo_url: &str,
+    opts: &FetchOptions,
 ) -> Result<(usize, Option<String>)> {
     info!("Fetching from {}", sanitize_url(repo_url));
-    let opts = fetch_options();
-    let outcome = http_fetch(http_client, git_dir, repo_url, &opts, &mut NoProgress)?;
+    let outcome = http_fetch(http_client, git_dir, repo_url, opts, &mut NoProgress)?;
     let count = outcome.updates.len();
     info!(
         "Fetched {} ref updates (default branch: {})",
+        count,
+        outcome.default_branch.as_deref().unwrap_or("unknown")
+    );
+    Ok((count, outcome.default_branch))
+}
+
+/// Fetch from remote via SSH.
+pub fn fetch_remote_ssh(
+    git_dir: &Path,
+    repo_url: &str,
+    ssh_shell_cmd: &str,
+    opts: &FetchOptions,
+) -> Result<(usize, Option<String>)> {
+    info!("Fetching via SSH from {}", repo_url);
+    let transport = if ssh_shell_cmd.is_empty() {
+        SshTransport::new()
+    } else {
+        SshTransport::with_shell_command(ssh_shell_cmd)
+    };
+    let mut conn = transport.connect(
+        repo_url,
+        grit_lib::transport::Service::UploadPack,
+        &ConnectOptions::default(),
+    )?;
+    let outcome = grit_lib::fetch::fetch_remote(git_dir, &mut *conn, opts, &mut NoProgress)?;
+    let count = outcome.updates.len();
+    info!(
+        "Fetched {} ref updates via SSH (default branch: {})",
         count,
         outcome.default_branch.as_deref().unwrap_or("unknown")
     );
@@ -55,43 +94,26 @@ mod tests {
     /// (`object not found: <parent>`) as soon as the remote advances mid-run.
     #[test]
     fn test_fetch_options_are_full_history() {
-        let opts = fetch_options();
+        let opts = fetch_options_for_branches(&["master", "main"]);
         assert!(
             opts.depth.is_none(),
             "fetch must be full-history, not shallow"
         );
-        assert!(opts
-            .refspecs
-            .iter()
-            .any(|r| r == "+refs/heads/*:refs/remotes/origin/*"));
+        assert!(opts.refspecs.iter().all(|r| !r.contains("refs/heads/*")));
         assert_eq!(opts.tags, TagMode::None);
     }
-}
 
-/// Fetch from remote via SSH.
-pub fn fetch_remote_ssh(
-    git_dir: &Path,
-    repo_url: &str,
-    ssh_shell_cmd: &str,
-) -> Result<(usize, Option<String>)> {
-    info!("Fetching via SSH from {}", repo_url);
-    let transport = if ssh_shell_cmd.is_empty() {
-        SshTransport::new()
-    } else {
-        SshTransport::with_shell_command(ssh_shell_cmd)
-    };
-    let mut conn = transport.connect(
-        repo_url,
-        grit_lib::transport::Service::UploadPack,
-        &ConnectOptions::default(),
-    )?;
-    let opts = fetch_options();
-    let outcome = grit_lib::fetch::fetch_remote(git_dir, &mut *conn, &opts, &mut NoProgress)?;
-    let count = outcome.updates.len();
-    info!(
-        "Fetched {} ref updates via SSH (default branch: {})",
-        count,
-        outcome.default_branch.as_deref().unwrap_or("unknown")
-    );
-    Ok((count, outcome.default_branch))
+    /// The narrow refspec must map exactly the requested branches, never the
+    /// wildcard `+refs/heads/*` that downloads every remote branch.
+    #[test]
+    fn test_fetch_options_for_branches_builds_narrow_refspecs() {
+        let opts = fetch_options_for_branches(&["master", "main"]);
+        assert_eq!(
+            opts.refspecs,
+            vec![
+                "+refs/heads/master:refs/remotes/origin/master",
+                "+refs/heads/main:refs/remotes/origin/main",
+            ]
+        );
+    }
 }

@@ -22,9 +22,12 @@ use anyhow::Result;
 use grit_lib::objects::ObjectId;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use crate::branch::{create_branch, switch_head};
-use crate::porcelain::{git_add, git_clone, git_clone_ssh, git_commit, git_pull, git_pull_ssh};
+use crate::porcelain::{
+    git_add, git_clone, git_clone_ssh, git_commit, git_pull, git_pull_ssh,
+};
 pub use crate::transport::GitTransport;
 use crate::transport::{https_to_ssh_url, sanitize_url, AuthHttpClient};
 
@@ -44,6 +47,9 @@ pub struct SigmaRepo {
     token: Option<String>,
     transport: GitTransport,
     ssh_key_path: Option<String>,
+    // Operation modes
+    offline: bool,
+    contrib: bool,
 }
 
 impl SigmaRepo {
@@ -57,6 +63,8 @@ impl SigmaRepo {
             token: None,
             transport: GitTransport::default(),
             ssh_key_path: None,
+            offline: false,
+            contrib: false,
         }
     }
 
@@ -82,6 +90,21 @@ impl SigmaRepo {
         self.ssh_key_path = ssh_key_path.map(String::from);
     }
 
+    /// Set git operation modes.
+    ///
+    /// When `offline` is true, `init()` skips the network pull (and refuses to
+    /// clone a missing/incomplete repository). When `contrib` is true, commits
+    /// are pushed to the remote fork; when false, commits stay local only.
+    pub fn set_git_operations(&mut self, offline: bool, contrib: bool) {
+        self.offline = offline;
+        self.contrib = contrib;
+    }
+
+    /// Returns whether contrib (push to remote) is enabled.
+    pub fn contrib_enabled(&self) -> bool {
+        self.contrib
+    }
+
     pub fn set_working_branch(&mut self, branch_name: String) -> Result<()> {
         assert!(!branch_name.is_empty(), "working_branch must not be empty");
         self.working_branch = Some(branch_name);
@@ -92,6 +115,13 @@ impl SigmaRepo {
         let git_dir = self.repo_path.join(".git");
 
         if git_dir.exists() && !is_repo_complete(&git_dir) {
+            if self.offline {
+                anyhow::bail!(
+                    "Repository at {:?} is incomplete and offline mode is enabled. \
+                     Delete the sigma/ directory and re-run with offline: false to clone a fresh copy.",
+                    self.repo_path
+                );
+            }
             warn!(
                 "Incomplete repository at {:?}, removing and re-cloning",
                 self.repo_path
@@ -103,6 +133,11 @@ impl SigmaRepo {
 
         if repo_exists {
             self.switch_to_tracking_branch()?;
+
+            if self.offline {
+                info!("Offline mode — using existing repository as-is (no pull)");
+                return Ok(());
+            }
 
             info!("Sigma repository exists, pulling latest...");
             let git_dir_clone = git_dir.clone();
@@ -140,6 +175,12 @@ impl SigmaRepo {
                 std::fs::remove_dir_all(&git_dir)?;
                 self.clone_repo().await?;
             }
+        } else if self.offline {
+            anyhow::bail!(
+                "Repository does not exist at {:?} and offline mode is enabled. \
+                 Run with offline: false first to clone the repository.",
+                self.repo_path
+            );
         } else {
             self.clone_repo().await?;
         }
@@ -157,6 +198,13 @@ impl SigmaRepo {
     /// then materializes and reconciles the working tree so the on-disk state
     /// is an exact mirror of the branch (files already pushed to the fork are
     /// present; stale local files are removed).
+    ///
+    /// The working branch is fetched first (narrow refspec, one branch): the
+    /// pull in `init()` only fetches the default branch now, so without this
+    /// `refs/remotes/origin/sigmacatch/<date>` would go stale and `create_branch`
+    /// would base the local branch on HEAD instead of the fork tip — producing
+    /// a sibling commit rejected with `RejectNonFastForward`. A fresh day (branch
+    /// not yet on the fork) matches nothing: zero updates, no error.
     pub fn switch_to_working_branch(&mut self) -> Result<()> {
         let branch_name = self.working_branch.clone().ok_or_else(|| {
             anyhow::anyhow!(
@@ -164,8 +212,32 @@ impl SigmaRepo {
             )
         })?;
         let git_dir = self.repo_path.join(".git");
+        if !self.offline {
+            self.fetch_working_branch(&git_dir, &branch_name)?;
+        }
         create_branch(&git_dir, &branch_name)?;
         crate::plumbing::checkout_main_branch(&git_dir, &self.repo_path)?;
+        Ok(())
+    }
+
+    /// Fetch only the given branch from origin, so its remote tracking ref is
+    /// current before `create_branch` bases on it. No-op (zero updates) when the
+    /// branch does not exist on the fork yet.
+    fn fetch_working_branch(&self, git_dir: &Path, branch: &str) -> Result<()> {
+        let remote_url = crate::plumbing::read_remote_url_from_config(git_dir, "origin")?;
+        let opts = crate::plumbing::fetch_options_for_branches(&[branch]);
+        match self.transport {
+            GitTransport::Http => {
+                let http_client = AuthHttpClient::new(self.token.clone())?;
+                crate::plumbing::fetch_remote(&http_client, git_dir, &remote_url, &opts)?;
+            }
+            GitTransport::Ssh => {
+                let ssh_url = https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
+                let ssh_cmd =
+                    crate::transport::build_ssh_shell_command(self.ssh_key_path.as_deref());
+                crate::plumbing::fetch_remote_ssh(git_dir, &ssh_url, ssh_cmd.as_str(), &opts)?;
+            }
+        }
         Ok(())
     }
 
@@ -356,7 +428,11 @@ impl SigmaRepo {
             .collect()
     }
 
-    pub fn git_upload(&self, files: Vec<String>, message: String) -> Result<()> {
+    /// Commit a set of files with a single message (add + commit only, no push).
+    ///
+    /// Invalid paths (traversal, NUL) are filtered out via `valid_commit_paths`;
+    /// when nothing valid remains the commit is skipped with an `info!` log.
+    pub fn git_commit_files(&self, files: Vec<String>, message: String) -> Result<()> {
         let git_dir = self.repo_path.join(".git");
         let name = self.author.trim();
         let addr = self.email.trim();
@@ -375,11 +451,72 @@ impl SigmaRepo {
             info!("Committed {} file(s)", valid.len());
         }
 
-        self.push()?;
         Ok(())
     }
 
-    fn push(&self) -> Result<()> {
+    /// Commit regression data rule by rule, then push once at the end.
+    ///
+    /// Each `(rule_id, files)` pair becomes its own commit with a rule-specific
+    /// message (`test: add regression data for rule {id}`). Empty/fully-invalid
+    /// file lists are skipped (a no-op `git_commit` would bail with
+    /// "Nothing to commit"). On a push failure the local branch is rolled back
+    /// to its pre-batch tip so an orphaned local commit cannot diverge from the
+    /// remote (which would cause `RejectNonFastForward` on the next run); the
+    /// generated files stay on disk and are reconciled by the next startup.
+    /// When contrib is disabled, commits stay local and no push is attempted.
+    pub fn upload_rule_batches(&self, batches: Vec<(Uuid, Vec<String>)>) -> Result<()> {
+        let pre_oid = self.working_branch_oid()?;
+        let mut committed = 0;
+
+        for (rule_id, files) in &batches {
+            if files.is_empty() {
+                info!("Skipping empty batch for rule {}", rule_id);
+                continue;
+            }
+            let message = format!("test: add regression data for rule {}", rule_id);
+            if let Err(e) = self.git_commit_files(files.clone(), message) {
+                warn!(
+                    "Commit failed for rule {} after {} commit(s): {} — \
+                     rolling local branch back to pre-batch tip {}",
+                    rule_id, committed, e, pre_oid
+                );
+                let _ = self.reset_working_branch_to_commit(pre_oid);
+                return Err(e);
+            }
+            committed += 1;
+        }
+
+        if committed == 0 {
+            info!("Nothing to commit — skipping push");
+            return Ok(());
+        }
+
+        if !self.contrib {
+            info!("Contrib disabled — {} commit(s) kept local (no push)", committed);
+            return Ok(());
+        }
+
+        if let Err(e) = self.push() {
+            warn!(
+                "Push failed after {} commit(s): {} — rolling local branch back to pre-batch tip {}",
+                committed, e, pre_oid
+            );
+            self.reset_working_branch_to_commit(pre_oid)?;
+            return Err(e);
+        }
+
+        info!("Pushed {} commit(s) for {} rule(s)", committed, batches.len());
+        Ok(())
+    }
+
+    /// Push the working branch to origin. No-op (logged) when contrib is
+    /// disabled.
+    pub fn push(&self) -> Result<()> {
+        if !self.contrib {
+            info!("Contrib disabled — skipping push to remote (local commit only)");
+            return Ok(());
+        }
+
         let branch = self
             .working_branch
             .as_deref()
@@ -430,6 +567,8 @@ impl Default for SigmaRepo {
             token: None,
             transport: GitTransport::default(),
             ssh_key_path: None,
+            offline: false,
+            contrib: false,
         }
     }
 }
@@ -626,6 +765,119 @@ mod tests {
         repo.reset_working_branch_to_commit(head_oid).unwrap();
         assert_eq!(repo.working_branch_oid().unwrap(), head_oid);
     }
+
+    /// A run with contrib disabled must still commit locally — only the push is
+    /// gated. `upload_rule_batches` produces a commit per rule with the
+    /// rule-specific message.
+    #[test]
+    fn test_upload_rule_batches_commits_locally_when_contrib_disabled() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_committed_repo(&tmp);
+        let git_dir = tmp.path().join(".git");
+        crate::branch::create_branch(&git_dir, "sigmacatch/20260803").unwrap();
+
+        let rel = "regression_data/rules/win/a.json";
+        std::fs::create_dir_all(tmp.path().join("regression_data/rules/win")).unwrap();
+        std::fs::write(tmp.path().join(rel), "{}").unwrap();
+
+        let mut repo = SigmaRepo::new();
+        repo.repo_path = tmp.path().to_path_buf();
+        repo.working_branch = Some("sigmacatch/20260803".to_string());
+        repo.set_info_user("testuser", "test@example.com");
+        repo.contrib = false;
+
+        let before = repo.working_branch_oid().unwrap();
+        let rule_id = Uuid::new_v4();
+        repo.upload_rule_batches(vec![(rule_id, vec![rel.to_string()])])
+            .unwrap();
+        let after = repo.working_branch_oid().unwrap();
+        assert_ne!(
+            before, after,
+            "contrib-disabled run must still commit locally"
+        );
+    }
+
+    /// Empty file lists must not produce a commit (`git_commit` would bail with
+    /// "Nothing to commit" on an unchanged tree).
+    #[test]
+    fn test_upload_rule_batches_skips_empty_batches() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_committed_repo(&tmp);
+        let git_dir = tmp.path().join(".git");
+        crate::branch::create_branch(&git_dir, "sigmacatch/20260803").unwrap();
+
+        let mut repo = SigmaRepo::new();
+        repo.repo_path = tmp.path().to_path_buf();
+        repo.working_branch = Some("sigmacatch/20260803".to_string());
+        repo.contrib = false;
+
+        let before = repo.working_branch_oid().unwrap();
+        let rule_id = Uuid::new_v4();
+        repo.upload_rule_batches(vec![(rule_id, vec![])])
+            .unwrap();
+        let after = repo.working_branch_oid().unwrap();
+        assert_eq!(
+            before, after,
+            "empty batches must not create a commit"
+        );
+    }
+
+    /// `push()` must no-op (Ok) when contrib is disabled — no working branch,
+    /// no network needed.
+    #[test]
+    fn test_push_noop_when_contrib_disabled() {
+        let mut repo = SigmaRepo::new();
+        repo.contrib = false;
+        assert!(repo.push().is_ok(), "contrib-disabled push must no-op");
+    }
+
+    #[test]
+    fn test_set_git_operations_enables_contrib() {
+        let mut repo = SigmaRepo::new();
+        repo.set_git_operations(true, true);
+        assert!(repo.contrib_enabled());
+    }
+
+    /// A commit failure mid-batch must roll the local branch back to its
+    /// pre-batch tip so no orphaned commits remain. We stage two batches:
+    /// the first commits a real file; the second references a path that resolves
+    /// to no on-disk file, so `git_add` stages nothing and `git_commit` bails
+    /// "Nothing to commit". The failure must roll back the first commit.
+    #[test]
+    fn test_upload_rule_batches_rolls_back_on_commit_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_committed_repo(&tmp);
+        let git_dir = tmp.path().join(".git");
+        crate::branch::create_branch(&git_dir, "sigmacatch/20260803").unwrap();
+
+        let good = "regression_data/rules/win/good.json";
+        std::fs::create_dir_all(tmp.path().join("regression_data/rules/win")).unwrap();
+        std::fs::write(tmp.path().join(good), "{}").unwrap();
+        // bad path: syntactically valid (no NUL/..) but absent on disk
+        let bad = "regression_data/rules/win/missing.json".to_string();
+
+        let mut repo = SigmaRepo::new();
+        repo.repo_path = tmp.path().to_path_buf();
+        repo.working_branch = Some("sigmacatch/20260803".to_string());
+        repo.set_info_user("testuser", "test@example.com");
+        repo.contrib = true;
+
+        let before = repo.working_branch_oid().unwrap();
+        let rule_a = Uuid::new_v4();
+        let rule_b = Uuid::new_v4();
+        let result = repo.upload_rule_batches(vec![
+            (rule_a, vec![good.to_string()]),
+            (rule_b, vec![bad.clone()]),
+        ]);
+
+        assert!(result.is_err(), "second batch must fail (Nothing to commit)");
+        let after = repo.working_branch_oid().unwrap();
+        assert_eq!(
+            before, after,
+            "first commit must be rolled back on the second batch's failure"
+        );
+    }
+
 
     #[test]
     fn test_is_repo_complete_empty() {
