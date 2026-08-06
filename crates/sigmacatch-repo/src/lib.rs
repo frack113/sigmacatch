@@ -25,9 +25,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::branch::{create_branch, switch_head};
-use crate::porcelain::{
-    git_add, git_clone, git_clone_ssh, git_commit, git_pull, git_pull_ssh,
-};
+use crate::porcelain::{git_add, git_clone, git_clone_ssh, git_commit, git_pull, git_pull_ssh};
 pub use crate::transport::GitTransport;
 use crate::transport::{https_to_ssh_url, sanitize_url, AuthHttpClient};
 
@@ -492,7 +490,10 @@ impl SigmaRepo {
         }
 
         if !self.contrib {
-            info!("Contrib disabled — {} commit(s) kept local (no push)", committed);
+            info!(
+                "Contrib disabled — {} commit(s) kept local (no push)",
+                committed
+            );
             return Ok(());
         }
 
@@ -505,7 +506,11 @@ impl SigmaRepo {
             return Err(e);
         }
 
-        info!("Pushed {} commit(s) for {} rule(s)", committed, batches.len());
+        info!(
+            "Pushed {} commit(s) for {} rule(s)",
+            committed,
+            batches.len()
+        );
         Ok(())
     }
 
@@ -813,13 +818,9 @@ mod tests {
 
         let before = repo.working_branch_oid().unwrap();
         let rule_id = Uuid::new_v4();
-        repo.upload_rule_batches(vec![(rule_id, vec![])])
-            .unwrap();
+        repo.upload_rule_batches(vec![(rule_id, vec![])]).unwrap();
         let after = repo.working_branch_oid().unwrap();
-        assert_eq!(
-            before, after,
-            "empty batches must not create a commit"
-        );
+        assert_eq!(before, after, "empty batches must not create a commit");
     }
 
     /// `push()` must no-op (Ok) when contrib is disabled — no working branch,
@@ -870,14 +871,16 @@ mod tests {
             (rule_b, vec![bad.clone()]),
         ]);
 
-        assert!(result.is_err(), "second batch must fail (Nothing to commit)");
+        assert!(
+            result.is_err(),
+            "second batch must fail (Nothing to commit)"
+        );
         let after = repo.working_branch_oid().unwrap();
         assert_eq!(
             before, after,
             "first commit must be rolled back on the second batch's failure"
         );
     }
-
 
     #[test]
     fn test_is_repo_complete_empty() {
