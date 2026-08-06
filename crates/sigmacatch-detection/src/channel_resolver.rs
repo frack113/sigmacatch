@@ -7,7 +7,7 @@
 //! `service: sysmon` (see `pipelines/windows.yml`), so the compiled rule
 //! logsource is the single source of truth: category → service lives in the
 //! pipeline, service → channel lives here. Rules whose category the pipeline
-//! does not touch (login, ps_module, ...) fall back to their category.
+//! does not touch (ps_module, ps_script, ...) fall back to their category.
 
 use rsigma_eval::compiler::CompiledRule;
 use std::collections::{HashMap, HashSet};
@@ -94,10 +94,6 @@ static SERVICE_CHANNELS: phf::Map<&'static str, &'static [&'static str]> = phf::
 /// does not route (no EventID mapping). Sysmon categories are intentionally
 /// absent — the pipeline rewrites them to `service: sysmon`.
 static CATEGORY_CHANNELS: phf::Map<&'static str, &'static [&'static str]> = phf::phf_map! {
-    "login" => &["Security"],
-    "login_failure" => &["Security"],
-    "logoff" => &["Security"],
-    "privilege_use" => &["Security"],
     "ps_classic_provider_start" => &["Windows PowerShell"],
     "ps_classic_script" => &["Windows PowerShell"],
     "ps_classic_start" => &["Windows PowerShell"],
