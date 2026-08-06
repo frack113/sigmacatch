@@ -148,6 +148,20 @@ impl AuthHttpClient {
 }
 
 impl grit_lib::transport::http::HttpClient for AuthHttpClient {
+    /// Negotiate git protocol v2 for every HTTP request.
+    ///
+    /// grit's `http_fetch` passes `client.git_protocol_header()` into the
+    /// `info/refs` discovery GET. Without an override it sends `None`, so the
+    /// server (GitHub) falls back to a v0/v1 advertisement that enumerates
+    /// *every* remote ref — wasteful here, and it defeats the `ref-prefix`
+    /// narrowing that the narrow refspecs rely on under v2. Requesting v2
+    /// makes grit issue a scoped `command=ls-refs` with `ref-prefix` lines
+    /// derived from the refspecs, and use the v2 pack-negotiation path. With
+    /// the Sigma repo (very large), this materially cuts clone/fetch time.
+    fn git_protocol_header(&self) -> Option<&str> {
+        Some("version=2")
+    }
+
     fn get(&self, url: &str, git_protocol: Option<&str>) -> grit_lib::error::Result<Vec<u8>> {
         let auth_url = self.add_auth(url);
         debug!(
@@ -221,6 +235,7 @@ impl grit_lib::transport::http::HttpClient for AuthHttpClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use grit_lib::transport::http::HttpClient;
 
     #[test]
     fn test_sanitize_url_with_at() {
@@ -240,5 +255,15 @@ mod tests {
     fn test_sanitize_url_empty() {
         let result = sanitize_url("");
         assert_eq!(result, "");
+    }
+
+    /// Protocol v2 must be advertised on every HTTP request — without it GitHub
+    /// serves a v0/v1 full advertisement, which (a) enumerates every remote ref
+    /// and (b) defeats the `ref-prefix` narrowing our narrow refspecs depend on,
+    /// making clones of the large Sigma repo needlessly slow.
+    #[test]
+    fn test_git_protocol_header_negotiates_v2() {
+        let client = AuthHttpClient::new(None).unwrap();
+        assert_eq!(client.git_protocol_header(), Some("version=2"));
     }
 }
