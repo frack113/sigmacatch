@@ -64,6 +64,9 @@ pub(crate) fn git_clone_ssh(url: &str, dest: &Path, ssh_key_path: Option<&str>) 
     set_head_after_fetch(&git_dir, default_branch.as_deref());
 
     checkout_main_branch(&git_dir, dest)?;
+
+    crate::plumbing::pack_loose_objects(&git_dir)?;
+
     Ok(())
 }
 
@@ -80,6 +83,8 @@ pub(crate) fn git_pull(git_dir: &Path, token: Option<&str>) -> Result<()> {
 
     fetch_remote(&http_client, git_dir, &remote_url, &opts)?;
     fast_forward_branch(git_dir)?;
+
+    crate::plumbing::pack_loose_objects(git_dir)?;
 
     // Re-checkout worktree to reflect any changes from fast-forward
     let work_tree = git_dir
@@ -100,6 +105,8 @@ pub(crate) fn git_pull_ssh(git_dir: &Path, ssh_key_path: Option<&str>) -> Result
 
     fetch_remote_ssh(git_dir, &ssh_url, ssh_cmd.as_str(), &opts)?;
     fast_forward_branch(git_dir)?;
+
+    crate::plumbing::pack_loose_objects(git_dir)?;
 
     // Re-checkout worktree to reflect any changes from fast-forward
     let work_tree = git_dir

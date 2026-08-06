@@ -12,6 +12,7 @@ pub(crate) mod commit;
 pub(crate) mod fetch;
 pub(crate) mod index;
 pub(crate) mod init;
+pub(crate) mod pack;
 pub(crate) mod push;
 pub(crate) mod refs;
 
@@ -21,6 +22,7 @@ pub(crate) use commit::commit_tree;
 pub(crate) use fetch::{fetch_options_for_branches, fetch_remote, fetch_remote_ssh};
 pub(crate) use index::{add_directory_to_index, add_file_to_index, add_tree_to_index, write_index};
 pub(crate) use init::init_repo;
+pub(crate) use pack::pack_loose_objects;
 pub(crate) use push::{push_branch, push_branch_ssh};
 pub(crate) use refs::{
     fast_forward_branch, read_loose_or_packed_ref, read_remote_url_from_config, resolve_head,

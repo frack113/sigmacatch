@@ -43,5 +43,8 @@ pub fn clone_repo(http_client: &dyn HttpClient, url: &str, dest: &Path) -> Resul
     set_head_after_fetch(&git_dir, default_branch.as_deref());
 
     checkout_main_branch(&git_dir, dest)?;
+
+    crate::plumbing::pack_loose_objects(&git_dir)?;
+
     Ok(())
 }
