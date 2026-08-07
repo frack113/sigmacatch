@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 /// Rule loading filters. All fields are optional — `None` means no filtering.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(default, rename_all = "snake_case")]
+#[serde(default, deny_unknown_fields, rename_all = "snake_case")]
 pub struct SigmaFilterConfig {
     pub product: String,
     pub min_status: Option<MinStatus>,

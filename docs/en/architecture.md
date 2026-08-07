@@ -104,7 +104,7 @@ engine.process_events() → get_alerts()
 returns batches: Vec<(Uuid, Vec<String>)>   # (rule_id, written files) — empty if no alerts
     ↓
 upload_regression() → upload_rule_batches()   # in sigmacatch-repo
-    ├── one commit per rule: "test: add regression data for rule {rule_id}"
+     ├── one commit per rule: "🧪 test: add regression data for rule {rule_id}"
     ├── commit/push failure → rollback local branch to pre-batch tip
     └── SINGLE push if git.contrib: true (otherwise local commits only)
 ```

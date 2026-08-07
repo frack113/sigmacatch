@@ -165,6 +165,7 @@ impl Event {
                     c
                 }
             })
+            .or_else(|| category_exclusive_sentinel(&channel))
             .map(str::to_string);
 
         if let Value::Object(ref mut map) = self.event_json {
@@ -310,6 +311,24 @@ fn get_category(channel: &str, event_id: u32) -> Option<&'static str> {
         .get(&key)
         .copied()
         .or_else(|| CHANNEL_EVENT_TO_CATEGORY.get(&key).copied())
+}
+
+/// Category-exclusive Windows channels: their only purpose is to carry a
+/// single Sigma category (PowerShell logging). An event in one of these
+/// channels whose EventID is not mapped is *not* that category — a
+/// PowerShell console error (EventID 4100) is never `ps_module` (4103) nor
+/// `ps_script` (4104). Injecting a synthetic value that conflicts with every
+/// `ps_module`/`ps_script`/`ps_classic_*` rule turns the fail-open logsource
+/// pruning fail-closed for these events (the reference SigmaHQ harness maps
+/// `ps_module` to EventID 4103 only, so such a match would be a false
+/// positive). Rules targeting `service: powershell` are unaffected.
+fn category_exclusive_sentinel(channel: &str) -> Option<&'static str> {
+    match channel {
+        "Microsoft-Windows-PowerShell/Operational"
+        | "PowerShellCore/Operational"
+        | "Windows PowerShell" => Some("ps_other"),
+        _ => None,
+    }
 }
 
 /// Whether the event's `EventData.EventType` marks a Sysmon registry deletion
@@ -1234,6 +1253,102 @@ mod tests {
         assert_eq!(event.event_json["service"].as_str().unwrap(), "sysmon");
         // Category absent because get_category uses unknown channel
         assert!(event.event_json.get("category").is_none());
+    }
+
+    #[test]
+    fn test_inject_logsource_fields_ps_module_eventid() {
+        // EventID 4103 is module logging → ps_module
+        let json = serde_json::json!({
+            "Event": {
+                "System": {
+                    "Provider": { "#attributes": { "Name": "Microsoft-Windows-PowerShell" } },
+                    "EventID": 4103,
+                    "Channel": "Microsoft-Windows-PowerShell/Operational"
+                }
+            }
+        });
+        let mut event = Event::new(json.clone(), json, Vec::new());
+        event.inject_logsource_fields();
+
+        assert_eq!(event.event_json["service"].as_str().unwrap(), "powershell");
+        assert_eq!(event.event_json["category"].as_str().unwrap(), "ps_module");
+    }
+
+    #[test]
+    fn test_inject_logsource_fields_ps_script_eventid() {
+        // EventID 4104 is script block logging → ps_script
+        let json = serde_json::json!({
+            "Event": {
+                "System": {
+                    "Provider": { "#attributes": { "Name": "Microsoft-Windows-PowerShell" } },
+                    "EventID": 4104,
+                    "Channel": "PowerShellCore/Operational"
+                }
+            }
+        });
+        let mut event = Event::new(json.clone(), json, Vec::new());
+        event.inject_logsource_fields();
+
+        assert_eq!(event.event_json["category"].as_str().unwrap(), "ps_script");
+    }
+
+    #[test]
+    fn test_inject_logsource_fields_ps_unmapped_eventid_sentinel() {
+        // EventID 4100 (console error) is neither ps_module nor ps_script:
+        // inject a conflicting sentinel so ps_* rules are pruned.
+        let json = serde_json::json!({
+            "Event": {
+                "System": {
+                    "Provider": { "#attributes": { "Name": "Microsoft-Windows-PowerShell" } },
+                    "EventID": 4100,
+                    "Channel": "Microsoft-Windows-PowerShell/Operational"
+                }
+            }
+        });
+        let mut event = Event::new(json.clone(), json, Vec::new());
+        event.inject_logsource_fields();
+
+        assert_eq!(event.event_json["service"].as_str().unwrap(), "powershell");
+        assert_eq!(event.event_json["category"].as_str().unwrap(), "ps_other");
+    }
+
+    #[test]
+    fn test_inject_logsource_fields_ps_classic_script() {
+        // Classic channel EventID 800 → ps_classic_script
+        let json = serde_json::json!({
+            "Event": {
+                "System": {
+                    "Provider": { "#attributes": { "Name": "PowerShell" } },
+                    "EventID": 800,
+                    "Channel": "Windows PowerShell"
+                }
+            }
+        });
+        let mut event = Event::new(json.clone(), json, Vec::new());
+        event.inject_logsource_fields();
+
+        assert_eq!(
+            event.event_json["category"].as_str().unwrap(),
+            "ps_classic_script"
+        );
+    }
+
+    #[test]
+    fn test_inject_logsource_fields_ps_classic_unmapped_sentinel() {
+        // Classic channel unmapped EventID → sentinel
+        let json = serde_json::json!({
+            "Event": {
+                "System": {
+                    "Provider": { "#attributes": { "Name": "PowerShell" } },
+                    "EventID": 401,
+                    "Channel": "Windows PowerShell"
+                }
+            }
+        });
+        let mut event = Event::new(json.clone(), json, Vec::new());
+        event.inject_logsource_fields();
+
+        assert_eq!(event.event_json["category"].as_str().unwrap(), "ps_other");
     }
 
     #[test]

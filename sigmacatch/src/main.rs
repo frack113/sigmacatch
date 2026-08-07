@@ -8,6 +8,29 @@ use sigmacatch_logger::init as init_logger;
 use sigmacatch_regression::SigmahqRegression;
 use sigmacatch_repo::SigmaRepo;
 use sigmacatch_rule::SigmahqRules;
+
+/// Extract MITRE ATT&CK technique IDs from a rule's tags.
+/// Returns sub-technique tags (e.g. "t1071.004") first, then tactical group
+/// tags (e.g. "command-and-control"), with the "attack." prefix stripped.
+fn extract_attack_techniques(rule: &sigmacatch_rule::SigmaRule) -> Vec<String> {
+    let mut sub_techs: Vec<String> = Vec::new();
+    let mut groups: Vec<String> = Vec::new();
+    for tag in &rule.tags {
+        if let Some(rest) = tag.strip_prefix("attack.") {
+            if rest.starts_with('t') {
+                sub_techs.push(rest.to_string());
+            } else if !rest.starts_with('g')
+                && !rest.starts_with('s')
+                && !rest.starts_with(|c: char| c.is_ascii_digit())
+            {
+                // tactical group tag (e.g. "command-and-control"), skip g/s IDs
+                groups.push(rest.to_string());
+            }
+        }
+    }
+    sub_techs.extend(groups);
+    sub_techs
+}
 use sigmacatch_types::{Event, EventProducer};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -161,14 +184,36 @@ async fn main() -> Result<()> {
                         .replace('\\', "/")
                 })
                 .unwrap_or_default();
+            let techniques = extract_attack_techniques(rule);
+            let art_link = techniques
+                .iter()
+                .find(|t| t.starts_with('t'))
+                .map(|t| format!("https://atomicredteam.io/technique/{}/", t))
+                .unwrap_or_default();
+            let status_str = rule
+                .status
+                .as_ref()
+                .map(|s| match s {
+                    sigmacatch_rule::Status::Stable => "stable",
+                    sigmacatch_rule::Status::Test => "test",
+                    sigmacatch_rule::Status::Experimental => "experimental",
+                    sigmacatch_rule::Status::Deprecated => "deprecated",
+                    sigmacatch_rule::Status::Unsupported => "unsupported",
+                })
+                .unwrap_or("unknown");
+            let level_str = rule.level.as_ref().map(|l| l.as_str()).unwrap_or("unknown");
             println!(
-                "{id}  {title}  {status:?}  {level:?}  {path}",
+                "\n{separator}\nID:          {id}\nTitle:       {title}\nStatus:      {status_str}\nLevel:       {level_str}\nTechniques:  {techniques_str}\nPath:        {path}\nART:         {art}",
+                separator = "─".repeat(72),
                 title = rule.title,
-                status = rule.status,
-                level = rule.level,
+                status_str = status_str,
+                level_str = level_str,
+                techniques_str = techniques.join(", "),
+                art = art_link,
             );
             count += 1;
         }
+        println!();
         info!("{} rules without regression data", count);
         return Ok(());
     }

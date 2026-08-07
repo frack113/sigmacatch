@@ -72,9 +72,10 @@ Rules missing a `status` or `level` field are always accepted.
 | `--dry-run` | Git diagnostics only (no collection) |
 | `--channels-only` | List resolved channels and exit (no collection) |
 | `--all-rules` | Load all rules — skip set is disabled |
-| `--list-rules` | List rules without regression data and exit (no collection) |
+| `--list-rules` | List rules without regression data, showing techniques (attack.* tags) and ART link (no collection) |
 | `--offline` | Skip pull at startup (use existing repo as-is) |
 | `--contrib` | Enable push to the remote fork for this run |
+| `--help`, `-h` | Print help and exit |
 
 ## Git clone performance (grit-lib vs native git)
 

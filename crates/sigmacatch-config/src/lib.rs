@@ -15,7 +15,7 @@ pub use sigmacatch_repo::GitTransport;
 
 /// Git transport configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct GitConfig {
     /// GitHub username for contrib workflow.
     pub author: String,
@@ -112,7 +112,7 @@ pub use sigmacatch_rule::SigmaFilterConfig;
 
 /// Log configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct LogConfig {
     /// Log level for file output.
     #[serde(default = "default_level_file")]
@@ -418,9 +418,34 @@ pub struct CliArgs {
     pub contrib: bool,
 }
 
+const HELP: &str = "\
+sigmacatch — Sigma regression data generator
+
+USAGE:
+    sigmacatch [OPTIONS]
+
+FLAGS:
+    --dry-run          Run git diagnostics and exit (clone, branch check, etc.)
+    --channels-only    Resolve and list channels, then exit
+    --all-rules        Skip rules that already have regression data
+    --list-rules       List all loaded rules with their paths
+    --offline          Skip pull at startup (existing repo required)
+    --contrib          Enable push to remote fork (requires git.contrib=true)
+    --help             Print this help and exit
+
+OPTIONS:
+    --author <NAME>    Override GitHub username from config.yaml
+";
+
 /// Parse CLI arguments from environment.
 pub fn parse_args() -> CliArgs {
     let args: Vec<String> = std::env::args().collect();
+    for arg in &args {
+        if arg == "--help" || arg == "-h" {
+            print!("{HELP}");
+            std::process::exit(0);
+        }
+    }
     let mut author = None;
     let mut dry_run = false;
     let mut channels_only = false;
@@ -441,7 +466,10 @@ pub fn parse_args() -> CliArgs {
             "--list-rules" => list_rules = true,
             "--offline" => offline = true,
             "--contrib" => contrib = true,
-            _ => {}
+            unknown => {
+                eprintln!("Error: unknown flag `{}`", unknown);
+                std::process::exit(1);
+            }
         }
         i += 1;
     }
@@ -619,7 +647,7 @@ impl DryRunConfig {
         let api_url = "https://api.github.com/user";
         let api_req = client
             .get(api_url)
-            .header("User-Agent", "sigmacatch/0.2.0")
+            .header("User-Agent", "sigmacatch/0.3.0")
             .header("Authorization", format!("Bearer {}", token));
         match api_req.send().await {
             Ok(resp) => {
@@ -668,7 +696,7 @@ impl DryRunConfig {
         println!("   URL: {}", info_refs_url);
         let git_req = client
             .get(&info_refs_url)
-            .header("User-Agent", "sigmacatch/0.2.0")
+            .header("User-Agent", "sigmacatch/0.3.0")
             .header("Authorization", format!("Bearer {}", token));
         match git_req.send().await {
             Ok(resp) => {

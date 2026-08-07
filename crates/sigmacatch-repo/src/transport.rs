@@ -123,7 +123,7 @@ pub struct AuthHttpClient {
 impl AuthHttpClient {
     pub fn new(token: Option<String>) -> Result<Self> {
         let client = reqwest::blocking::Client::builder()
-            .user_agent("sigmacatch/0.2.0")
+            .user_agent("sigmacatch/0.3.0")
             .timeout(std::time::Duration::from_secs(120))
             .connect_timeout(std::time::Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::limited(10))

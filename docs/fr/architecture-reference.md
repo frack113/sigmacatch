@@ -85,7 +85,7 @@ ou `contrib: true` ; un run entièrement offline (`offline: true` + `contrib: fa
 `contrib: true` active le push sur le fork à la fin ; par défaut (`false`) les commits restent locaux.
 Les flags CLI `--offline` / `--contrib` forcent ces valeurs à `true`.
 
-**CLI flags :** `--author <name>`, `--dry-run`, `--channels-only`, `--all-rules`, `--list-rules`, `--offline`, `--contrib`.
+**CLI flags :** `--author <name>`, `--dry-run`, `--channels-only`, `--all-rules`, `--list-rules`, `--offline`, `--contrib`, `--help` / `-h`.
 
 ---
 
@@ -178,7 +178,7 @@ SigmahqRules::new()                 # charge ./sigma
 rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size })
     ├── stats() → rules_loaded, filtered_product/status/level/author
     ├── 0 règle chargée → bail avec un message d'erreur clair
-    └── --list-rules → affiche id, titre, status/level, chemin relatif par règle + exit
+    └── --list-rules → affiche chaque règle sur 7 lignes (ID, titre, status, niveau, techniques, chemin, lien ART) séparées par des tirets + exit
 ```
 
 > Les règles avec des données de régression existantes sont exclues du moteur Sigma — ce
@@ -276,7 +276,7 @@ engine.process_events() → engine.get_alerts()
 retourne batches: Vec<(Uuid, Vec<String>)>   # (rule_id, fichiers écrits) — vide si aucun alert
     ↓
 upload_regression() → upload_rule_batches()   # dans sigmacatch-repo
-    ├── un commit par règle : "test: add regression data for rule {rule_id}"
+     ├── un commit par règle : "🧪 test: add regression data for rule {rule_id}"
     ├── échec commit/push → rollback de la branche locale vers le tip pré-batch
     └── UN SEUL push si git.contrib: true (sinon commits locaux)
         └── succès → "Next step: create PR at https://github.com/SigmaHQ/sigma/pulls"
@@ -304,7 +304,7 @@ Flush final :
     await de la task collector (timeout 30s) → drain du rx restant → engine.put_events
     ↓
 process_and_generate() → upload_regression() si fichiers
-    ├── commit par règle ("test: add regression data for rule {id}")
+     ├── commit par règle ("🧪 test: add regression data for rule {id}")
     └── push() vers le fork si git.contrib: true
         └── succès → "Next step: create PR at https://github.com/SigmaHQ/sigma/pulls"
 ```
@@ -469,6 +469,7 @@ sigmacatch
     [--list-rules]         # affiche les règles sans data-regression et exit
     [--offline]            # skip le pull au startup (force offline)
     [--contrib]            # active le push au remote fork
+    [--help], [-h]         # affiche cette aide et exit
 ```
 
 La config est auto-créée au premier run avec des défauts. Éditez `config.yaml` avant de lancer.
