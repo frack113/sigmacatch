@@ -4,7 +4,7 @@
 //! Fetch from remote via smart HTTP or SSH.
 
 use anyhow::Result;
-use grit_lib::fetch::NoProgress;
+use grit_lib::fetch::Progress;
 use grit_lib::transfer::{FetchOptions, TagMode};
 use grit_lib::transport::http::{http_fetch, HttpClient};
 use grit_lib::transport::{ConnectOptions, SshTransport, Transport};
@@ -12,6 +12,23 @@ use std::path::Path;
 use tracing::info;
 
 use crate::transport::sanitize_url;
+
+/// Forward the remote's side-band progress lines (channel 2) to the log so a
+/// first clone's long download isn't silent. The server's messages are
+/// `\r`-delimited counters (`Enumerating objects`, `Compressing objects`, …).
+struct LogProgress;
+
+impl Progress for LogProgress {
+    fn message(&mut self, bytes: &[u8]) {
+        let text = String::from_utf8_lossy(bytes);
+        for line in text.split('\r') {
+            let line = line.trim();
+            if !line.is_empty() {
+                info!("remote: {}", line);
+            }
+        }
+    }
+}
 
 /// Fetch options for a specific set of branches.
 ///
@@ -47,7 +64,7 @@ pub fn fetch_remote(
     opts: &FetchOptions,
 ) -> Result<(usize, Option<String>)> {
     info!("Fetching from {}", sanitize_url(repo_url));
-    let outcome = http_fetch(http_client, git_dir, repo_url, opts, &mut NoProgress)?;
+    let outcome = http_fetch(http_client, git_dir, repo_url, opts, &mut LogProgress)?;
     let count = outcome.updates.len();
     info!(
         "Fetched {} ref updates (default branch: {})",
@@ -75,7 +92,7 @@ pub fn fetch_remote_ssh(
         grit_lib::transport::Service::UploadPack,
         &ConnectOptions::default(),
     )?;
-    let outcome = grit_lib::fetch::fetch_remote(git_dir, &mut *conn, opts, &mut NoProgress)?;
+    let outcome = grit_lib::fetch::fetch_remote(git_dir, &mut *conn, opts, &mut LogProgress)?;
     let count = outcome.updates.len();
     info!(
         "Fetched {} ref updates via SSH (default branch: {})",
