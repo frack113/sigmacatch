@@ -408,6 +408,54 @@ detection:
         assert_eq!(evaluate_eventid("registry_event", 1), 0);
     }
 
+    #[test]
+    fn test_ps_module_pruned_for_unmapped_powershell_eventid() {
+        // The reference SigmaHQ harness maps ps_module to EventID 4103 only.
+        // ps_module rules carry no EventID condition in windows.yml (only
+        // sysmon categories get one), so without the injected category
+        // sentinel an unrelated PowerShell console error (EID 4100) would be
+        // evaluated against them — a real FP committed on sigmacatch/20260807.
+        let dir = tempfile::tempdir().unwrap();
+        let sigma_dir = dir.path().join("sigma");
+        let rules_dir = sigma_dir.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("ps_module_rule.yml"),
+            rule_with_category("11111111-1111-1111-1111-111111111111", "ps_module"),
+        )
+        .unwrap();
+
+        let rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
+        let mut engine = DetectionEngine::new(&rules).unwrap();
+
+        let ps_event = |event_id: u32| {
+            let json = serde_json::json!({
+                "Event": {
+                    "System": {
+                        "Provider": { "#attributes": { "Name": "Microsoft-Windows-PowerShell" } },
+                        "EventID": event_id,
+                        "Channel": "Microsoft-Windows-PowerShell/Operational"
+                    },
+                    "EventData": { "ContextInfo": "Application hôte = powershell.exe" }
+                },
+                "foo": "bar"
+            });
+            let mut event = Event::new(json.clone(), json.clone(), Vec::new());
+            event.inject_logsource_fields();
+            event
+        };
+
+        // EID 4100 console error: injected category sentinel prunes the rule.
+        engine.put_events(vec![ps_event(4100)]);
+        engine.process_events();
+        assert_eq!(engine.get_alerts().len(), 0);
+
+        // EID 4103 module logging: category matches, rule evaluated, alert.
+        engine.put_events(vec![ps_event(4103)]);
+        engine.process_events();
+        assert_eq!(engine.get_alerts().len(), 1);
+    }
+
     fn channels_for(logsource: &str) -> Vec<String> {
         let dir = tempfile::tempdir().unwrap();
         let sigma_dir = dir.path().join("sigma");
