@@ -647,7 +647,7 @@ impl DryRunConfig {
         let api_url = "https://api.github.com/user";
         let api_req = client
             .get(api_url)
-            .header("User-Agent", "sigmacatch/0.2.0")
+            .header("User-Agent", "sigmacatch/0.3.0")
             .header("Authorization", format!("Bearer {}", token));
         match api_req.send().await {
             Ok(resp) => {
@@ -696,7 +696,7 @@ impl DryRunConfig {
         println!("   URL: {}", info_refs_url);
         let git_req = client
             .get(&info_refs_url)
-            .header("User-Agent", "sigmacatch/0.2.0")
+            .header("User-Agent", "sigmacatch/0.3.0")
             .header("Authorization", format!("Bearer {}", token));
         match git_req.send().await {
             Ok(resp) => {

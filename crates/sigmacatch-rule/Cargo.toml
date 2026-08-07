@@ -3,7 +3,7 @@
 
 [package]
 name = "sigmacatch-rule"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Sigma rule management: loading, filtering, scanning, and AST indexing"
 license = "MIT"
