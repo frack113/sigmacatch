@@ -1294,7 +1294,7 @@ dependencies = [
 
 [[package]]
 name = "input-evtx"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1305,7 +1305,7 @@ dependencies = [
 
 [[package]]
 name = "input-windows-channels"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1499,7 +1499,7 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "localcheck"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "input-evtx",
  "serde_json",
@@ -2481,7 +2481,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sigmacatch"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2502,7 +2502,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-config"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "reqwest",
@@ -2518,7 +2518,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-detection"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "phf",
@@ -2534,7 +2534,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-logger"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "sigmacatch-config",
@@ -2545,7 +2545,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-regression"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2561,7 +2561,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-repo"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2581,7 +2581,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-rule"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "dunce",
@@ -2595,7 +2595,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-types"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
