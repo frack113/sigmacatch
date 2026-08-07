@@ -418,9 +418,34 @@ pub struct CliArgs {
     pub contrib: bool,
 }
 
+const HELP: &str = "\
+sigmacatch — Sigma regression data generator
+
+USAGE:
+    sigmacatch [OPTIONS]
+
+FLAGS:
+    --dry-run          Run git diagnostics and exit (clone, branch check, etc.)
+    --channels-only    Resolve and list channels, then exit
+    --all-rules        Skip rules that already have regression data
+    --list-rules       List all loaded rules with their paths
+    --offline          Skip pull at startup (existing repo required)
+    --contrib          Enable push to remote fork (requires git.contrib=true)
+    --help             Print this help and exit
+
+OPTIONS:
+    --author <NAME>    Override GitHub username from config.yaml
+";
+
 /// Parse CLI arguments from environment.
 pub fn parse_args() -> CliArgs {
     let args: Vec<String> = std::env::args().collect();
+    for arg in &args {
+        if arg == "--help" || arg == "-h" {
+            print!("{HELP}");
+            std::process::exit(0);
+        }
+    }
     let mut author = None;
     let mut dry_run = false;
     let mut channels_only = false;
