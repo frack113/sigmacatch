@@ -2568,6 +2568,7 @@ dependencies = [
  "crc32fast",
  "flate2",
  "grit-lib",
+ "rayon",
  "reqwest",
  "serde",
  "sha1 0.10.7",

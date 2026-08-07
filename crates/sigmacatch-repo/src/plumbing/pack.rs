@@ -36,7 +36,7 @@ struct PackOffset {
 /// Collect all loose objects under `objects_dir` by scanning the `xx/yyy…`
 /// two-level directory layout. Returns entries sorted by OID so the resulting
 /// pack index can use binary search.
-fn collect_loose_objects(objects_dir: &Path, odb: &Odb) -> Result<Vec<LooseEntry>> {
+fn collect_loose_objects(objects_dir: &Path) -> Result<Vec<LooseEntry>> {
     let mut entries: Vec<LooseEntry> = Vec::new();
     for entry in std::fs::read_dir(objects_dir)? {
         let entry = entry?;
@@ -63,13 +63,10 @@ fn collect_loose_objects(objects_dir: &Path, odb: &Odb) -> Result<Vec<LooseEntry
                 Ok(o) => o,
                 Err(_) => continue,
             };
-            // Verify the object is readable in the ODB
-            if odb.read(&oid).is_ok() {
-                entries.push(LooseEntry {
-                    oid,
-                    path: sub.path(),
-                });
-            }
+            entries.push(LooseEntry {
+                oid,
+                path: sub.path(),
+            });
         }
     }
     entries.sort_by(|a, b| a.oid.as_bytes().cmp(b.oid.as_bytes()));
@@ -103,8 +100,49 @@ fn kind_to_pack_type(kind: ObjectKind) -> u8 {
     }
 }
 
+/// A single pack entry prepared in parallel: header + compressed payload + CRC32.
+struct PreparedEntry {
+    oid: ObjectId,
+    header: Vec<u8>,
+    compressed: Vec<u8>,
+    crc32: u32,
+}
+
+/// Compress and CRC a single object (CPU-heavy, safe to run in parallel).
+fn prepare_entry(oid: ObjectId, obj: &Object) -> Result<PreparedEntry> {
+    let type_code = kind_to_pack_type(obj.kind);
+    let mut header = Vec::new();
+    encode_pack_header(&mut header, type_code, obj.data.len());
+
+    let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    enc.write_all(&obj.data)
+        .map_err(|e| anyhow::anyhow!("zlib encode: {}", e))?;
+    let compressed = enc
+        .finish()
+        .map_err(|e| anyhow::anyhow!("zlib finish: {}", e))?;
+
+    // CRC32 over header + compressed data (the full on-disk entry) — computed
+    // per object, not cumulatively.
+    let mut crc = crc32fast::Hasher::new();
+    crc.update(&header);
+    crc.update(&compressed);
+
+    Ok(PreparedEntry {
+        oid,
+        header,
+        compressed,
+        crc32: crc.finalize(),
+    })
+}
+
 /// Build a V2 pack file from loose objects and return (pack_bytes, offsets).
+///
+/// Compression (zlib) is the CPU bottleneck and is embarrassingly parallel;
+/// objects are processed in chunks so we never hold the whole uncompressed
+/// repository in RAM at once.
 fn build_pack_data(odb: &Odb, objects: &[LooseEntry]) -> Result<(Vec<u8>, Vec<PackOffset>)> {
+    use rayon::prelude::*;
+
     let mut buf = Vec::new();
     buf.extend_from_slice(PACK_MAGIC);
     buf.extend_from_slice(&2u32.to_be_bytes());
@@ -113,40 +151,31 @@ fn build_pack_data(odb: &Odb, objects: &[LooseEntry]) -> Result<(Vec<u8>, Vec<Pa
     buf.extend_from_slice(&count.to_be_bytes());
 
     let mut offsets = Vec::with_capacity(objects.len());
+    let chunk_size = 16384;
 
-    for entry in objects {
-        let offset = buf.len() as u64;
-        let obj: Object = odb.read(&entry.oid)?;
+    for chunk in objects.chunks(chunk_size) {
+        let objects_read: Vec<Object> = chunk
+            .iter()
+            .map(|entry| odb.read(&entry.oid))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| anyhow::anyhow!("odb read: {}", e))?;
 
-        // Header
-        let type_code = kind_to_pack_type(obj.kind);
-        let header_start = buf.len();
-        encode_pack_header(&mut buf, type_code, obj.data.len());
-        let header_end = buf.len();
+        let prepared: Vec<PreparedEntry> = chunk
+            .par_iter()
+            .zip(objects_read.par_iter())
+            .map(|(entry, obj)| prepare_entry(entry.oid, obj))
+            .collect::<Result<_>>()?;
 
-        // Compressed data
-        let compressed = {
-            let mut enc =
-                flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
-            enc.write_all(&obj.data)
-                .map_err(|e| anyhow::anyhow!("zlib encode: {}", e))?;
-            enc.finish()
-                .map_err(|e| anyhow::anyhow!("zlib finish: {}", e))?
-        };
-
-        // CRC32 over header + compressed data (the full on-disk entry) — computed
-        // per object, not cumulatively.
-        let mut crc = crc32fast::Hasher::new();
-        crc.update(&buf[header_start..header_end]);
-        crc.update(&compressed);
-        let crc32 = crc.finalize();
-
-        buf.extend_from_slice(&compressed);
-        offsets.push(PackOffset {
-            oid: entry.oid,
-            offset,
-            crc32,
-        });
+        for entry in prepared {
+            let offset = buf.len() as u64;
+            buf.extend_from_slice(&entry.header);
+            buf.extend_from_slice(&entry.compressed);
+            offsets.push(PackOffset {
+                oid: entry.oid,
+                offset,
+                crc32: entry.crc32,
+            });
+        }
     }
 
     // Pack trailer: SHA-1 of everything written so far
@@ -245,7 +274,7 @@ pub(crate) fn pack_loose_objects(git_dir: &Path) -> Result<()> {
     let objects_dir = git_dir.join("objects");
     let odb = crate::plumbing::open_odb(git_dir);
 
-    let loose = collect_loose_objects(&objects_dir, &odb)?;
+    let loose = collect_loose_objects(&objects_dir)?;
     if loose.is_empty() {
         debug!("No loose objects to pack");
         return Ok(());
