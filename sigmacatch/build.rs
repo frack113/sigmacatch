@@ -4,13 +4,25 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
+
+    // SOURCE_DATE_EPOCH (epoch seconds) overrides the wall clock for
+    // reproducible builds; otherwise stamp with the current UTC time.
+    let secs = std::env::var("SOURCE_DATE_EPOCH")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or_else(now_epoch);
 
     let (y, mo, d, h, mi, s) = epoch_to_ymd_hms(secs);
     println!("cargo:rustc-env=BUILD_TIME={y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z");
+}
+
+fn now_epoch() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn epoch_to_ymd_hms(epoch: u64) -> (u64, u64, u64, u64, u64, u64) {
