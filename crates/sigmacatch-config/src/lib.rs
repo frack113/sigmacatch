@@ -15,7 +15,7 @@ pub use sigmacatch_repo::GitTransport;
 
 /// Git transport configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct GitConfig {
     /// GitHub username for contrib workflow.
     pub author: String,
@@ -112,7 +112,7 @@ pub use sigmacatch_rule::SigmaFilterConfig;
 
 /// Log configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct LogConfig {
     /// Log level for file output.
     #[serde(default = "default_level_file")]
@@ -466,7 +466,10 @@ pub fn parse_args() -> CliArgs {
             "--list-rules" => list_rules = true,
             "--offline" => offline = true,
             "--contrib" => contrib = true,
-            _ => {}
+            unknown => {
+                eprintln!("Error: unknown flag `{}`", unknown);
+                std::process::exit(1);
+            }
         }
         i += 1;
     }
