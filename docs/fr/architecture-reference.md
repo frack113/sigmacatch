@@ -85,7 +85,7 @@ ou `contrib: true` ; un run entièrement offline (`offline: true` + `contrib: fa
 `contrib: true` active le push sur le fork à la fin ; par défaut (`false`) les commits restent locaux.
 Les flags CLI `--offline` / `--contrib` forcent ces valeurs à `true`.
 
-**CLI flags :** `--author <name>`, `--dry-run`, `--channels-only`, `--all-rules`, `--list-rules`, `--offline`, `--contrib`.
+**CLI flags :** `--author <name>`, `--dry-run`, `--channels-only`, `--all-rules`, `--list-rules`, `--offline`, `--contrib`, `--help` / `-h`.
 
 ---
 
@@ -469,6 +469,7 @@ sigmacatch
     [--list-rules]         # affiche les règles sans data-regression et exit
     [--offline]            # skip le pull au startup (force offline)
     [--contrib]            # active le push au remote fork
+    [--help], [-h]         # affiche cette aide et exit
 ```
 
 La config est auto-créée au premier run avec des défauts. Éditez `config.yaml` avant de lancer.

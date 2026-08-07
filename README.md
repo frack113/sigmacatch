@@ -75,6 +75,7 @@ Rules missing a `status` or `level` field are always accepted.
 | `--list-rules` | List rules without regression data and exit (no collection) |
 | `--offline` | Skip pull at startup (use existing repo as-is) |
 | `--contrib` | Enable push to the remote fork for this run |
+| `--help`, `-h` | Print help and exit |
 
 ## Git clone performance (grit-lib vs native git)
 
