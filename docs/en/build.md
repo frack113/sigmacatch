@@ -74,3 +74,6 @@ cargo build -p localcheck
 | `sigmacatch` | `sigmacatch/src/main.rs` | Headless capture + evaluation + regression generation |
 | `check_filter` | `localcheck/src/check_filter.rs` | Validates `SigmaFilterConfig` against real Sigma rules (ground-truth counts, no CLI args) |
 | `check_evtx` | `localcheck/src/check_evtx.rs` | Batch validation of Sigma engine against .evtx regression data |
+
+Observed sizes (x86_64-pc-windows-msvc cross, release): `sigmacatch.exe` ~10.4 MB,
+`check_evtx.exe` ~4.0 MB, `check_filter.exe` ~0.9 MB.

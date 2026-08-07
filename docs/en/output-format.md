@@ -118,6 +118,15 @@ The source rule YAML is also annotated with:
 regression_tests_path: regression_data/rules/<rule_rel_path>/info.yml
 ```
 
+### Supported logtypes
+
+The `type` field of `regression_tests_info` (and the reading of existing info.yml files) supports
+4 logtypes (`crates/sigmacatch-regression/src/logtype.rs`): `evtx`, `json`, `raw`, `log`
+— an unknown/missing value falls back to `json` with a `warn!`. The pipeline always writes
+`.json` + `.evtx` (fallback `.xml`); a `.raw` is possible for non-Winevt data
+(e.g. `regression_data/rules/cisco/aaa/cisco_cli_dot1x_disabled/ef0ff092-....raw`, `type: raw`,
+generated outside the pipeline — its `regression_tests_info` section is commented out).
+
 ## Constraints
 
 - **One event per rule**: each regression directory contains exactly one JSON event.

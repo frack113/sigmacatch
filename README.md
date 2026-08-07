@@ -76,6 +76,23 @@ Rules missing a `status` or `level` field are always accepted.
 | `--offline` | Skip pull at startup (use existing repo as-is) |
 | `--contrib` | Enable push to the remote fork for this run |
 
+## Git clone performance (grit-lib vs native git)
+
+The Sigma repo (~131K objects) is cloned and pulled through grit-lib (pure Rust, no git CLI). A **fresh clone** is slower and larger than a native `git clone`:
+
+| | `git clone` (native, single-branch) | sigmacatch (grit-lib + pack) |
+|---|---|---|
+| Time | ~3s | ~70s |
+| `.git/` size | 52 MB | 218 MB |
+| Pack file | 47 MB (delta-compressed) | 215 MB (no delta) |
+| `git fsck --strict` | clean | clean |
+
+Why the difference:
+- Native git writes the server's already delta-compressed pack directly to disk — no post-processing.
+- grit-lib's `http_fetch` unpacks every object to a loose file (131K files, ~650 MB), then sigmacatch re-packs them (no delta compression) to keep `.git/` small (218 MB vs 650 MB, 3x).
+
+The download itself is identical (~47 MB); the gap is local post-processing, inherent to grit-lib. This cost is paid **once at first clone** — subsequent pulls only transfer deltas (sub-second when nothing changed). On a slow VM the first clone can take a few minutes.
+
 ## Requirements
 
 - **Windows** with [Sysmon](https://docs.microsoft.com/en-us/sysinternals/downloads/sysmon) installed — required for rich events (ParentImage, CommandLine, hashes, etc.)
