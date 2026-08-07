@@ -9,6 +9,7 @@
 Headless tool that captures real Windows events via **Windows Event Log API** (winevt), matches them against SigmaHQ rules, and outputs structured regression data.
 
 **Continuous run (one process until Ctrl+C):**
+
 1. Load config + init logger
 2. Acquire SigmaHQ rules (grit-lib clone/fetch) + create branch
 3. Build the skip set from existing regression data
@@ -25,7 +26,7 @@ Headless tool that captures real Windows events via **Windows Event Log API** (w
 
 ## 2. Source tree
 
-```
+```text
 sigmacatch/
 ├── Cargo.toml                     # Workspace root (11 packages)
 ├── sigmacatch/                    # Binary crate
@@ -92,7 +93,7 @@ The CLI flags `--offline` / `--contrib` force these values to `true`.
 
 ### Step 1 — Init
 
-```
+```text
 parse_args() → CliArgs
     ↓
 Config::load_with_cli("config.yaml", cli)
@@ -108,7 +109,7 @@ init_logger(&config) → tracing (stderr info + daily rolling file debug)
 
 ### Step 2 — Repo acquisition
 
-```
+```text
 ensure_dirs() → create <sigma_repo_path>/ and logs/
     ↓
 fork_url = "https://github.com/{author}/sigma"
@@ -161,7 +162,7 @@ several minutes.
 
 ### Step 3 — Skip set (existing regression)
 
-```
+```text
 SigmahqRegression::new()            # loads ./sigma/regression_data
     └── scans all info.yml (walk, depth 64, skips symlinks)
         └── lenient: missing dir → empty, not an error
@@ -187,7 +188,7 @@ rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author,
 
 ### Step 4 — Channel resolution
 
-```
+```text
 custom_map = load_custom_channel_mapping("custom_channels.yaml")   # missing/empty → {}
     ↓
 DetectionEngine::new(&rules)
@@ -203,7 +204,7 @@ cycle_channels = engine.resolve_channels(&custom_map)
 
 ### Step 5 — Continuous collection
 
-```
+```text
 output_base = <sigma_repo_path>/regression_data
 clean_partial_artifacts(&output_base)     # removes dirs with json/evtx but no info.yml
     ↓
@@ -214,7 +215,7 @@ EventCollector::new(cycle_channels).run(tx, stop)   # tokio task, one task per c
 
 **Per-channel loop (`collect_continuous`, spawned with `spawn_blocking`):**
 
-```
+```text
 loop (until stop):
     query = "*" if last_record_id == 0
             else "*[System[EventRecordID > {last_record_id}]]"
@@ -243,7 +244,7 @@ channel task is a no-op stub.
 
 ### Step 6 — Continuous event loop
 
-```
+```text
 generate_interval = 30s (first tick skipped immediately)
     ↓
 loop:
@@ -257,7 +258,7 @@ loop:
 
 ### Step 7 — process_and_generate
 
-```
+```text
 engine.process_events() → engine.get_alerts()
     ├── alerts empty → return (no "evaluation complete" log)
     ├── log stats: events_processed, matches_found (unique rules), alerts_count
@@ -283,7 +284,8 @@ upload_regression() → upload_rule_batches()   # in sigmacatch-repo
 ```
 
 **Output:**
-```
+
+```text
 <sigma_repo_path>/regression_data/<rule_rel_path>/
     ├── <rule_id>.json      # first matching event (raw Winevt JSON, original EventData key names)
     ├── <rule_id>.evtx      # valid EVTX via EvtExportLog (or .xml fallback)
@@ -296,7 +298,7 @@ repo and is committed to the fork when `git.contrib: true` (local commits otherw
 
 ### Step 8 — Shutdown / commit / push
 
-```
+```text
 Ctrl+C → shutdown_rx.set(true)
     ↓
 Final flush:
@@ -458,7 +460,7 @@ cargo xwin build --release --target x86_64-pc-windows-msvc   # cross-compile Win
 
 ## 9. CLI
 
-```
+```text
 sigmacatch
     [--author <name>]      # override git.author from config
     [--dry-run]            # git diagnostics only (no collection)
@@ -479,7 +481,7 @@ Config is auto-created on first run with defaults. Edit `config.yaml` before run
 
 Embedded transformation pipeline (loaded via `include_str!` in `sigmacatch-detection`), applied to every rule before compilation:
 
-- Maps `logsource.category` → Sysmon EventID conditions via `add_condition`, gated by `rule_conditions` (`type: logsource` with `category`, `product`, `service` filters; all conditions ANDed).
+- Maps `logsource.category` → Sysmon EventID conditions via `add_condition`, gated by `rule_conditions` (`type: logsource` with `category`, `product`, `service` filters; all conditions combined with AND).
 - **rsigma-eval v0.21+** : `add_condition` accepts YAML sequences (`conditions: {EventID: [17, 18]}`) whose values are OR-linked, matching the pySigma `AddConditionTransformation` (breaking API : `AddCondition.conditions` is `HashMap<String, Vec<SigmaValue>>`). A multi-EventID category is a single transformation entry (e.g. `wmi_event` → `[19, 20, 21]`).
 - **EventType registry filters** : `registry_add` = EventID 12 + `EventType: CreateKey`, `registry_set` = EventID 13 + `EventType: SetValue`, `registry_rename` = EventID 14 + `EventType: RenameKey`. **`registry_delete` has NO EventType filter** — EventID 12 carries both `DeleteKey` and `DeleteValue` (rsigma-eval constraint), so it matches on EventID 12 alone.
 - **`change_logsource` final (post-add_condition)** : one `service: sysmon` block per routed category, same logsource gate `(category, product: windows)` as its `add_condition` → makes the post-pipeline logsource usable by `channel_resolver` (zero duplicated category → service mapping).

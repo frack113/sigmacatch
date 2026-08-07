@@ -9,7 +9,7 @@ Capture real Windows events via the **Windows Event Log API** (`winevt`), match 
 
 ## What it does
 
-```
+```text
 SigmaHQ rules (auto-cloned via grit-lib)
     ↓
 Load rules → skip existing regression → filter Windows → apply pipeline
@@ -88,6 +88,7 @@ The Sigma repo (~131K objects) is cloned and pulled through grit-lib (pure Rust,
 | `git fsck --strict` | clean | clean |
 
 Why the difference:
+
 - Native git writes the server's already delta-compressed pack directly to disk — no post-processing.
 - grit-lib's `http_fetch` unpacks every object to a loose file (131K files, ~650 MB), then sigmacatch re-packs them (no delta compression) to keep `.git/` small (218 MB vs 650 MB, 3x).
 

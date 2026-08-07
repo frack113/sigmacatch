@@ -8,7 +8,7 @@ A regression test set consists of a **triplet** per rule: an `info.yml` file (me
 
 ## Directory tree
 
-```
+```text
 regression_data/
 ├── rules/                            # Main SigmaHQ rules
 │   ├── cisco/
@@ -52,7 +52,7 @@ Intermediate directories (`cisco/`, `windows/`, `builtin/`, etc.) reflect the Si
 
 Each rule with regression contains a directory (slug) with exactly three files:
 
-```
+```text
 <slug>/
 ├── info.yml                    # Metadata + test results
 ├── <rule_id>.json              # Raw event (nested Winevt JSON, original EventData key names)
@@ -90,6 +90,7 @@ rule_metadata:
 ```
 
 `rule_metadata[0].id` is the **canonical ID**. This UUID uniquely identifies the rule across the entire system. It is used for:
+
 - Naming `.json` and `.evtx` files
 - Lookup key in Sigma engines
 - Indexing in data structures
@@ -147,6 +148,7 @@ The `<rule_id>` in file names is always the UUID from `rule_metadata[0].id`.
 ### rule_id consistency
 
 The same UUID must appear in three places:
+
 1. `rule_metadata[0].id` in `info.yml`
 2. `.json` file name
 3. `.evtx` file name
@@ -156,6 +158,7 @@ If these three values are not identical, the triplet is inconsistent.
 ### Triplet completeness
 
 A triplet is **complete** if all three files exist in the same directory:
+
 - `info.yml`
 - `<rule_id>.json` (or `<rule_id>.raw`)
 - `<rule_id>.evtx`
@@ -165,6 +168,7 @@ A triplet is **incomplete** if any file is missing.
 ### info.yml format validation
 
 For an `info.yml` to be valid:
+
 1. The file must be UTF-8 (BOM allowed)
 2. The `rule_metadata` field must be a non-empty sequence
 3. `rule_metadata[0].id` must be a valid UUID v4 in `8-4-4-4-12` format (lowercase hex)

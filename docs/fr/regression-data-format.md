@@ -8,7 +8,7 @@ Un jeu de régression se compose d'un **triplet** par règle : un fichier `info.
 
 ## Arborescence
 
-```
+```text
 regression_data/
 ├── rules/                            # Règles principales SigmaHQ
 │   ├── cisco/
@@ -52,7 +52,7 @@ Les dossiers intermédiaires (`cisco/`, `windows/`, `builtin/`, etc.) reflètent
 
 Chaque règle avec régression contient un dossier (slug) avec exactement trois fichiers :
 
-```
+```text
 <slug>/
 ├── info.yml                    # Métadonnées + résultats du test
 ├── <rule_id>.json              # Événement brut (JSON Winevt imbriqué, noms de clés EventData d'origine)
@@ -90,6 +90,7 @@ rule_metadata:
 ```
 
 `rule_metadata[0].id` est l'**identifiant canonique**. C'est cet UUID qui identifie de manière unique la règle dans tout le système. Il est utilisé pour :
+
 - Nommage des fichiers `.json` et `.evtx`
 - Clé de lookup dans les moteurs Sigma
 - Indexation dans les structures de données
@@ -147,6 +148,7 @@ Le `<rule_id>` dans les noms de fichiers est toujours le UUID de `rule_metadata[
 ### Cohérence du rule_id
 
 Le même UUID doit apparaître dans trois endroits :
+
 1. `rule_metadata[0].id` dans `info.yml`
 2. Nom du fichier `.json`
 3. Nom du fichier `.evtx`
@@ -156,6 +158,7 @@ Si ces trois valeurs ne sont pas identiques, le triplet est incohérent.
 ### Complétude du triplet
 
 Un triplet est **complet** si les trois fichiers existent dans le même dossier :
+
 - `info.yml`
 - `<rule_id>.json` (ou `<rule_id>.raw`)
 - `<rule_id>.evtx`
@@ -165,6 +168,7 @@ Un triplet est **incomplet** si l'un des fichiers manque.
 ### Validation du format info.yml
 
 Pour qu'un `info.yml` soit valide :
+
 1. Le fichier doit être en UTF-8 (BOM autorisé)
 2. Le champ `rule_metadata` doit être une séquence non vide
 3. `rule_metadata[0].id` doit être un UUID v4 valide au format `8-4-4-4-12` (hexadécimal minuscule)

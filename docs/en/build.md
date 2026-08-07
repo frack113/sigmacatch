@@ -40,6 +40,7 @@ The resulting binary is at `target/x86_64-pc-windows-msvc/release/sigmacatch.exe
 Optimized release build: ~10MB (single headless binary).
 
 Applied profile:
+
 - `strip = true`
 - `lto = true`
 - `codegen-units = 1`

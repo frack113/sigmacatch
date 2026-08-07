@@ -4,7 +4,7 @@
 
 The project is a cargo workspace of 11 packages (2 binary crates + 9 libraries):
 
-```
+```text
 sigmacatch/
 ├── Cargo.toml                    # Workspace root
 ├── crates/
@@ -28,7 +28,7 @@ sigmacatch/
 
 ## Source tree
 
-```
+```text
 sigmacatch/src/
 └── main.rs              # Binary: orchestration, continuous loop, process_and_generate
 
@@ -42,7 +42,7 @@ There is no `config.rs` / `logger.rs` / `repo.rs` in the binary — those moved 
 
 ## Crate dependency graph
 
-```
+```text
 sigmacatch ──┬── sigmacatch-config       (Config, CliArgs, dry-run diagnostics)
              ├── sigmacatch-logger       (tracing init)
              ├── sigmacatch-rule         (SigmahqRules: load/filter/remove_id)
@@ -65,7 +65,7 @@ depends on `rsigma-parser`. `sigmacatch-config` depends on `sigmacatch-repo` + `
 
 ## Pipeline (continuous loop)
 
-```
+```text
 1. parse_args() + Config::load_with_cli("config.yaml", cli)
    └── --dry-run → dry_run_git() (git diagnostics) + exit
 2. init_logger() → tracing (stderr info + file debug)
@@ -92,7 +92,7 @@ depends on `rsigma-parser`. `sigmacatch-config` depends on `sigmacatch-repo` + `
 
 `process_and_generate()`:
 
-```
+```text
 engine.process_events() → get_alerts()
     ├── alerts empty → return (no "evaluation complete" log)
     ├── log stats (events_processed, matches_found, alerts_count)

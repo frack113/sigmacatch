@@ -6,7 +6,7 @@ L'outil produit des données de régression compatibles avec le format du dépô
 
 La sortie vit toujours dans le repo sigma, sous `regression_data/` :
 
-```
+```text
 <sigma_repo_path>/regression_data/
 └── <rule_rel_path>/         # miroir du chemin de la règle sous sigma/rules/
     ├── info.yml
@@ -16,7 +16,7 @@ La sortie vit toujours dans le repo sigma, sous `regression_data/` :
 
 Le répertoire miroir le chemin de la règle sous `rules/`. Par exemple :
 
-```
+```text
 sigma/rules/windows/builtin/security/win_security_foo.yml
     → sigma/regression_data/rules/windows/builtin/security/win_security_foo/
     → sigma/regression_data/rules/windows/builtin/security/win_security_foo/info.yml
@@ -87,6 +87,7 @@ XML d'origine, et préserve les noms de clés `EventData` d'origine (espaces com
 ```
 
 Conventions notables :
+
 - Les attributs XML sont stockés sous une clé `#attributes` (ex. `Provider`, `TimeCreated`).
 - `EventData` conserve ses noms de clés **d'origine** — espaces compris (ex. `"RuleName"`, pas `Rule_Name`).
   `event_json` (la forme du moteur de détection) supprime ces espaces ; `event_json_raw` (ce fichier) non.
