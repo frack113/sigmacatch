@@ -6,7 +6,7 @@ The tool produces regression data compatible with the [SigmaHQ](https://github.c
 
 The output always lives inside the sigma repo, under `regression_data/`:
 
-```
+```text
 <sigma_repo_path>/regression_data/
 └── <rule_rel_path>/         # mirrors the rule path under sigma/rules/
     ├── info.yml
@@ -16,7 +16,7 @@ The output always lives inside the sigma repo, under `regression_data/`:
 
 The directory mirrors the rule path under `rules/`. For example:
 
-```
+```text
 sigma/rules/windows/builtin/security/win_security_foo.yml
     → sigma/regression_data/rules/windows/builtin/security/win_security_foo/
     → sigma/regression_data/rules/windows/builtin/security/win_security_foo/info.yml
@@ -87,6 +87,7 @@ structure verbatim, and preserves the original `EventData` key names (including 
 ```
 
 Notable conventions:
+
 - XML attributes are stored under a `#attributes` key (e.g. `Provider`, `TimeCreated`).
 - `EventData` keeps its **original** key names — spaces included (e.g. `"RuleName"`, not `Rule_Name`).
   `event_json` (the detection-engine form) strips those spaces; `event_json_raw` (this file) does not.

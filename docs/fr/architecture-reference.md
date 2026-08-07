@@ -9,6 +9,7 @@
 Outil headless qui capture des événements Windows réels via **Windows Event Log API** (winevt), les matche contre les règles SigmaHQ, et sort des données de régression structurées.
 
 **Exécution continue (un seul processus jusqu'à Ctrl+C) :**
+
 1. Charger la config + init logger
 2. Acquérir les règles SigmaHQ (grit-lib clone/fetch) + créer la branche
 3. Construire le skip set depuis les données de régression existantes
@@ -25,7 +26,7 @@ Outil headless qui capture des événements Windows réels via **Windows Event L
 
 ## 2. Arborescence
 
-```
+```text
 sigmacatch/
 ├── Cargo.toml                     # Racine workspace (11 packages)
 ├── sigmacatch/                    # Crate binaire
@@ -92,7 +93,7 @@ Les flags CLI `--offline` / `--contrib` forcent ces valeurs à `true`.
 
 ### Étape 1 — Init
 
-```
+```text
 parse_args() → CliArgs
     ↓
 Config::load_with_cli("config.yaml", cli)
@@ -108,7 +109,7 @@ init_logger(&config) → tracing (stderr info + fichier journal rolling debug)
 
 ### Étape 2 — Acquisition du repo
 
-```
+```text
 ensure_dirs() → crée <sigma_repo_path>/ et logs/
     ↓
 fork_url = "https://github.com/{author}/sigma"
@@ -160,7 +161,7 @@ prendre plusieurs minutes.
 
 ### Étape 3 — Skip set (régression existante)
 
-```
+```text
 SigmahqRegression::new()            # charge ./sigma/regression_data
     └── scanne tous les info.yml (walk, profondeur 64, ignore les symlinks)
         └── permissif : dossier manquant → vide, pas une erreur
@@ -186,7 +187,7 @@ rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author,
 
 ### Étape 4 — Résolution des channels
 
-```
+```text
 custom_map = load_custom_channel_mapping("custom_channels.yaml")   # manquant/vide → {}
     ↓
 DetectionEngine::new(&rules)
@@ -202,7 +203,7 @@ cycle_channels = engine.resolve_channels(&custom_map)
 
 ### Étape 5 — Collecte continue
 
-```
+```text
 output_base = <sigma_repo_path>/regression_data
 clean_partial_artifacts(&output_base)     # supprime les dossiers avec json/evtx mais sans info.yml
     ↓
@@ -213,7 +214,7 @@ EventCollector::new(cycle_channels).run(tx, stop)   # task tokio, une task par c
 
 **Boucle par channel (`collect_continuous`, lancée via `spawn_blocking`) :**
 
-```
+```text
 loop (jusqu'à stop):
     query = "*" si last_record_id == 0
             sinon "*[System[EventRecordID > {last_record_id}]]"
@@ -242,7 +243,7 @@ chaque task de channel est un stub no-op.
 
 ### Étape 6 — Boucle d'events continue
 
-```
+```text
 generate_interval = 30s (premier tick sauté immédiatement)
     ↓
 loop:
@@ -256,7 +257,7 @@ loop:
 
 ### Étape 7 — process_and_generate
 
-```
+```text
 engine.process_events() → engine.get_alerts()
     ├── alerts vides → return (pas de log "evaluation complete")
     ├── log stats : events_processed, matches_found (règles uniques), alerts_count
@@ -282,7 +283,8 @@ upload_regression() → upload_rule_batches()   # dans sigmacatch-repo
 ```
 
 **Sortie :**
-```
+
+```text
 <sigma_repo_path>/regression_data/<rule_rel_path>/
     ├── <rule_id>.json      # premier event matché (JSON Winevt brut, noms de clés EventData d'origine)
     ├── <rule_id>.evtx      # EVTX valide via EvtExportLog (ou fallback .xml)
@@ -295,7 +297,7 @@ et est commitée sur le fork si `git.contrib: true` (commits locaux sinon).
 
 ### Étape 8 — Arrêt / commit / push
 
-```
+```text
 Ctrl+C → shutdown_rx.set(true)
     ↓
 Flush final :
@@ -458,7 +460,7 @@ cargo xwin build --release --target x86_64-pc-windows-msvc   # cross-compile Win
 
 ## 9. CLI
 
-```
+```text
 sigmacatch
     [--author <name>]      # écrase git.author de la config
     [--dry-run]            # diagnostics git uniquement (pas de collecte)

@@ -26,7 +26,7 @@ binaire principal `sigmacatch` pour garder son arbre de dépendances léger.
 
 ### Sortie
 
-```
+```text
 Found 3777 total rules
   → 2872 windows rules after filtering
 
@@ -108,7 +108,7 @@ directement depuis les règles brutes — donc un `stats()` auto-cohérent mais 
 
 ### Sortie
 
-```
+```text
 Loaded 3777 total rules from ./sigma
 
 ============================================================
@@ -181,5 +181,5 @@ name = "<name>"
 path = "src/<name>.rs"
 ```
 
-3. Ajouter seulement les dépendances nécessaires à l'outil dans `localcheck/Cargo.toml`
-4. Documenter ici avec usage et pipeline
+1. Ajouter seulement les dépendances nécessaires à l'outil dans `localcheck/Cargo.toml`
+2. Documenter ici avec usage et pipeline

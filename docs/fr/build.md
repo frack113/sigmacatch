@@ -40,6 +40,7 @@ Le binaire résultant est à `target/x86_64-pc-windows-msvc/release/sigmacatch.e
 Build release optimisé : ~10MB (binaire headless unique).
 
 Profil appliqué :
+
 - `strip = true`
 - `lto = true`
 - `codegen-units = 1`

@@ -26,7 +26,7 @@ main `sigmacatch` binary so its dependency tree stays lean.
 
 ### Output
 
-```
+```text
 Found 3777 total rules
   → 2872 windows rules after filtering
 
@@ -108,7 +108,7 @@ directly from the raw rules — so a self-consistent but wrong `stats()` would s
 
 ### Output
 
-```
+```text
 Loaded 3777 total rules from ./sigma
 
 ============================================================
@@ -181,5 +181,5 @@ name = "<name>"
 path = "src/<name>.rs"
 ```
 
-3. Add only the dependencies the tool needs to `localcheck/Cargo.toml`
-4. Document here with usage and pipeline
+1. Add only the dependencies the tool needs to `localcheck/Cargo.toml`
+2. Document here with usage and pipeline
