@@ -1,0 +1,6 @@
+[files]
+extend-exclude = ["docs/fr/**"]
+
+[default]
+extend-words = { "Encyption" = "Encyption", "complet" = "complet", "ba" = "ba" }
+extend-identifiers = { "ratatui" = "ratatui" }

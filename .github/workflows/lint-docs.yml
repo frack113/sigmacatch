@@ -1,18 +1,9 @@
-name: Audit dependencies
+name: Lint documentation
 
 on:
   push:
-    branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
-  schedule:
-    - cron: '0 4 * * 1'
 
 permissions:
   contents: read
@@ -22,23 +13,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  cargo-deny:
-    name: Audit with cargo-deny
+  typos:
+    name: Check spelling (typos)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@c3bbe7e4e3f7baeee1a3dd9aec0a3b2aded580fb # v2.1.1
-        with:
-          command: check advisories sources licenses
+      - name: Run typos
+        run: pipx run typos .
 
-  zizmor:
-    name: Audit GitHub Actions with zizmor
+  markdownlint:
+    name: Lint Markdown (markdownlint)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Run zizmor
-        run: pipx run zizmor .
+      - uses: DavidAnson/markdownlint-cli2-action@4580e1612f6407034edd6c0e4e316d725920867b # v24.2.0
+        with:
+          globs: |
+            docs/**/*.md
+            *.md
