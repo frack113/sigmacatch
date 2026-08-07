@@ -276,7 +276,7 @@ engine.process_events() → engine.get_alerts()
 retourne batches: Vec<(Uuid, Vec<String>)>   # (rule_id, fichiers écrits) — vide si aucun alert
     ↓
 upload_regression() → upload_rule_batches()   # dans sigmacatch-repo
-    ├── un commit par règle : "test: add regression data for rule {rule_id}"
+     ├── un commit par règle : "🧪 test: add regression data for rule {rule_id}"
     ├── échec commit/push → rollback de la branche locale vers le tip pré-batch
     └── UN SEUL push si git.contrib: true (sinon commits locaux)
         └── succès → "Next step: create PR at https://github.com/SigmaHQ/sigma/pulls"
@@ -304,7 +304,7 @@ Flush final :
     await de la task collector (timeout 30s) → drain du rx restant → engine.put_events
     ↓
 process_and_generate() → upload_regression() si fichiers
-    ├── commit par règle ("test: add regression data for rule {id}")
+     ├── commit par règle ("🧪 test: add regression data for rule {id}")
     └── push() vers le fork si git.contrib: true
         └── succès → "Next step: create PR at https://github.com/SigmaHQ/sigma/pulls"
 ```

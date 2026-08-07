@@ -471,7 +471,7 @@ impl SigmaRepo {
                 info!("Skipping empty batch for rule {}", rule_id);
                 continue;
             }
-            let message = format!("test: add regression data for rule {}", rule_id);
+            let message = format!("🧪 test: add regression data for rule {}", rule_id);
             if let Err(e) = self.git_commit_files(files.clone(), message) {
                 warn!(
                     "Commit failed for rule {} after {} commit(s): {} — \

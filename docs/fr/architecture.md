@@ -104,7 +104,7 @@ engine.process_events() → get_alerts()
 retourne batches: Vec<(Uuid, Vec<String>)>  (règles générées + fichiers écrits)
     ↓
 upload_regression() → upload_rule_batches() (dans sigmacatch-repo)
-    ├── un commit par règle : "test: add regression data for rule {rule_id}"
+     ├── un commit par règle : "🧪 test: add regression data for rule {rule_id}"
     ├── échec commit/push → rollback de la branche locale vers le tip pré-batch
     └── UN SEUL push si git.contrib: true (sinon commits locaux) → message PR
 ```
