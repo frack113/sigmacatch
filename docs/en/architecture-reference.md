@@ -179,7 +179,7 @@ SigmahqRules::new()                 # loads ./sigma
 rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size })
     ├── stats() → rules_loaded, filtered_product/status/level/author
     ├── 0 rules loaded → bail with a clear error message
-    └── --list-rules → print id, title, status/level, relative path per rule + exit
+    └── --list-rules → print each rule in a 7-line card (ID, title, status, level, techniques, path, ART link) separated by dashes + exit
 ```
 
 > Rules with existing regression data are excluded from the Sigma engine — this skip-at-load

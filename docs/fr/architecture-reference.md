@@ -178,7 +178,7 @@ SigmahqRules::new()                 # charge ./sigma
 rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size })
     ├── stats() → rules_loaded, filtered_product/status/level/author
     ├── 0 règle chargée → bail avec un message d'erreur clair
-    └── --list-rules → affiche id, titre, status/level, chemin relatif par règle + exit
+    └── --list-rules → affiche chaque règle sur 7 lignes (ID, titre, status, niveau, techniques, chemin, lien ART) séparées par des tirets + exit
 ```
 
 > Les règles avec des données de régression existantes sont exclues du moteur Sigma — ce
