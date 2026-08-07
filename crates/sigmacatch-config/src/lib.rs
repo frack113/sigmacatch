@@ -33,6 +33,14 @@ pub struct GitConfig {
     /// Local path to store the sigma repository.
     #[serde(default = "default_sigma_repo_path")]
     pub sigma_repo_path: String,
+    /// Enable offline mode: skip git pull/fetch at startup (use existing repo as-is).
+    /// Default: false (pull enabled). Set to true for air-gapped environments.
+    #[serde(default)]
+    pub offline: Option<bool>,
+    /// Enable contrib workflow: push commits to remote fork.
+    /// Default: false (no push, local commits only). Set to true to contribute.
+    #[serde(default)]
+    pub contrib: Option<bool>,
 }
 
 fn default_sigma_repo_url() -> String {
@@ -41,6 +49,23 @@ fn default_sigma_repo_url() -> String {
 
 fn default_sigma_repo_path() -> String {
     "sigma".to_string()
+}
+
+impl GitConfig {
+    /// Returns true if offline mode is enabled (skip pull).
+    pub fn is_offline(&self) -> bool {
+        self.offline.unwrap_or(false)
+    }
+
+    /// Returns true if contrib (push) is enabled.
+    pub fn is_contrib(&self) -> bool {
+        self.contrib.unwrap_or(false)
+    }
+
+    /// Returns true if any network operation is needed (pull or push).
+    pub fn needs_network(&self) -> bool {
+        !self.is_offline() || self.is_contrib()
+    }
 }
 
 impl Default for GitConfig {
@@ -53,6 +78,8 @@ impl Default for GitConfig {
             ssh_key_path: None,
             sigma_repo_url: default_sigma_repo_url(),
             sigma_repo_path: default_sigma_repo_path(),
+            offline: None, // None → false (pull enabled)
+            contrib: None, // None → false (push disabled)
         }
     }
 }
@@ -157,6 +184,12 @@ impl Config {
         let mut config = Self::load_unvalidated(path)?;
         if let Some(author) = &cli.author {
             config.git.author.clone_from(author);
+        }
+        if cli.offline {
+            config.git.offline = Some(true);
+        }
+        if cli.contrib {
+            config.git.contrib = Some(true);
         }
         config.validate()?;
         Ok(config)
@@ -271,16 +304,19 @@ impl Config {
             }
         }
 
-        // Token is only required for HTTP transport
-        if self.git.transport == GitTransport::Http {
+        // Token is only required for HTTP transport when a network operation
+        // is enabled (pull or push). Fully offline mode needs no token.
+        if self.git.transport == GitTransport::Http && self.git.needs_network() {
             let has_config_token = !self.git.github_token.trim().is_empty();
             let has_env_token = std::env::var("GITHUB_TOKEN")
                 .map(|t| !t.trim().is_empty())
                 .unwrap_or(false);
             if !has_config_token && !has_env_token {
                 anyhow::bail!(
-                    "config: 'git.github_token' is required for HTTP transport. Set git.github_token in config.yaml or GITHUB_TOKEN env var. \
-                     Create a token at https://github.com/settings/tokens"
+                    "config: 'git.github_token' is required for HTTP transport when offline=false or contrib=true. \
+                     Set git.github_token in config.yaml or GITHUB_TOKEN env var. \
+                     Create a token at https://github.com/settings/tokens. \
+                     Alternatively, set offline: true and contrib: false for fully offline mode (no network)."
                 );
             }
             if has_config_token {
@@ -378,6 +414,8 @@ pub struct CliArgs {
     pub channels_only: bool,
     pub all_rules: bool,
     pub list_rules: bool,
+    pub offline: bool,
+    pub contrib: bool,
 }
 
 /// Parse CLI arguments from environment.
@@ -388,6 +426,8 @@ pub fn parse_args() -> CliArgs {
     let mut channels_only = false;
     let mut all_rules = false;
     let mut list_rules = false;
+    let mut offline = false;
+    let mut contrib = false;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -399,6 +439,8 @@ pub fn parse_args() -> CliArgs {
             "--channels-only" => channels_only = true,
             "--all-rules" => all_rules = true,
             "--list-rules" => list_rules = true,
+            "--offline" => offline = true,
+            "--contrib" => contrib = true,
             _ => {}
         }
         i += 1;
@@ -409,6 +451,8 @@ pub fn parse_args() -> CliArgs {
         channels_only,
         all_rules,
         list_rules,
+        offline,
+        contrib,
     }
 }
 
@@ -852,5 +896,86 @@ mod tests {
             result.is_empty(),
             "empty YAML should return empty HashMap without warning"
         );
+    }
+
+    #[test]
+    fn test_is_offline_default_false() {
+        let cfg = GitConfig::default();
+        assert!(!cfg.is_offline(), "offline must default to false");
+    }
+
+    #[test]
+    fn test_is_contrib_default_false() {
+        let cfg = GitConfig::default();
+        assert!(!cfg.is_contrib(), "contrib must default to false");
+    }
+
+    #[test]
+    fn test_is_offline_true_when_some_true() {
+        let cfg = GitConfig {
+            offline: Some(true),
+            ..GitConfig::default()
+        };
+        assert!(cfg.is_offline());
+    }
+
+    #[test]
+    fn test_is_contrib_true_when_some_true() {
+        let cfg = GitConfig {
+            contrib: Some(true),
+            ..GitConfig::default()
+        };
+        assert!(cfg.is_contrib());
+    }
+
+    /// Fully offline + no contrib → no network needed (no token required).
+    #[test]
+    fn test_needs_network_false_fully_offline() {
+        let cfg = GitConfig {
+            offline: Some(true),
+            contrib: Some(false),
+            ..GitConfig::default()
+        };
+        assert!(!cfg.needs_network());
+    }
+
+    /// Default config pulls at startup → network needed.
+    #[test]
+    fn test_needs_network_true_default() {
+        let cfg = GitConfig::default();
+        assert!(cfg.needs_network());
+    }
+
+    /// `offline: true` + `contrib: true` still needs the network for the push.
+    #[test]
+    fn test_needs_network_true_offline_with_contrib() {
+        let cfg = GitConfig {
+            offline: Some(true),
+            contrib: Some(true),
+            ..GitConfig::default()
+        };
+        assert!(cfg.needs_network());
+    }
+
+    /// `--offline` / `--contrib` flags must override the parsed config.
+    #[test]
+    fn test_load_with_cli_applies_offline_and_contrib() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "git:").unwrap();
+            writeln!(file, "  author: my-user").unwrap();
+            writeln!(file, "  email: me@example.com").unwrap();
+            writeln!(file, "  github_token: ghp_token").unwrap();
+        }
+        let cli = CliArgs {
+            offline: true,
+            contrib: true,
+            ..CliArgs::default()
+        };
+        let config = Config::load_with_cli(&path, &cli).unwrap();
+        assert!(config.git.is_offline(), "CLI --offline must enable offline");
+        assert!(config.git.is_contrib(), "CLI --contrib must enable contrib");
     }
 }

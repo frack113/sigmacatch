@@ -10,8 +10,8 @@ sigmacatch/
 ├── crates/
 │   ├── sigmacatch-config/        # Config YAML + parsing CLI + custom_channels.yaml + diagnostics git dry-run
 │   ├── sigmacatch-logger/        # Abonnement tracing à deux couches (stderr info + fichier journal rolling debug)
-│   ├── sigmacatch-rule/          # SigmahqRules : chargement de règles (parse_sigma_yaml), filtre, dédupe, channels()
-│   ├── sigmacatch-detection/     # Wrapper DetectionEngine + pipelines embarquées (windows.yml, flatten_winevt.yml)
+│   ├── sigmacatch-rule/          # SigmahqRules : chargement de règles (parse_sigma_yaml), filtre, dédupe, remove_id
+│   ├── sigmacatch-detection/     # Wrapper DetectionEngine + pipelines embarquées (windows.yml, flatten_winevt.yml) + channel_resolver
 │   ├── input-windows-channels/   # Collecteur Winevt multi-channel (cfg(windows))
 │   ├── sigmacatch-regression/    # SigmahqRegression (get_sigma_id, add, retire), InfoYml, triplet
 │   ├── sigmacatch-types/         # Types partagés : Event, Alert, RegressionHeader + parsing XML + tables de mapping logsource
@@ -45,8 +45,8 @@ déplacés dans les crates `sigmacatch-config`, `sigmacatch-logger` et `sigmacat
 ```
 sigmacatch ──┬── sigmacatch-config       (Config, CliArgs, diagnostics dry-run)
              ├── sigmacatch-logger       (init tracing)
-             ├── sigmacatch-rule         (SigmahqRules : load/filter/remove_id/channels)
-             ├── sigmacatch-detection    (DetectionEngine : pipelines + bloom + LogSourceExtractor)
+             ├── sigmacatch-rule         (SigmahqRules : load/filter/remove_id)
+             ├── sigmacatch-detection    (DetectionEngine : pipelines + bloom + LogSourceExtractor + resolve_channels)
              ├── input-windows-channels  (EventCollector : Winevt multi-channel)
              ├── sigmacatch-regression   (SigmahqRegression : skip set + génération triplet)
              ├── sigmacatch-types        (Event, Alert, RegressionHeader, Product, EventProducer, parsing XML)
@@ -71,15 +71,15 @@ dépend de `rsigma-parser`. `sigmacatch-config` dépend de `sigmacatch-repo` + `
 2. init_logger() → tracing (stderr info + fichier debug)
 3. ensure_dirs() → dossier repo sigma + logs/
 4. SigmaRepo init (remote_url = fork, branche de travail, token) → init() [clone/fetch]
-   └── set_working_branch() → check_remote_working_branch() (garde sur branche du même jour)
+   └── set_git_operations(offline, contrib) → set_working_branch() → check_remote_working_branch() (garde sur branche du même jour)
 5. SigmahqRegression::new() → charge les info.yml existants depuis ./sigma/regression_data
    └── existing_rules = regression.get_sigma_id() → HashSet<Uuid> (vide avec --all-rules)
 6. SigmahqRules::new() → chargement + dédupe ; remove_id() par règle skipée
     └── filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size }) ; 0 règles → bail
     └── --list-rules → affiche les règles sans data-regression + sortie
 7. custom_map = load_custom_channel_mapping("custom_channels.yaml")
-   └── cycle_channels = rules.channels(&custom_map) ; 0 channels → warn + return
 8. DetectionEngine::new(&rules)  (pipelines + bloom + LogSourceExtractor)
+   └── cycle_channels = engine.resolve_channels(&custom_map) ; 0 channels → warn + return
    └── --channels-only → affiche les channels + sortie
 9. output_base = <sigma_repo_path>/regression_data ; clean_partial_artifacts()
 10. EventCollector::new(cycle_channels).run(tx, stop) → task tokio
@@ -87,7 +87,7 @@ dépend de `rsigma-parser`. `sigmacatch-config` dépend de `sigmacatch-repo` + `
     ├── shutdown_rx (Ctrl+C) → break
     ├── event depuis rx → engine.put_events(vec![event])
     └── generate_interval (30s) → process_and_generate() → upload_regression() si fichiers
-12. Flush final : drain des events restants → process_and_generate() → commit → push() fork
+12. Flush final : drain des events restants → process_and_generate() → upload_regression() (commit par règle) → push unique si contrib
 ```
 
 `process_and_generate()` :
@@ -100,6 +100,13 @@ engine.process_events() → get_alerts()
          ├── None si règle déjà retirée / pas d'id valide / info.yml existant
          └── Some(files) → écrit le triplet + regression_tests_path + retire la règle
     └── règles retirées → rules.remove_id() → engine.reload_rules() (un seul reload batch)
+    ↓
+retourne batches: Vec<(Uuid, Vec<String>)>  (règles générées + fichiers écrits)
+    ↓
+upload_regression() → upload_rule_batches() (dans sigmacatch-repo)
+    ├── un commit par règle : "test: add regression data for rule {rule_id}"
+    ├── échec commit/push → rollback de la branche locale vers le tip pré-batch
+    └── UN SEUL push si git.contrib: true (sinon commits locaux) → message PR
 ```
 
 ## Notes de conception
@@ -108,7 +115,7 @@ engine.process_events() → get_alerts()
   construit une seule fois au démarrage. `--all-rules` le désactive. Après génération, une règle
   est retirée et le moteur est rechargé en un seul batch (`engine.reload_rules`).
 - **Output toujours dans le repo sigma** : `<sigma_repo_path>/regression_data/<rule_rel_path>/`
-  (triplet `info.yml` + `<rule_id>.json` + `<rule_id>.evtx`), commité sur le fork.
+  (triplet `info.yml` + `<rule_id>.json` + `<rule_id>.evtx`), commité sur le fork si `contrib` (commits locaux sinon).
 - **Collecteur observable** : les channels inexistants sont exclus une fois pour toutes sur
   `ERROR_EVT_CHANNEL_NOT_FOUND` (un seul `error!`) ; chaque channel vivant log « initial query OK »
   puis un heartbeat « still alive » (60s) ; `warn!` quand des events sont fetchés mais perdus au

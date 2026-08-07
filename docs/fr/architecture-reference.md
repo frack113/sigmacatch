@@ -16,8 +16,8 @@ Outil headless qui capture des événements Windows réels via **Windows Event L
 5. Résoudre les channels depuis les règles chargées
 6. Lancer un collecteur continu (winevt, une task par channel)
 7. Évaluer chaque event contre toutes les règles chargées (API FIFO)
-8. Toutes les 30s : générer la sortie regression pour les règles matchées, commit sur le fork
-9. Sur Ctrl+C : flush final → commit → push de la branche vers le fork
+8. Toutes les 30s : générer la sortie regression pour les règles matchées, commit (par règle) + push (si contrib) sur le fork
+9. Sur Ctrl+C : flush final → commit → push de la branche vers le fork (seulement si `git.contrib: true`)
 
 **Plateforme :** Windows (winevt + Sysmon requis pour des events riches). Linux/macOS : le collecteur est un stub no-op — le pipeline tourne quand même de bout en bout pour les tests.
 
@@ -35,8 +35,8 @@ sigmacatch/
 └── crates/
     ├── sigmacatch-config/         # Config YAML, parsing CLI, custom_channels.yaml, diagnostics git dry-run
     ├── sigmacatch-logger/         # Abonnement tracing à deux couches (stderr info + fichier journal rolling debug)
-    ├── sigmacatch-rule/           # SigmahqRules : chargement (parse_sigma_yaml), filtre, dédupe, remove_id, channels()
-    ├── sigmacatch-detection/      # Wrapper DetectionEngine + pipelines embarquées (windows.yml, flatten_winevt.yml)
+    ├── sigmacatch-rule/           # SigmahqRules : chargement (parse_sigma_yaml), filtre, dédupe, remove_id
+    ├── sigmacatch-detection/      # Wrapper DetectionEngine + pipelines embarquées (windows.yml, flatten_winevt.yml) + channel_resolver
     ├── input-windows-channels/    # Collecteur Winevt multi-channel (EventProducer)
     ├── sigmacatch-regression/     # SigmahqRegression, InfoYml, RegressionData, validation triplet
     ├── sigmacatch-types/          # Types partagés : Event, Alert, RegressionHeader, Product + parsing XML + tables de mapping logsource
@@ -59,6 +59,8 @@ git:
   ssh_key_path: ""            # path to SSH private key (optionnel, seulement pour SSH)
   sigma_repo_url: "https://github.com/SigmaHQ/sigma.git"
   sigma_repo_path: "sigma"    # chemin local du repo sigma (relatif, pas de '..', pas absolu)
+  offline: false              # true = skip le pull au startup (repo existant requis). false (défaut) = pull
+  contrib: false              # true = push au remote fork. false (défaut) = commits locaux uniquement
 log:
   level_file: "debug"
 filter:
@@ -74,10 +76,15 @@ Les règles dont `status`/`level` est inférieur au seuil sont exclues (seulemen
 les règles sans `status`/`level` sont toujours acceptées. Si 0 règle reste, le programme bail.
 
 **Validation :** `git.author` doit être un username GitHub valide (alphanumérique + tirets), `git.email`
-est requis, le transport HTTP exige un token (config ou env), et `sigma_repo_path` est validé contre
-le traversal/les chemins absolus.
+est requis, et `sigma_repo_path` est validé contre le traversal/les chemins absolus. Le transport HTTP
+exige un token (config ou env `GITHUB_TOKEN`) quand `needs_network()` est vrai — c.-à-d. `offline: false`
+ou `contrib: true` ; un run entièrement offline (`offline: true` + `contrib: false`) n'a pas besoin de token.
 
-**CLI flags :** `--author <name>`, `--dry-run`, `--channels-only`, `--all-rules`, `--list-rules`.
+**Offline / contrib :** `offline: true` utilise le repo existant tel quel (pas de pull, repo complet requis).
+`contrib: true` active le push sur le fork à la fin ; par défaut (`false`) les commits restent locaux.
+Les flags CLI `--offline` / `--contrib` forcent ces valeurs à `true`.
+
+**CLI flags :** `--author <name>`, `--dry-run`, `--channels-only`, `--all-rules`, `--list-rules`, `--offline`, `--contrib`.
 
 ---
 
@@ -109,11 +116,47 @@ fork_url = "https://github.com/{author}/sigma"
 SigmaRepo::new()
     ├── set_info_user(author, email)
     ├── set_info_http(token) | set_info_ssh(key_path)
+    ├── set_git_operations(offline, contrib)   # contrôle le pull au startup + le push final
     ├── set_remote_url(fork_url) → init() [async]
-    ├── set_working_branch(branch_name)
-    ├── check_remote_working_branch()   # garde : rejette une branche du même jour orpheline/amputée
-    └── switch_to_working_branch()      # matérialise l'arbre de la branche
+    │       ├── repo incomplet/absent + offline → bail actionnable
+    │       ├── repo existant → pull étroit de la branche courante (skip si offline)
+    │       └── sinon → clone complet (full-history, protocole v2) + pack
+    ├── set_working_branch(branch_name)         # fetch branche ciblée (skip si offline) + create_branch
+    │   └── switch_to_working_branch()          # matérialise l'arbre de la branche (miroir exact du commit)
+    └── check_remote_working_branch()   # garde : rejette une branche du même jour orpheline/amputée
 ```
+
+### Post-traitement : pack des objets loose
+
+Le clone/fetch via grit-lib (`http_fetch`) écrit chaque objet reçu comme fichier **loose**
+dans `.git/objects/xx/` (~131K fichiers, ~650 MB pour le repo Sigma) — grit n'a pas
+d'équivalent `git gc --auto`. Après chaque clone/fetch (clone HTTP, clone SSH, pull HTTP,
+pull SSH), `pack_loose_objects()` (`crates/sigmacatch-repo/src/plumbing/pack.rs`) consolide :
+
+- collecte des loose objects (triés par OID) ;
+- compression zlib (niveau défaut, **pas de delta**) **parallélisée** (rayon, chunks de 16K)
+  puis sérialisation d'un pack **V2** + index `.idx` (magic `\xfftOc`, fanout, OIDs triés,
+  table CRC32, offset table, checksums SHA-1) ;
+- suppression des fichiers loose + répertoires `xx/` vides ;
+- observabilité : messages de progression du serveur (`remote: Enumerating objects…`)
+  relayés au log pendant le téléchargement.
+
+Résultat : `.git/` passe de ~650 MB à ~218 MB (3x), `git fsck --full --strict` propre,
+objets toujours lisibles via l'ODB (loose **ou** pack).
+
+**Benchmark vs `git clone` natif** (fork `frack113/sigma`, branche master, Linux 24 cœurs) :
+
+| | `git clone` natif | sigmacatch (grit + pack) |
+|---|---|---|
+| Temps clone frais | ~3s | ~70s (fetch ~50s + pack ~17s) |
+| `.git/` | 52 MB | 218 MB |
+| Pack | 47 MB (deltas) | 215 MB (sans delta) |
+
+Écart : git natif écrit **directement** le pack delta-compressé du serveur ; grit décompresse
+tout en loose puis on re-compresse **sans delta**. Le téléchargement lui-même est identique
+(~47 MB). Coût payé **une seule fois** au premier clone — les pulls suivants ne transfèrent
+que les deltas (sub-seconde si rien n'a changé). Sur une VM lente, le premier clone peut
+prendre plusieurs minutes.
 
 ### Étape 3 — Skip set (régression existante)
 
@@ -146,14 +189,15 @@ rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author,
 ```
 custom_map = load_custom_channel_mapping("custom_channels.yaml")   # manquant/vide → {}
     ↓
-cycle_channels = rules.channels(&custom_map)
-    ├── resolve_channels() : logsource service:category → liste de channels (dédupliquée)
-    └── 0 channel → warn + return Ok (rien à collecter)
-    ↓
 DetectionEngine::new(&rules)
     ├── charge les pipelines embarquées (flatten_winevt.yml, windows.yml) une fois
     ├── active bloom pre-filter + LogSourceExtractor
-    └── --channels-only → affiche les channels + exit
+    ↓
+cycle_channels = engine.resolve_channels(&custom_map)
+    ├── lit CompiledRule.logsource post-pipeline → service:category → liste de channels (dédupliquée, triée)
+    └── 0 channel → warn + return Ok (rien à collecter)
+    ↓
+--channels-only → affiche les channels + exit
 ```
 
 ### Étape 5 — Collecte continue
@@ -227,6 +271,14 @@ engine.process_events() → engine.get_alerts()
                 ├── ajoute "regression_tests_path" au YAML de la règle source
                 └── retire la règle (regression.retired + rules.remove_id)
     └── règles retirées → engine.reload_rules(rules)   # UN SEUL reload batch
+    ↓
+retourne batches: Vec<(Uuid, Vec<String>)>   # (rule_id, fichiers écrits) — vide si aucun alert
+    ↓
+upload_regression() → upload_rule_batches()   # dans sigmacatch-repo
+    ├── un commit par règle : "test: add regression data for rule {rule_id}"
+    ├── échec commit/push → rollback de la branche locale vers le tip pré-batch
+    └── UN SEUL push si git.contrib: true (sinon commits locaux)
+        └── succès → "Next step: create PR at https://github.com/SigmaHQ/sigma/pulls"
 ```
 
 **Sortie :**
@@ -239,7 +291,7 @@ engine.process_events() → engine.get_alerts()
 
 `<rule_rel_path>` reflète le chemin de la règle sous `sigma/rules/` (ex.
 `rules/windows/builtin/security/win_security_foo/`). La sortie vit toujours dans le repo sigma
-et est commitée sur le fork.
+et est commitée sur le fork si `git.contrib: true` (commits locaux sinon).
 
 ### Étape 8 — Arrêt / commit / push
 
@@ -247,13 +299,12 @@ et est commitée sur le fork.
 Ctrl+C → shutdown_rx.set(true)
     ↓
 Flush final :
-    await de la task collector (s'arrête → drop des clones de Sender)
-    drain du rx restant → engine.put_events
+    await de la task collector (timeout 30s) → drain du rx restant → engine.put_events
     ↓
 process_and_generate() → upload_regression() si fichiers
-    ↓
-push(sigma_repo_path, branch_name, transport, token) → fork
-    └── succès → "Next step: create PR at https://github.com/SigmaHQ/sigma/pulls"
+    ├── commit par règle ("test: add regression data for rule {id}")
+    └── push() vers le fork si git.contrib: true
+        └── succès → "Next step: create PR at https://github.com/SigmaHQ/sigma/pulls"
 ```
 
 ---
@@ -270,9 +321,10 @@ Event {
 }
 ```
 
-Méthodes : `from_xml()`, `channel()`, `provider()`, `record_id()`, `inject_logsource_fields()`.
-Le collecteur appelle `inject_logsource_fields()` qui injecte `product`, `service`, `category`
-dans `event_json` ; le `LogSourceExtractor` du moteur lit ces champs pour élaguer les règles incompatibles.
+Méthodes publiques : `from_xml()`, `new()`, `record_id()`, `inject_logsource_fields()` (`channel()`,
+`provider()` et `event_id()` sont privés). Le collecteur appelle `inject_logsource_fields()` qui injecte
+`product`, `service`, `category` dans `event_json` ; le `LogSourceExtractor` du moteur lit ces champs
+pour élaguer les règles incompatibles.
 
 ### Alert (`sigmacatch-types`)
 
@@ -332,6 +384,7 @@ regression_tests_info:
 - Active bloom pre-filter + LogSourceExtractor dans `new()` pour l'optimisation d'évaluation
 - Cycle FIFO : `put_events()` / `process_events()` / `get_alerts()`
 - `reload_rules(&SigmahqRules)` — reload batch après retrait de règles
+- `resolve_channels(&custom_map)` — résout les channels depuis les logsources post-pipeline (voir §10)
 - `rule_count()`, `stats()` (EngineStats), `explain_rule(rule_id, event)`, `save_hir` / `load_hir`
 - Dépend de `sigmacatch-rule` + `sigmacatch-types` + `rsigma-eval`
 
@@ -339,13 +392,14 @@ regression_tests_info:
 
 - `new()` (hardcodé `./sigma`) / `new_from_path()` — walk + parse + dédupe
 - `filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size })` → LoadStats
-- `remove_id(&Uuid)`, `get(&Uuid)`, `channels(&custom_map)`, `to_collection()`
+- `remove_id(&Uuid)`, `get(&Uuid)`, `rules()` / `iter()`, `to_collection()`, `rule_paths()`
+- La résolution de channels n'est plus ici — elle vit dans `DetectionEngine::resolve_channels` (§10)
 
-### EventCollector (`crates/input-windows-channels/src/collector.rs`)
+### EventCollector (`crates/input-windows-channels/src/lib.rs`)
 
-- Collecteur Windows Event Log multi-channel, implémente `EventProducer`
+- Collecteur Windows Event Log multi-channel, implémente `EventProducer` (module unique, plus de `collector.rs`)
 - `new(channels)` → `run(self, tx, stop)` async ; une task blocking par channel
-- Windows : EvtQuery → EvtNext → EvtRender → `Event::from_xml` → `inject_logsource_fields`
+- Windows : EvtQuery → EvtNext (batch de 32, timeout 5s) → EvtRender → `Event::from_xml` → `inject_logsource_fields`
 - Non-Windows : stub no-op
 - Observabilité : exclusion permanente sur `ERROR_EVT_CHANNEL_NOT_FOUND` (un seul `error!`),
   logs de liveness ("initial query OK", "still alive" toutes les 60s, progression toutes les 10s),
@@ -380,7 +434,7 @@ regression_tests_info:
 | `anyhow` | gestion d'erreurs |
 | `chrono` | dates |
 | `uuid` | UUID v4 pour info.yml + ids de règles |
-| `phf` | hash maps statiques pour les tables de taxonomie (dans `sigmacatch-types`) + résolution de channels (dans `sigmacatch-rule`) |
+| `phf` | hash maps statiques pour les tables de taxonomie (dans `sigmacatch-types`) + résolution de channels (dans `sigmacatch-detection/src/channel_resolver.rs`) |
 | `evtx` | parsing de fichiers EVTX (crate input-evtx, utilisé par localcheck/check_evtx) |
 | `roxmltree` | parsing XML pour les events Winevt (dans `sigmacatch-types`) |
 | `windows` | API Winevt (cfg-gated : windows uniquement, features : Foundation, System, Security, Com, Console, Threading) |
@@ -411,6 +465,35 @@ sigmacatch
     [--channels-only]      # affiche les channels résolus et exit
     [--all-rules]          # désactive le skip set (charge toutes les règles)
     [--list-rules]         # affiche les règles sans data-regression et exit
+    [--offline]            # skip le pull au startup (force offline)
+    [--contrib]            # active le push au remote fork
 ```
 
 La config est auto-créée au premier run avec des défauts. Éditez `config.yaml` avant de lancer.
+
+---
+
+## 10. Pipelines embarquées & résolution de channels
+
+### `windows.yml` (`crates/sigmacatch-detection/pipelines/`)
+
+Pipeline de transformation embarquée (chargée via `include_str!` dans `sigmacatch-detection`), appliquée à chaque règle avant compilation :
+
+- Mappe `logsource.category` → conditions Sysmon EventID via `add_condition`, gaté par `rule_conditions` (`type: logsource` avec filtres `category`, `product`, `service` ; toutes les conditions en logique AND).
+- **rsigma-eval v0.21+** : `add_condition` accepte des séquences YAML (`conditions: {EventID: [17, 18]}`) dont les valeurs sont OR-liées, conformément au `AddConditionTransformation` de pySigma (API breaking : `AddCondition.conditions` est `HashMap<String, Vec<SigmaValue>>`). Une catégorie multi-EventID est une seule entrée de transformation (ex. `wmi_event` → `[19, 20, 21]`).
+- **Filtres EventType registry** : `registry_add` = EventID 12 + `EventType: CreateKey`, `registry_set` = EventID 13 + `EventType: SetValue`, `registry_rename` = EventID 14 + `EventType: RenameKey`. **`registry_delete` n'a PAS de filtre EventType** — l'EventID 12 porte `DeleteKey` et `DeleteValue` (contrainte rsigma-eval), il matche donc sur le seul EventID 12.
+- **`change_logsource` final (post-add_condition)** : un bloc `service: sysmon` par catégorie routée, même gate logsource `(category, product: windows)` que son `add_condition` → rend le logsource post-pipeline exploitable par `channel_resolver` (zéro mapping dupliqué category → service).
+- `prepend` : ajoute la condition avant la détection existante (`new AND existing`) pour l'optimisation short-circuit.
+- **Transformations supportées** : `field_name_mapping`, `field_name_prefix_mapping`, `field_name_prefix`, `field_name_suffix`, `drop_detection_item`, `add_condition`, `change_logsource`, `replace_string`, `value_placeholders`, `wildcard_placeholders`, `query_expression_placeholders`, `set_state`, `rule_failure`, `detection_item_failure`, `field_name_transform`, `hashes_fields`, `map_string`, `set_value`, `convert_type`, `regex`, `add_field`, `remove_field`, `set_field`, `set_custom_attribute`, `case_transformation`, `nest`, `include`.
+
+`flatten_winevt.yml` : aplatit la structure XML Winevt imbriquée pour l'évaluation Sigma. Pipeline chargée une fois à l'init du moteur, appliquée à toutes les règles avant compilation.
+
+### Résolution de channels (`crates/sigmacatch-detection/src/channel_resolver.rs`)
+
+- **Post-pipeline logsource** : `resolve_channels` lit `CompiledRule.logsource` (post-pipeline, exposé publiquement par rsigma-eval 0.21) via `DetectionEngine::resolve_channels(&custom_map)` dans `main.rs` — résolution au moment de la création du moteur, aucun coût supplémentaire (pas de re-transform).
+- `SERVICE_CHANNELS` : static `phf::Map<service, &[channel]>` — mapping service → channels Windows Event Log (runtime, pas une table générée).
+- `CATEGORY_CHANNELS` : catégories que la pipeline ne route PAS (`ps_classic_*`, `ps_module`, `ps_script`).
+- Lookup : `service` présent → `SERVICE_CHANNELS[service]` + `custom_map` (depuis `custom_channels.yaml`, `channel → service`) ; sinon `category` → `CATEGORY_CHANNELS[category]`.
+- Les catégories Sysmon ne figurent **pas** dans la table — la pipeline les réécrit en `service: sysmon` (single source of truth dans `windows.yml`).
+- Logsource non mappé → `warn!` (par logsource), aucun channel ; les règles non-Windows sont ignorées. Résultat : liste de channels dédupliquée et triée.
+- `sigmacatch-types` reste propriétaire des tables de mapping inverses (`CHANNEL_TO_SERVICE`, `PROVIDER_TO_SERVICE`, `CHANNEL_EVENT_TO_CATEGORY`, `CHANNEL_EVENT_TO_SUBCATEGORY`) utilisées par `inject_logsource_fields()` (channel/provider → enrichment logsource).

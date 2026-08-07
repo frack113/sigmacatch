@@ -459,10 +459,11 @@ detection:
     }
 
     #[test]
-    fn test_resolve_channels_unrouted_category() {
-        // login is not routed by the pipeline → falls back to category.
+    fn test_resolve_channels_unmapped_category() {
+        // A category absent from CATEGORY_CHANNELS (login was removed — not a
+        // valid Sigma taxonomy category) resolves to no channels (fail-closed).
         let channels = channels_for("  product: windows\n  category: login\n");
-        assert_eq!(channels, vec!["Security"]);
+        assert!(channels.is_empty());
     }
 
     #[test]
@@ -552,8 +553,14 @@ detection:
 
     #[test]
     fn test_resolve_channels_category_case_insensitive() {
-        // "Login" (mixed case) must resolve just like "login".
-        let channels = channels_for("  product: windows\n  category: Login\n");
-        assert_eq!(channels, vec!["Security"]);
+        // "Ps_Module" (mixed case) must resolve just like "ps_module".
+        let channels = channels_for("  product: windows\n  category: Ps_Module\n");
+        assert_eq!(
+            channels,
+            vec![
+                "Microsoft-Windows-PowerShell/Operational".to_string(),
+                "PowerShellCore/Operational".to_string()
+            ]
+        );
     }
 }

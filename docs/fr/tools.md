@@ -27,28 +27,56 @@ binaire principal `sigmacatch` pour garder son arbre de dépendances léger.
 ### Sortie
 
 ```
-  [  1/202] proc_creation_win_bitsadmin_download ... [PASS] 1 alert(s), rule matched
-  [  2/202] win_security_foo  ... [FAIL] RULE NOT MATCHED — expected '<uuid>' (0 alert(s), matched: ...)
+Found 3777 total rules
+  → 2872 windows rules after filtering
+
+Found 202 regression entry(ies)
+
+Engine ready — 2872 rule(s) loaded.
+
+Running validation...
+
+  [   1/202 ] win_security_explicit_credential_local_logon       ...     [JSON OK] parse_winevt_xml_raw reproduces committed JSON
+[PASS] 1 alert(s), rule matched
+  [   2/202 ] win_security_susp_scheduled_task_delete_or_disable ...     [JSON MISMATCH] no EVTX record reproduces committed JSON first diff: Event.EventData.TaskContent ...
+[PASS] 1 alert(s), rule matched
+  ...
+  [ 165/202 ] registry_event_add_local_hidden_user               ...     [JSON OK] parse_winevt_xml_raw reproduces committed JSON
+[FAIL] RULE NOT MATCHED — expected '460479f3-80b7-42da-9c43-2cc1d54dbccd' (0 alert(s), matched: )
+  --- explain_rule trace ---
+  ...
+  [ 201/202 ] win_defender_exploit_redsun_tiering_engine_detected_as_eicar ... [JSON MISMATCH] ...
+[PASS] 1 alert(s), rule matched
+  [ 202/202 ] image_load_win_werfaultsecure_dbgcore_dbghelp_load ...     [JSON OK] parse_winevt_xml_raw reproduces committed JSON
+[PASS] 1 alert(s), rule matched
 
 ============================================================
   VALIDATION SUMMARY
 ============================================================
   Total entries:   202
-  Passed:          196
+  Passed:          201
   Skipped:         0
-  Failed:          6
-  Pass rate:       97.0%
+  Failed:          1
+  Pass rate:       99.5%
 
   JSON FORMAT CHECKS (parse_winevt_xml_raw vs committed JSON):
-  Checked:         202
-  Matched:         199
+  Checked:         189
+  Matched:         186
   Mismatch:        3
 ============================================================
+
+Failed rules:
+  FAIL registry_event_add_local_hidden_user — RULE NOT MATCHED — expected '460479f3-...'
+
+JSON format mismatches:
+  MISMATCH win_security_susp_scheduled_task_delete_or_disable — no EVTX record reproduces committed JSON first diff: Event.EventData.TaskContent ... (CRLF vs LF dans le XML embarqué)
+  MISMATCH proc_creation_win_susp_right_to_left_override — no EVTX record reproduces committed JSON first diff: Event.System.TimeCreated.#attributes.SystemTime ... (précision des fractions de seconde)
+  MISMATCH win_defender_exploit_redsun_tiering_engine_detected_as_eicar — no EVTX record reproduces committed JSON first diff: Event.EventData.Threat ID (nombre vs string)
 ```
 
 Le run `check_evtx` ci-dessus correspond à l'état actuel de `sigma/regression_data`
-(202 entrées, 196 PASS / 6 FAIL — les 6 échecs sont le problème registry connu en attente d'une
-maj rsigma ; 3 écarts de format JSON cosmétiques restent).
+(202 entrées, 201 PASS / 1 FAIL — l'échec `registry_event_add_local_hidden_user` est le problème
+registry connu en attente d'une maj rsigma ; 3 écarts de format JSON cosmétiques restent).
 
 ### Exemple
 
@@ -81,11 +109,58 @@ directement depuis les règles brutes — donc un `stats()` auto-cohérent mais 
 ### Sortie
 
 ```
-  product=windows status=None level=None author=Some("frack113")  →  461 loaded / 3769 total
-    GT: loaded=461 prod=908 stat=0 lvl=0 auth=2400 total=3769
-    filter: loaded=461 prod=908 stat=0 lvl=0 auth=2400 total=3769
+Loaded 3777 total rules from ./sigma
+
+============================================================
+  TEST: empty filter (no filtering)
+============================================================
+  product=windows status=None level=None author=None  →  2872 loaded / 3777 total
+    GT: loaded=2872 prod=905 stat=0 lvl=0 auth=0 total=3777  sum=3777
+    filter: loaded=2872 prod=905 stat=0 lvl=0 auth=0 total=3777  sum=3777
     ✅ all dimensions match ground truth
+  ✅ PASS
+
+============================================================
+  TEST: product filter
+============================================================
+  product=linux status=None level=None author=None  →  248 loaded / 3777 total
+    GT: loaded=248 prod=3529 stat=0 lvl=0 auth=0 total=3777  sum=3777
+    filter: loaded=248 prod=3529 stat=0 lvl=0 auth=0 total=3777  sum=3777
+    ✅ all dimensions match ground truth
+  product=macos status=None level=None author=None  →  75 loaded / 3777 total
+    GT: loaded=75 prod=3702 stat=0 lvl=0 auth=0 total=3777  sum=3777
+    filter: loaded=75 prod=3702 stat=0 lvl=0 auth=0 total=3777  sum=3777
+    ✅ all dimensions match ground truth
+  ✅ PASS
+
+============================================================
+  TEST: author filter
+============================================================
+  product=windows status=None level=None author=Some("FRACK113")  →  461 loaded / 3777 total
+    GT: loaded=461 prod=905 stat=0 lvl=0 auth=2411 total=3777  sum=3777
+    filter: loaded=461 prod=905 stat=0 lvl=0 auth=2411 total=3777  sum=3777
+    ✅ all dimensions match ground truth
+  ✅ PASS
+
+============================================================
+  TEST: combined: with author
+============================================================
+  product=windows status=None level=None author=Some("Elastic")  →  5 loaded / 3777 total
+    GT: loaded=5 prod=905 stat=0 lvl=0 auth=2867 total=3777  sum=3777
+    filter: loaded=5 prod=905 stat=0 lvl=0 auth=2867 total=3777  sum=3777
+    ✅ all dimensions match ground truth
+  ✅ PASS
+
+============================================================
+  SUMMARY
+============================================================
+  Passed: 7
+  Failed: 0
+============================================================
 ```
+
+(7 tests : empty filter, product, status, level, author, combined product+status+level, combined
+avec author — tous passent au moment de la rédaction, 3777 règles totales.)
 
 ### Exemple
 
