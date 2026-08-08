@@ -6,6 +6,7 @@
 mod evtx;
 mod info;
 pub mod logtype;
+mod long_path;
 
 use std::path::{Path, PathBuf};
 
@@ -23,14 +24,14 @@ use crate::logtype::LogType;
 /// ≥ 1 record, else a non-empty `.json`. Broken data is excluded from the
 /// skip set so the rule is re-captured.
 fn data_file_is_valid(dir: &Path, rule_id: &Uuid) -> bool {
-    let evtx = dir.join(format!("{}.evtx", rule_id));
+    let evtx = crate::long_path::long_path(&dir.join(format!("{}.evtx", rule_id)));
     if evtx.exists() {
         return match input_evtx::parse_evtx_file(&evtx) {
             Ok(events) => !events.is_empty(),
             Err(_) => false,
         };
     }
-    let json = dir.join(format!("{}.json", rule_id));
+    let json = crate::long_path::long_path(&dir.join(format!("{}.json", rule_id)));
     if json.exists() {
         return std::fs::metadata(&json).is_ok_and(|m| m.len() > 0);
     }
@@ -321,6 +322,7 @@ impl RegressionData {
         F: Fn(&str, &str, Option<u64>, &Path) -> Result<()>,
     {
         let rule_dir = self.rule_dir()?;
+        let rule_dir = crate::long_path::long_path(&rule_dir);
         let rule_id = &self.header.rule_id;
         std::fs::create_dir_all(&rule_dir)
             .with_context(|| format!("Failed to create rule directory {:?}", rule_dir))?;
@@ -330,12 +332,14 @@ impl RegressionData {
 
         let evtx_ext = "evtx";
         if let Some(alert) = first {
-            let raw_json_path = rule_dir.join(format!("{}.json", rule_id));
+            let raw_json_path =
+                crate::long_path::long_path(&rule_dir.join(format!("{}.json", rule_id)));
             let raw_json = serde_json::to_string_pretty(&alert.event_json_raw)?;
             std::fs::write(&raw_json_path, raw_json)?;
             tracing::info!("Wrote JSON for rule {:?}", rule_id);
 
-            let evtx_path = rule_dir.join(format!("{}.evtx", rule_id));
+            let evtx_path =
+                crate::long_path::long_path(&rule_dir.join(format!("{}.evtx", rule_id)));
             if let Err(e) = write_fn(
                 alert.raw_xml(),
                 alert.channel(),
@@ -380,7 +384,7 @@ impl RegressionData {
             description,
             provider,
         );
-        let info_path = rule_dir.join("info.yml");
+        let info_path = crate::long_path::long_path(&rule_dir.join("info.yml"));
         info.save(&info_path)?;
         tracing::info!("Created info.yml at {:?}", info_path);
 

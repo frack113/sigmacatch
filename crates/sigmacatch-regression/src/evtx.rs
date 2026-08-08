@@ -38,6 +38,7 @@ pub fn write_evtx(_xml: &str, channel: &str, record_id: Option<u64>, path: &Path
         return Err(anyhow!("Cannot export EVTX: empty channel"));
     }
 
+    let path = crate::long_path::long_path(path);
     let query = format!("*[System[EventRecordID={}]]", rid);
 
     for attempt in 0..EVTX_EXPORT_MAX_ATTEMPTS {
@@ -52,7 +53,7 @@ pub fn write_evtx(_xml: &str, channel: &str, record_id: Option<u64>, path: &Path
         };
 
         match result {
-            Ok(()) => match exported_has_records(path) {
+            Ok(()) => match exported_has_records(&path) {
                 Ok(true) => {
                     tracing::info!(
                         "Wrote EVTX via EvtExportLog: {} (channel={}, rid={})",
@@ -103,7 +104,7 @@ pub fn write_evtx(_xml: &str, channel: &str, record_id: Option<u64>, path: &Path
 
     // Remove the header-only `.evtx` so no invalid binary is committed.
     if path.exists() {
-        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(&path);
     }
 
     Err(anyhow!(
@@ -119,7 +120,8 @@ pub fn write_evtx(_xml: &str, channel: &str, record_id: Option<u64>, path: &Path
 /// Verify the exported file actually contains at least one parseable record.
 #[cfg(windows)]
 fn exported_has_records(path: &Path) -> Result<bool> {
-    let events = input_evtx::parse_evtx_file(path)
+    let path = crate::long_path::long_path(path);
+    let events = input_evtx::parse_evtx_file(&path)
         .with_context(|| format!("Failed to parse exported EVTX {}", path.display()))?;
     Ok(!events.is_empty())
 }

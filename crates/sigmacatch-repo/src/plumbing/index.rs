@@ -123,7 +123,9 @@ pub(crate) fn add_file_to_index(
     index: &mut grit_lib::index::Index,
 ) -> Result<()> {
     let odb = open_odb(git_dir);
-    let contents = std::fs::read(file_path)?;
+    let file_path = crate::plumbing::long_path::long_path(file_path);
+    let base = crate::plumbing::long_path::long_path(base);
+    let contents = std::fs::read(&file_path)?;
     let blob_oid = odb
         .write(grit_lib::objects::ObjectKind::Blob, &contents)
         .map_err(|e| anyhow::anyhow!("Failed to write blob: {}", e))?;
@@ -133,7 +135,7 @@ pub(crate) fn add_file_to_index(
     let mut mode = if is_exec { 0o100755 } else { 0o100644 };
 
     let rel = file_path
-        .strip_prefix(base)
+        .strip_prefix(&base)
         .map_err(|_| anyhow::anyhow!("Path not under base"))?;
     let path_str = rel.to_string_lossy().replace('\\', "/");
     let path_bytes = path_str.as_bytes().to_vec();
