@@ -56,6 +56,22 @@ pub(crate) fn fetch_options_for_branches(branches: &[&str]) -> FetchOptions {
     }
 }
 
+/// Fetch options for the whole `sigmacatch/*` namespace (every pending-PR
+/// working branch on the fork).
+///
+/// A single glob refspec (`+refs/heads/sigmacatch/*:refs/remotes/origin/sigmacatch/*`)
+/// replaces the per-branch refspecs: it is still narrow (never `+refs/heads/*`),
+/// and with protocol v2 the server turns it into a `ref-prefix` line cut at the
+/// first `*` (`refs/heads/sigmacatch/`) so only those branches are advertised.
+/// Full history (no `depth`) — same invariant as `fetch_options_for_branches`.
+pub(crate) fn fetch_options_for_sigmacatch_namespace() -> FetchOptions {
+    FetchOptions {
+        refspecs: vec!["+refs/heads/sigmacatch/*:refs/remotes/origin/sigmacatch/*".to_string()],
+        tags: TagMode::None,
+        ..Default::default()
+    }
+}
+
 /// Fetch from remote via smart HTTP.
 pub fn fetch_remote(
     http_client: &dyn HttpClient,
@@ -131,6 +147,23 @@ mod tests {
                 "+refs/heads/master:refs/remotes/origin/master",
                 "+refs/heads/main:refs/remotes/origin/main",
             ]
+        );
+    }
+
+    /// The sigmacatch namespace fetch must use one glob refspec scoped to
+    /// `sigmacatch/*` (never the full `+refs/heads/*`) and stay full-history.
+    #[test]
+    fn test_fetch_options_for_sigmacatch_namespace() {
+        let opts = fetch_options_for_sigmacatch_namespace();
+        assert_eq!(
+            opts.refspecs,
+            vec!["+refs/heads/sigmacatch/*:refs/remotes/origin/sigmacatch/*".to_string()]
+        );
+        assert!(opts.depth.is_none(), "namespace fetch must be full-history");
+        assert_eq!(opts.tags, TagMode::None);
+        assert!(
+            opts.refspecs.iter().all(|r| !r.contains("refs/heads/*:")),
+            "must never fetch the full refs/heads/* namespace"
         );
     }
 }

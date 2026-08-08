@@ -73,7 +73,7 @@ dépend de `rsigma-parser`. `sigmacatch-config` dépend de `sigmacatch-repo` + `
 4. SigmaRepo init (remote_url = fork, branche de travail, token) → init() [clone/fetch]
    └── set_git_operations(offline, contrib) → set_working_branch() → check_remote_working_branch() (garde sur branche du même jour)
 5. SigmahqRegression::new() → charge les info.yml existants depuis ./sigma/regression_data
-   └── existing_rules = regression.get_sigma_id() → HashSet<Uuid> (vide avec --all-rules)
+   └── existing_rules = regression.get_sigma_id() ∪ sigma_repo.pending_regression_rule_ids() (branches remote sigmacatch/* en attente) → HashSet<Uuid> (vide avec --all-rules)
 6. SigmahqRules::new() → chargement + dédupe ; remove_id() par règle skipée
     └── filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size }) ; 0 règles → bail
     └── --list-rules → affiche les règles sans data-regression + sortie
@@ -111,7 +111,9 @@ upload_regression() → upload_rule_batches() (dans sigmacatch-repo)
 
 ## Notes de conception
 
-- **Skip set** = `HashSet<Uuid>` depuis `SigmahqRegression::get_sigma_id()` (info.yml existants),
+- **Skip set** = `HashSet<Uuid>` depuis `SigmahqRegression::get_sigma_id()` (info.yml existants)
+  ∪ `SigmaRepo::pending_regression_rule_ids()` (arbres des branches remote `sigmacatch/*` :
+  PR en attente non mergés — une VM fraîche ne recapture pas leurs données),
   construit une seule fois au démarrage. `--all-rules` le désactive. Après génération, une règle
   est retirée et le moteur est rechargé en un seul batch (`engine.reload_rules`).
 - **Output toujours dans le repo sigma** : `<sigma_repo_path>/regression_data/<rule_rel_path>/`

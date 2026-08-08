@@ -122,7 +122,7 @@ SigmaRepo::new()
     │       ├── repo incomplet/absent + offline → bail actionnable
     │       ├── repo existant → pull étroit de la branche courante (skip si offline)
     │       └── sinon → clone complet (full-history, protocole v2) + pack
-    ├── set_working_branch(branch_name)         # fetch branche ciblée (skip si offline) + create_branch
+    ├── set_working_branch(branch_name)         # fetch namespace sigmacatch/* (skip si offline) + create_branch
     │   └── switch_to_working_branch()          # matérialise l'arbre de la branche (miroir exact du commit)
     └── check_remote_working_branch()   # garde : rejette une branche du même jour orpheline/amputée
 ```
@@ -169,6 +169,12 @@ SigmahqRegression::new()            # charge ./sigma/regression_data
 existing_rules: HashSet<Uuid> = regression.get_sigma_id().collect()
     └── vide avec --all-rules
     ↓
+Σ sigma_repo.pending_regression_rule_ids()     # union des branches remote sigmacatch/*
+    ├── list_refs("refs/remotes/origin/sigmacatch/") → chaque branche (PR en attente)
+    ├── marche en RAM de l'arbre (commit → tree → sous-arbre regression_data/)
+    │   └── ids extraits des noms de fichiers <uuid>.json|evtx|xml (jamais de checkout)
+    └── HashSet union → dédupe des ids partagés entre branches / avec le worktree
+    ↓
 SigmahqRules::new()                 # charge ./sigma
     ├── find_rules_dirs() → rules, rules-* (exclut rules-compliance, index.yml)
     ├── walk séquentiel, parse_sigma_yaml() par fichier
@@ -184,6 +190,16 @@ rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author,
 > Les règles avec des données de régression existantes sont exclues du moteur Sigma — ce
 > skip-at-load est la seule optimisation au chargement. Après génération, une règle est retirée
 > et le moteur est rechargé en un seul batch (voir Étape 7).
+>
+> **Union multi-branches (PR en attente)** : le worktree ne voit que la branche du jour (basée
+> sur main). Une VM fraîche ne recapturerait donc pas seulement les règles mergées, mais aussi
+> celles d'un PR encore ouvert d'un autre jour — d'où la deuxième source du skip set :
+> `SigmaRepo::pending_regression_rule_ids()` scanne les arbres de toutes les branches remote
+> `sigmacatch/*` (le fetch de `switch_to_working_branch` les récupère via le glob
+> `+refs/heads/sigmacatch/*:refs/remotes/origin/sigmacatch/*`). Le scan est purement en RAM
+> (`list_refs` + marche des objets arbre), jamais de checkout : le worktree reste un miroir
+> exact de la branche du jour, donc le diff du nouveau PR reste basé sur main et ne contient
+> jamais les données des PR précédents. Offline = best-effort (refs déjà fetchées).
 
 ### Étape 4 — Résolution des channels
 

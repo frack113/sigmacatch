@@ -125,12 +125,34 @@ async fn main() -> Result<()> {
     let existing_rules: HashSet<Uuid> = if cli.all_rules {
         HashSet::new()
     } else {
-        let existing: HashSet<Uuid> = regression.get_sigma_id().into_iter().collect();
+        let mut existing: HashSet<Uuid> = regression.get_sigma_id().into_iter().collect();
         if !existing.is_empty() {
             info!(
                 "{} rules with existing regression data (skipped)",
                 existing.len()
             );
+        }
+        // Union with rules that have regression data committed on any pending
+        // `sigmacatch/*` PR branch (not yet merged into main). A fresh VM only
+        // sees main in its worktree, so without this scan an open PR from a
+        // previous day would be re-captured and duplicated.
+        match sigma_repo.pending_regression_rule_ids() {
+            Ok(pending) => {
+                if !pending.is_empty() {
+                    let before = existing.len();
+                    existing.extend(pending);
+                    info!(
+                        "{} rules with regression data on pending sigmacatch/* branches (skipped)",
+                        existing.len() - before
+                    );
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to scan pending sigmacatch/* branches for existing regression data: {}",
+                    e
+                );
+            }
         }
         existing
     };

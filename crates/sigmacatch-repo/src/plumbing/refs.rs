@@ -21,6 +21,12 @@ pub(crate) fn resolve_head(git_dir: &Path) -> Result<ObjectId> {
     map_grit(refs::resolve_ref(git_dir, "HEAD"))
 }
 
+/// List every remote tracking ref under `refs/remotes/origin/sigmacatch/`
+/// (loose + packed, deduplicated, sorted) — the pending-PR branches on the fork.
+pub(crate) fn list_sigmacatch_remote_refs(git_dir: &Path) -> Result<Vec<(String, ObjectId)>> {
+    map_grit(refs::list_refs(git_dir, "refs/remotes/origin/sigmacatch/"))
+}
+
 /// Resolve a ref name to its oid, returning `None` when absent (packed or loose).
 /// Mirrors grit-lib's `resolve_ref` but as an `Option` for callers that treat a
 /// missing ref as a valid "first run" case.
