@@ -25,8 +25,7 @@ const EVTX_EXPORT_BACKOFF_SECS: [u64; (EVTX_EXPORT_MAX_ATTEMPTS - 1) as usize] =
 /// `EvtExportLog` returns success even when the query matched zero records
 /// (header-only file), so every successful call is re-parsed; a file with no
 /// records is retried (the live-log race may be transient) then treated as
-/// failure. The empty `.evtx` is removed and an error is returned. No `.xml`
-/// fallback is written: the SigmaHQ CI runner only accepts `type: evtx`.
+/// failure. The empty `.evtx` is removed and an error is returned.
 #[cfg(windows)]
 pub fn write_evtx(_xml: &str, channel: &str, record_id: Option<u64>, path: &Path) -> Result<()> {
     use windows::core::HSTRING;

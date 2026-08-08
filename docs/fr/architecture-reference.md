@@ -287,7 +287,7 @@ engine.process_events() → engine.get_alerts()
             └── Some(files) :
                 ├── RegressionData::for_rule(header, output_path, rule_rel_path, author, description)
                 ├── écrit <rule_id>.json (event_json_raw du premier event matché, JSON pretty)
-                ├── écrit <rule_id>.evtx via EvtExportLog (validation ≥ 1 record + retry ; pas de .xml sur Windows)
+                ├── écrit <rule_id>.evtx via EvtExportLog (validation ≥ 1 record + retry)
                 ├── écrit info.yml
                 ├── ajoute "regression_tests_path" au YAML de la règle source
                 └── retire la règle (regression.retired + rules.remove_id)
@@ -435,16 +435,14 @@ regression_tests_info:
     `EvtExportLog` retourne un succès même quand la requête matche 0 event (fichier header-only) — un fichier
     vide ou corrompu est donc un échec, pas un succès.
   - **Retry** : 4 tentatives au total (1 initiale + 3 retries) avec backoff court (2s/5s/10s) — la course avec la rétention est souvent transitoire.
-  - **Pas de fallback `.xml` sur Windows** : le runner CI SigmaHQ n'accepte que `type: evtx` (un `.xml` commité
-    ferait échouer `true-positive-tests`). Échec → le `.json` partiel est supprimé, erreur retournée, la règle
-    est sautée ce cycle (pas de commit) et re-capturée sur un cycle ultérieur.
+  - **En cas d'échec** : le `.json` partiel est supprimé, une erreur est retournée, la règle est sautée ce
+    cycle (pas de commit) et re-capturée sur un cycle ultérieur.
   - **Limitation connue** : race condition avec la rétention du log — si l'event a été purgé entre la collecte
     et l'export, l'appel échoue silencieusement (`ERROR_EVT_QUERY_RESULT_STALE`)
 - **Auto-guérison** : les règles dont les données commitées sont invalides (EVTX vide) sont exclues du skip set
   (`get_sigma_id` via `data_file_is_valid`, et `pending_regression_rule_ids` via validation des blobs `.evtx`)
   → régénérées au run suivant.
-- **Non-Windows** : aucune donnée n'est générée (le collecteur Winevt est un stub) et `write_evtx` échoue ; le
-  fallback XML a été retiré (dead code v0.1.0, jamais validé par `check_evtx` qui ne traite que `type: evtx`)
+- **Non-Windows** : aucune donnée n'est générée (le collecteur Winevt est un stub) et `write_evtx` échoue.
 
 ### Logger (`crates/sigmacatch-logger/src/lib.rs`)
 

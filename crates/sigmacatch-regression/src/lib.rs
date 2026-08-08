@@ -347,7 +347,6 @@ impl RegressionData {
                 let _ = std::fs::remove_file(&raw_json_path);
                 return Err(e);
             }
-            // `write_evtx` only produces `.evtx` or errors — no `.xml` fallback.
             tracing::info!("Wrote EVTX for rule {:?}", rule_id);
         }
 

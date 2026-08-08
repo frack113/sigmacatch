@@ -269,7 +269,7 @@ engine.process_events() → engine.get_alerts()
             └── Some(files):
                 ├── RegressionData::for_rule(header, output_path, rule_rel_path, author, description)
                 ├── write <rule_id>.json (event_json_raw of first matching event, pretty JSON)
-                ├── write <rule_id>.evtx via EvtExportLog (validated ≥ 1 record + retry; no .xml on Windows)
+                ├── write <rule_id>.evtx via EvtExportLog (validated ≥ 1 record + retry)
                 ├── write info.yml
                 ├── append "regression_tests_path" to the source rule YAML
                 └── retire the rule (regression.retired + rules.remove_id)
@@ -416,16 +416,14 @@ regression_tests_info:
     `EvtExportLog` reports success even when the query matched 0 events (header-only file) — an empty or
     corrupt file is a failure, not a success.
   - **Retry**: 4 attempts total (1 initial + 3 retries) with short backoff (2s/5s/10s) — the retention race is often transient.
-  - **No `.xml` fallback on Windows**: the SigmaHQ CI runner only accepts `type: evtx` (a committed `.xml`
-    would fail `true-positive-tests`). On failure the partial `.json` is deleted, an error is returned, the
-    rule is skipped this cycle (no commit) and re-captured on a later cycle.
+  - **On failure** the partial `.json` is deleted, an error is returned, the rule is skipped this cycle
+    (no commit) and re-captured on a later cycle.
   - **Known limitation**: race condition with log retention — if the event has been purged between collection
     and export, the call fails silently (`ERROR_EVT_QUERY_RESULT_STALE`)
 - **Self-healing**: rules whose committed data is invalid (empty EVTX) are excluded from the skip set
   (`get_sigma_id` via `data_file_is_valid`, and `pending_regression_rule_ids` via `.evtx` blob validation)
   → regenerated on the next run.
-- **Non-Windows**: no data is generated (the Winevt collector is a stub) and `write_evtx` errors; the `XML`
-  fallback was removed (v0.1.0 dead code, never validated by `check_evtx` which only handles `type: evtx`)
+- **Non-Windows**: no data is generated (the Winevt collector is a stub) and `write_evtx` errors.
 
 ### Logger (`crates/sigmacatch-logger/src/lib.rs`)
 

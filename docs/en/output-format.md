@@ -134,7 +134,6 @@ generated outside the pipeline — its `regression_tests_info` section is commen
   Only the first matching event is captured.
 - **Valid binary EVTX**: `<rule_id>.evtx` is written via `EvtExportLog` API (Windows), which re-queries the event by RecordID from the live log.
   The exported file is **validated** (re-parse ≥ 1 record) with short-backoff retry; an empty/corrupt export
-   (event rotated out between collection and export) is an error, **not** a `.xml` fallback — the SigmaHQ
-   CI runner only accepts `type: evtx`, so the rule is skipped this cycle (no commit) and re-captured later.
-   On non-Windows, no data is generated (the Winevt collector is a stub) and `write_evtx` errors.
-   The companion `.json` file carries the actual data for Sigma matching.
+  (event rotated out between collection and export) is an error: the rule is skipped this cycle (no commit)
+  and re-captured later. On non-Windows, no data is generated (the Winevt collector is a stub).
+  The companion `.json` file carries the actual data for Sigma matching.
