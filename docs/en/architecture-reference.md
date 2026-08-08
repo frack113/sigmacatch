@@ -264,11 +264,12 @@ engine.process_events() → engine.get_alerts()
     ├── log stats: events_processed, matches_found (unique rules), alerts_count
     └── for each alert:
         regression.add(&alert) → Option<Vec<String>>
-            ├── None if rule already retired / Uuid::nil() / info.yml exists
+            ├── None if rule already retired / Uuid::nil() / valid info.yml exists
+            ├── EVTX export failure → None too: rule stays loaded, re-captured later
             └── Some(files):
                 ├── RegressionData::for_rule(header, output_path, rule_rel_path, author, description)
                 ├── write <rule_id>.json (event_json_raw of first matching event, pretty JSON)
-                ├── write <rule_id>.evtx via EvtExportLog (or .xml fallback)
+                ├── write <rule_id>.evtx via EvtExportLog (validated ≥ 1 record + retry; no .xml on Windows)
                 ├── write info.yml
                 ├── append "regression_tests_path" to the source rule YAML
                 └── retire the rule (regression.retired + rules.remove_id)
@@ -288,7 +289,7 @@ upload_regression() → upload_rule_batches()   # in sigmacatch-repo
 ```text
 <sigma_repo_path>/regression_data/<rule_rel_path>/
     ├── <rule_id>.json      # first matching event (raw Winevt JSON, original EventData key names)
-    ├── <rule_id>.evtx      # valid EVTX via EvtExportLog (or .xml fallback)
+    ├── <rule_id>.evtx      # valid EVTX via EvtExportLog (non-Windows: .xml for local tools only)
     └── info.yml            # SigmaHQ-compatible metadata
 ```
 
@@ -411,9 +412,19 @@ regression_tests_info:
 
 - **Windows**: `EvtExportLog` API (winevt) — re-queries the event by RecordID and exports a valid binary `.evtx`
   - `EvtExportLog(None, channel, query, path, EvtExportLogChannelPath | EvtExportLogOverwrite)`
-  - **Known limitation**: race condition with log retention — if the event has been purged between collection and export, the call fails silently (`ERROR_EVT_QUERY_RESULT_STALE`)
-- **Fallback**: raw XML written as `.xml` (not `.evtx` — avoids an invalid binary that would break downstream tools)
-- **Non-Windows**: raw XML fallback as `.xml`
+  - **Validation**: the exported file is re-parsed (`input_evtx::parse_evtx_file`) and must contain ≥ 1 record.
+    `EvtExportLog` reports success even when the query matched 0 events (header-only file) — an empty or
+    corrupt file is a failure, not a success.
+  - **Retry**: 3 attempts with short backoff (2s/5s/10s) — the retention race is often transient.
+  - **No `.xml` fallback on Windows**: the SigmaHQ CI runner only accepts `type: evtx` (a committed `.xml`
+    would fail `true-positive-tests`). On failure the partial `.json` is deleted, an error is returned, the
+    rule is skipped this cycle (no commit) and re-captured on a later cycle.
+  - **Known limitation**: race condition with log retention — if the event has been purged between collection
+    and export, the call fails silently (`ERROR_EVT_QUERY_RESULT_STALE`)
+- **Self-healing**: rules whose committed data is invalid (empty EVTX) are excluded from the skip set
+  (`get_sigma_id` via `data_file_is_valid`, and `pending_regression_rule_ids` via `.evtx` blob validation)
+  → regenerated on the next run.
+- **Non-Windows**: raw XML as `.xml` (local tools only, never committed by the Windows pipeline)
 
 ### Logger (`crates/sigmacatch-logger/src/lib.rs`)
 

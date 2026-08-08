@@ -111,9 +111,10 @@ upload_regression() → upload_rule_batches()   # in sigmacatch-repo
 
 ## Design notes
 
-- **Skip set** = `HashSet<Uuid>` from `SigmahqRegression::get_sigma_id()` (existing info.yml),
+- **Skip set** = `HashSet<Uuid>` from `SigmahqRegression::get_sigma_id()` (existing info.yml + valid data),
   built once at startup. `--all-rules` disables it. After generation a rule is retired and
-  the engine is reloaded in one batch (`engine.reload_rules`).
+  the engine is reloaded in one batch (`engine.reload_rules`). Rules whose committed data is
+  invalid (empty EVTX) are excluded from the skip set → regenerated.
 - **Output always in the sigma repo**: `<sigma_repo_path>/regression_data/<rule_rel_path>/`
   (triplet `info.yml` + `<rule_id>.json` + `<rule_id>.evtx`), committed to the fork if
   `contrib` (local commits otherwise).

@@ -20,7 +20,7 @@ Basée sur la remote ref si présente (sinon HEAD) pour garder le fast-forward. 
 
 ### Skip-set multi-branches (PR en attente)
 
-`pending_regression_rule_ids()` (`SigmaRepo`) scanne les arbres de **toutes** les branches remote `sigmacatch/*` (jamais checkout — `list_refs` + marche `regression_data/` en RAM, ids extraits des noms `<uuid>.<ext>`). Union avec le worktree → une VM fraîche ne recapture pas les données d'un PR d'un autre jour encore ouvert ; le diff du nouveau PR reste basé sur main (données des PR précédents jamais incluses). Offline = best-effort (refs déjà fetchées).
+`pending_regression_rule_ids()` (`SigmaRepo`) scanne les arbres de **toutes** les branches remote `sigmacatch/*` (jamais checkout — `list_refs` + marche `regression_data/` en RAM, ids extraits des noms `<uuid>.<ext>`). Union avec le worktree → une VM fraîche ne recapture pas les données d'un PR d'un autre jour encore ouvert ; le diff du nouveau PR reste basé sur main (données des PR précédents jamais incluses). Les blobs `<uuid>.evtx` sont validés (parse ≥ 1 record) : un EVTX vide/corrompu exclut la règle du skip set (auto-guérison des commits vides). Offline = best-effort (refs déjà fetchées).
 
 ### Remote working-branch guard
 

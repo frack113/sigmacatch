@@ -111,11 +111,12 @@ upload_regression() → upload_rule_batches() (dans sigmacatch-repo)
 
 ## Notes de conception
 
-- **Skip set** = `HashSet<Uuid>` depuis `SigmahqRegression::get_sigma_id()` (info.yml existants)
+- **Skip set** = `HashSet<Uuid>` depuis `SigmahqRegression::get_sigma_id()` (info.yml existants + données valides)
   ∪ `SigmaRepo::pending_regression_rule_ids()` (arbres des branches remote `sigmacatch/*` :
   PR en attente non mergés — une VM fraîche ne recapture pas leurs données),
   construit une seule fois au démarrage. `--all-rules` le désactive. Après génération, une règle
   est retirée et le moteur est rechargé en un seul batch (`engine.reload_rules`).
+  Les règles dont les données commitées sont invalides (EVTX vide) sont exclues du skip set → régénérées.
 - **Output toujours dans le repo sigma** : `<sigma_repo_path>/regression_data/<rule_rel_path>/`
   (triplet `info.yml` + `<rule_id>.json` + `<rule_id>.evtx`), commité sur le fork si `contrib` (commits locaux sinon).
 - **Collecteur observable** : les channels inexistants sont exclus une fois pour toutes sur

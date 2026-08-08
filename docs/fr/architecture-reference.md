@@ -173,6 +173,9 @@ existing_rules: HashSet<Uuid> = regression.get_sigma_id().collect()
     ├── list_refs("refs/remotes/origin/sigmacatch/") → chaque branche (PR en attente)
     ├── marche en RAM de l'arbre (commit → tree → sous-arbre regression_data/)
     │   └── ids extraits des noms de fichiers <uuid>.json|evtx|xml (jamais de checkout)
+    │   └── validation des blobs <uuid>.evtx : parse ≥ 1 record, sinon id exclu
+    │       (auto-guérison : données vides commitées → règle régénérée)
+    ├── valid ∪ broken : seuls valid \ broken entrent dans le skip set
     └── HashSet union → dédupe des ids partagés entre branches / avec le worktree
     ↓
 SigmahqRules::new()                 # charge ./sigma
@@ -279,11 +282,12 @@ engine.process_events() → engine.get_alerts()
     ├── log stats : events_processed, matches_found (règles uniques), alerts_count
     └── pour chaque alert :
         regression.add(&alert) → Option<Vec<String>>
-            ├── None si règle déjà retirée / Uuid::nil() / info.yml existant
+            ├── None si règle déjà retirée / Uuid::nil() / info.yml existant (valide)
+            ├── échec d'export EVTX → None aussi : règle non retirée, re-capturée plus tard
             └── Some(files) :
                 ├── RegressionData::for_rule(header, output_path, rule_rel_path, author, description)
                 ├── écrit <rule_id>.json (event_json_raw du premier event matché, JSON pretty)
-                ├── écrit <rule_id>.evtx via EvtExportLog (ou fallback .xml)
+                ├── écrit <rule_id>.evtx via EvtExportLog (validation ≥ 1 record + retry ; pas de .xml sur Windows)
                 ├── écrit info.yml
                 ├── ajoute "regression_tests_path" au YAML de la règle source
                 └── retire la règle (regression.retired + rules.remove_id)
@@ -303,7 +307,7 @@ upload_regression() → upload_rule_batches()   # dans sigmacatch-repo
 ```text
 <sigma_repo_path>/regression_data/<rule_rel_path>/
     ├── <rule_id>.json      # premier event matché (JSON Winevt brut, noms de clés EventData d'origine)
-    ├── <rule_id>.evtx      # EVTX valide via EvtExportLog (ou fallback .xml)
+    ├── <rule_id>.evtx      # EVTX valide via EvtExportLog (non-Windows : .xml pour les outils locaux)
     └── info.yml            # métadonnées compatibles SigmaHQ
 ```
 
@@ -427,9 +431,19 @@ regression_tests_info:
 
 - **Windows** : API `EvtExportLog` (winevt) — re-queries l'event par RecordID et exporte un `.evtx` binaire valide
   - `EvtExportLog(None, channel, query, path, EvtExportLogChannelPath | EvtExportLogOverwrite)`
-  - **Limitation connue** : race condition avec la rétention du log — si l'event a été purgé entre la collecte et l'export, l'appel échoue silencieusement (`ERROR_EVT_QUERY_RESULT_STALE`)
-- **Fallback** : XML brut écrit en `.xml` (pas `.evtx` — évite un binaire invalide qui casserait les outils en aval)
-- **Non-Windows** : fallback XML brut en `.xml`
+  - **Validation** : le fichier exporté est re-parsé (`input_evtx::parse_evtx_file`) et doit contenir ≥ 1 record.
+    `EvtExportLog` retourne un succès même quand la requête matche 0 event (fichier header-only) — un fichier
+    vide ou corrompu est donc un échec, pas un succès.
+  - **Retry** : 3 tentatives avec backoff court (2s/5s/10s) — la course avec la rétention est souvent transitoire.
+  - **Pas de fallback `.xml` sur Windows** : le runner CI SigmaHQ n'accepte que `type: evtx` (un `.xml` commité
+    ferait échouer `true-positive-tests`). Échec → le `.json` partiel est supprimé, erreur retournée, la règle
+    est sautée ce cycle (pas de commit) et re-capturée sur un cycle ultérieur.
+  - **Limitation connue** : race condition avec la rétention du log — si l'event a été purgé entre la collecte
+    et l'export, l'appel échoue silencieusement (`ERROR_EVT_QUERY_RESULT_STALE`)
+- **Auto-guérison** : les règles dont les données commitées sont invalides (EVTX vide) sont exclues du skip set
+  (`get_sigma_id` via `data_file_is_valid`, et `pending_regression_rule_ids` via validation des blobs `.evtx`)
+  → régénérées au run suivant.
+- **Non-Windows** : XML brut en `.xml` (outils locaux uniquement, jamais commité par le pipeline Windows)
 
 ### Logger (`crates/sigmacatch-logger/src/lib.rs`)
 

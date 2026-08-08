@@ -124,7 +124,7 @@ regression_tests_path: regression_data/rules/<rule_rel_path>/info.yml
 The `type` field of `regression_tests_info` (and the reading of existing info.yml files) supports
 4 logtypes (`crates/sigmacatch-regression/src/logtype.rs`): `evtx`, `json`, `raw`, `log`
 — an unknown/missing value falls back to `json` with a `warn!`. The pipeline always writes
-`.json` + `.evtx` (fallback `.xml`); a `.raw` is possible for non-Winevt data
+`.json` + `.evtx` (`.xml` only on non-Windows); a `.raw` is possible for non-Winevt data
 (e.g. `regression_data/rules/cisco/aaa/cisco_cli_dot1x_disabled/ef0ff092-....raw`, `type: raw`,
 generated outside the pipeline — its `regression_tests_info` section is commented out).
 
@@ -133,5 +133,8 @@ generated outside the pipeline — its `regression_tests_info` section is commen
 - **One event per rule**: each regression directory contains exactly one JSON event.
   Only the first matching event is captured.
 - **Valid binary EVTX**: `<rule_id>.evtx` is written via `EvtExportLog` API (Windows), which re-queries the event by RecordID from the live log.
-  If `EvtExportLog` fails (event rotated out of retention) or on non-Windows → fallback `.xml` (raw XML, not invalid binary).
+  The exported file is **validated** (re-parse ≥ 1 record) with short-backoff retry; an empty/corrupt export
+  (event rotated out between collection and export) is an error, **not** a `.xml` fallback on Windows — the SigmaHQ
+  CI runner only accepts `type: evtx`, so the rule is skipped this cycle (no commit) and re-captured later.
+  On non-Windows → `.xml` (local tools only).
   The companion `.json` file carries the actual data for Sigma matching.
