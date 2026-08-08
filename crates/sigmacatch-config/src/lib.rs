@@ -239,29 +239,18 @@ impl Config {
                 self.git.email
             );
         }
-        // SSH transport is not yet implemented on Windows
-        #[cfg(windows)]
-        if self.git.transport == GitTransport::Ssh {
-            anyhow::bail!(
-                "SSH transport is not yet implemented on Windows; \
-                 set transport = http in config.yaml"
-            );
-        }
-
         // Validate SSH key path if configured
         if let Some(ref key_path) = self.git.ssh_key_path {
             if !key_path.is_empty() {
-                // On Windows, reject unix-style absolute paths early (e.g. /home/user/.ssh/id)
-                #[cfg(windows)]
-                if key_path.starts_with('/') || key_path.starts_with('~') {
+                let path = std::path::Path::new(key_path);
+                if !path.is_absolute() {
                     anyhow::bail!(
-                        "config: SSH key path '{}' looks like a unix-style path on Windows; \
-                         use a windows path (e.g. 'C:\\Users\\user\\.ssh\\id_sigmacatch') \
-                         or set transport = http",
-                        key_path
+                        "config: SSH key path '{}' is not absolute (transport={}); \
+                         use a full path like /home/user/.ssh/id or C:\\Users\\user\\.ssh\\id",
+                        key_path,
+                        self.git.transport
                     );
                 }
-
                 let meta = std::fs::metadata(key_path).map_err(|_| {
                     anyhow::anyhow!(
                         "config: SSH key path '{}' does not exist (transport={}); \

@@ -101,6 +101,13 @@ async fn main() -> Result<()> {
         }
     };
 
+    if matches!(config.git.transport, sigmacatch_config::GitTransport::Ssh) {
+        if let Err(e) = sigmacatch_repo::ensure_ssh_host_config(config.git.ssh_key_path.as_deref())
+        {
+            warn!("Failed to write SSH host-config: {e}");
+        }
+    }
+
     if let Some(ref key_path) = config.git.ssh_key_path {
         sigma_repo.set_signing_key(Some(std::path::PathBuf::from(key_path)));
     }

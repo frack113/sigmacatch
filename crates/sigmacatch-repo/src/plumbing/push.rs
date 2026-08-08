@@ -9,12 +9,13 @@ use grit_lib::objects::ObjectId;
 use grit_lib::transfer::PushOptions;
 use grit_lib::transfer::PushRefSpec;
 use grit_lib::transport::http::HttpClient;
-use grit_lib::transport::SshTransport;
 use grit_lib::transport::Transport;
+use grit_lib::transport::{SshCommand, SshTransport};
 use std::path::Path;
 use tracing::{info, warn};
 
 use crate::plumbing::refs::read_loose_or_packed_ref;
+use crate::transport::SshMode;
 
 /// Describe a rejection reason in user-friendly text.
 fn describe_push_rejection(status: &grit_lib::push_report::PushRefStatus) -> String {
@@ -102,7 +103,7 @@ pub fn push_branch_ssh(
     git_dir: &Path,
     remote_url: &str,
     branch_name: &str,
-    ssh_shell_cmd: &str,
+    ssh_mode: &SshMode,
 ) -> Result<()> {
     let ref_name = format!("refs/heads/{}", branch_name);
     let oid_str = read_loose_or_packed_ref(git_dir, &ref_name)
@@ -122,10 +123,14 @@ pub fn push_branch_ssh(
         dry_run: false,
         push_options: Vec::new(),
     };
-    let transport = if ssh_shell_cmd.is_empty() {
-        SshTransport::new()
-    } else {
-        SshTransport::with_shell_command(ssh_shell_cmd)
+    let transport = match ssh_mode {
+        SshMode::Default => SshTransport::new(),
+        SshMode::ShellCommand(cmd) => SshTransport {
+            ssh_command: SshCommand::ShellCommand(cmd.clone().into()),
+        },
+        SshMode::Program(args) => SshTransport {
+            ssh_command: SshCommand::Program(args[0].clone()),
+        },
     };
     let mut conn = transport.connect(
         remote_url,

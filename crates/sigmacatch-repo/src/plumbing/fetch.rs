@@ -7,11 +7,11 @@ use anyhow::Result;
 use grit_lib::fetch::Progress;
 use grit_lib::transfer::{FetchOptions, TagMode};
 use grit_lib::transport::http::{http_fetch, HttpClient};
-use grit_lib::transport::{ConnectOptions, SshTransport, Transport};
+use grit_lib::transport::{ConnectOptions, SshCommand, SshTransport, Transport};
 use std::path::Path;
 use tracing::info;
 
-use crate::transport::sanitize_url;
+use crate::transport::{sanitize_url, SshMode};
 
 /// Forward the remote's side-band progress lines (channel 2) to the log so a
 /// first clone's long download isn't silent. The server's messages are
@@ -94,14 +94,18 @@ pub fn fetch_remote(
 pub fn fetch_remote_ssh(
     git_dir: &Path,
     repo_url: &str,
-    ssh_shell_cmd: &str,
+    ssh_mode: &SshMode,
     opts: &FetchOptions,
 ) -> Result<(usize, Option<String>)> {
     info!("Fetching via SSH from {}", repo_url);
-    let transport = if ssh_shell_cmd.is_empty() {
-        SshTransport::new()
-    } else {
-        SshTransport::with_shell_command(ssh_shell_cmd)
+    let transport = match ssh_mode {
+        SshMode::Default => SshTransport::new(),
+        SshMode::ShellCommand(cmd) => SshTransport {
+            ssh_command: SshCommand::ShellCommand(cmd.clone().into()),
+        },
+        SshMode::Program(args) => SshTransport {
+            ssh_command: SshCommand::Program(args[0].clone()),
+        },
     };
     let mut conn = transport.connect(
         repo_url,
