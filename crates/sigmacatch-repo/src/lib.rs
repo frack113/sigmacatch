@@ -206,7 +206,9 @@ impl SigmaRepo {
     /// A fresh day (branch not yet on the fork) matches nothing: zero updates,
     /// no error. Fetching every `sigmacatch/*` branch (all pending-PR branches,
     /// not just today's) also feeds `pending_regression_rule_ids()` so the
-    /// skip set covers data from PRs still open on other days.
+    /// skip set covers data from PRs still open on other days. The fetch is
+    /// best-effort: a network failure is logged (`warn!`) and swallowed so the
+    /// run degrades to a worktree-only skip set instead of aborting at startup.
     pub fn switch_to_working_branch(&mut self) -> Result<()> {
         let branch_name = self.working_branch.clone().ok_or_else(|| {
             anyhow::anyhow!(
@@ -226,20 +228,38 @@ impl SigmaRepo {
     /// refspec, so their remote tracking refs are current before `create_branch`
     /// bases on them and before `pending_regression_rule_ids()` scans them.
     /// No-op (zero updates) when no such branch exists on the fork yet.
+    ///
+    /// This is a **best-effort** fetch: a network failure (transient outage,
+    /// rate limit, no token) is logged as a `warn!` and swallowed. The run then
+    /// degrades gracefully — the skip set is built only from the checked-out
+    /// worktree (main) instead of the worktree ∪ pending branches, so an
+    /// already-captured PR *could* be re-captured, but the run still proceeds
+    /// and completes rather than aborting at startup. The push-rollback guard
+    /// still protects against a sibling-commit push (`RejectNonFastForward`).
     fn fetch_sigmacatch_branches(&self, git_dir: &Path) -> Result<()> {
         let remote_url = crate::plumbing::read_remote_url_from_config(git_dir, "origin")?;
         let opts = crate::plumbing::fetch_options_for_sigmacatch_namespace();
-        match self.transport {
+        let outcome = match self.transport {
             GitTransport::Http => {
                 let http_client = AuthHttpClient::new(self.token.clone())?;
-                crate::plumbing::fetch_remote(&http_client, git_dir, &remote_url, &opts)?;
+                crate::plumbing::fetch_remote(&http_client, git_dir, &remote_url, &opts)
             }
             GitTransport::Ssh => {
                 let ssh_url = https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
                 let ssh_cmd =
                     crate::transport::build_ssh_shell_command(self.ssh_key_path.as_deref());
-                crate::plumbing::fetch_remote_ssh(git_dir, &ssh_url, ssh_cmd.as_str(), &opts)?;
+                crate::plumbing::fetch_remote_ssh(git_dir, &ssh_url, ssh_cmd.as_str(), &opts)
             }
+        };
+        if let Err(e) = outcome {
+            warn!(
+                "Failed to fetch sigmacatch/* branches from origin ({}): \
+                 the skip set will only cover the checked-out worktree. \
+                 Re-runs on this repo can still resolve pending-PR data; consider \
+                 retrying or checking network/token. Error: {}",
+                sanitize_url(&remote_url),
+                e
+            );
         }
         Ok(())
     }
