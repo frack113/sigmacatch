@@ -29,7 +29,7 @@ fn current_branch_name(git_dir: &Path) -> Result<Option<String>> {
 /// Clone a repository using token auth.
 /// Wraps `clone_repo` by creating an `AuthHttpClient` from token.
 pub(crate) fn git_clone(url: &str, dest: &Path, token: Option<&str>) -> Result<()> {
-    let http_client = AuthHttpClient::new(token.map(String::from))?;
+    let http_client = AuthHttpClient::new(token.map(|s| zeroize::Zeroizing::new(s.to_string())))?;
     crate::plumbing::clone_repo(&http_client, url, dest)
 }
 
@@ -44,12 +44,8 @@ pub(crate) fn git_clone_ssh(url: &str, dest: &Path, ssh_key_path: Option<&str>) 
     info!("Cloning via SSH into {:?}", dest);
     init_repo(&git_dir, dest, url)?;
     let opts = fetch_options_for_branches(DEFAULT_BRANCHES);
-    let (count, default_branch) = match fetch_remote_ssh(
-        &git_dir,
-        url,
-        build_ssh_shell_command(ssh_key_path).as_str(),
-        &opts,
-    ) {
+    let ssh_mode = build_ssh_shell_command(ssh_key_path);
+    let (count, default_branch) = match fetch_remote_ssh(&git_dir, url, &ssh_mode, &opts) {
         Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_dir_all(&git_dir);
@@ -75,7 +71,7 @@ pub(crate) fn git_clone_ssh(url: &str, dest: &Path, ssh_key_path: Option<&str>) 
 /// Only the current branch is fetched (narrow refspec) — the default branch
 /// after `switch_to_tracking_branch`, never the wildcard `+refs/heads/*`.
 pub(crate) fn git_pull(git_dir: &Path, token: Option<&str>) -> Result<()> {
-    let http_client = AuthHttpClient::new(token.map(String::from))?;
+    let http_client = AuthHttpClient::new(token.map(|s| zeroize::Zeroizing::new(s.to_string())))?;
     let remote_url = read_remote_url_from_config(git_dir, "origin")?;
     let branch = current_branch_name(git_dir)?
         .ok_or_else(|| anyhow::anyhow!("Cannot pull — HEAD is detached"))?;
@@ -98,12 +94,12 @@ pub(crate) fn git_pull(git_dir: &Path, token: Option<&str>) -> Result<()> {
 pub(crate) fn git_pull_ssh(git_dir: &Path, ssh_key_path: Option<&str>) -> Result<()> {
     let remote_url = read_remote_url_from_config(git_dir, "origin")?;
     let ssh_url = https_to_ssh_url(&remote_url).unwrap_or(remote_url);
-    let ssh_cmd = build_ssh_shell_command(ssh_key_path);
+    let ssh_mode = build_ssh_shell_command(ssh_key_path);
     let branch = current_branch_name(git_dir)?
         .ok_or_else(|| anyhow::anyhow!("Cannot pull — HEAD is detached"))?;
     let opts = fetch_options_for_branches(&[branch.as_str()]);
 
-    fetch_remote_ssh(git_dir, &ssh_url, ssh_cmd.as_str(), &opts)?;
+    fetch_remote_ssh(git_dir, &ssh_url, &ssh_mode, &opts)?;
     fast_forward_branch(git_dir)?;
 
     crate::plumbing::pack_loose_objects(git_dir)?;

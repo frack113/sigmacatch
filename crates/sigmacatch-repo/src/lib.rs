@@ -16,6 +16,8 @@ pub(crate) mod porcelain;
 pub(crate) mod signing;
 pub(crate) mod transport;
 
+pub use crate::transport::ensure_ssh_host_config;
+
 #[cfg(test)]
 mod regression_tests;
 
@@ -44,7 +46,7 @@ pub struct SigmaRepo {
     author: String,
     email: String,
     // Transport configuration
-    token: Option<String>,
+    token: Option<zeroize::Zeroizing<String>>,
     transport: GitTransport,
     ssh_key_path: Option<String>,
     // Optional ed25519 key for signing regression commits (pure-Rust ssh-key)
@@ -83,7 +85,7 @@ impl SigmaRepo {
         self.token = if token.trim().is_empty() {
             None
         } else {
-            Some(token.trim().to_string())
+            Some(zeroize::Zeroizing::new(token.trim().to_string()))
         };
     }
 
@@ -155,11 +157,11 @@ impl SigmaRepo {
             let token = self.token.clone();
             let ssh_key_path = self.ssh_key_path.clone();
             let result = match transport {
-                GitTransport::Http => {
-                    tokio::task::spawn_blocking(move || git_pull(&git_dir_clone, token.as_deref()))
-                        .await
-                        .map_err(|e| anyhow::anyhow!("Pull task panicked: {}", e))
-                }
+                GitTransport::Http => tokio::task::spawn_blocking(move || {
+                    git_pull(&git_dir_clone, token.as_ref().map(|t| t.as_str()))
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("Pull task panicked: {}", e)),
                 GitTransport::Ssh => {
                     let result = tokio::task::spawn_blocking(move || {
                         git_pull_ssh(&git_dir_clone, ssh_key_path.as_deref())
@@ -257,9 +259,9 @@ impl SigmaRepo {
             }
             GitTransport::Ssh => {
                 let ssh_url = https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
-                let ssh_cmd =
+                let ssh_mode =
                     crate::transport::build_ssh_shell_command(self.ssh_key_path.as_deref());
-                crate::plumbing::fetch_remote_ssh(git_dir, &ssh_url, ssh_cmd.as_str(), &opts)
+                crate::plumbing::fetch_remote_ssh(git_dir, &ssh_url, &ssh_mode, &opts)
             }
         };
         if let Err(e) = outcome {
@@ -471,9 +473,11 @@ impl SigmaRepo {
 
         match transport {
             GitTransport::Http => {
-                tokio::task::spawn_blocking(move || git_clone(&url, &path, token.as_deref()))
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Clone task panicked: {}", e))??;
+                tokio::task::spawn_blocking(move || {
+                    git_clone(&url, &path, token.as_ref().map(|t| t.as_str()))
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("Clone task panicked: {}", e))??;
             }
             GitTransport::Ssh => {
                 let ssh_url = https_to_ssh_url(&url)
@@ -641,9 +645,9 @@ impl SigmaRepo {
             GitTransport::Ssh => {
                 let remote_url = crate::plumbing::read_remote_url_from_config(&git_dir, "origin")?;
                 let ssh_url = https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
-                let ssh_cmd =
+                let ssh_mode =
                     crate::transport::build_ssh_shell_command(self.ssh_key_path.as_deref());
-                crate::plumbing::push_branch_ssh(&git_dir, &ssh_url, branch, ssh_cmd.as_str())
+                crate::plumbing::push_branch_ssh(&git_dir, &ssh_url, branch, &ssh_mode)
             }
         }
     }
@@ -1064,7 +1068,10 @@ mod tests {
         let mut repo = SigmaRepo::new();
         repo.set_info_http("ghp_token123");
         assert_eq!(repo.transport, GitTransport::Http);
-        assert_eq!(repo.token, Some("ghp_token123".to_string()));
+        assert_eq!(
+            repo.token.as_ref().map(|t| t.as_str()),
+            Some("ghp_token123")
+        );
     }
 
     #[test]
