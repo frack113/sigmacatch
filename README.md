@@ -24,7 +24,7 @@ Every 30s: generate regression triplet for each matched rule
     ↓
 sigma/regression_data/<rule_rel_path>/
     ├── <rule_id>.json    ← flat event (Sigma keys)
-    ├── <rule_id>.evtx    ← valid EVTX (via EvtExportLog, validated ≥1 record; .xml on non-Windows only)
+    ├── <rule_id>.evtx    ← valid EVTX (via EvtExportLog, validated ≥1 record; no data on non-Windows)
     └── info.yml          ← SigmaHQ-compatible metadata
     ↓
 commit + push to fork (continuous until Ctrl+C)

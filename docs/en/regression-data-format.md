@@ -56,7 +56,7 @@ Each rule with regression contains a directory (slug) with exactly three files:
 <slug>/
 ├── info.yml                    # Metadata + test results
 ├── <rule_id>.json              # Raw event (nested Winevt JSON, original EventData key names)
-└── <rule_id>.evtx              # Valid EVTX via EvtExportLog (non-Windows: .xml)
+└── <rule_id>.evtx              # Valid EVTX via EvtExportLog (non-Windows: no data generated)
 ```
 
 The `<rule_id>` is always the **UUID** contained in `rule_metadata[0].id` of the `info.yml` file. It is never the directory name.
@@ -139,7 +139,7 @@ regression_tests_info:
 |------|--------|------|---------|
 | `info.yml` | YAML | Always `info.yml` | Metadata + results |
 | `<rule_id>.json` | JSON | UUID v4 | Raw event (nested JSON, original EventData key names) |
-| `<rule_id>.evtx` | Binary | UUID v4 | Valid EVTX via EvtExportLog (validated ≥ 1 record; failure = no commit, non-Windows: .xml) |
+| `<rule_id>.evtx` | Binary | UUID v4 | Valid EVTX via EvtExportLog (validated ≥ 1 record; failure = skip rule, no data on non-Windows) |
 
 The `<rule_id>` in file names is always the UUID from `rule_metadata[0].id`.
 

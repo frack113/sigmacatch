@@ -172,7 +172,7 @@ existing_rules: HashSet<Uuid> = regression.get_sigma_id().collect()
 Σ sigma_repo.pending_regression_rule_ids()     # union des branches remote sigmacatch/*
     ├── list_refs("refs/remotes/origin/sigmacatch/") → chaque branche (PR en attente)
     ├── marche en RAM de l'arbre (commit → tree → sous-arbre regression_data/)
-    │   └── ids extraits des noms de fichiers <uuid>.json|evtx|xml (jamais de checkout)
+    │   └── ids extraits des noms de fichiers <uuid>.json|evtx (jamais de checkout)
     │   └── validation des blobs <uuid>.evtx : parse ≥ 1 record, sinon id exclu
     │       (auto-guérison : données vides commitées → règle régénérée)
     ├── valid ∪ broken : seuls valid \ broken entrent dans le skip set
@@ -307,7 +307,7 @@ upload_regression() → upload_rule_batches()   # dans sigmacatch-repo
 ```text
 <sigma_repo_path>/regression_data/<rule_rel_path>/
     ├── <rule_id>.json      # premier event matché (JSON Winevt brut, noms de clés EventData d'origine)
-    ├── <rule_id>.evtx      # EVTX valide via EvtExportLog (non-Windows : .xml pour les outils locaux)
+    ├── <rule_id>.evtx      # EVTX valide via EvtExportLog (hors Windows : aucune donnée générée)
     └── info.yml            # métadonnées compatibles SigmaHQ
 ```
 
@@ -443,7 +443,8 @@ regression_tests_info:
 - **Auto-guérison** : les règles dont les données commitées sont invalides (EVTX vide) sont exclues du skip set
   (`get_sigma_id` via `data_file_is_valid`, et `pending_regression_rule_ids` via validation des blobs `.evtx`)
   → régénérées au run suivant.
-- **Non-Windows** : XML brut en `.xml` (outils locaux uniquement, jamais commité par le pipeline Windows)
+- **Non-Windows** : aucune donnée n'est générée (le collecteur Winevt est un stub) et `write_evtx` échoue ; le
+  fallback XML a été retiré (dead code v0.1.0, jamais validé par `check_evtx` qui ne traite que `type: evtx`)
 
 ### Logger (`crates/sigmacatch-logger/src/lib.rs`)
 

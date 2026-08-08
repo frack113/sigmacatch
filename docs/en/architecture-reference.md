@@ -289,7 +289,7 @@ upload_regression() → upload_rule_batches()   # in sigmacatch-repo
 ```text
 <sigma_repo_path>/regression_data/<rule_rel_path>/
     ├── <rule_id>.json      # first matching event (raw Winevt JSON, original EventData key names)
-    ├── <rule_id>.evtx      # valid EVTX via EvtExportLog (non-Windows: .xml for local tools only)
+    ├── <rule_id>.evtx      # valid EVTX via EvtExportLog (non-Windows: no data generated)
     └── info.yml            # SigmaHQ-compatible metadata
 ```
 
@@ -424,7 +424,8 @@ regression_tests_info:
 - **Self-healing**: rules whose committed data is invalid (empty EVTX) are excluded from the skip set
   (`get_sigma_id` via `data_file_is_valid`, and `pending_regression_rule_ids` via `.evtx` blob validation)
   → regenerated on the next run.
-- **Non-Windows**: raw XML as `.xml` (local tools only, never committed by the Windows pipeline)
+- **Non-Windows**: no data is generated (the Winevt collector is a stub) and `write_evtx` errors; the `XML`
+  fallback was removed (v0.1.0 dead code, never validated by `check_evtx` which only handles `type: evtx`)
 
 ### Logger (`crates/sigmacatch-logger/src/lib.rs`)
 
