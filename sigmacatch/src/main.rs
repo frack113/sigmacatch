@@ -101,6 +101,10 @@ async fn main() -> Result<()> {
         }
     };
 
+    if let Some(ref key_path) = config.git.ssh_key_path {
+        sigma_repo.set_signing_key(Some(std::path::PathBuf::from(key_path)));
+    }
+
     sigma_repo.set_git_operations(config.git.is_offline(), config.git.is_contrib());
 
     if config.git.is_offline() {

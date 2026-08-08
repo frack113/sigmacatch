@@ -145,6 +145,7 @@ pub(crate) fn git_commit(
     msg: &str,
     author: &str,
     email: &str,
+    signing_key: Option<&Path>,
 ) -> Result<()> {
     let index_path = git_dir.join("index");
     if !index_path.exists() {
@@ -182,5 +183,5 @@ pub(crate) fn git_commit(
         anyhow::bail!("Nothing to commit — the staged changes match the current HEAD tree");
     }
 
-    commit_tree(git_dir, &odb, tree_oid, msg, author, email)
+    commit_tree(git_dir, &odb, tree_oid, msg, author, email, signing_key)
 }

@@ -13,6 +13,7 @@
 pub(crate) mod branch;
 pub(crate) mod plumbing;
 pub(crate) mod porcelain;
+pub(crate) mod signing;
 pub(crate) mod transport;
 
 #[cfg(test)]
@@ -46,6 +47,8 @@ pub struct SigmaRepo {
     token: Option<String>,
     transport: GitTransport,
     ssh_key_path: Option<String>,
+    // Optional ed25519 key for signing regression commits (pure-Rust ssh-key)
+    signing_key: Option<PathBuf>,
     // Operation modes
     offline: bool,
     contrib: bool,
@@ -62,6 +65,7 @@ impl SigmaRepo {
             token: None,
             transport: GitTransport::default(),
             ssh_key_path: None,
+            signing_key: None,
             offline: false,
             contrib: false,
         }
@@ -87,6 +91,13 @@ impl SigmaRepo {
     pub fn set_info_ssh(&mut self, ssh_key_path: Option<&str>) {
         self.transport = GitTransport::Ssh;
         self.ssh_key_path = ssh_key_path.map(String::from);
+    }
+
+    /// Set an ed25519 OpenSSH private key used to sign every regression commit
+    /// (pure-Rust signing, no `ssh-keygen`/`gpg` binary needed). `None`
+    /// disables signing.
+    pub fn set_signing_key(&mut self, signing_key: Option<PathBuf>) {
+        self.signing_key = signing_key;
     }
 
     /// Set git operation modes.
@@ -515,7 +526,14 @@ impl SigmaRepo {
             }
         } else {
             git_add(&git_dir, &self.repo_path, &valid)?;
-            git_commit(&git_dir, &self.repo_path, message.as_str(), name, addr)?;
+            git_commit(
+                &git_dir,
+                &self.repo_path,
+                message.as_str(),
+                name,
+                addr,
+                self.signing_key.as_deref(),
+            )?;
             info!("Committed {} file(s)", valid.len());
         }
 
@@ -642,6 +660,7 @@ impl Default for SigmaRepo {
             token: None,
             transport: GitTransport::default(),
             ssh_key_path: None,
+            signing_key: None,
             offline: false,
             contrib: false,
         }

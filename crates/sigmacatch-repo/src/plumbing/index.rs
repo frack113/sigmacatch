@@ -311,6 +311,7 @@ mod tests {
             "test: add regression data",
             "test",
             "test@example.com",
+            None,
         )
         .unwrap();
 
