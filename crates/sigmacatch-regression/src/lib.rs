@@ -19,14 +19,9 @@ use crate::evtx::write_evtx;
 use crate::info::InfoYml;
 use crate::logtype::LogType;
 
-/// Skip a rule from the regression-data skip set when its committed data file
-/// is broken (e.g. an EVTX with no records). `data_file_is_valid` is the single
-/// source of truth used by `get_sigma_id`, `RegressionData::exists` and the
-/// pending-branch scan.
-///
-/// The legacy `.xml` fallback (v0.1.0 dead code, only ever emitted by a
-/// non-Windows write path that produced unreadable data) is not consulted:
-/// committed regression data is always `<rule_id>.evtx` on Windows.
+/// True when the rule's committed data file is valid: `.evtx` parses with
+/// ≥ 1 record, else a non-empty `.json`. Broken data is excluded from the
+/// skip set so the rule is re-captured.
 fn data_file_is_valid(dir: &Path, rule_id: &Uuid) -> bool {
     let evtx = dir.join(format!("{}.evtx", rule_id));
     if evtx.exists() {
@@ -148,10 +143,8 @@ impl SigmahqRegression {
         self.entries.get(index).map(|(_, _, entry)| entry)
     }
 
-    /// Rule ids that already have **valid** regression data and can be skipped.
-    ///
-    /// Entries whose data file is broken (empty/corrupt EVTX, missing triplet)
-    /// are excluded so the rule is re-captured and regenerated on the next run.
+    /// Rule ids with valid regression data (skippable). Broken data is excluded
+    /// so the rule is re-captured and regenerated.
     pub fn get_sigma_id(&self) -> Vec<Uuid> {
         self.entries
             .iter()
@@ -171,10 +164,7 @@ impl SigmahqRegression {
         std::fs::read(&data_path).ok()
     }
 
-    /// Read the committed raw event JSON (`<rule_id>.json`) for an entry, if present.
-    ///
-    /// Used by `check_evtx` to validate that `parse_winevt_xml_raw` reproduces the
-    /// SigmaHQ-committed JSON format from the EVTX records.
+    /// Read the committed raw event JSON (`<rule_id>.json`), if present.
     pub fn get_json_data(&self, index: usize) -> Option<serde_json::Value> {
         let (info_path, info, _) = self.entries.get(index)?;
         let rule_id = info.rule_metadata.first()?.id;
@@ -352,16 +342,12 @@ impl RegressionData {
                 alert.record_id(),
                 &evtx_path,
             ) {
-                // No valid EVTX was produced (e.g. EvtExportLog matched 0
-                // records, or a non-Windows host without EvtExportLog). Remove
-                // the partial `.json` so nothing broken is committed; the rule
-                // stays loaded and is re-captured on a later cycle.
+                // EVTX failed (empty export or non-Windows): drop the partial `.json`
+                // and keep the rule loaded so it is re-captured later.
                 let _ = std::fs::remove_file(&raw_json_path);
                 return Err(e);
             }
-            // `write_evtx` now only ever produces a valid `.evtx` (Windows) or
-            // errors. The legacy `.xml` fallback was removed, so the committed
-            // logtype is always `evtx`.
+            // `write_evtx` only produces `.evtx` or errors — no `.xml` fallback.
             tracing::info!("Wrote EVTX for rule {:?}", rule_id);
         }
 

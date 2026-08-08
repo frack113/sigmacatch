@@ -22,25 +22,11 @@ const EVTX_EXPORT_BACKOFF_SECS: [u64; EVTX_EXPORT_RETRIES as usize] = [2, 5, 10]
 
 /// Write a valid EVTX file from a matched event.
 ///
-/// On Windows, uses `EvtExportLog` to re-query the specific event by
-/// RecordID and export it to a valid binary `.evtx` file.
-///
-/// **Why validation + retry instead of an XML fallback:** `EvtExportLog`
-/// returns success even when the query matched zero records (Microsoft: "If
-/// the query result is empty, the service creates a file that contains header
-/// information but no events"). Every successful call is therefore re-parsed;
-/// a file with no records is retried with a short backoff (the live-log race
-/// may be transient) and finally treated as a failure.
-///
-/// On failure the empty `.evtx` is removed and an error is returned. The
-/// caller skips the rule this cycle (no commit, rule stays loaded) so a fresh
-/// event is re-captured on a later cycle. A `.xml` fallback is deliberately
-/// NOT written: the SigmaHQ CI runner only accepts `type: evtx` tests, so a
-/// committed `.xml` would fail `true-positive-tests`.
-///
-/// On non-Windows there is no `EvtExportLog` API and no live Winevt collector,
-/// so no data is generated — see the `#[cfg(not(windows))]` variant which
-/// returns an error instead of the legacy v0.1.0 `.xml` fallback.
+/// `EvtExportLog` returns success even when the query matched zero records
+/// (header-only file), so every successful call is re-parsed; a file with no
+/// records is retried (the live-log race may be transient) then treated as
+/// failure. The empty `.evtx` is removed and an error is returned. No `.xml`
+/// fallback is written: the SigmaHQ CI runner only accepts `type: evtx`.
 #[cfg(windows)]
 pub fn write_evtx(_xml: &str, channel: &str, record_id: Option<u64>, path: &Path) -> Result<()> {
     use windows::core::HSTRING;
@@ -116,8 +102,7 @@ pub fn write_evtx(_xml: &str, channel: &str, record_id: Option<u64>, path: &Path
         }
     }
 
-    // Every attempt failed or produced an empty file. Remove the broken
-    // header-only `.evtx` so no invalid binary is ever committed.
+    // Remove the header-only `.evtx` so no invalid binary is committed.
     if path.exists() {
         let _ = std::fs::remove_file(path);
     }
@@ -140,14 +125,8 @@ fn exported_has_records(path: &Path) -> Result<bool> {
     Ok(!events.is_empty())
 }
 
-/// Non-Windows platforms have no `EvtExportLog` API and no live Winevt collector
-/// (the channel collector is a Windows-only stub), so there is no valid `.evtx`
-/// to produce. Previously this wrote a raw `.xml` fallback, but the Windows-only
-/// `EvtExportLog` path is the only one that emits committed regression data and
-/// `check_evtx` only validates `type: evtx` data — the `.xml` output was dead code
-/// since v0.1.0 and is now removed (see AGENTS.md EVTX invariants). Calling this
-/// on a non-Windows host returns an error so the rule is skipped this cycle rather
-/// than producing an unreadable `.xml`.
+/// Non-Windows has no `EvtExportLog`: error so the rule is skipped this cycle
+/// rather than producing an unreadable file.
 #[cfg(not(windows))]
 pub fn write_evtx(_xml: &str, _channel: &str, _record_id: Option<u64>, _path: &Path) -> Result<()> {
     Err(anyhow!(

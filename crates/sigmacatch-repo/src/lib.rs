@@ -267,14 +267,12 @@ impl SigmaRepo {
     /// Collect the rule ids that already have regression data on any remote
     /// `sigmacatch/*` branch (pending PRs not yet merged into main), without
     /// touching the working tree.
-    ///
-    /// Each branch's tree is walked in memory: the `regression_data/` subtree
-    /// is scanned for data files whose filename stem parses as a `Uuid` (the
-    /// generator always writes `<rule_id>.json` + `<rule_id>.evtx` next
-    /// to `info.yml`, so a committed `<uuid>.evtx` file is a trustworthy marker).
-    /// Union of all branches; `HashSet` dedupes branches that share ids (e.g.
-    /// a merged PR whose branch was not yet deleted). Best-effort in offline
-    /// mode: only the refs already fetched locally are scanned.
+    /// Rule ids committed on remote `sigmacatch/*` branches, used to skip rules
+    /// awaiting merge. Walks each branch's `regression_data/` tree for files
+    /// whose stem is a `Uuid` (the generator commits `<rule_id>.json` +
+    /// `<rule_id>.evtx` + `info.yml` as one atomic commit). Rules whose EVTX is
+    /// broken (empty export) are excluded so they get re-captured. Best-effort
+    /// offline: only the locally fetched refs are scanned.
     pub fn pending_regression_rule_ids(&self) -> Result<Vec<Uuid>> {
         let git_dir = self.repo_path.join(".git");
         let branches = crate::plumbing::list_sigmacatch_remote_refs(&git_dir)?;
@@ -301,8 +299,7 @@ impl SigmaRepo {
                 }
             }
         }
-        // Rules whose data is broken (e.g. an EVTX with no records) must NOT be
-        // skipped: they need to be re-captured and regenerated on this run.
+        // Broken data (e.g. empty EVTX) must not skip the rule: re-capture it.
         let ids: HashSet<Uuid> = valid.difference(&broken).copied().collect();
         info!(
             "{} rule ids found in pending sigmacatch/* branches ({} with broken data)",
@@ -664,13 +661,9 @@ fn is_repo_complete(git_dir: &Path) -> bool {
     crate::plumbing::open_odb(git_dir).read(&head).is_ok()
 }
 
-/// Recursively walk a git tree in memory and collect every data filename whose
-/// stem parses as a `Uuid` — the generator's `<rule_id>.json` / `.evtx`
-/// markers inside `regression_data/`. Never touches the working tree.
-///
-/// A committed `<uuid>.<evtx>` file is a trustworthy skip marker because the
-/// generator only ever commits the full triplet (`<rule_id>.json` +
-/// `<rule_id>.evtx` + `info.yml`) in a single atomic per-rule commit.
+/// Recursively walk a git tree in memory and collect `<uuid>` data filenames
+/// under `regression_data/` (the generator's skip markers). Never touches the
+/// working tree. `.evtx` blobs are parsed to validate they contain records.
 fn collect_tree_rule_ids(
     odb: &grit_lib::odb::Odb,
     tree_oid: ObjectId,
@@ -703,9 +696,8 @@ fn collect_tree_rule_ids_depth(
             let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(&name);
             if let Ok(id) = Uuid::parse_str(stem) {
                 if name.ends_with(".evtx") {
-                    // A committed `<uuid>.evtx` with no parseable records is the
-                    // empty-export bug: exclude the rule from the pending skip-set
-                    // so it is re-captured and regenerated with valid data.
+                    // Empty/undecodable EVTX blob = the empty-export bug: do not
+                    // skip the rule so it is re-captured with valid data.
                     match odb.read(&entry.oid) {
                         Ok(blob) => match input_evtx::parse_evtx_bytes(&blob.data) {
                             Ok(events) if !events.is_empty() => {
