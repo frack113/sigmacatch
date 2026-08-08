@@ -47,7 +47,6 @@ fn collect_loose_objects(objects_dir: &Path) -> Result<Vec<LooseEntry>> {
         if !entry.path().is_dir() {
             continue;
         }
-        // Skip pack/ and info/ subdirs
         if name == "pack" || name == "info" {
             continue;
         }
@@ -197,6 +196,13 @@ fn build_pack_data(odb: &Odb, objects: &[LooseEntry]) -> Result<(Vec<u8>, Vec<Pa
 }
 
 /// Write a V2 pack index (.idx) file from sorted offsets.
+///
+/// V2 layout: `\xfftOc` magic + version u32, a 256-entry fanout table
+/// (fanout[i] = count of OIDs whose first byte ≤ i), the sorted OIDs
+/// (20 bytes each), a CRC32 per OID in the same order, a 4-byte offset table
+/// (offsets ≥ 2^31 set the high bit and index into the large-offset table),
+/// an 8-byte large-offset table, the pack SHA-1, and a final SHA-1 checksum
+/// over all the index data written so far.
 fn write_v2_index(idx_path: &Path, offsets: &[PackOffset], pack_checksum: &[u8]) -> Result<()> {
     use std::io::Write;
 
@@ -205,16 +211,13 @@ fn write_v2_index(idx_path: &Path, offsets: &[PackOffset], pack_checksum: &[u8])
 
     let mut idx = Vec::new();
 
-    // Magic + version
     idx.extend_from_slice(IDX_MAGIC);
     idx.extend_from_slice(&IDX_VERSION.to_be_bytes());
 
-    // Fanout table: 256 × u32. fanout[i] = count of OIDs whose first byte <= i
     let mut fanout = [0u32; 256];
     for entry in offsets {
         fanout[entry.oid.as_bytes()[0] as usize] += 1;
     }
-    // Make cumulative
     for i in 1..256 {
         fanout[i] += fanout[i - 1];
     }
@@ -222,19 +225,16 @@ fn write_v2_index(idx_path: &Path, offsets: &[PackOffset], pack_checksum: &[u8])
         idx.extend_from_slice(&count.to_be_bytes());
     }
 
-    // Sorted OIDs (20 bytes each)
     let mut sorted: Vec<&PackOffset> = offsets.iter().collect();
     sorted.sort_by(|a, b| a.oid.as_bytes().cmp(b.oid.as_bytes()));
     for entry in &sorted {
         idx.extend_from_slice(&entry.oid.as_bytes()[..oid_len]);
     }
 
-    // CRC32 table (4 bytes each, same order as OIDs)
     for entry in &sorted {
         idx.extend_from_slice(&entry.crc32.to_be_bytes());
     }
 
-    // Offset table (4 bytes each)
     let mut large_offsets: Vec<(usize, u64)> = Vec::new(); // (index_in_table, offset)
     for entry in &sorted {
         if entry.offset >= (1u64 << 31) {
@@ -247,15 +247,12 @@ fn write_v2_index(idx_path: &Path, offsets: &[PackOffset], pack_checksum: &[u8])
         }
     }
 
-    // Large offset table (8 bytes each) — only if needed
     for (_, offset) in &large_offsets {
         idx.extend_from_slice(&offset.to_be_bytes());
     }
 
-    // Pack checksum (20 bytes)
     idx.extend_from_slice(&pack_checksum[..oid_len]);
 
-    // Index checksum: SHA-1 of all index data so far
     let mut hasher = Sha1::new();
     hasher.update(&idx);
     idx.extend_from_slice(&hasher.finalize());
@@ -288,11 +285,9 @@ pub(crate) fn pack_loose_objects(git_dir: &Path) -> Result<()> {
     let trailer_start = pack_data.len() - 20;
     let pack_checksum = &pack_data[trailer_start..];
 
-    // Write pack file
     let pack_dir = objects_dir.join("pack");
     std::fs::create_dir_all(&pack_dir)?;
 
-    // Use a deterministic-ish name based on timestamp
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -307,7 +302,6 @@ pub(crate) fn pack_loose_objects(git_dir: &Path) -> Result<()> {
     // Sort offsets by OID (should already be sorted, but be explicit for the index)
     offsets.sort_by(|a, b| a.oid.as_bytes().cmp(b.oid.as_bytes()));
 
-    // Delete loose object files and clean up empty directories
     let mut deleted = 0usize;
     for entry in &loose {
         if std::fs::remove_file(&entry.path).is_ok() {
@@ -315,7 +309,6 @@ pub(crate) fn pack_loose_objects(git_dir: &Path) -> Result<()> {
         }
     }
 
-    // Remove empty two-char hex subdirectories
     for entry in std::fs::read_dir(&objects_dir)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().to_string();
@@ -383,11 +376,7 @@ mod tests {
     fn test_pack_empty_dir_is_noop() {
         let tmp = tempdir().unwrap();
         let (git_dir, _odb) = make_committed_repo(&tmp);
-        // No loose objects (committed via odb.write creates loose objects —
-        // let's write an extra one and then pack it)
-        // Actually, odb.write creates loose objects. Let's verify.
         let result = pack_loose_objects(&git_dir);
-        // There SHOULD be loose objects from the commit write
         assert!(result.is_ok());
     }
 

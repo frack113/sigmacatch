@@ -46,7 +46,6 @@ pub(crate) fn sanitize_url(url: &str) -> String {
 /// or contains characters that would allow SSH command injection.
 pub fn https_to_ssh_url(url: &str) -> Option<String> {
     let rest = url.strip_prefix("https://github.com/")?;
-    // Reject path traversal and suspicious characters
     if rest.contains("..") || rest.contains([' ', '\t', '\n', '\r']) {
         return None;
     }

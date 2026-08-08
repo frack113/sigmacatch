@@ -75,7 +75,6 @@ impl EventProducer for EventCollector {
             });
         }
 
-        // Wait for all tasks to complete
         while let Some(res) = handles.join_next().await {
             if let Err(e) = res {
                 tracing::warn!("Collector task failed: {e}");
@@ -175,7 +174,7 @@ impl EventCollector {
                     }
                 };
                 if events_fetched == 0 {
-                    break; // timeout with no new events — re-query
+                    break;
                 }
                 cycle_fetched += events_fetched as usize;
 
@@ -482,7 +481,6 @@ impl EventCollector {
             return None;
         }
 
-        // Allocate and render
         let mut buffer: Vec<u8> = vec![0u8; buffer_size as usize];
         let mut bytes_used: u32 = 0;
         let result = unsafe {
@@ -524,7 +522,6 @@ impl EventCollector {
         _tx: Arc<mpsc::Sender<Event>>,
         _stop: watch::Receiver<bool>,
     ) {
-        // stub on non-Windows
     }
 }
 
