@@ -2479,6 +2479,7 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "input-evtx",
  "serde",
  "serde_json",
  "sigmacatch-types",
@@ -2498,6 +2499,7 @@ dependencies = [
  "crc32fast",
  "flate2",
  "grit-lib",
+ "input-evtx",
  "rayon",
  "reqwest",
  "serde",

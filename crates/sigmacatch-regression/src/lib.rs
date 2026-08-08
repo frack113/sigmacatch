@@ -19,6 +19,29 @@ use crate::evtx::write_evtx;
 use crate::info::InfoYml;
 use crate::logtype::LogType;
 
+/// Skip a rule from the regression-data skip set when its committed data file
+/// is broken (e.g. an EVTX with no records). `data_file_is_valid` is the single
+/// source of truth used by `get_sigma_id`, `RegressionData::exists` and the
+/// pending-branch scan.
+fn data_file_is_valid(dir: &Path, rule_id: &Uuid) -> bool {
+    let evtx = dir.join(format!("{}.evtx", rule_id));
+    if evtx.exists() {
+        return match input_evtx::parse_evtx_file(&evtx) {
+            Ok(events) => !events.is_empty(),
+            Err(_) => false,
+        };
+    }
+    let xml = dir.join(format!("{}.xml", rule_id));
+    if xml.exists() {
+        return std::fs::metadata(&xml).is_ok_and(|m| m.len() > 0);
+    }
+    let json = dir.join(format!("{}.json", rule_id));
+    if json.exists() {
+        return std::fs::metadata(&json).is_ok_and(|m| m.len() > 0);
+    }
+    false
+}
+
 #[derive(Debug, Clone)]
 pub struct RegressionEntry {
     pub rule_id: Uuid,
@@ -125,10 +148,18 @@ impl SigmahqRegression {
         self.entries.get(index).map(|(_, _, entry)| entry)
     }
 
+    /// Rule ids that already have **valid** regression data and can be skipped.
+    ///
+    /// Entries whose data file is broken (empty/corrupt EVTX, missing triplet)
+    /// are excluded so the rule is re-captured and regenerated on the next run.
     pub fn get_sigma_id(&self) -> Vec<Uuid> {
         self.entries
             .iter()
-            .filter_map(|(_, info, _)| info.rule_metadata.first().map(|m| m.id))
+            .filter_map(|(info_path, info, _)| {
+                let rule_id = info.rule_metadata.first().map(|m| m.id)?;
+                let dir = info_path.parent()?;
+                data_file_is_valid(dir, &rule_id).then_some(rule_id)
+            })
             .collect()
     }
 
@@ -290,7 +321,9 @@ impl RegressionData {
     }
 
     fn exists(&self) -> bool {
-        self.rule_dir().is_ok_and(|d| d.join("info.yml").exists())
+        self.rule_dir().is_ok_and(|d| {
+            d.join("info.yml").exists() && data_file_is_valid(&d, &self.header.rule_id)
+        })
     }
 
     fn generate<F>(&self, write_fn: F) -> Result<String>
@@ -313,13 +346,19 @@ impl RegressionData {
             tracing::info!("Wrote JSON for rule {:?}", rule_id);
 
             let evtx_path = rule_dir.join(format!("{}.evtx", rule_id));
-            write_fn(
+            if let Err(e) = write_fn(
                 alert.raw_xml(),
                 alert.channel(),
                 alert.record_id(),
                 &evtx_path,
-            )
-            .with_context(|| format!("Failed to write EVTX for rule {:?}", rule_id))?;
+            ) {
+                // No valid EVTX was produced (e.g. EvtExportLog matched 0
+                // records). Remove the partial `.json` so nothing broken is
+                // committed; the rule stays loaded and is re-captured on a
+                // later cycle.
+                let _ = std::fs::remove_file(&raw_json_path);
+                return Err(e);
+            }
             evtx_ext = if evtx_path.exists() {
                 "evtx"
             } else if evtx_path.with_extension("xml").exists() {
@@ -536,6 +575,70 @@ fn clean_recursive(dir: &Path, depth: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_data_file_is_valid_detects_broken_evtx() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let id = Uuid::new_v4();
+
+        assert!(!data_file_is_valid(dir, &id), "no data file → invalid");
+
+        let evtx = dir.join(format!("{id}.evtx"));
+        std::fs::write(&evtx, b"not-an-evtx").unwrap();
+        assert!(!data_file_is_valid(dir, &id), "unparseable EVTX → invalid");
+
+        std::fs::remove_file(&evtx).unwrap();
+        let json = dir.join(format!("{id}.json"));
+        std::fs::write(&json, b"").unwrap();
+        assert!(!data_file_is_valid(dir, &id), "empty json → invalid");
+
+        std::fs::write(&json, b"{}").unwrap();
+        assert!(data_file_is_valid(dir, &id), "non-empty json → valid");
+    }
+
+    #[test]
+    fn test_get_sigma_id_excludes_broken_evtx() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("regression_data");
+        let good_dir = base.join("rules/win/good");
+        let broken_dir = base.join("rules/win/broken");
+        let missing_dir = base.join("rules/win/missing");
+        for d in [&good_dir, &broken_dir, &missing_dir] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+
+        let good_id = Uuid::new_v4();
+        let broken_id = Uuid::new_v4();
+        let missing_id = Uuid::new_v4();
+
+        let write_info = |dir: &Path, rule_id: Uuid| {
+            InfoYml::new(
+                &rule_id,
+                "Test Rule",
+                1,
+                "regression_data/rules/win/x/1.evtx",
+                "tester",
+                "N/A",
+                "Microsoft-Windows-Sysmon",
+            )
+            .save(&dir.join("info.yml"))
+            .unwrap();
+        };
+
+        write_info(&good_dir, good_id);
+        std::fs::write(good_dir.join(format!("{good_id}.json")), "{}").unwrap();
+
+        write_info(&broken_dir, broken_id);
+        std::fs::write(broken_dir.join(format!("{broken_id}.evtx")), b"x").unwrap();
+        std::fs::write(broken_dir.join(format!("{broken_id}.json")), "{}").unwrap();
+
+        write_info(&missing_dir, missing_id);
+
+        let reg = SigmahqRegression::new_from_path(&base).unwrap();
+        let ids = reg.get_sigma_id();
+        assert_eq!(ids, vec![good_id]);
+    }
 
     #[test]
     fn test_get_sigma_id_returns_uuids() {

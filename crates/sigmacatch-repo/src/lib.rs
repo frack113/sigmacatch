@@ -282,7 +282,8 @@ impl SigmaRepo {
             return Ok(Vec::new());
         }
         let odb = crate::plumbing::open_odb(&git_dir);
-        let mut ids: HashSet<Uuid> = HashSet::new();
+        let mut valid: HashSet<Uuid> = HashSet::new();
+        let mut broken: HashSet<Uuid> = HashSet::new();
         for (refname, oid) in branches {
             let obj = odb
                 .read(&oid)
@@ -296,13 +297,17 @@ impl SigmaRepo {
                 .map_err(|e| anyhow::anyhow!("Failed to parse tree of '{}': {}", refname, e))?;
             for entry in entries {
                 if entry.mode == 0o040000 && entry.name.as_slice() == b"regression_data" {
-                    collect_tree_rule_ids(&odb, entry.oid, &mut ids)?;
+                    collect_tree_rule_ids(&odb, entry.oid, &mut valid, &mut broken)?;
                 }
             }
         }
+        // Rules whose data is broken (e.g. an EVTX with no records) must NOT be
+        // skipped: they need to be re-captured and regenerated on this run.
+        let ids: HashSet<Uuid> = valid.difference(&broken).copied().collect();
         info!(
-            "{} rule ids found in pending sigmacatch/* branches",
-            ids.len()
+            "{} rule ids found in pending sigmacatch/* branches ({} with broken data)",
+            ids.len(),
+            broken.len()
         );
         Ok(ids.into_iter().collect())
     }
@@ -669,9 +674,10 @@ fn is_repo_complete(git_dir: &Path) -> bool {
 fn collect_tree_rule_ids(
     odb: &grit_lib::odb::Odb,
     tree_oid: ObjectId,
-    ids: &mut HashSet<Uuid>,
+    valid: &mut HashSet<Uuid>,
+    broken: &mut HashSet<Uuid>,
 ) -> Result<()> {
-    collect_tree_rule_ids_depth(odb, tree_oid, ids, 0)
+    collect_tree_rule_ids_depth(odb, tree_oid, valid, broken, 0)
 }
 
 const MAX_REGRESSION_TREE_DEPTH: u32 = 32;
@@ -679,7 +685,8 @@ const MAX_REGRESSION_TREE_DEPTH: u32 = 32;
 fn collect_tree_rule_ids_depth(
     odb: &grit_lib::odb::Odb,
     tree_oid: ObjectId,
-    ids: &mut HashSet<Uuid>,
+    valid: &mut HashSet<Uuid>,
+    broken: &mut HashSet<Uuid>,
     depth: u32,
 ) -> Result<()> {
     if depth > MAX_REGRESSION_TREE_DEPTH {
@@ -690,12 +697,36 @@ fn collect_tree_rule_ids_depth(
     let entries = grit_lib::objects::parse_tree(&obj.data)?;
     for entry in entries {
         if entry.mode == 0o040000 {
-            collect_tree_rule_ids_depth(odb, entry.oid, ids, depth + 1)?;
+            collect_tree_rule_ids_depth(odb, entry.oid, valid, broken, depth + 1)?;
         } else if matches!(entry.mode, 0o100644 | 0o100755) {
             let name = String::from_utf8_lossy(&entry.name);
             let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(&name);
             if let Ok(id) = Uuid::parse_str(stem) {
-                ids.insert(id);
+                if name.ends_with(".evtx") {
+                    // A committed `<uuid>.evtx` with no parseable records is the
+                    // empty-export bug: exclude the rule from the pending skip-set
+                    // so it is re-captured and regenerated with valid data.
+                    match odb.read(&entry.oid) {
+                        Ok(blob) => match input_evtx::parse_evtx_bytes(&blob.data) {
+                            Ok(events) if !events.is_empty() => {
+                                valid.insert(id);
+                            }
+                            _ => {
+                                warn!(
+                                    "rule {} excluded from pending skip-set: broken EVTX '{}' (will be re-captured)",
+                                    id, name
+                                );
+                                broken.insert(id);
+                            }
+                        },
+                        Err(e) => {
+                            warn!("failed to read EVTX blob '{}': {}", name, e);
+                            broken.insert(id);
+                        }
+                    }
+                } else {
+                    valid.insert(id);
+                }
             }
         }
     }
@@ -1052,7 +1083,7 @@ mod tests {
     /// Build a remote ref `sigmacatch/<date>` whose commit tree contains the
     /// given `regression_data` files, and return the `SigmaRepo` configured on
     /// the next working branch.
-    fn setup_pending_branch(tmp: &tempfile::TempDir, rel_files: &[(&str, &str)]) -> SigmaRepo {
+    fn setup_pending_branch(tmp: &tempfile::TempDir, rel_files: &[(&str, &[u8])]) -> SigmaRepo {
         make_committed_repo(tmp);
         let git_dir = tmp.path().join(".git");
         let odb = crate::plumbing::open_odb(&git_dir);
@@ -1084,21 +1115,53 @@ mod tests {
 
     /// Rule ids committed on a pending-PR branch (not merged into main) must be
     /// returned, so a fresh VM's skip set covers them. Non-`<uuid>` files are
-    /// ignored.
+    /// ignored. Rules whose committed `.evtx` has no records (empty-export bug)
+    /// are excluded so they are re-captured with valid data.
     #[test]
     fn test_pending_regression_rule_ids_from_remote_branch() {
         let tmp = tempfile::tempdir().unwrap();
         let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
+        let id3 = Uuid::new_v4();
         let repo = setup_pending_branch(
             &tmp,
             &[
-                (&format!("regression_data/rules/win/a/{id1}.json"), "{}"),
-                (&format!("regression_data/rules/win/a/{id1}.evtx"), "e"),
-                ("regression_data/rules/win/a/info.yml", "test: x\n"),
-                (&format!("regression_data/rules/win/b/{id2}.json"), "{}"),
-                ("regression_data/rules/win/b/info.yml", "test: x\n"),
-                ("regression_data/rules/win/b/not-a-rule.txt", "x"),
+                (
+                    &format!("regression_data/rules/win/a/{id1}.json"),
+                    b"{}".as_slice(),
+                ),
+                (
+                    &format!("regression_data/rules/win/a/{id1}.evtx"),
+                    include_bytes!("../tests/fixtures/valid-single.evtx").as_slice(),
+                ),
+                (
+                    "regression_data/rules/win/a/info.yml",
+                    b"test: x\n".as_slice(),
+                ),
+                (
+                    &format!("regression_data/rules/win/b/{id2}.json"),
+                    b"{}".as_slice(),
+                ),
+                (
+                    "regression_data/rules/win/b/info.yml",
+                    b"test: x\n".as_slice(),
+                ),
+                (
+                    "regression_data/rules/win/b/not-a-rule.txt",
+                    b"x".as_slice(),
+                ),
+                (
+                    &format!("regression_data/rules/win/c/{id3}.json"),
+                    b"{}".as_slice(),
+                ),
+                (
+                    &format!("regression_data/rules/win/c/{id3}.evtx"),
+                    b"x".as_slice(),
+                ),
+                (
+                    "regression_data/rules/win/c/info.yml",
+                    b"test: x\n".as_slice(),
+                ),
             ],
         );
 
@@ -1132,7 +1195,10 @@ mod tests {
         let rel = format!("regression_data/rules/win/a/{id}.json");
         setup_pending_branch(
             &tmp,
-            &[(&rel, "{}"), ("regression_data/rules/win/a/info.yml", "x")],
+            &[
+                (&rel, b"{}".as_slice()),
+                ("regression_data/rules/win/a/info.yml", b"x".as_slice()),
+            ],
         );
 
         let git_dir = tmp.path().join(".git");
