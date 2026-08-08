@@ -45,8 +45,6 @@ pub(crate) fn commit_tree(
         .write(ObjectKind::Commit, &raw)
         .map_err(|e| anyhow::anyhow!("Failed to write commit object: {}", e))?;
 
-    // Advance the symbolic target of HEAD (e.g. refs/heads/main), or write
-    // HEAD directly if detached.
     match symbolic_ref_target(git_dir, "HEAD")? {
         Some(ref_name) => {
             map_grit(refs::write_ref(git_dir, &ref_name, &commit_oid))?;

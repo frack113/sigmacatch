@@ -78,8 +78,8 @@ impl Default for GitConfig {
             ssh_key_path: None,
             sigma_repo_url: default_sigma_repo_url(),
             sigma_repo_path: default_sigma_repo_path(),
-            offline: None, // None → false (pull enabled)
-            contrib: None, // None → false (push disabled)
+            offline: None,
+            contrib: None,
         }
     }
 }

@@ -122,7 +122,6 @@ impl DetectionEngine {
         // an event without logsource fields evaluates all rules.
         engine.set_logsource_extractor(Some(LogSourceExtractor::new()));
 
-        // Clone cached pipelines instead of re-parsing YAML.
         engine.add_pipeline(flatten.clone());
         engine.add_pipeline(windows.clone());
 

@@ -174,7 +174,6 @@ fn main() {
     println!("  → {} windows rules after filtering", rules.len());
     println!();
 
-    // Load regression entries
     let regression = match SigmahqRegression::new() {
         Ok(r) => r,
         Err(e) => {
@@ -189,7 +188,6 @@ fn main() {
     println!("Found {} regression entry(ies)", regression.len());
     println!();
 
-    // Build engine once
     let mut engine = match DetectionEngine::new(&rules) {
         Ok(e) => e,
         Err(e) => {
@@ -199,7 +197,6 @@ fn main() {
     };
     println!("Engine ready — {} rule(s) loaded.\n", engine.rule_count());
 
-    // Validate each entry
     println!("Running validation...");
     println!();
 

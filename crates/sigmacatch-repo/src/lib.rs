@@ -20,6 +20,7 @@ mod regression_tests;
 
 use anyhow::Result;
 use grit_lib::objects::ObjectId;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -197,12 +198,17 @@ impl SigmaRepo {
     /// is an exact mirror of the branch (files already pushed to the fork are
     /// present; stale local files are removed).
     ///
-    /// The working branch is fetched first (narrow refspec, one branch): the
-    /// pull in `init()` only fetches the default branch now, so without this
-    /// `refs/remotes/origin/sigmacatch/<date>` would go stale and `create_branch`
-    /// would base the local branch on HEAD instead of the fork tip — producing
-    /// a sibling commit rejected with `RejectNonFastForward`. A fresh day (branch
-    /// not yet on the fork) matches nothing: zero updates, no error.
+    /// The whole `sigmacatch/*` namespace is fetched first (glob refspec, one
+    /// fetch): the pull in `init()` only fetches the default branch now, so
+    /// without this `refs/remotes/origin/sigmacatch/<date>` would go stale and
+    /// `create_branch` would base the local branch on HEAD instead of the fork
+    /// tip — producing a sibling commit rejected with `RejectNonFastForward`.
+    /// A fresh day (branch not yet on the fork) matches nothing: zero updates,
+    /// no error. Fetching every `sigmacatch/*` branch (all pending-PR branches,
+    /// not just today's) also feeds `pending_regression_rule_ids()` so the
+    /// skip set covers data from PRs still open on other days. The fetch is
+    /// best-effort: a network failure is logged (`warn!`) and swallowed so the
+    /// run degrades to a worktree-only skip set instead of aborting at startup.
     pub fn switch_to_working_branch(&mut self) -> Result<()> {
         let branch_name = self.working_branch.clone().ok_or_else(|| {
             anyhow::anyhow!(
@@ -211,32 +217,94 @@ impl SigmaRepo {
         })?;
         let git_dir = self.repo_path.join(".git");
         if !self.offline {
-            self.fetch_working_branch(&git_dir, &branch_name)?;
+            self.fetch_sigmacatch_branches(&git_dir)?;
         }
         create_branch(&git_dir, &branch_name)?;
         crate::plumbing::checkout_main_branch(&git_dir, &self.repo_path)?;
         Ok(())
     }
 
-    /// Fetch only the given branch from origin, so its remote tracking ref is
-    /// current before `create_branch` bases on it. No-op (zero updates) when the
-    /// branch does not exist on the fork yet.
-    fn fetch_working_branch(&self, git_dir: &Path, branch: &str) -> Result<()> {
+    /// Fetch every `sigmacatch/*` branch from origin with a single glob
+    /// refspec, so their remote tracking refs are current before `create_branch`
+    /// bases on them and before `pending_regression_rule_ids()` scans them.
+    /// No-op (zero updates) when no such branch exists on the fork yet.
+    ///
+    /// This is a **best-effort** fetch: a network failure (transient outage,
+    /// rate limit, no token) is logged as a `warn!` and swallowed. The run then
+    /// degrades gracefully — the skip set is built only from the checked-out
+    /// worktree (main) instead of the worktree ∪ pending branches, so an
+    /// already-captured PR *could* be re-captured, but the run still proceeds
+    /// and completes rather than aborting at startup. The push-rollback guard
+    /// still protects against a sibling-commit push (`RejectNonFastForward`).
+    fn fetch_sigmacatch_branches(&self, git_dir: &Path) -> Result<()> {
         let remote_url = crate::plumbing::read_remote_url_from_config(git_dir, "origin")?;
-        let opts = crate::plumbing::fetch_options_for_branches(&[branch]);
-        match self.transport {
+        let opts = crate::plumbing::fetch_options_for_sigmacatch_namespace();
+        let outcome = match self.transport {
             GitTransport::Http => {
                 let http_client = AuthHttpClient::new(self.token.clone())?;
-                crate::plumbing::fetch_remote(&http_client, git_dir, &remote_url, &opts)?;
+                crate::plumbing::fetch_remote(&http_client, git_dir, &remote_url, &opts)
             }
             GitTransport::Ssh => {
                 let ssh_url = https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
                 let ssh_cmd =
                     crate::transport::build_ssh_shell_command(self.ssh_key_path.as_deref());
-                crate::plumbing::fetch_remote_ssh(git_dir, &ssh_url, ssh_cmd.as_str(), &opts)?;
+                crate::plumbing::fetch_remote_ssh(git_dir, &ssh_url, ssh_cmd.as_str(), &opts)
             }
+        };
+        if let Err(e) = outcome {
+            warn!(
+                "Failed to fetch sigmacatch/* branches from origin ({}): \
+                 the skip set will only cover the checked-out worktree. \
+                 Re-runs on this repo can still resolve pending-PR data; consider \
+                 retrying or checking network/token. Error: {}",
+                sanitize_url(&remote_url),
+                e
+            );
         }
         Ok(())
+    }
+
+    /// Collect the rule ids that already have regression data on any remote
+    /// `sigmacatch/*` branch (pending PRs not yet merged into main), without
+    /// touching the working tree.
+    ///
+    /// Each branch's tree is walked in memory: the `regression_data/` subtree
+    /// is scanned for data files whose filename stem parses as a `Uuid` (the
+    /// generator always writes `<rule_id>.json` + `<rule_id>.evtx`/`.xml` next
+    /// to `info.yml`, so a committed `<uuid>.*` file is a trustworthy marker).
+    /// Union of all branches; `HashSet` dedupes branches that share ids (e.g.
+    /// a merged PR whose branch was not yet deleted). Best-effort in offline
+    /// mode: only the refs already fetched locally are scanned.
+    pub fn pending_regression_rule_ids(&self) -> Result<Vec<Uuid>> {
+        let git_dir = self.repo_path.join(".git");
+        let branches = crate::plumbing::list_sigmacatch_remote_refs(&git_dir)?;
+        if branches.is_empty() {
+            return Ok(Vec::new());
+        }
+        let odb = crate::plumbing::open_odb(&git_dir);
+        let mut ids: HashSet<Uuid> = HashSet::new();
+        for (refname, oid) in branches {
+            let obj = odb
+                .read(&oid)
+                .map_err(|e| anyhow::anyhow!("Failed to read remote ref '{}': {}", refname, e))?;
+            let commit = grit_lib::objects::parse_commit(&obj.data)
+                .map_err(|e| anyhow::anyhow!("Failed to parse commit '{}': {}", refname, e))?;
+            let tree_obj = odb
+                .read(&commit.tree)
+                .map_err(|e| anyhow::anyhow!("Failed to read tree of '{}': {}", refname, e))?;
+            let entries = grit_lib::objects::parse_tree(&tree_obj.data)
+                .map_err(|e| anyhow::anyhow!("Failed to parse tree of '{}': {}", refname, e))?;
+            for entry in entries {
+                if entry.mode == 0o040000 && entry.name.as_slice() == b"regression_data" {
+                    collect_tree_rule_ids(&odb, entry.oid, &mut ids)?;
+                }
+            }
+        }
+        info!(
+            "{} rule ids found in pending sigmacatch/* branches",
+            ids.len()
+        );
+        Ok(ids.into_iter().collect())
     }
 
     /// Validate the remote tracking branch for the working branch, if present.
@@ -591,6 +659,49 @@ fn is_repo_complete(git_dir: &Path) -> bool {
     crate::plumbing::open_odb(git_dir).read(&head).is_ok()
 }
 
+/// Recursively walk a git tree in memory and collect every data filename whose
+/// stem parses as a `Uuid` — the generator's `<rule_id>.json` / `.evtx` /
+/// `.xml` markers inside `regression_data/`. Never touches the working tree.
+///
+/// A committed `<uuid>.<ext>` file is a trustworthy skip marker because the
+/// generator only ever commits the full triplet (`<rule_id>.json` +
+/// `<rule_id>.evtx`/`.xml` + `info.yml`) in a single atomic per-rule commit.
+fn collect_tree_rule_ids(
+    odb: &grit_lib::odb::Odb,
+    tree_oid: ObjectId,
+    ids: &mut HashSet<Uuid>,
+) -> Result<()> {
+    collect_tree_rule_ids_depth(odb, tree_oid, ids, 0)
+}
+
+const MAX_REGRESSION_TREE_DEPTH: u32 = 32;
+
+fn collect_tree_rule_ids_depth(
+    odb: &grit_lib::odb::Odb,
+    tree_oid: ObjectId,
+    ids: &mut HashSet<Uuid>,
+    depth: u32,
+) -> Result<()> {
+    if depth > MAX_REGRESSION_TREE_DEPTH {
+        warn!("regression_data tree exceeds depth limit at {:?}", tree_oid);
+        return Ok(());
+    }
+    let obj = odb.read(&tree_oid)?;
+    let entries = grit_lib::objects::parse_tree(&obj.data)?;
+    for entry in entries {
+        if entry.mode == 0o040000 {
+            collect_tree_rule_ids_depth(odb, entry.oid, ids, depth + 1)?;
+        } else if matches!(entry.mode, 0o100644 | 0o100755) {
+            let name = String::from_utf8_lossy(&entry.name);
+            let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(&name);
+            if let Ok(id) = Uuid::parse_str(stem) {
+                ids.insert(id);
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -936,5 +1047,111 @@ mod tests {
         repo.set_info_ssh(None);
         assert_eq!(repo.transport, GitTransport::Ssh);
         assert_eq!(repo.ssh_key_path, None);
+    }
+
+    /// Build a remote ref `sigmacatch/<date>` whose commit tree contains the
+    /// given `regression_data` files, and return the `SigmaRepo` configured on
+    /// the next working branch.
+    fn setup_pending_branch(tmp: &tempfile::TempDir, rel_files: &[(&str, &str)]) -> SigmaRepo {
+        make_committed_repo(tmp);
+        let git_dir = tmp.path().join(".git");
+        let odb = crate::plumbing::open_odb(&git_dir);
+        for (rel, content) in rel_files {
+            let path = tmp.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, content).unwrap();
+        }
+        let mut index = grit_lib::index::Index::new();
+        crate::plumbing::add_directory_to_index(
+            &git_dir,
+            &tmp.path().join("regression_data"),
+            tmp.path(),
+            &mut index,
+        )
+        .unwrap();
+        let tree = write_tree_from_index(&odb, &index, "").unwrap();
+        let parent = crate::plumbing::resolve_head(&git_dir).unwrap();
+        let remote_oid = write_commit(&odb, tree, vec![parent]);
+        let remote_ref = git_dir.join("refs/remotes/origin/sigmacatch/20260807");
+        std::fs::create_dir_all(remote_ref.parent().unwrap()).unwrap();
+        std::fs::write(&remote_ref, format!("{remote_oid}\n")).unwrap();
+
+        let mut repo = SigmaRepo::new();
+        repo.repo_path = tmp.path().to_path_buf();
+        repo.working_branch = Some("sigmacatch/20260808".to_string());
+        repo
+    }
+
+    /// Rule ids committed on a pending-PR branch (not merged into main) must be
+    /// returned, so a fresh VM's skip set covers them. Non-`<uuid>` files are
+    /// ignored.
+    #[test]
+    fn test_pending_regression_rule_ids_from_remote_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let repo = setup_pending_branch(
+            &tmp,
+            &[
+                (&format!("regression_data/rules/win/a/{id1}.json"), "{}"),
+                (&format!("regression_data/rules/win/a/{id1}.evtx"), "e"),
+                ("regression_data/rules/win/a/info.yml", "test: x\n"),
+                (&format!("regression_data/rules/win/b/{id2}.json"), "{}"),
+                ("regression_data/rules/win/b/info.yml", "test: x\n"),
+                ("regression_data/rules/win/b/not-a-rule.txt", "x"),
+            ],
+        );
+
+        let mut ids = repo.pending_regression_rule_ids().unwrap();
+        ids.sort();
+        let mut expected = vec![id1, id2];
+        expected.sort();
+        assert_eq!(ids, expected);
+    }
+
+    /// No `sigmacatch/*` remote refs → empty skip source (fresh fork, fresh day).
+    #[test]
+    fn test_pending_regression_rule_ids_empty_without_branches() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_committed_repo(&tmp);
+        let mut repo = SigmaRepo::new();
+        repo.repo_path = tmp.path().to_path_buf();
+        repo.working_branch = Some("sigmacatch/20260808".to_string());
+
+        assert!(
+            repo.pending_regression_rule_ids().unwrap().is_empty(),
+            "no remote sigmacatch/* branches must yield no pending ids"
+        );
+    }
+
+    /// Two pending branches that share a rule id must dedupe (HashSet union).
+    #[test]
+    fn test_pending_regression_rule_ids_dedupes_across_branches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = Uuid::new_v4();
+        let rel = format!("regression_data/rules/win/a/{id}.json");
+        setup_pending_branch(
+            &tmp,
+            &[(&rel, "{}"), ("regression_data/rules/win/a/info.yml", "x")],
+        );
+
+        let git_dir = tmp.path().join(".git");
+        let first_ref = git_dir.join("refs/remotes/origin/sigmacatch/20260807");
+        let oid = std::fs::read_to_string(&first_ref).unwrap();
+        let second_ref = git_dir.join("refs/remotes/origin/sigmacatch/20260806");
+        std::fs::create_dir_all(second_ref.parent().unwrap()).unwrap();
+        std::fs::write(&second_ref, oid).unwrap();
+
+        let mut repo = SigmaRepo::new();
+        repo.repo_path = tmp.path().to_path_buf();
+        repo.working_branch = Some("sigmacatch/20260808".to_string());
+
+        let ids = repo.pending_regression_rule_ids().unwrap();
+        assert_eq!(
+            ids.len(),
+            1,
+            "shared rule id across branches must dedupe, got: {ids:?}"
+        );
+        assert!(ids.contains(&id));
     }
 }

@@ -36,6 +36,7 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 | Architecture | [EN](architecture/) | [FR](fr/architecture/) |
 | Architecture reference | [EN](architecture-reference/) | [FR](fr/architecture-reference/) |
 | Build | [EN](build/) | [FR](fr/build/) |
+| Git | [EN](git/) | [FR](fr/git/) |
 | Output format | [EN](output-format/) | [FR](fr/output-format/) |
 | Regression data format | [EN](regression-data-format/) | [FR](fr/regression-data-format/) |
 | Nice-to-have | [EN](nice-to-have/) | [FR](fr/nice-to-have/) |
