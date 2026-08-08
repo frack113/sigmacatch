@@ -12,13 +12,13 @@ use std::thread::sleep;
 #[cfg(windows)]
 use std::time::Duration;
 
-/// Number of `EvtExportLog` attempts before giving up on the re-query.
+/// Total `EvtExportLog` attempts (initial + retries) before giving up.
 #[cfg(windows)]
-const EVTX_EXPORT_RETRIES: u32 = 3;
+const EVTX_EXPORT_MAX_ATTEMPTS: u32 = 4;
 
-/// Backoff (seconds) between `EvtExportLog` attempts.
+/// Backoff (seconds) between failed `EvtExportLog` attempts.
 #[cfg(windows)]
-const EVTX_EXPORT_BACKOFF_SECS: [u64; EVTX_EXPORT_RETRIES as usize] = [2, 5, 10];
+const EVTX_EXPORT_BACKOFF_SECS: [u64; (EVTX_EXPORT_MAX_ATTEMPTS - 1) as usize] = [2, 5, 10];
 
 /// Write a valid EVTX file from a matched event.
 ///
@@ -41,7 +41,7 @@ pub fn write_evtx(_xml: &str, channel: &str, record_id: Option<u64>, path: &Path
 
     let query = format!("*[System[EventRecordID={}]]", rid);
 
-    for attempt in 0..=EVTX_EXPORT_RETRIES {
+    for attempt in 0..EVTX_EXPORT_MAX_ATTEMPTS {
         let result = unsafe {
             EvtExportLog(
                 None,
@@ -95,7 +95,7 @@ pub fn write_evtx(_xml: &str, channel: &str, record_id: Option<u64>, path: &Path
             }
         }
 
-        if attempt < EVTX_EXPORT_RETRIES {
+        if attempt + 1 < EVTX_EXPORT_MAX_ATTEMPTS {
             sleep(Duration::from_secs(
                 EVTX_EXPORT_BACKOFF_SECS[attempt as usize],
             ));
@@ -113,7 +113,7 @@ pub fn write_evtx(_xml: &str, channel: &str, record_id: Option<u64>, path: &Path
         path.display(),
         channel,
         rid,
-        EVTX_EXPORT_RETRIES + 1
+        EVTX_EXPORT_MAX_ATTEMPTS
     ))
 }
 

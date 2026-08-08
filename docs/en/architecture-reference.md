@@ -415,7 +415,7 @@ regression_tests_info:
   - **Validation**: the exported file is re-parsed (`input_evtx::parse_evtx_file`) and must contain ≥ 1 record.
     `EvtExportLog` reports success even when the query matched 0 events (header-only file) — an empty or
     corrupt file is a failure, not a success.
-  - **Retry**: 3 attempts with short backoff (2s/5s/10s) — the retention race is often transient.
+  - **Retry**: 4 attempts total (1 initial + 3 retries) with short backoff (2s/5s/10s) — the retention race is often transient.
   - **No `.xml` fallback on Windows**: the SigmaHQ CI runner only accepts `type: evtx` (a committed `.xml`
     would fail `true-positive-tests`). On failure the partial `.json` is deleted, an error is returned, the
     rule is skipped this cycle (no commit) and re-captured on a later cycle.

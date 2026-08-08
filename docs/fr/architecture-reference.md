@@ -434,7 +434,7 @@ regression_tests_info:
   - **Validation** : le fichier exporté est re-parsé (`input_evtx::parse_evtx_file`) et doit contenir ≥ 1 record.
     `EvtExportLog` retourne un succès même quand la requête matche 0 event (fichier header-only) — un fichier
     vide ou corrompu est donc un échec, pas un succès.
-  - **Retry** : 3 tentatives avec backoff court (2s/5s/10s) — la course avec la rétention est souvent transitoire.
+  - **Retry** : 4 tentatives au total (1 initiale + 3 retries) avec backoff court (2s/5s/10s) — la course avec la rétention est souvent transitoire.
   - **Pas de fallback `.xml` sur Windows** : le runner CI SigmaHQ n'accepte que `type: evtx` (un `.xml` commité
     ferait échouer `true-positive-tests`). Échec → le `.json` partiel est supprimé, erreur retournée, la règle
     est sautée ce cycle (pas de commit) et re-capturée sur un cycle ultérieur.
