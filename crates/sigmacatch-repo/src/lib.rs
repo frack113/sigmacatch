@@ -270,8 +270,8 @@ impl SigmaRepo {
     ///
     /// Each branch's tree is walked in memory: the `regression_data/` subtree
     /// is scanned for data files whose filename stem parses as a `Uuid` (the
-    /// generator always writes `<rule_id>.json` + `<rule_id>.evtx`/`.xml` next
-    /// to `info.yml`, so a committed `<uuid>.*` file is a trustworthy marker).
+    /// generator always writes `<rule_id>.json` + `<rule_id>.evtx` next
+    /// to `info.yml`, so a committed `<uuid>.evtx` file is a trustworthy marker).
     /// Union of all branches; `HashSet` dedupes branches that share ids (e.g.
     /// a merged PR whose branch was not yet deleted). Best-effort in offline
     /// mode: only the refs already fetched locally are scanned.
@@ -665,12 +665,12 @@ fn is_repo_complete(git_dir: &Path) -> bool {
 }
 
 /// Recursively walk a git tree in memory and collect every data filename whose
-/// stem parses as a `Uuid` — the generator's `<rule_id>.json` / `.evtx` /
-/// `.xml` markers inside `regression_data/`. Never touches the working tree.
+/// stem parses as a `Uuid` — the generator's `<rule_id>.json` / `.evtx`
+/// markers inside `regression_data/`. Never touches the working tree.
 ///
-/// A committed `<uuid>.<ext>` file is a trustworthy skip marker because the
+/// A committed `<uuid>.<evtx>` file is a trustworthy skip marker because the
 /// generator only ever commits the full triplet (`<rule_id>.json` +
-/// `<rule_id>.evtx`/`.xml` + `info.yml`) in a single atomic per-rule commit.
+/// `<rule_id>.evtx` + `info.yml`) in a single atomic per-rule commit.
 fn collect_tree_rule_ids(
     odb: &grit_lib::odb::Odb,
     tree_oid: ObjectId,

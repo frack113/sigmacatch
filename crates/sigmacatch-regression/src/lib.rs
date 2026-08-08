@@ -23,6 +23,10 @@ use crate::logtype::LogType;
 /// is broken (e.g. an EVTX with no records). `data_file_is_valid` is the single
 /// source of truth used by `get_sigma_id`, `RegressionData::exists` and the
 /// pending-branch scan.
+///
+/// The legacy `.xml` fallback (v0.1.0 dead code, only ever emitted by a
+/// non-Windows write path that produced unreadable data) is not consulted:
+/// committed regression data is always `<rule_id>.evtx` on Windows.
 fn data_file_is_valid(dir: &Path, rule_id: &Uuid) -> bool {
     let evtx = dir.join(format!("{}.evtx", rule_id));
     if evtx.exists() {
@@ -30,10 +34,6 @@ fn data_file_is_valid(dir: &Path, rule_id: &Uuid) -> bool {
             Ok(events) => !events.is_empty(),
             Err(_) => false,
         };
-    }
-    let xml = dir.join(format!("{}.xml", rule_id));
-    if xml.exists() {
-        return std::fs::metadata(&xml).is_ok_and(|m| m.len() > 0);
     }
     let json = dir.join(format!("{}.json", rule_id));
     if json.exists() {
@@ -338,7 +338,7 @@ impl RegressionData {
         let first = self.alerts.first();
         let match_count = if first.is_some() { 1 } else { 0 };
 
-        let mut evtx_ext = "evtx";
+        let evtx_ext = "evtx";
         if let Some(alert) = first {
             let raw_json_path = rule_dir.join(format!("{}.json", rule_id));
             let raw_json = serde_json::to_string_pretty(&alert.event_json_raw)?;
@@ -353,28 +353,16 @@ impl RegressionData {
                 &evtx_path,
             ) {
                 // No valid EVTX was produced (e.g. EvtExportLog matched 0
-                // records). Remove the partial `.json` so nothing broken is
-                // committed; the rule stays loaded and is re-captured on a
-                // later cycle.
+                // records, or a non-Windows host without EvtExportLog). Remove
+                // the partial `.json` so nothing broken is committed; the rule
+                // stays loaded and is re-captured on a later cycle.
                 let _ = std::fs::remove_file(&raw_json_path);
                 return Err(e);
             }
-            evtx_ext = if evtx_path.exists() {
-                "evtx"
-            } else if evtx_path.with_extension("xml").exists() {
-                tracing::warn!(
-                    "EVTX write fell back to XML for rule {:?}, using .xml extension",
-                    rule_id
-                );
-                "xml"
-            } else {
-                tracing::warn!(
-                    "Neither .evtx nor .xml was written for rule {:?}, defaulting to .evtx",
-                    rule_id
-                );
-                "evtx"
-            };
-            tracing::info!("Wrote EVTX/XML for rule {:?}", rule_id);
+            // `write_evtx` now only ever produces a valid `.evtx` (Windows) or
+            // errors. The legacy `.xml` fallback was removed, so the committed
+            // logtype is always `evtx`.
+            tracing::info!("Wrote EVTX for rule {:?}", rule_id);
         }
 
         let sigma_evtx_path = if first.is_some() {

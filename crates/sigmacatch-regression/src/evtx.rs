@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-#[cfg(windows)]
 use anyhow::anyhow;
-use anyhow::{Context, Result};
+#[cfg(windows)]
+use anyhow::Context;
+use anyhow::Result;
 use std::path::Path;
 #[cfg(windows)]
 use std::thread::sleep;
+#[cfg(windows)]
 #[cfg(windows)]
 use std::time::Duration;
 
@@ -33,10 +35,12 @@ const EVTX_EXPORT_BACKOFF_SECS: [u64; EVTX_EXPORT_RETRIES as usize] = [2, 5, 10]
 /// On failure the empty `.evtx` is removed and an error is returned. The
 /// caller skips the rule this cycle (no commit, rule stays loaded) so a fresh
 /// event is re-captured on a later cycle. A `.xml` fallback is deliberately
-/// NOT written on Windows: the SigmaHQ CI runner only accepts `type: evtx`
-/// tests, so a committed `.xml` would fail `true-positive-tests`.
+/// NOT written: the SigmaHQ CI runner only accepts `type: evtx` tests, so a
+/// committed `.xml` would fail `true-positive-tests`.
 ///
-/// Non-Windows platforms still write `.xml` for local tooling (`check_evtx`).
+/// On non-Windows there is no `EvtExportLog` API and no live Winevt collector,
+/// so no data is generated — see the `#[cfg(not(windows))]` variant which
+/// returns an error instead of the legacy v0.1.0 `.xml` fallback.
 #[cfg(windows)]
 pub fn write_evtx(_xml: &str, channel: &str, record_id: Option<u64>, path: &Path) -> Result<()> {
     use windows::core::HSTRING;
@@ -136,13 +140,17 @@ fn exported_has_records(path: &Path) -> Result<bool> {
     Ok(!events.is_empty())
 }
 
-/// Non-Windows fallback: write raw XML as `.xml` for local tooling only
-/// (`check_evtx`). Never committed by the Windows pipeline.
+/// Non-Windows platforms have no `EvtExportLog` API and no live Winevt collector
+/// (the channel collector is a Windows-only stub), so there is no valid `.evtx`
+/// to produce. Previously this wrote a raw `.xml` fallback, but the Windows-only
+/// `EvtExportLog` path is the only one that emits committed regression data and
+/// `check_evtx` only validates `type: evtx` data — the `.xml` output was dead code
+/// since v0.1.0 and is now removed (see AGENTS.md EVTX invariants). Calling this
+/// on a non-Windows host returns an error so the rule is skipped this cycle rather
+/// than producing an unreadable `.xml`.
 #[cfg(not(windows))]
-pub fn write_evtx(xml: &str, _channel: &str, _record_id: Option<u64>, path: &Path) -> Result<()> {
-    let xml_path = path.with_extension("xml");
-    std::fs::write(&xml_path, xml)
-        .with_context(|| format!("Failed to write XML: {}", xml_path.display()))?;
-    tracing::info!("Wrote XML (non-Windows): {}", xml_path.display());
-    Ok(())
+pub fn write_evtx(_xml: &str, _channel: &str, _record_id: Option<u64>, _path: &Path) -> Result<()> {
+    Err(anyhow!(
+        "EVTX export via EvtExportLog is Windows-only; no local data on non-Windows"
+    ))
 }
