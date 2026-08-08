@@ -38,6 +38,7 @@ nav:
     - Overview: architecture.md
     - Architecture Reference: architecture-reference.md
     - Build: build.md
+    - Git: git.md
     - Output Format: output-format.md
     - Regression Data Format: regression-data-format.md
     - Tools: tools.md
@@ -61,6 +62,7 @@ plugins:
             Overview: Aperçu
             Architecture Reference: Référence Architecture
             Build: Build
+            Git: Git
             Output Format: Format de Sortie
             Regression Data Format: Format des Données de Régression
             Tools: Outils
