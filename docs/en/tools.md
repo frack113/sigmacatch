@@ -229,9 +229,9 @@ moved here).
 
 **File:** `tools/src/get_atomic.rs`
 
-**Usage:** `cargo run --release --bin get_atomic [--output run_atomic.ps]`
+**Usage:** `cargo run --release --bin get_atomic [--output run_atomic.ps1]`
 
-**Purpose:** generates a `run_atomic.ps` script chaining `Invoke-AtomicTest
+**Purpose:** generates a `run_atomic.ps1` script chaining `Invoke-AtomicTest
 T1xxx.xxx` commands for the ATT&CK techniques of rules **without regression
 data** according to the config filter. The script is copied to the Windows VM
 and run manually; sigmacatch (continuous loop) captures the generated events
@@ -246,7 +246,7 @@ and produces the regression data.
 4. For each remaining rule: `rule.attack_techniques()` (`SigmaRuleExt`
    extension trait from `sigmacatch-rule`)
 5. Dedupe + sort techniques (BTreeSet) — one `Invoke-AtomicTest` per technique
-6. Writes `run_atomic.ps` (or `--output <path>`) + report
+6. Writes `run_atomic.ps1` (or `--output <path>`) + report
 
 ### Generated script
 
