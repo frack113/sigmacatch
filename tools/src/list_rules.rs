@@ -9,7 +9,7 @@
 //!   3. Print each rule with id, title, status, level, techniques, path, ART
 //!
 //! Usage:
-//!   cargo run --release --bin list_rules
+//!   cargo run --release --bin list_rules [--json]
 
 use sigmacatch_config::Config;
 use sigmacatch_rule::{SigmaRuleExt, SigmahqRules, Status};
@@ -17,7 +17,25 @@ use std::path::{Path, PathBuf};
 use std::process;
 use uuid::Uuid;
 
+#[derive(serde::Serialize)]
+struct RuleInfo {
+    id: String,
+    title: String,
+    status: String,
+    level: String,
+    techniques: Vec<String>,
+    path: String,
+    art_link: String,
+}
+
 fn main() {
+    let mut json_output = false;
+    for arg in std::env::args().skip(1) {
+        if arg == "--json" {
+            json_output = true;
+        }
+    }
+
     let config = match Config::load(&PathBuf::from("config.yaml")) {
         Ok(c) => c,
         Err(e) => {
@@ -39,11 +57,11 @@ fn main() {
         eprintln!("0 rules loaded — adjust filter.* in config.yaml");
         process::exit(1);
     }
-    println!("Loaded {} rules after filtering", rules.len());
-    println!();
 
     let sigma_repo_path = Path::new(&config.git.sigma_repo_path);
     let mut count = 0;
+    let mut rule_infos: Vec<RuleInfo> = Vec::new();
+
     for rule in rules.rules() {
         let id = rule.id.as_deref().unwrap_or("no-id");
         let path = rule
@@ -77,17 +95,39 @@ fn main() {
             })
             .unwrap_or("unknown");
         let level_str = rule.level.as_ref().map(|l| l.as_str()).unwrap_or("unknown");
-        println!(
-            "\n{separator}\nID:          {id}\nTitle:       {title}\nStatus:      {status_str}\nLevel:       {level_str}\nTechniques:  {techniques_str}\nPath:        {path}\nART:         {art}",
-            separator = "─".repeat(72),
-            title = rule.title,
-            status_str = status_str,
-            level_str = level_str,
-            techniques_str = techniques.join(", "),
-            art = art_link,
-        );
+
+        if json_output {
+            rule_infos.push(RuleInfo {
+                id: id.to_string(),
+                title: rule.title.clone(),
+                status: status_str.to_string(),
+                level: level_str.to_string(),
+                techniques: techniques.clone(),
+                path: path.clone(),
+                art_link: art_link.clone(),
+            });
+        } else {
+            println!(
+                "\n{separator}\nID:          {id}\nTitle:       {title}\nStatus:      {status_str}\nLevel:       {level_str}\nTechniques:  {techniques_str}\nPath:        {path}\nART:         {art}",
+                separator = "─".repeat(72),
+                title = rule.title,
+                status_str = status_str,
+                level_str = level_str,
+                techniques_str = techniques.join(", "),
+                art = art_link,
+            );
+        }
         count += 1;
     }
-    println!();
-    println!("{count} rules listed");
+
+    if json_output {
+        let output = serde_json::json!({
+            "total_rules": count,
+            "rules": rule_infos,
+        });
+        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+    } else {
+        println!();
+        println!("{count} rules listed");
+    }
 }

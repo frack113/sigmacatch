@@ -11,7 +11,7 @@
 //!   4. Print the channel list
 //!
 //! Usage:
-//!   cargo run --release --bin check_channels
+//!   cargo run --release --bin check_channels [--json]
 
 use sigmacatch_config::{self, load_custom_channel_mapping, Config};
 use sigmacatch_detection::DetectionEngine;
@@ -20,6 +20,13 @@ use std::path::PathBuf;
 use std::process;
 
 fn main() {
+    let mut json_output = false;
+    for arg in std::env::args().skip(1) {
+        if arg == "--json" {
+            json_output = true;
+        }
+    }
+
     let config = match Config::load(&PathBuf::from("config.yaml")) {
         Ok(c) => c,
         Err(e) => {
@@ -41,7 +48,6 @@ fn main() {
         eprintln!("0 rules loaded — adjust filter.* in config.yaml");
         process::exit(1);
     }
-    println!("Loaded {} rules after filtering", rules.len());
 
     let engine = match DetectionEngine::new(&rules) {
         Ok(e) => e,
@@ -55,12 +61,30 @@ fn main() {
     let cycle_channels = engine.resolve_channels(&custom_map);
 
     if cycle_channels.is_empty() {
-        println!("0 channels resolved — nothing to collect");
+        if json_output {
+            let output = serde_json::json!({
+                "total_rules": rules.len(),
+                "channel_count": 0,
+                "channels": Vec::<String>::new(),
+            });
+            println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        } else {
+            println!("0 channels resolved — nothing to collect");
+        }
         process::exit(1);
     }
 
-    println!("{} channel(s):", cycle_channels.len());
-    for ch in &cycle_channels {
-        println!("  {ch}");
+    if json_output {
+        let output = serde_json::json!({
+            "total_rules": rules.len(),
+            "channel_count": cycle_channels.len(),
+            "channels": cycle_channels,
+        });
+        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+    } else {
+        println!("{} channel(s):", cycle_channels.len());
+        for ch in &cycle_channels {
+            println!("  {ch}");
+        }
     }
 }

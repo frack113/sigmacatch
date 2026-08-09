@@ -17,7 +17,7 @@
 //! sigmacatch captures the generated events and produces the regression data.
 //!
 //! Usage:
-//!   cargo run --release --bin get_atomic [--output run_atomic.ps] [--getprereqs]
+//!   cargo run --release --bin get_atomic [--output run_atomic.ps] [--getprereqs] [--json]
 
 use sigmacatch_config::Config;
 use sigmacatch_regression::SigmahqRegression;
@@ -34,11 +34,13 @@ const TIMEOUT_SECONDS: u64 = 120;
 struct Args {
     output: PathBuf,
     get_prereqs: bool,
+    json_output: bool,
 }
 
 fn parse_args() -> Args {
     let mut output = PathBuf::from(DEFAULT_OUTPUT);
     let mut get_prereqs = false;
+    let mut json_output = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -52,14 +54,18 @@ fn parse_args() -> Args {
             "--getprereqs" => {
                 get_prereqs = true;
             }
+            "--json" => {
+                json_output = true;
+            }
             "--help" | "-h" => {
                 println!(
                     "get_atomic: generate run_atomic.ps for rules without regression data\n\n\
-                     Usage: get_atomic [--output <path>] [--getprereqs]\n\n\
+                     Usage: get_atomic [--output <path>] [--getprereqs] [--json]\n\n\
                      Options:\n\
                      \x20 --output <path>    write the script to <path> (default: run_atomic.ps)\n\
                      \x20 --getprereqs       generate Invoke-AtomicTest with -GetPrereqs flag\n\
-                                          (downloads/installs prerequisites without running tests)"
+                                           (downloads/installs prerequisites without running tests)\n\
+                     \x20 --json             output results as JSON instead of text"
                 );
                 process::exit(0);
             }
@@ -72,6 +78,7 @@ fn parse_args() -> Args {
     Args {
         output,
         get_prereqs,
+        json_output,
     }
 }
 
@@ -84,10 +91,19 @@ fn atomic_techniques(rule: &sigmacatch_rule::SigmaRule) -> Vec<String> {
         .collect()
 }
 
+#[derive(serde::Serialize)]
+struct AtomicInfo {
+    rules_without_data: usize,
+    technique_count: usize,
+    techniques: Vec<String>,
+    rules_without_attack_tag: Vec<String>,
+}
+
 fn main() {
     let args = parse_args();
     let output = &args.output;
     let get_prereqs = args.get_prereqs;
+    let json_output = args.json_output;
 
     let config = match Config::load(&PathBuf::from("config.yaml")) {
         Ok(c) => c,
@@ -185,24 +201,34 @@ fn main() {
         process::exit(1);
     }
 
-    let mode = if get_prereqs {
-        "get-prereqs"
+    if json_output {
+        let info = AtomicInfo {
+            rules_without_data,
+            technique_count: techniques.len(),
+            techniques: techniques.into_iter().collect(),
+            rules_without_attack_tag,
+        };
+        println!("{}", serde_json::to_string_pretty(&info).unwrap());
     } else {
-        "execute"
-    };
-    println!(
-        "Wrote {} [{}] ({rules_without_data} rules, {} techniques)",
-        output.display(),
-        mode,
-        techniques.len()
-    );
-    if !rules_without_attack_tag.is_empty() {
+        let mode = if get_prereqs {
+            "get-prereqs"
+        } else {
+            "execute"
+        };
         println!(
-            "\n{} rule(s) without attack.* tag (no Invoke-AtomicTest generated):",
-            rules_without_attack_tag.len()
+            "Wrote {} [{}] ({rules_without_data} rules, {} techniques)",
+            output.display(),
+            mode,
+            techniques.len()
         );
-        for title in &rules_without_attack_tag {
-            println!("  - {title}");
+        if !rules_without_attack_tag.is_empty() {
+            println!(
+                "\n{} rule(s) without attack.* tag (no Invoke-AtomicTest generated):",
+                rules_without_attack_tag.len()
+            );
+            for title in &rules_without_attack_tag {
+                println!("  - {title}");
+            }
         }
     }
 }
