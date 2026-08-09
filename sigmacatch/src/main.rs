@@ -96,8 +96,8 @@ async fn main() -> Result<()> {
         info!("No-contrib mode: push disabled — commits will be local only");
     }
 
-    sigma_repo.set_remote_url(fork_url.clone()).await?;
     sigma_repo.set_working_branch(branch_name.clone())?;
+    sigma_repo.set_remote_url(fork_url.clone()).await?;
     sigma_repo.check_remote_working_branch()?;
 
     let mut regression = match SigmahqRegression::new() {

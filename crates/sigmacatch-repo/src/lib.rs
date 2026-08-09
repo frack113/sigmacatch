@@ -25,7 +25,7 @@ use anyhow::Result;
 use grit_lib::objects::ObjectId;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::branch::{create_branch, switch_head};
@@ -147,7 +147,14 @@ impl SigmaRepo {
         let repo_exists = git_dir.exists();
 
         if repo_exists {
-            self.switch_to_tracking_branch()?;
+            if !self.is_head_on_working_branch() {
+                self.switch_to_tracking_branch()?;
+            } else {
+                info!(
+                    "Already on working branch '{}' — skipping master switch",
+                    self.working_branch.as_deref().unwrap_or_default()
+                );
+            }
 
             if self.offline {
                 info!("Offline mode — using existing repository as-is (no pull)");
@@ -173,9 +180,9 @@ impl SigmaRepo {
                     .map_err(|e| anyhow::anyhow!("Pull task panicked: {}", e));
                     if let Err(ref e) = result {
                         warn!(
-                            "SSH pull failed ({}): falling back to HTTPS fetch. \
-                              This can happen if ssh binary is not available (e.g. Windows without Git for Windows) \
-                              or the SSH key is invalid. Consider switching to transport = http in config.yaml.",
+                            "SSH pull failed ({}): aborting — ssh binary unavailable \
+                              (e.g. Windows without Git for Windows) or invalid key. \
+                              Switch to transport = http in config.yaml to use HTTPS.",
                             e
                         );
                     }
@@ -268,14 +275,21 @@ impl SigmaRepo {
             }
         };
         if let Err(e) = outcome {
+            let cause = if self.token.is_none() {
+                "missing GitHub token (set git.github_token in config.yaml or GITHUB_TOKEN env)"
+            } else if matches!(self.transport, GitTransport::Ssh) {
+                "SSH key invalid or ssh binary unavailable"
+            } else {
+                "network unreachable, rate-limited, or authentication failed"
+            };
             warn!(
-                "Failed to fetch sigmacatch/* branches from origin ({}): \
-                 the skip set will only cover the checked-out worktree. \
-                 Re-runs on this repo can still resolve pending-PR data; consider \
-                 retrying or checking network/token. Error: {}",
+                "Failed to fetch sigmacatch/* branches from origin ({}): {}\
+                 the skip set will only cover the checked-out worktree.\
+                 Re-runs on this repo can still resolve pending-PR data.",
                 sanitize_url(&remote_url),
-                e
+                cause,
             );
+            debug!("fetch_sigmacatch_branches detail: {e}");
         }
         Ok(())
     }
@@ -441,6 +455,23 @@ impl SigmaRepo {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("No working branch configured"))?;
         let git_dir = self.repo_path.join(".git");
+        let odb = crate::plumbing::open_odb(&git_dir);
+        let obj = odb.read(&oid).map_err(|e| {
+            anyhow::anyhow!(
+                "Cannot reset branch '{}' to {} — object not found in ODB: {}",
+                branch,
+                oid,
+                e
+            )
+        })?;
+        if obj.kind != grit_lib::objects::ObjectKind::Commit {
+            anyhow::bail!(
+                "Cannot reset branch '{}' to {} — object is a {} (expected commit)",
+                branch,
+                oid,
+                obj.kind
+            );
+        }
         let local_ref = format!("refs/heads/{}", branch);
         crate::plumbing::refs::map_grit(grit_lib::refs::write_ref(&git_dir, &local_ref, &oid))?;
         info!(
@@ -448,6 +479,21 @@ impl SigmaRepo {
             branch, oid
         );
         Ok(())
+    }
+
+    /// Returns true when HEAD already points to the working branch.
+    /// Used to skip the master→working-branch round-trip on same-day re-runs.
+    fn is_head_on_working_branch(&self) -> bool {
+        let branch = match &self.working_branch {
+            Some(b) => b,
+            None => return false,
+        };
+        let git_dir = self.repo_path.join(".git");
+        let expected = format!("refs/heads/{branch}");
+        match crate::plumbing::symbolic_ref_target(&git_dir, "HEAD") {
+            Ok(Some(target)) => target == expected,
+            _ => false,
+        }
     }
 
     fn switch_to_tracking_branch(&self) -> Result<()> {
@@ -699,6 +745,10 @@ fn collect_tree_rule_ids(
 }
 
 const MAX_REGRESSION_TREE_DEPTH: u32 = 32;
+/// Maximum EVTX blob size we are willing to parse in memory (16 MiB).
+/// Larger blobs are treated as broken so the rule gets re-captured instead of
+/// consuming unbounded RAM on a corrupted or synthetic blob.
+const MAX_EVTX_BLOB_SIZE: usize = 16 * 1024 * 1024;
 
 fn collect_tree_rule_ids_depth(
     odb: &grit_lib::odb::Odb,
@@ -724,18 +774,27 @@ fn collect_tree_rule_ids_depth(
                     // Empty/undecodable EVTX blob = the empty-export bug: do not
                     // skip the rule so it is re-captured with valid data.
                     match odb.read(&entry.oid) {
-                        Ok(blob) => match input_evtx::parse_evtx_bytes(&blob.data) {
-                            Ok(events) if !events.is_empty() => {
-                                valid.insert(id);
+                        Ok(blob) if blob.data.len() <= MAX_EVTX_BLOB_SIZE => {
+                            match input_evtx::parse_evtx_bytes(&blob.data) {
+                                Ok(events) if !events.is_empty() => {
+                                    valid.insert(id);
+                                }
+                                _ => {
+                                    warn!(
+                                        "rule {} excluded from pending skip-set: broken EVTX '{}' (will be re-captured)",
+                                        id, name
+                                    );
+                                    broken.insert(id);
+                                }
                             }
-                            _ => {
-                                warn!(
-                                    "rule {} excluded from pending skip-set: broken EVTX '{}' (will be re-captured)",
-                                    id, name
-                                );
-                                broken.insert(id);
-                            }
-                        },
+                        }
+                        Ok(_blob) => {
+                            warn!(
+                                "rule {} excluded from pending skip-set: EVTX '{}' exceeds {} MiB (will be re-captured)",
+                                id, name, MAX_EVTX_BLOB_SIZE / 1024 / 1024
+                            );
+                            broken.insert(id);
+                        }
                         Err(e) => {
                             warn!("failed to read EVTX blob '{}': {}", name, e);
                             broken.insert(id);
