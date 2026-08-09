@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 [package]
-name = "localcheck"
+name = "tools"
 version = "0.3.0"
 edition = "2021"
 license = "MIT"
