@@ -22,6 +22,9 @@ sigmacatch/
 │       └── main.rs               # Config + init repo + boucle continue + process_and_generate + commit/push
 └── localcheck/                   # Outils de dev (hors du crate principal)
     └── src/
+        ├── check_dry_run.rs      # Diagnostics git (token/fork/API/info-refs/état repo)
+        ├── check_channels.rs     # Résout et liste les channels Windows collectés
+        ├── list_rules.rs         # Liste les règles chargées (techniques, lien ART)
         ├── check_filter.rs       # Valide SigmaFilterConfig contre les vraies règles Sigma (comptage ground-truth)
         └── check_evtx.rs         # Validation batch du moteur Sigma contre les données .evtx
 ```
@@ -33,8 +36,11 @@ sigmacatch/src/
 └── main.rs              # Binaire : orchestration, boucle continue, process_and_generate
 
 localcheck/src/
-├── check_filter.rs      # Outil de validation des filtres (pas d'args CLI, charge ./sigma lui-même)
-└── check_evtx.rs        # Outil de validation batch (exit 1 sur entrée vide / aucun match)
+├── check_dry_run.rs      # Outil de diagnostics git (config.yaml + dry_run_git)
+├── check_channels.rs     # Outil de résolution de channels (filtre config.yaml)
+├── list_rules.rs         # Outil de listing des règles (filtre config.yaml)
+├── check_filter.rs       # Outil de validation des filtres (pas d'args CLI, charge ./sigma lui-même)
+└── check_evtx.rs         # Outil de validation batch (exit 1 sur entrée vide / aucun match)
 ```
 
 Il n'y a pas de `config.rs` / `logger.rs` / `repo.rs` dans le binaire — ces modules ont été
@@ -67,7 +73,6 @@ dépend de `rsigma-parser`. `sigmacatch-config` dépend de `sigmacatch-repo` + `
 
 ```text
 1. parse_args() + Config::load_with_cli("config.yaml", cli)
-   └── --dry-run → dry_run_git() (diagnostics git) + sortie
 2. init_logger() → tracing (stderr info + fichier debug)
 3. ensure_dirs() → dossier repo sigma + logs/
 4. SigmaRepo init (remote_url = fork, branche de travail, token) → init() [clone/fetch]
@@ -76,11 +81,9 @@ dépend de `rsigma-parser`. `sigmacatch-config` dépend de `sigmacatch-repo` + `
    └── existing_rules = regression.get_sigma_id() ∪ sigma_repo.pending_regression_rule_ids() (branches remote sigmacatch/* en attente) → HashSet<Uuid> (vide avec --all-rules)
 6. SigmahqRules::new() → chargement + dédupe ; remove_id() par règle skipée
     └── filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size }) ; 0 règles → bail
-    └── --list-rules → affiche les règles sans data-regression + sortie
 7. custom_map = load_custom_channel_mapping("custom_channels.yaml")
 8. DetectionEngine::new(&rules)  (pipelines + bloom + LogSourceExtractor)
    └── cycle_channels = engine.resolve_channels(&custom_map) ; 0 channels → warn + return
-   └── --channels-only → affiche les channels + sortie
 9. output_base = <sigma_repo_path>/regression_data ; clean_partial_artifacts()
 10. EventCollector::new(cycle_channels).run(tx, stop) → task tokio
 11. Boucle : tokio::select!

@@ -48,7 +48,7 @@ Profil appliqué :
 
 ## Workspace
 
-Le projet est un cargo workspace de 11 packages (2 crates binaires — `sigmacatch` avec 1 binaire, `localcheck` avec 2 binaires — et 9 bibliothèques) :
+Le projet est un cargo workspace de 11 packages (2 crates binaires — `sigmacatch` avec 1 binaire, `localcheck` avec 5 binaires — et 9 bibliothèques) :
 
 ```bash
 # Tout builder
@@ -73,6 +73,9 @@ cargo build -p localcheck
 | Binaire | Chemin | Description |
 |---|---|---|
 | `sigmacatch` | `sigmacatch/src/main.rs` | Capture + évaluation + génération de régression |
+| `check_dry_run` | `localcheck/src/check_dry_run.rs` | Diagnostics git (token, fork, API, info/refs, état repo) |
+| `check_channels` | `localcheck/src/check_channels.rs` | Résout et liste les channels Windows collectés |
+| `list_rules` | `localcheck/src/list_rules.rs` | Liste les règles chargées (techniques, lien ART) |
 | `check_filter` | `localcheck/src/check_filter.rs` | Valide `SigmaFilterConfig` contre les vraies règles Sigma (comptage ground-truth, pas d'args CLI) |
 | `check_evtx` | `localcheck/src/check_evtx.rs` | Validation batch du moteur Sigma contre des .evtx |
 

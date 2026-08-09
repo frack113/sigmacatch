@@ -170,6 +170,61 @@ cargo run --release --bin check_filter
 
 ---
 
+## check_dry_run
+
+**File:** `localcheck/src/check_dry_run.rs`
+
+**Usage:** `cargo run --release --bin check_dry_run`
+
+**Purpose:** git diagnostics of the former `--dry-run` sigmacatch flag (moved here to keep the
+main binary lean). Reuses `Config::load_with_cli` + `dry_run_git` from `sigmacatch-config`.
+Accepts the same flags as the main binary (`--author`, `--offline`, `--contrib`, `--help`).
+
+### Pipeline
+
+1. `parse_args()` + `Config::load_with_cli("config.yaml", cli)`
+2. `dry_run_git(&config)` → token resolution (config + env), fork detection (HTTP HEAD),
+   API `/user` check, git smart HTTP info/refs endpoint, local `sigma/` repo state
+3. Detailed report of each step → identify the failure point
+
+---
+
+## check_channels
+
+**File:** `localcheck/src/check_channels.rs`
+
+**Usage:** `cargo run --release --bin check_channels`
+
+**Purpose:** resolves and lists the Windows channels the engine would collect (former
+`--channels-only` sigmacatch flag, moved here).
+
+### Pipeline
+
+1. `Config::load("config.yaml")` (filter section)
+2. Loads Sigma rules from `./sigma` + filter config
+3. `DetectionEngine::new(&rules)` → `resolve_channels(&custom_map)` (incl. custom_channels.yaml)
+4. Prints the channel list (exit 1 if none)
+
+---
+
+## list_rules
+
+**File:** `localcheck/src/list_rules.rs`
+
+**Usage:** `cargo run --release --bin list_rules`
+
+**Purpose:** lists the loaded rules with their path (former `--list-rules` sigmacatch flag,
+moved here).
+
+### Pipeline
+
+1. `Config::load("config.yaml")` (filter section)
+2. Loads Sigma rules from `./sigma` + filter config
+3. Per rule: id, title, status, level, techniques (`attack.*` tags), path, ART link (first
+   sub-technique)
+
+---
+
 ## How to add a tool
 
 1. Create `localcheck/src/<name>.rs` with a docstring at the top

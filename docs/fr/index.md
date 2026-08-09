@@ -18,7 +18,7 @@ Le projet est un cargo workspace de 11 crates (9 bibliothèques + 2 crates binai
 | `sigmacatch-types` | Types partagés : `Event`, `Alert`, `RegressionHeader`, parsing XML, tables logsource |
 | `sigmacatch-repo` | wrapper grit-lib : SigmaRepo, opérations git |
 | `input-evtx` | Parse les fichiers EVTX en objets `Event` (utilisé par `localcheck`) |
-| `localcheck` | Outils de dev : `check_filter` + `check_evtx` |
+| `localcheck` | Outils de dev : `check_dry_run`, `check_channels`, `list_rules`, `check_filter`, `check_evtx` |
 
 ## Démarrage rapide
 

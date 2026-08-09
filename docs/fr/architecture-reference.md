@@ -32,9 +32,9 @@ sigmacatch/
 ├── sigmacatch/                    # Crate binaire
 │   └── src/
 │       └── main.rs                # Orchestration : boucle continue + process_and_generate + commit/push
-├── localcheck/                    # Outils de dev (check_filter, check_evtx)
+├── localcheck/                    # Outils de dev (check_dry_run, check_channels, list_rules, check_filter, check_evtx)
 └── crates/
-    ├── sigmacatch-config/         # Config YAML, parsing CLI, custom_channels.yaml, diagnostics git dry-run
+    ├── sigmacatch-config/         # Config YAML, parsing CLI, custom_channels.yaml, diagnostics git dry-run (check_dry_run)
     ├── sigmacatch-logger/         # Abonnement tracing à deux couches (stderr info + fichier journal rolling debug)
     ├── sigmacatch-rule/           # SigmahqRules : chargement (parse_sigma_yaml), filtre, dédupe, remove_id
     ├── sigmacatch-detection/      # Wrapper DetectionEngine + pipelines embarquées (windows.yml, flatten_winevt.yml) + channel_resolver
@@ -93,7 +93,7 @@ Quand `ssh_key_path` est renseigné, chaque commit de régression est **signé**
 (`ssh-key`) : l'en-tête `gpgsig` est inséré entre la ligne committer et le message, comme
 `git commit -S` avec `gpg.format = ssh`, pour que GitHub affiche le commit "Verified".
 
-**CLI flags :** `--author <name>`, `--dry-run`, `--channels-only`, `--all-rules`, `--list-rules`, `--offline`, `--contrib`, `--help` / `-h`.
+**CLI flags :** `--author <name>`, `--all-rules`, `--offline`, `--contrib`, `--help` / `-h`. Les diagnostics (dry-run git, channels, liste des règles) sont des tools `localcheck` : `check_dry_run`, `check_channels`, `list_rules`.
 
 ---
 
@@ -107,8 +107,6 @@ parse_args() → CliArgs
 Config::load_with_cli("config.yaml", cli)
     ├── manquant → écrit les défauts → exit(1) avec instructions
     └── --author <name> écrase git.author avant la validation
-    ↓
---dry-run → dry_run_git() (diagnostics token/fork/API/info-refs) → exit
     ↓
 [windows] setup_console() (codepage UTF-8 + traitement VT)
     ↓
@@ -196,8 +194,7 @@ SigmahqRules::new()                 # charge ./sigma
     ↓
 rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size })
     ├── stats() → rules_loaded, filtered_product/status/level/author
-    ├── 0 règle chargée → bail avec un message d'erreur clair
-    └── --list-rules → affiche chaque règle sur 7 lignes (ID, titre, status, niveau, techniques, chemin, lien ART) séparées par des tirets + exit
+    └── 0 règle chargée → bail avec un message d'erreur clair
 ```
 
 > Les règles avec des données de régression existantes sont exclues du moteur Sigma — ce
@@ -226,8 +223,6 @@ DetectionEngine::new(&rules)
 cycle_channels = engine.resolve_channels(&custom_map)
     ├── lit CompiledRule.logsource post-pipeline → service:category → liste de channels (dédupliquée, triée)
     └── 0 channel → warn + return Ok (rien à collecter)
-    ↓
---channels-only → affiche les channels + exit
 ```
 
 ### Étape 5 — Collecte continue
@@ -504,13 +499,20 @@ cargo xwin build --release --target x86_64-pc-windows-msvc   # cross-compile Win
 ```text
 sigmacatch
     [--author <name>]      # écrase git.author de la config
-    [--dry-run]            # diagnostics git uniquement (pas de collecte)
-    [--channels-only]      # affiche les channels résolus et exit
     [--all-rules]          # désactive le skip set (charge toutes les règles)
-    [--list-rules]         # affiche les règles sans data-regression et exit
     [--offline]            # skip le pull au startup (force offline)
     [--contrib]            # active le push au remote fork
     [--help], [-h]         # affiche cette aide et exit
+```
+
+Diagnostics déplacés vers `localcheck` :
+
+```text
+check_dry_run              # diagnostics git (token, fork, API, info/refs, état repo)
+check_channels             # affiche les channels résolus
+list_rules                 # affiche les règles chargées (id, titre, status, niveau, techniques, chemin, lien ART)
+check_filter               # valide SigmaFilterConfig contre les règles (ground-truth)
+check_evtx                 # valide les données de régression (evtx + json + match moteur)
 ```
 
 La config est auto-créée au premier run avec des défauts. Éditez `config.yaml` avant de lancer.
