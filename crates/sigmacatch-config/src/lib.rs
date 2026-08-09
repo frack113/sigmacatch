@@ -399,10 +399,7 @@ pub struct CustomChannels {
 #[derive(Debug, Clone, Default)]
 pub struct CliArgs {
     pub author: Option<String>,
-    pub dry_run: bool,
-    pub channels_only: bool,
     pub all_rules: bool,
-    pub list_rules: bool,
     pub offline: bool,
     pub contrib: bool,
 }
@@ -414,10 +411,7 @@ USAGE:
     sigmacatch [OPTIONS]
 
 FLAGS:
-    --dry-run          Run git diagnostics and exit (clone, branch check, etc.)
-    --channels-only    Resolve and list channels, then exit
     --all-rules        Skip rules that already have regression data
-    --list-rules       List all loaded rules with their paths
     --offline          Skip pull at startup (existing repo required)
     --contrib          Enable push to remote fork (requires git.contrib=true)
     --help             Print this help and exit
@@ -436,10 +430,7 @@ pub fn parse_args() -> CliArgs {
         }
     }
     let mut author = None;
-    let mut dry_run = false;
-    let mut channels_only = false;
     let mut all_rules = false;
-    let mut list_rules = false;
     let mut offline = false;
     let mut contrib = false;
     let mut i = 1;
@@ -449,10 +440,7 @@ pub fn parse_args() -> CliArgs {
                 i += 1;
                 author = args.get(i).cloned();
             }
-            "--dry-run" => dry_run = true,
-            "--channels-only" => channels_only = true,
             "--all-rules" => all_rules = true,
-            "--list-rules" => list_rules = true,
             "--offline" => offline = true,
             "--contrib" => contrib = true,
             unknown => {
@@ -464,10 +452,7 @@ pub fn parse_args() -> CliArgs {
     }
     CliArgs {
         author,
-        dry_run,
-        channels_only,
         all_rules,
-        list_rules,
         offline,
         contrib,
     }

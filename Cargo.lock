@@ -1688,11 +1688,14 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 name = "localcheck"
 version = "0.3.0"
 dependencies = [
+ "anyhow",
  "input-evtx",
  "serde_json",
+ "sigmacatch-config",
  "sigmacatch-detection",
  "sigmacatch-regression",
  "sigmacatch-rule",
+ "tokio",
  "uuid",
 ]
 

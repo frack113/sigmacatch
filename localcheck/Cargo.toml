@@ -15,11 +15,27 @@ path = "src/check_filter.rs"
 name = "check_evtx"
 path = "src/check_evtx.rs"
 
+[[bin]]
+name = "check_dry_run"
+path = "src/check_dry_run.rs"
+
+[[bin]]
+name = "check_channels"
+path = "src/check_channels.rs"
+
+[[bin]]
+name = "list_rules"
+path = "src/list_rules.rs"
+
 [dependencies]
+sigmacatch-config = { path = "../crates/sigmacatch-config" }
 sigmacatch-rule = { path = "../crates/sigmacatch-rule" }
 sigmacatch-detection = { path = "../crates/sigmacatch-detection" }
 sigmacatch-regression = { path = "../crates/sigmacatch-regression" }
 input-evtx = { path = "../crates/input-evtx" }
 
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+
+anyhow = "1.0"
 serde_json = "1.0"
 uuid = { version = "1", features = ["v4"] }
