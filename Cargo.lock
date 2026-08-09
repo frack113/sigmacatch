@@ -3462,6 +3462,7 @@ dependencies = [
  "sigmacatch-rule",
  "tokio",
  "uuid",
+ "windows",
 ]
 
 [[package]]

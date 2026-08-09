@@ -94,7 +94,7 @@ fn main() {
 
     #[cfg(windows)]
     {
-        let report = check_channels_windows(&cycle_channels, channel_filter.as_deref());
+        let report = check_channels_windows(&cycle_channels, _channel_filter.as_deref());
         if _json_output || !cfg!(not(windows)) {
             println!("{}", serde_json::to_string_pretty(&report).unwrap());
         } else {
