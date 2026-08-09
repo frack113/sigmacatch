@@ -56,7 +56,7 @@ git:
   author: "sigmacatch"        # GitHub username pour le contrib workflow (doit être renseigné)
   email: "you@example.com"    # requis pour les commits git (doit contenir '@')
   github_token: ""            # GitHub token (ou variable d'env GITHUB_TOKEN) — requis pour HTTP transport
-  transport: http             # http (défaut) ou ssh (ssh pas implémenté sur Windows)
+  transport: http             # http (défaut, token) ou ssh (clé privée)
   ssh_key_path: ""            # path to SSH private key (optionnel, seulement pour SSH)
   sigma_repo_url: "https://github.com/SigmaHQ/sigma.git"
   sigma_repo_path: "sigma"    # chemin local du repo sigma (relatif, pas de '..', pas absolu)
@@ -84,6 +84,14 @@ ou `contrib: true` ; un run entièrement offline (`offline: true` + `contrib: fa
 **Offline / contrib :** `offline: true` utilise le repo existant tel quel (pas de pull, repo complet requis).
 `contrib: true` active le push sur le fork à la fin ; par défaut (`false`) les commits restent locaux.
 Les flags CLI `--offline` / `--contrib` forcent ces valeurs à `true`.
+
+**Transport SSH :** `git.transport: ssh` clone/fetch/push via la clé privée `ssh_key_path`. Au startup,
+`ensure_ssh_host_config()` (`transport.rs`) écrit les directives `IdentityFile`/`UserKnownHostsFile`
+dans `~/.ssh/config` (idempotent) ; sur Windows l'exécutable `ssh` est résolu via les chemins standards
+(OpenSSH de Windows, Git for Windows) et utilisé en exec direct (`SshCommand::Program`, pas de shell).
+Quand `ssh_key_path` est renseigné, chaque commit de régression est **signé** en ed25519 pur Rust
+(`ssh-key`) : l'en-tête `gpgsig` est inséré entre la ligne committer et le message, comme
+`git commit -S` avec `gpg.format = ssh`, pour que GitHub affiche le commit "Verified".
 
 **CLI flags :** `--author <name>`, `--dry-run`, `--channels-only`, `--all-rules`, `--list-rules`, `--offline`, `--contrib`, `--help` / `-h`.
 
@@ -117,6 +125,8 @@ fork_url = "https://github.com/{author}/sigma"
 SigmaRepo::new()
     ├── set_info_user(author, email)
     ├── set_info_http(token) | set_info_ssh(key_path)
+    ├── [ssh] ensure_ssh_host_config(key_path)   # écrit IdentityFile dans ~/.ssh/config (warn si échec)
+    ├── [ssh_key_path défini] set_signing_key(key_path)   # signe chaque commit (ed25519, gpgsig)
     ├── set_git_operations(offline, contrib)   # contrôle le pull au startup + le push final
     ├── set_remote_url(fork_url) → init() [async]
     │       ├── repo incomplet/absent + offline → bail actionnable
@@ -456,8 +466,10 @@ regression_tests_info:
 
 | Dépendance | Usage |
 |---|---|
-| `grit-lib` | toutes les opérations git (clone, fetch, push, branch, commit, checkout) via HTTP, pure Rust |
+| `grit-lib` | toutes les opérations git (clone, fetch, push, branch, commit, checkout) via HTTP (token) et SSH (clé), pure Rust |
 | `reqwest` (blocking + async) | client HTTP pour le transport git |
+| `ssh-key` | signature ed25519 des commits (en-tête `gpgsig`, pure Rust) |
+| `zeroize` | effacement des secrets en mémoire (token GitHub) |
 | `rsigma-eval` + `rsigma-parser` | chargement/évaluation des règles Sigma |
 | `tokio` | runtime async |
 | `tracing` + `tracing-subscriber` | logging |

@@ -45,6 +45,7 @@ git:
   email: "you@example.com"
   github_token: ""          # GitHub token (or set GITHUB_TOKEN env var) — required for HTTP transport when network is active
   transport: http           # http or ssh
+  ssh_key_path: ""          # path to SSH private key (optional, only needed for SSH)
   sigma_repo_url: "https://github.com/SigmaHQ/sigma.git"
   sigma_repo_path: "sigma"
   offline: false            # true = skip pull at startup (use existing repo as-is)

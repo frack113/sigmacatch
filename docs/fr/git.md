@@ -42,4 +42,6 @@ Basée sur la remote ref si présente (sinon HEAD) pour garder le fast-forward. 
 
 `git.contrib` est opt-in : `true` (ou `--contrib`) active le push sur le fork ; `false` (défaut) = commits locaux, aucun push. `needs_network()` = `!offline || contrib` — token GitHub requis seulement si une opération réseau (pull ou push) est active.
 
+**Transport SSH** : `git.transport: ssh` + `ssh_key_path` (clé ed25519). `ensure_ssh_host_config()` écrit les directives `IdentityFile`/`UserKnownHostsFile` dans `~/.ssh/config` avant les ops de transport (idempotent) ; sur Windows, `ssh` est résolu via OpenSSH de Windows / Git for Windows et exécuté en direct (`SshCommand::Program`). Quand `ssh_key_path` est renseigné, chaque commit de régression est signé en ed25519 pure Rust (`ssh-key`, en-tête `gpgsig` comme `git commit -S` + `gpg.format = ssh`) → GitHub affiche "Verified".
+
 Voir `config.yaml` et les invariants généraux dans [`architecture-reference.md`](architecture-reference.md) pour la configuration complète.

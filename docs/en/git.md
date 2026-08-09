@@ -42,4 +42,6 @@ Based on the remote ref if present (else HEAD) to keep fast-forward. The narrow 
 
 `git.contrib` is opt-in: `true` (or `--contrib`) enables pushing to the fork; `false` (default) = local commits only, no push. `needs_network()` = `!offline || contrib` — a GitHub token is required only when a network operation (pull or push) is active.
 
+**SSH transport**: `git.transport: ssh` + `ssh_key_path` (ed25519 key). `ensure_ssh_host_config()` writes the `IdentityFile`/`UserKnownHostsFile` directives into `~/.ssh/config` before transport ops (idempotent); on Windows, `ssh` is resolved via Windows OpenSSH / Git for Windows and executed directly (`SshCommand::Program`). When `ssh_key_path` is set, every regression commit is signed with pure-Rust ed25519 (`ssh-key`, `gpgsig` header like `git commit -S` + `gpg.format = ssh`) → GitHub shows "Verified".
+
 See `config.yaml` and the general invariants in [`architecture-reference.md`](architecture-reference.md) for the full configuration.
