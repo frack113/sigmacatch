@@ -123,7 +123,9 @@ pub(crate) fn add_file_to_index(
     index: &mut grit_lib::index::Index,
 ) -> Result<()> {
     let odb = open_odb(git_dir);
-    let contents = std::fs::read(file_path)?;
+    let file_path = crate::plumbing::long_path::long_path(file_path);
+    let base = crate::plumbing::long_path::long_path(base);
+    let contents = std::fs::read(&file_path)?;
     let blob_oid = odb
         .write(grit_lib::objects::ObjectKind::Blob, &contents)
         .map_err(|e| anyhow::anyhow!("Failed to write blob: {}", e))?;
@@ -133,16 +135,14 @@ pub(crate) fn add_file_to_index(
     let mut mode = if is_exec { 0o100755 } else { 0o100644 };
 
     let rel = file_path
-        .strip_prefix(base)
+        .strip_prefix(&base)
         .map_err(|_| anyhow::anyhow!("Path not under base"))?;
     let path_str = rel.to_string_lossy().replace('\\', "/");
     let path_bytes = path_str.as_bytes().to_vec();
 
-    // Preserve the mode recorded in the parent tree for this path. On Windows
-    // (non-unix) is_exec_file is always false, so a path that upstream stores
-    // at mode 100755 (e.g. .evtx files checked into SigmaHQ) would otherwise be
-    // re-staged as 100644 and produce spurious mode-change diffs. Reuse the
-    // parent mode when the path already exists in HEAD.
+    // Preserve the parent-tree mode: on Windows (non-unix) is_exec_file is
+    // always false, so a path upstream stores at 100755 (e.g. .evtx files)
+    // would otherwise be re-staged as 100644 and produce spurious mode diffs.
     if let Some(parent_mode) = lookup_parent_mode(git_dir, &path_str) {
         mode = parent_mode;
     }
@@ -311,10 +311,10 @@ mod tests {
             "test: add regression data",
             "test",
             "test@example.com",
+            None,
         )
         .unwrap();
 
-        // Read the new HEAD commit tree and collect all blob paths.
         let odb = open_odb(&git_dir);
         let head_oid = resolve_head(&git_dir).unwrap();
         let head_obj = odb.read(&head_oid).unwrap();

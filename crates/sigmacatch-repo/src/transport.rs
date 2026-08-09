@@ -7,7 +7,8 @@
 
 use anyhow::Result;
 use std::sync::Mutex;
-use tracing::debug;
+use tracing::{debug, info};
+use zeroize::Zeroizing;
 
 /// Git transport protocol for clone/fetch/push operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -68,59 +69,141 @@ pub fn https_to_ssh_url(url: &str) -> Option<String> {
     Some(format!("git@github.com:{}.git", repo))
 }
 
-/// Escape a string for safe use as an argument inside a shell-quoted segment.
-fn shell_quote_arg(arg: &str) -> String {
-    if arg.is_empty() {
-        return String::new();
-    }
-    if !arg
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ':' | ',' | '~'))
-    {
-        let escaped = arg.replace('\'', "'\\''");
-        return format!("'{}'", escaped);
-    }
-    arg.to_string()
-}
-
-/// Build the SSH shell command string from config or environment.
+/// Resolve the full path to the `ssh` executable, falling back to a bare name.
 ///
-/// Priority: `GIT_SSH_COMMAND` env > `GIT_SSH` env > `ssh_key_path` in config > default `ssh`.
-/// Environment variables take precedence so the user can override config at runtime without
-/// modifying `config.yaml` (e.g. for testing different keys or proxies).
-/// Returns an empty string when no custom command is configured (use default `ssh`).
-pub(crate) fn build_ssh_shell_command(ssh_key_path: Option<&str>) -> String {
-    if let Ok(cmd) = std::env::var("GIT_SSH_COMMAND") {
-        if !cmd.is_empty() {
-            debug!("Using GIT_SSH_COMMAND from environment");
-            return cmd;
+/// This is needed because the process PATH may differ from the user's interactive
+/// shell PATH (e.g. when launched by a service or from a non-interactive context).
+///
+/// On Windows, common locations are checked:
+/// - `C:\Windows\System32\OpenSSH\ssh.exe` (Windows OpenSSH client)
+/// - `%ProgramFiles%\Git\usr\bin\ssh.exe` (Git for Windows)
+///
+/// On Unix, `which ssh` is used when available.
+/// If none of these resolve, the caller receives `"ssh"` and the OS PATH lookup
+/// is attempted (may still fail if PATH is too narrow).
+#[cfg(windows)]
+fn resolve_ssh_path() -> String {
+    // First try the OS resolver (works on both Windows and Unix when PATH is set)
+    let mut cmd = std::process::Command::new("which");
+    cmd.arg("ssh").stdin(std::process::Stdio::null());
+    if let Ok(output) = cmd.output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return path;
+            }
         }
     }
+
+    // Windows-specific fallbacks
+    #[cfg(windows)]
+    {
+        let program_files =
+            std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
+        let program_files_x86 = std::env::var("ProgramFiles(x86)")
+            .unwrap_or_else(|_| "C:\\Program Files (x86)".to_string());
+        let candidates: Vec<std::path::PathBuf> = vec![
+            std::path::PathBuf::from(r"C:\Windows\System32\OpenSSH\ssh.exe"),
+            std::path::PathBuf::from(r"C:\Windows\Sysnative\OpenSSH\ssh.exe"),
+            std::path::Path::new(&program_files)
+                .join("Git")
+                .join("usr")
+                .join("bin")
+                .join("ssh.exe"),
+            std::path::Path::new(&program_files_x86)
+                .join("Git")
+                .join("usr")
+                .join("bin")
+                .join("ssh.exe"),
+        ]
+        .into_iter()
+        .filter(|p| p.exists())
+        .collect();
+
+        if let Some(path) = candidates.into_iter().next() {
+            return path.to_string_lossy().to_string();
+        }
+    }
+
+    // Nothing resolved — return bare name, hope for the best
+    "ssh".to_string()
+}
+
+/// How the caller should construct the SSH transport.
+#[derive(Clone, Debug)]
+pub(crate) enum SshMode {
+    /// Use grit-lib's default: resolve from environment (`GIT_SSH_COMMAND`, `GIT_SSH`, `ssh`).
+    #[allow(dead_code)]
+    Default,
+    /// Use `SshCommand::ShellCommand` — runs via `sh -c`. Requires a POSIX shell.
+    #[allow(dead_code)]
+    ShellCommand(String),
+    /// Use `SshCommand::Program` — direct exec, no shell. Works on Windows.
+    /// The vector holds the full argv: `["ssh.exe", "-i", "/path/to/key"]`.
+    Program(Vec<std::ffi::OsString>),
+}
+
+/// Build the SSH transport mode from environment and optional SSH key path.
+///
+/// Priority: `GIT_SSH` env > resolved `ssh` path from PATH / common locations.
+/// Environment variables take precedence so the user can override config at runtime
+/// (e.g. for testing different keys or proxies).
+///
+/// On Unix, returns `ShellCommand("ssh -o StrictHostKeyChecking=no")` so the host-key
+/// prompt is skipped in headless mode.
+///
+/// On Windows, returns `Program([ssh.exe, -i, key_path])`. Host-key verification is
+/// disabled by writing `~/.ssh/config` with `StrictHostKeyChecking no` (see
+/// `ensure_ssh_host_config`). `GIT_SSH_COMMAND` is unsupported on Windows because
+/// grit-lib runs it via `sh -c` which requires a POSIX shell.
+pub(crate) fn build_ssh_shell_command(_ssh_key_path: Option<&str>) -> SshMode {
     if let Ok(cmd) = std::env::var("GIT_SSH") {
         if !cmd.is_empty() {
             debug!("Using GIT_SSH from environment");
-            return cmd;
+            return SshMode::Program(vec![cmd.into()]);
         }
     }
-    if let Some(key_path) = ssh_key_path {
-        if !key_path.is_empty() {
-            let quoted = shell_quote_arg(key_path);
-            let cmd = format!("ssh -i {quoted}");
-            debug!("Constructed SSH command with key path: {cmd}");
-            return cmd;
+    if let Ok(cmd) = std::env::var("GIT_SSH_COMMAND") {
+        if !cmd.is_empty() {
+            debug!(
+                "Ignoring GIT_SSH_COMMAND (shell command lines are not supported without sh); \
+                 use GIT_SSH or ~/.ssh/config instead"
+            );
         }
     }
-    String::new()
+    #[cfg(windows)]
+    {
+        let ssh_bin = resolve_ssh_path();
+        // SshCommand::Program only accepts the binary path; -i and key path
+        // cannot be passed as args. The key is wired via IdentityFile in
+        // ~/.ssh/config by ensure_ssh_host_config() instead.
+        debug!("Resolved ssh path on Windows: {}", ssh_bin,);
+        SshMode::Program(vec![ssh_bin.into()])
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cmd = "ssh -o StrictHostKeyChecking=no".to_string();
+        if let Some(key) = _ssh_key_path {
+            cmd.push_str(&format!(" -i {}", shell_escape(key)));
+        }
+        SshMode::ShellCommand(cmd)
+    }
+}
+
+/// Escape a path for safe inclusion in a shell command string.
+#[cfg(not(windows))]
+fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\\', "\\\\").replace('\'', "'\\''"))
 }
 
 /// HTTP client implementing grit-lib's `HttpClient` trait with GitHub token auth.
 pub struct AuthHttpClient {
     client: reqwest::blocking::Client,
-    token: Mutex<Option<String>>,
+    token: Mutex<Option<Zeroizing<String>>>,
 }
 
 impl AuthHttpClient {
-    pub fn new(token: Option<String>) -> Result<Self> {
+    pub fn new(token: Option<Zeroizing<String>>) -> Result<Self> {
         let client = reqwest::blocking::Client::builder()
             .user_agent("sigmacatch/0.3.0")
             .timeout(std::time::Duration::from_secs(120))
@@ -135,7 +218,7 @@ impl AuthHttpClient {
 
     fn add_auth(&self, url: &str) -> String {
         let token = self.token.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(ref t) = *token {
+        if let Some(t) = token.as_deref() {
             if url.starts_with("https://") {
                 if let Some(rest) = url.strip_prefix("https://") {
                     return format!("https://x-access-token:{t}@{rest}");
@@ -229,6 +312,75 @@ impl grit_lib::transport::http::HttpClient for AuthHttpClient {
             .map(|b| b.to_vec())
             .map_err(|e| grit_lib::error::Error::Message(e.to_string()))
     }
+}
+
+/// Ensure `~/.ssh/config` disables host-key verification and points to the
+/// SSH private key.
+///
+/// `ssh.exe` on Windows prompts for host-key confirmation by default when the
+/// host is not in `known_hosts`. In a headless / CI context this prompt blocks
+/// the process. Writing a `~/.ssh/config` with `StrictHostKeyChecking no`
+/// suppresses the prompt without requiring a POSIX shell (unlike
+/// `GIT_SSH_COMMAND`).
+///
+/// On Windows, `UserKnownHostsFile` is set to `NUL` (not `/dev/null`) so that
+/// the known-hosts file is discarded without causing a permission error.
+///
+/// The function is idempotent: if the config already contains the required
+/// directives it returns `Ok(())` immediately.
+pub fn ensure_ssh_host_config(ssh_key_path: Option<&str>) -> Result<()> {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_default();
+    let ssh_dir = std::path::Path::new(&home).join(".ssh");
+    let config_path = ssh_dir.join("config");
+
+    let known_hosts_directive = if cfg!(windows) {
+        "UserKnownHostsFile NUL"
+    } else {
+        "UserKnownHostsFile /dev/null"
+    };
+
+    if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path)?;
+        if content.contains("StrictHostKeyChecking no") && content.contains(known_hosts_directive) {
+            // If a key was previously configured, keep it; otherwise the caller
+            // needs a fresh write below.
+            if let Some(key) = ssh_key_path {
+                if content.contains(&format!("IdentityFile {}", key)) {
+                    return Ok(());
+                }
+            } else if !content.contains("IdentityFile") {
+                return Ok(());
+            }
+        }
+    }
+
+    std::fs::create_dir_all(&ssh_dir)?;
+    let mut content = String::new();
+    if config_path.exists() {
+        content = std::fs::read_to_string(&config_path)?;
+        if !content.ends_with('\n') {
+            content.push('\n');
+        }
+    }
+    content.push_str("Host *\n");
+    content.push_str("    StrictHostKeyChecking no\n");
+    content.push_str(&format!("    {known_hosts_directive}\n"));
+    if let Some(key) = ssh_key_path {
+        content.push_str(&format!("    IdentityFile {key}\n"));
+    }
+    std::fs::write(&config_path, content)?;
+    let key_suffix = if let Some(key) = ssh_key_path {
+        format!(", IdentityFile {key}")
+    } else {
+        String::new()
+    };
+    info!(
+        "Wrote SSH host-config to {:?} (StrictHostKeyChecking no, {}{})",
+        config_path, known_hosts_directive, key_suffix
+    );
+    Ok(())
 }
 
 #[cfg(test)]

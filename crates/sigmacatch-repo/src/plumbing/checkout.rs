@@ -80,6 +80,7 @@ fn checkout_tree(odb: &Odb, tree_oid: ObjectId, base_path: &Path, prefix: &str) 
         }
         let full_path = base_path.join(&rel_path);
 
+        let full_path = crate::plumbing::long_path::long_path(&full_path);
         if entry.mode == 0o040000 {
             std::fs::create_dir_all(&full_path)?;
             checkout_tree(odb, entry.oid, base_path, &rel_path)?;

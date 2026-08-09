@@ -29,7 +29,7 @@ fn current_branch_name(git_dir: &Path) -> Result<Option<String>> {
 /// Clone a repository using token auth.
 /// Wraps `clone_repo` by creating an `AuthHttpClient` from token.
 pub(crate) fn git_clone(url: &str, dest: &Path, token: Option<&str>) -> Result<()> {
-    let http_client = AuthHttpClient::new(token.map(String::from))?;
+    let http_client = AuthHttpClient::new(token.map(|s| zeroize::Zeroizing::new(s.to_string())))?;
     crate::plumbing::clone_repo(&http_client, url, dest)
 }
 
@@ -44,12 +44,8 @@ pub(crate) fn git_clone_ssh(url: &str, dest: &Path, ssh_key_path: Option<&str>) 
     info!("Cloning via SSH into {:?}", dest);
     init_repo(&git_dir, dest, url)?;
     let opts = fetch_options_for_branches(DEFAULT_BRANCHES);
-    let (count, default_branch) = match fetch_remote_ssh(
-        &git_dir,
-        url,
-        build_ssh_shell_command(ssh_key_path).as_str(),
-        &opts,
-    ) {
+    let ssh_mode = build_ssh_shell_command(ssh_key_path);
+    let (count, default_branch) = match fetch_remote_ssh(&git_dir, url, &ssh_mode, &opts) {
         Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_dir_all(&git_dir);
@@ -75,7 +71,7 @@ pub(crate) fn git_clone_ssh(url: &str, dest: &Path, ssh_key_path: Option<&str>) 
 /// Only the current branch is fetched (narrow refspec) — the default branch
 /// after `switch_to_tracking_branch`, never the wildcard `+refs/heads/*`.
 pub(crate) fn git_pull(git_dir: &Path, token: Option<&str>) -> Result<()> {
-    let http_client = AuthHttpClient::new(token.map(String::from))?;
+    let http_client = AuthHttpClient::new(token.map(|s| zeroize::Zeroizing::new(s.to_string())))?;
     let remote_url = read_remote_url_from_config(git_dir, "origin")?;
     let branch = current_branch_name(git_dir)?
         .ok_or_else(|| anyhow::anyhow!("Cannot pull — HEAD is detached"))?;
@@ -98,12 +94,12 @@ pub(crate) fn git_pull(git_dir: &Path, token: Option<&str>) -> Result<()> {
 pub(crate) fn git_pull_ssh(git_dir: &Path, ssh_key_path: Option<&str>) -> Result<()> {
     let remote_url = read_remote_url_from_config(git_dir, "origin")?;
     let ssh_url = https_to_ssh_url(&remote_url).unwrap_or(remote_url);
-    let ssh_cmd = build_ssh_shell_command(ssh_key_path);
+    let ssh_mode = build_ssh_shell_command(ssh_key_path);
     let branch = current_branch_name(git_dir)?
         .ok_or_else(|| anyhow::anyhow!("Cannot pull — HEAD is detached"))?;
     let opts = fetch_options_for_branches(&[branch.as_str()]);
 
-    fetch_remote_ssh(git_dir, &ssh_url, ssh_cmd.as_str(), &opts)?;
+    fetch_remote_ssh(git_dir, &ssh_url, &ssh_mode, &opts)?;
     fast_forward_branch(git_dir)?;
 
     crate::plumbing::pack_loose_objects(git_dir)?;
@@ -145,6 +141,7 @@ pub(crate) fn git_commit(
     msg: &str,
     author: &str,
     email: &str,
+    signing_key: Option<&Path>,
 ) -> Result<()> {
     let index_path = git_dir.join("index");
     if !index_path.exists() {
@@ -155,7 +152,6 @@ pub(crate) fn git_commit(
     let staged_index = grit_lib::index::Index::load(&index_path)
         .map_err(|e| anyhow::anyhow!("Failed to load index: {}", e))?;
 
-    // Merge parent tree entries + staged changes into a single tree
     let parent_oid = resolve_head(git_dir)?;
     let parent_obj = odb
         .read(&parent_oid)
@@ -163,11 +159,10 @@ pub(crate) fn git_commit(
     let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)
         .map_err(|e| anyhow::anyhow!("Failed to parse HEAD commit: {}", e))?;
 
-    // Merge the full parent (HEAD) tree under the staged entries. The parent
-    // tree is added at stage 0 unconditionally; staged entries are then overlaid
-    // with `add_or_replace`, so the staged blob content wins. There is no
-    // staged-paths filtering step — that was the site of a prior tree-amputation
-    // bug (inverted condition) and is no longer needed.
+    // Add the full parent (HEAD) tree at stage 0, then overlay the staged
+    // entries with `add_or_replace` so staged blob content wins. There is no
+    // staged-paths filtering — that was the site of a prior tree-amputation
+    // bug (inverted condition).
     let mut merged_index = grit_lib::index::Index::new();
     add_tree_to_index(&odb, parent_commit.tree, "", &mut merged_index)?;
     for entry in &staged_index.entries {
@@ -182,5 +177,5 @@ pub(crate) fn git_commit(
         anyhow::bail!("Nothing to commit — the staged changes match the current HEAD tree");
     }
 
-    commit_tree(git_dir, &odb, tree_oid, msg, author, email)
+    commit_tree(git_dir, &odb, tree_oid, msg, author, email, signing_key)
 }

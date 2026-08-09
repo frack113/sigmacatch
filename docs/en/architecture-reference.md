@@ -56,7 +56,7 @@ git:
   author: "sigmacatch"        # GitHub username for the contrib workflow (must be set)
   email: "you@example.com"    # required for git commits (must contain '@')
   github_token: ""            # GitHub token (or GITHUB_TOKEN env var) — required for HTTP transport
-  transport: http             # http (default) or ssh (ssh not implemented on Windows)
+  transport: http             # http (default, token) or ssh (private key)
   ssh_key_path: ""            # path to SSH private key (optional, only needed for SSH)
   sigma_repo_url: "https://github.com/SigmaHQ/sigma.git"
   sigma_repo_path: "sigma"    # local path to the sigma repo (relative, no '..' traversal, not absolute)
@@ -84,6 +84,14 @@ is true — i.e. `offline: false` or `contrib: true`; a fully offline run (`offl
 **Offline / contrib:** `offline: true` uses the existing repo as-is (no pull, complete repo required).
 `contrib: true` enables the push to the fork at the end; by default (`false`) commits stay local.
 The CLI flags `--offline` / `--contrib` force these values to `true`.
+
+**SSH transport:** `git.transport: ssh` clones/fetches/pushes via the `ssh_key_path` private key. At
+startup, `ensure_ssh_host_config()` (`transport.rs`) writes the `IdentityFile`/`UserKnownHostsFile`
+directives into `~/.ssh/config` (idempotent); on Windows the `ssh` binary is resolved through the
+standard locations (Windows OpenSSH, Git for Windows) and used with direct exec (`SshCommand::Program`,
+no shell). When `ssh_key_path` is set, every regression commit is **signed** with pure-Rust ed25519
+(`ssh-key`): the `gpgsig` header is inserted between the committer line and the message, like
+`git commit -S` with `gpg.format = ssh`, so GitHub shows the commit as "Verified".
 
 **CLI flags:** `--author <name>`, `--dry-run`, `--channels-only`, `--all-rules`, `--list-rules`, `--offline`, `--contrib`, `--help` / `-h`.
 
@@ -117,6 +125,8 @@ fork_url = "https://github.com/{author}/sigma"
 SigmaRepo::new()
     ├── set_info_user(author, email)
     ├── set_info_http(token) | set_info_ssh(key_path)
+    ├── [ssh] ensure_ssh_host_config(key_path)   # writes IdentityFile into ~/.ssh/config (warn on failure)
+    ├── [ssh_key_path set] set_signing_key(key_path)   # signs every commit (ed25519, gpgsig)
     ├── set_git_operations(offline, contrib)   # controls pull at startup + final push
     ├── set_remote_url(fork_url) → init() [async]
     │       ├── incomplete/missing repo + offline → actionable bail
@@ -264,11 +274,12 @@ engine.process_events() → engine.get_alerts()
     ├── log stats: events_processed, matches_found (unique rules), alerts_count
     └── for each alert:
         regression.add(&alert) → Option<Vec<String>>
-            ├── None if rule already retired / Uuid::nil() / info.yml exists
+            ├── None if rule already retired / Uuid::nil() / valid info.yml exists
+            ├── EVTX export failure → None too: rule stays loaded, re-captured later
             └── Some(files):
                 ├── RegressionData::for_rule(header, output_path, rule_rel_path, author, description)
                 ├── write <rule_id>.json (event_json_raw of first matching event, pretty JSON)
-                ├── write <rule_id>.evtx via EvtExportLog (or .xml fallback)
+                ├── write <rule_id>.evtx via EvtExportLog (validated ≥ 1 record + retry)
                 ├── write info.yml
                 ├── append "regression_tests_path" to the source rule YAML
                 └── retire the rule (regression.retired + rules.remove_id)
@@ -288,7 +299,7 @@ upload_regression() → upload_rule_batches()   # in sigmacatch-repo
 ```text
 <sigma_repo_path>/regression_data/<rule_rel_path>/
     ├── <rule_id>.json      # first matching event (raw Winevt JSON, original EventData key names)
-    ├── <rule_id>.evtx      # valid EVTX via EvtExportLog (or .xml fallback)
+    ├── <rule_id>.evtx      # valid EVTX via EvtExportLog (non-Windows: no data generated)
     └── info.yml            # SigmaHQ-compatible metadata
 ```
 
@@ -411,9 +422,18 @@ regression_tests_info:
 
 - **Windows**: `EvtExportLog` API (winevt) — re-queries the event by RecordID and exports a valid binary `.evtx`
   - `EvtExportLog(None, channel, query, path, EvtExportLogChannelPath | EvtExportLogOverwrite)`
-  - **Known limitation**: race condition with log retention — if the event has been purged between collection and export, the call fails silently (`ERROR_EVT_QUERY_RESULT_STALE`)
-- **Fallback**: raw XML written as `.xml` (not `.evtx` — avoids an invalid binary that would break downstream tools)
-- **Non-Windows**: raw XML fallback as `.xml`
+  - **Validation**: the exported file is re-parsed (`input_evtx::parse_evtx_file`) and must contain ≥ 1 record.
+    `EvtExportLog` reports success even when the query matched 0 events (header-only file) — an empty or
+    corrupt file is a failure, not a success.
+  - **Retry**: 4 attempts total (1 initial + 3 retries) with short backoff (2s/5s/10s) — the retention race is often transient.
+  - **On failure** the partial `.json` is deleted, an error is returned, the rule is skipped this cycle
+    (no commit) and re-captured on a later cycle.
+  - **Known limitation**: race condition with log retention — if the event has been purged between collection
+    and export, the call fails silently (`ERROR_EVT_QUERY_RESULT_STALE`)
+- **Self-healing**: rules whose committed data is invalid (empty EVTX) are excluded from the skip set
+  (`get_sigma_id` via `data_file_is_valid`, and `pending_regression_rule_ids` via `.evtx` blob validation)
+  → regenerated on the next run.
+- **Non-Windows**: no data is generated (the Winevt collector is a stub) and `write_evtx` errors.
 
 ### Logger (`crates/sigmacatch-logger/src/lib.rs`)
 
@@ -427,8 +447,10 @@ regression_tests_info:
 
 | Dependency | Usage |
 |---|---|
-| `grit-lib` | all git operations (clone, fetch, push, branch, commit, checkout) via HTTP, pure Rust |
+| `grit-lib` | all git operations (clone, fetch, push, branch, commit, checkout) via HTTP (token) and SSH (key), pure Rust |
 | `reqwest` (blocking + async) | HTTP client for git transport |
+| `ssh-key` | ed25519 commit signing (`gpgsig` header, pure Rust) |
+| `zeroize` | zeroes secrets in memory (GitHub token) |
 | `rsigma-eval` + `rsigma-parser` | Sigma rule loading/evaluation |
 | `tokio` | async runtime |
 | `tracing` + `tracing-subscriber` | logging |

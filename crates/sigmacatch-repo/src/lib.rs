@@ -13,7 +13,10 @@
 pub(crate) mod branch;
 pub(crate) mod plumbing;
 pub(crate) mod porcelain;
+pub(crate) mod signing;
 pub(crate) mod transport;
+
+pub use crate::transport::ensure_ssh_host_config;
 
 #[cfg(test)]
 mod regression_tests;
@@ -42,11 +45,11 @@ pub struct SigmaRepo {
     // User info for git commits (defaults from Config)
     author: String,
     email: String,
-    // Transport configuration
-    token: Option<String>,
+    token: Option<zeroize::Zeroizing<String>>,
     transport: GitTransport,
     ssh_key_path: Option<String>,
-    // Operation modes
+    // Optional ed25519 key for signing regression commits (pure-Rust ssh-key)
+    signing_key: Option<PathBuf>,
     offline: bool,
     contrib: bool,
 }
@@ -62,6 +65,7 @@ impl SigmaRepo {
             token: None,
             transport: GitTransport::default(),
             ssh_key_path: None,
+            signing_key: None,
             offline: false,
             contrib: false,
         }
@@ -79,7 +83,7 @@ impl SigmaRepo {
         self.token = if token.trim().is_empty() {
             None
         } else {
-            Some(token.trim().to_string())
+            Some(zeroize::Zeroizing::new(token.trim().to_string()))
         };
     }
 
@@ -87,6 +91,13 @@ impl SigmaRepo {
     pub fn set_info_ssh(&mut self, ssh_key_path: Option<&str>) {
         self.transport = GitTransport::Ssh;
         self.ssh_key_path = ssh_key_path.map(String::from);
+    }
+
+    /// Set an ed25519 OpenSSH private key used to sign every regression commit
+    /// (pure-Rust signing, no `ssh-keygen`/`gpg` binary needed). `None`
+    /// disables signing.
+    pub fn set_signing_key(&mut self, signing_key: Option<PathBuf>) {
+        self.signing_key = signing_key;
     }
 
     /// Set git operation modes.
@@ -144,11 +155,11 @@ impl SigmaRepo {
             let token = self.token.clone();
             let ssh_key_path = self.ssh_key_path.clone();
             let result = match transport {
-                GitTransport::Http => {
-                    tokio::task::spawn_blocking(move || git_pull(&git_dir_clone, token.as_deref()))
-                        .await
-                        .map_err(|e| anyhow::anyhow!("Pull task panicked: {}", e))
-                }
+                GitTransport::Http => tokio::task::spawn_blocking(move || {
+                    git_pull(&git_dir_clone, token.as_ref().map(|t| t.as_str()))
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("Pull task panicked: {}", e)),
                 GitTransport::Ssh => {
                     let result = tokio::task::spawn_blocking(move || {
                         git_pull_ssh(&git_dir_clone, ssh_key_path.as_deref())
@@ -246,9 +257,9 @@ impl SigmaRepo {
             }
             GitTransport::Ssh => {
                 let ssh_url = https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
-                let ssh_cmd =
+                let ssh_mode =
                     crate::transport::build_ssh_shell_command(self.ssh_key_path.as_deref());
-                crate::plumbing::fetch_remote_ssh(git_dir, &ssh_url, ssh_cmd.as_str(), &opts)
+                crate::plumbing::fetch_remote_ssh(git_dir, &ssh_url, &ssh_mode, &opts)
             }
         };
         if let Err(e) = outcome {
@@ -266,15 +277,12 @@ impl SigmaRepo {
 
     /// Collect the rule ids that already have regression data on any remote
     /// `sigmacatch/*` branch (pending PRs not yet merged into main), without
-    /// touching the working tree.
+    /// touching the working tree. Walks each branch's `regression_data/` tree
+    /// for files whose stem is a `Uuid` (the generator commits `<rule_id>.json`,
+    /// `<rule_id>.evtx` and `info.yml` in one atomic commit). Rules whose EVTX
+    /// is broken (empty export) are excluded so they get re-captured.
     ///
-    /// Each branch's tree is walked in memory: the `regression_data/` subtree
-    /// is scanned for data files whose filename stem parses as a `Uuid` (the
-    /// generator always writes `<rule_id>.json` + `<rule_id>.evtx`/`.xml` next
-    /// to `info.yml`, so a committed `<uuid>.*` file is a trustworthy marker).
-    /// Union of all branches; `HashSet` dedupes branches that share ids (e.g.
-    /// a merged PR whose branch was not yet deleted). Best-effort in offline
-    /// mode: only the refs already fetched locally are scanned.
+    /// Best-effort offline: only the locally fetched refs are scanned.
     pub fn pending_regression_rule_ids(&self) -> Result<Vec<Uuid>> {
         let git_dir = self.repo_path.join(".git");
         let branches = crate::plumbing::list_sigmacatch_remote_refs(&git_dir)?;
@@ -282,7 +290,8 @@ impl SigmaRepo {
             return Ok(Vec::new());
         }
         let odb = crate::plumbing::open_odb(&git_dir);
-        let mut ids: HashSet<Uuid> = HashSet::new();
+        let mut valid: HashSet<Uuid> = HashSet::new();
+        let mut broken: HashSet<Uuid> = HashSet::new();
         for (refname, oid) in branches {
             let obj = odb
                 .read(&oid)
@@ -296,13 +305,16 @@ impl SigmaRepo {
                 .map_err(|e| anyhow::anyhow!("Failed to parse tree of '{}': {}", refname, e))?;
             for entry in entries {
                 if entry.mode == 0o040000 && entry.name.as_slice() == b"regression_data" {
-                    collect_tree_rule_ids(&odb, entry.oid, &mut ids)?;
+                    collect_tree_rule_ids(&odb, entry.oid, &mut valid, &mut broken)?;
                 }
             }
         }
+        // Broken data (e.g. empty EVTX) must not skip the rule: re-capture it.
+        let ids: HashSet<Uuid> = valid.difference(&broken).copied().collect();
         info!(
-            "{} rule ids found in pending sigmacatch/* branches",
-            ids.len()
+            "{} rule ids found in pending sigmacatch/* branches ({} with broken data)",
+            ids.len(),
+            broken.len()
         );
         Ok(ids.into_iter().collect())
     }
@@ -458,9 +470,11 @@ impl SigmaRepo {
 
         match transport {
             GitTransport::Http => {
-                tokio::task::spawn_blocking(move || git_clone(&url, &path, token.as_deref()))
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Clone task panicked: {}", e))??;
+                tokio::task::spawn_blocking(move || {
+                    git_clone(&url, &path, token.as_ref().map(|t| t.as_str()))
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("Clone task panicked: {}", e))??;
             }
             GitTransport::Ssh => {
                 let ssh_url = https_to_ssh_url(&url)
@@ -513,7 +527,14 @@ impl SigmaRepo {
             }
         } else {
             git_add(&git_dir, &self.repo_path, &valid)?;
-            git_commit(&git_dir, &self.repo_path, message.as_str(), name, addr)?;
+            git_commit(
+                &git_dir,
+                &self.repo_path,
+                message.as_str(),
+                name,
+                addr,
+                self.signing_key.as_deref(),
+            )?;
             info!("Committed {} file(s)", valid.len());
         }
 
@@ -621,9 +642,9 @@ impl SigmaRepo {
             GitTransport::Ssh => {
                 let remote_url = crate::plumbing::read_remote_url_from_config(&git_dir, "origin")?;
                 let ssh_url = https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
-                let ssh_cmd =
+                let ssh_mode =
                     crate::transport::build_ssh_shell_command(self.ssh_key_path.as_deref());
-                crate::plumbing::push_branch_ssh(&git_dir, &ssh_url, branch, ssh_cmd.as_str())
+                crate::plumbing::push_branch_ssh(&git_dir, &ssh_url, branch, &ssh_mode)
             }
         }
     }
@@ -640,6 +661,7 @@ impl Default for SigmaRepo {
             token: None,
             transport: GitTransport::default(),
             ssh_key_path: None,
+            signing_key: None,
             offline: false,
             contrib: false,
         }
@@ -659,19 +681,16 @@ fn is_repo_complete(git_dir: &Path) -> bool {
     crate::plumbing::open_odb(git_dir).read(&head).is_ok()
 }
 
-/// Recursively walk a git tree in memory and collect every data filename whose
-/// stem parses as a `Uuid` — the generator's `<rule_id>.json` / `.evtx` /
-/// `.xml` markers inside `regression_data/`. Never touches the working tree.
-///
-/// A committed `<uuid>.<ext>` file is a trustworthy skip marker because the
-/// generator only ever commits the full triplet (`<rule_id>.json` +
-/// `<rule_id>.evtx`/`.xml` + `info.yml`) in a single atomic per-rule commit.
+/// Recursively walk a git tree in memory and collect `<uuid>` data filenames
+/// under `regression_data/` (the generator's skip markers). Never touches the
+/// working tree. `.evtx` blobs are parsed to validate they contain records.
 fn collect_tree_rule_ids(
     odb: &grit_lib::odb::Odb,
     tree_oid: ObjectId,
-    ids: &mut HashSet<Uuid>,
+    valid: &mut HashSet<Uuid>,
+    broken: &mut HashSet<Uuid>,
 ) -> Result<()> {
-    collect_tree_rule_ids_depth(odb, tree_oid, ids, 0)
+    collect_tree_rule_ids_depth(odb, tree_oid, valid, broken, 0)
 }
 
 const MAX_REGRESSION_TREE_DEPTH: u32 = 32;
@@ -679,7 +698,8 @@ const MAX_REGRESSION_TREE_DEPTH: u32 = 32;
 fn collect_tree_rule_ids_depth(
     odb: &grit_lib::odb::Odb,
     tree_oid: ObjectId,
-    ids: &mut HashSet<Uuid>,
+    valid: &mut HashSet<Uuid>,
+    broken: &mut HashSet<Uuid>,
     depth: u32,
 ) -> Result<()> {
     if depth > MAX_REGRESSION_TREE_DEPTH {
@@ -690,12 +710,35 @@ fn collect_tree_rule_ids_depth(
     let entries = grit_lib::objects::parse_tree(&obj.data)?;
     for entry in entries {
         if entry.mode == 0o040000 {
-            collect_tree_rule_ids_depth(odb, entry.oid, ids, depth + 1)?;
+            collect_tree_rule_ids_depth(odb, entry.oid, valid, broken, depth + 1)?;
         } else if matches!(entry.mode, 0o100644 | 0o100755) {
             let name = String::from_utf8_lossy(&entry.name);
             let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(&name);
             if let Ok(id) = Uuid::parse_str(stem) {
-                ids.insert(id);
+                if name.ends_with(".evtx") {
+                    // Empty/undecodable EVTX blob = the empty-export bug: do not
+                    // skip the rule so it is re-captured with valid data.
+                    match odb.read(&entry.oid) {
+                        Ok(blob) => match input_evtx::parse_evtx_bytes(&blob.data) {
+                            Ok(events) if !events.is_empty() => {
+                                valid.insert(id);
+                            }
+                            _ => {
+                                warn!(
+                                    "rule {} excluded from pending skip-set: broken EVTX '{}' (will be re-captured)",
+                                    id, name
+                                );
+                                broken.insert(id);
+                            }
+                        },
+                        Err(e) => {
+                            warn!("failed to read EVTX blob '{}': {}", name, e);
+                            broken.insert(id);
+                        }
+                    }
+                } else {
+                    valid.insert(id);
+                }
             }
         }
     }
@@ -1022,7 +1065,10 @@ mod tests {
         let mut repo = SigmaRepo::new();
         repo.set_info_http("ghp_token123");
         assert_eq!(repo.transport, GitTransport::Http);
-        assert_eq!(repo.token, Some("ghp_token123".to_string()));
+        assert_eq!(
+            repo.token.as_ref().map(|t| t.as_str()),
+            Some("ghp_token123")
+        );
     }
 
     #[test]
@@ -1052,7 +1098,7 @@ mod tests {
     /// Build a remote ref `sigmacatch/<date>` whose commit tree contains the
     /// given `regression_data` files, and return the `SigmaRepo` configured on
     /// the next working branch.
-    fn setup_pending_branch(tmp: &tempfile::TempDir, rel_files: &[(&str, &str)]) -> SigmaRepo {
+    fn setup_pending_branch(tmp: &tempfile::TempDir, rel_files: &[(&str, &[u8])]) -> SigmaRepo {
         make_committed_repo(tmp);
         let git_dir = tmp.path().join(".git");
         let odb = crate::plumbing::open_odb(&git_dir);
@@ -1084,21 +1130,53 @@ mod tests {
 
     /// Rule ids committed on a pending-PR branch (not merged into main) must be
     /// returned, so a fresh VM's skip set covers them. Non-`<uuid>` files are
-    /// ignored.
+    /// ignored. Rules whose committed `.evtx` has no records (empty-export bug)
+    /// are excluded so they are re-captured with valid data.
     #[test]
     fn test_pending_regression_rule_ids_from_remote_branch() {
         let tmp = tempfile::tempdir().unwrap();
         let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
+        let id3 = Uuid::new_v4();
         let repo = setup_pending_branch(
             &tmp,
             &[
-                (&format!("regression_data/rules/win/a/{id1}.json"), "{}"),
-                (&format!("regression_data/rules/win/a/{id1}.evtx"), "e"),
-                ("regression_data/rules/win/a/info.yml", "test: x\n"),
-                (&format!("regression_data/rules/win/b/{id2}.json"), "{}"),
-                ("regression_data/rules/win/b/info.yml", "test: x\n"),
-                ("regression_data/rules/win/b/not-a-rule.txt", "x"),
+                (
+                    &format!("regression_data/rules/win/a/{id1}.json"),
+                    b"{}".as_slice(),
+                ),
+                (
+                    &format!("regression_data/rules/win/a/{id1}.evtx"),
+                    include_bytes!("../tests/fixtures/valid-single.evtx").as_slice(),
+                ),
+                (
+                    "regression_data/rules/win/a/info.yml",
+                    b"test: x\n".as_slice(),
+                ),
+                (
+                    &format!("regression_data/rules/win/b/{id2}.json"),
+                    b"{}".as_slice(),
+                ),
+                (
+                    "regression_data/rules/win/b/info.yml",
+                    b"test: x\n".as_slice(),
+                ),
+                (
+                    "regression_data/rules/win/b/not-a-rule.txt",
+                    b"x".as_slice(),
+                ),
+                (
+                    &format!("regression_data/rules/win/c/{id3}.json"),
+                    b"{}".as_slice(),
+                ),
+                (
+                    &format!("regression_data/rules/win/c/{id3}.evtx"),
+                    b"x".as_slice(),
+                ),
+                (
+                    "regression_data/rules/win/c/info.yml",
+                    b"test: x\n".as_slice(),
+                ),
             ],
         );
 
@@ -1132,7 +1210,10 @@ mod tests {
         let rel = format!("regression_data/rules/win/a/{id}.json");
         setup_pending_branch(
             &tmp,
-            &[(&rel, "{}"), ("regression_data/rules/win/a/info.yml", "x")],
+            &[
+                (&rel, b"{}".as_slice()),
+                ("regression_data/rules/win/a/info.yml", b"x".as_slice()),
+            ],
         );
 
         let git_dir = tmp.path().join(".git");

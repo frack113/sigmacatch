@@ -154,11 +154,10 @@ impl Event {
 
         let category = get_category(&channel, event_id)
             .map(|c| {
-                // Sysmon EventID 12 covers both registry add (CreateKey) and
-                // registry delete (DeleteKey/DeleteValue). The subcategory table
-                // can only carry one value per channel:event_id, so refine by
-                // EventType here so `registry_delete` rules are not pruned by a
-                // conflicting injected `registry_add` category.
+                // Sysmon EventID 12 is both registry add (CreateKey) and
+                // delete (DeleteKey/DeleteValue); the subcategory table holds
+                // one value per channel:event_id, so refine by EventType here
+                // or injected `registry_add` would prune `registry_delete` rules.
                 if c == "registry_add" && is_registry_delete_event_type(&self.event_json) {
                     "registry_delete"
                 } else {
@@ -313,15 +312,12 @@ fn get_category(channel: &str, event_id: u32) -> Option<&'static str> {
         .or_else(|| CHANNEL_EVENT_TO_CATEGORY.get(&key).copied())
 }
 
-/// Category-exclusive Windows channels: their only purpose is to carry a
-/// single Sigma category (PowerShell logging). An event in one of these
-/// channels whose EventID is not mapped is *not* that category — a
-/// PowerShell console error (EventID 4100) is never `ps_module` (4103) nor
-/// `ps_script` (4104). Injecting a synthetic value that conflicts with every
-/// `ps_module`/`ps_script`/`ps_classic_*` rule turns the fail-open logsource
-/// pruning fail-closed for these events (the reference SigmaHQ harness maps
-/// `ps_module` to EventID 4103 only, so such a match would be a false
-/// positive). Rules targeting `service: powershell` are unaffected.
+/// Category-exclusive PowerShell channels: an event whose EventID is not
+/// mapped (e.g. console error 4100) is never `ps_module` (4103) nor
+/// `ps_script` (4104). Injecting a conflicting sentinel turns the fail-open
+/// logsource pruning fail-closed, avoiding false positives (the reference
+/// harness maps `ps_module` to 4103 only). `service: powershell` rules are
+/// unaffected.
 fn category_exclusive_sentinel(channel: &str) -> Option<&'static str> {
     match channel {
         "Microsoft-Windows-PowerShell/Operational"
@@ -345,10 +341,8 @@ fn is_registry_delete_event_type(event_json: &Value) -> bool {
 
 // ─── XML parsing ────────────────────────────────────────────────────────────
 
-/// Maximum allowed size for a Winevt XML event (1 MB).
-///
-/// Winevt events are typically well under this limit. This prevents
-/// memory exhaustion from malformed or excessively large input.
+/// Maximum allowed size for a Winevt XML event (1 MB) — prevents memory
+/// exhaustion from malformed or excessively large input.
 const MAX_XML_SIZE: usize = 1024 * 1024;
 
 /// Convert a decimal string to a JSON number when it parses cleanly.
@@ -1031,7 +1025,6 @@ mod tests {
         </Event>"#;
         let result = parse_winevt_xml(xml).unwrap();
         let event_data = result["Event"]["EventData"].as_object().unwrap();
-        // Last value wins when duplicate names exist
         assert_eq!(event_data["Image"].as_str().unwrap(), "second.exe");
     }
 

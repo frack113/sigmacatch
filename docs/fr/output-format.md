@@ -124,7 +124,7 @@ regression_tests_path: regression_data/rules/<rule_rel_path>/info.yml
 Le champ `type` de `regression_tests_info` (et la lecture des info.yml existants) reconnaît
 4 types (`crates/sigmacatch-regression/src/logtype.rs`) : `evtx`, `json`, `raw`, `log`
 — une valeur inconnue/absente retombe sur `json` avec un `warn!`. Le pipeline écrit toujours
-`.json` + `.evtx` (fallback `.xml`) ; un `.raw` est possible pour des données non-Winevt
+`.json` + `.evtx` ; un `.raw` est possible pour des données non-Winevt
 (ex. `regression_data/rules/cisco/aaa/cisco_cli_dot1x_disabled/ef0ff092-....raw`, `type: raw`,
 généré hors pipeline — sa section `regression_tests_info` est commentée).
 
@@ -133,5 +133,7 @@ généré hors pipeline — sa section `regression_tests_info` est commentée).
 - **Un event par règle** : chaque répertoire de régression contient exactement un event JSON.
   Seul le premier event correspondant est capturé.
 - **EVTX binaire valide** : `<rule_id>.evtx` est écrit via `EvtExportLog` API (Windows) qui re-queries l'event par RecordID depuis le live log.
-  Si `EvtExportLog` échoue (event purgé) ou sur non-Windows → fallback `.xml` (raw XML, pas de binaire invalide).
+  Le fichier exporté est **validé** (re-parse ≥ 1 record) avec retry à backoff court ; un export vide/corrompu
+  (événement purgé entre collecte et export) est une erreur : la règle est sautée ce cycle (pas de commit)
+  et re-capturée plus tard. Hors Windows, aucune donnée n'est générée (le collecteur Winevt est un stub).
   Le `.json` compagnon porte les données réelles pour le matching Sigma.

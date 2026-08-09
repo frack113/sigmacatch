@@ -12,6 +12,7 @@ pub(crate) mod commit;
 pub(crate) mod fetch;
 pub(crate) mod index;
 pub(crate) mod init;
+pub(crate) mod long_path;
 pub(crate) mod pack;
 pub(crate) mod push;
 pub(crate) mod refs;

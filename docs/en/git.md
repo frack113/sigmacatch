@@ -20,7 +20,7 @@ Based on the remote ref if present (else HEAD) to keep fast-forward. The narrow 
 
 ### Multi-branch skip set (pending PRs)
 
-`pending_regression_rule_ids()` (`SigmaRepo`) scans the trees of ALL remote `sigmacatch/*` branches (never a checkout — `list_refs` + in-RAM walk of `regression_data/`, ids extracted from `<uuid>.<ext>` filenames). Union with the worktree → a fresh VM does not re-capture data from a still-open PR of another day; the new PR diff stays based on main (previous PR data never included). Offline = best-effort (already-fetched refs only).
+`pending_regression_rule_ids()` (`SigmaRepo`) scans the trees of ALL remote `sigmacatch/*` branches (never a checkout — `list_refs` + in-RAM walk of `regression_data/`, ids extracted from `<uuid>.<ext>` filenames). Union with the worktree → a fresh VM does not re-capture data from a still-open PR of another day; the new PR diff stays based on main (previous PR data never included). `<uuid>.evtx` blobs are validated (parse ≥ 1 record): an empty/corrupt EVTX excludes the rule from the skip set (self-healing of empty commits). Offline = best-effort (already-fetched refs only).
 
 ### Remote working-branch guard
 
@@ -41,5 +41,7 @@ Based on the remote ref if present (else HEAD) to keep fast-forward. The narrow 
 ## Git configuration
 
 `git.contrib` is opt-in: `true` (or `--contrib`) enables pushing to the fork; `false` (default) = local commits only, no push. `needs_network()` = `!offline || contrib` — a GitHub token is required only when a network operation (pull or push) is active.
+
+**SSH transport**: `git.transport: ssh` + `ssh_key_path` (ed25519 key). `ensure_ssh_host_config()` writes the `IdentityFile`/`UserKnownHostsFile` directives into `~/.ssh/config` before transport ops (idempotent); on Windows, `ssh` is resolved via Windows OpenSSH / Git for Windows and executed directly (`SshCommand::Program`). When `ssh_key_path` is set, every regression commit is signed with pure-Rust ed25519 (`ssh-key`, `gpgsig` header like `git commit -S` + `gpg.format = ssh`) → GitHub shows "Verified".
 
 See `config.yaml` and the general invariants in [`architecture-reference.md`](architecture-reference.md) for the full configuration.

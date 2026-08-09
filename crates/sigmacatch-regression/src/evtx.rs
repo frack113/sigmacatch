@@ -1,44 +1,60 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-use anyhow::{Context, Result};
+use anyhow::anyhow;
+#[cfg(windows)]
+use anyhow::Context;
+use anyhow::Result;
 use std::path::Path;
+#[cfg(windows)]
+use std::thread::sleep;
+#[cfg(windows)]
+#[cfg(windows)]
+use std::time::Duration;
+
+/// Total `EvtExportLog` attempts (initial + retries) before giving up.
+#[cfg(windows)]
+const EVTX_EXPORT_MAX_ATTEMPTS: u32 = 4;
+
+/// Backoff (seconds) between failed `EvtExportLog` attempts.
+#[cfg(windows)]
+const EVTX_EXPORT_BACKOFF_SECS: [u64; (EVTX_EXPORT_MAX_ATTEMPTS - 1) as usize] = [2, 5, 10];
 
 /// Write a valid EVTX file from a matched event.
 ///
-/// On Windows, uses `EvtExportLog` to re-query the specific event by
-/// RecordID and export it to a valid binary `.evtx` file.
-///
-/// Falls back to writing raw XML as `.xml` (not `.evtx`) if:
-/// - RecordID or channel are unavailable
-/// - EvtExportLog fails (event may have rotated out of retention)
-/// - Non-Windows platform
-///
-/// **Known limitation:** `EvtExportLog` re-queries the live event log. If the
-/// event has rotated out of the channel's retention window between collection
-/// and export, the call will fail silently (ERROR_EVT_QUERY_RESULT_STALE).
-/// This is inherent to the architecture — we store XML, not binary event data.
+/// `EvtExportLog` returns success even for a zero-record match (header-only
+/// file), so every successful call is re-parsed; an empty file is retried
+/// (the live-log race may be transient) then treated as failure and the
+/// `.evtx` is removed.
 #[cfg(windows)]
-pub fn write_evtx(xml: &str, channel: &str, record_id: Option<u64>, path: &Path) -> Result<()> {
+pub fn write_evtx(_xml: &str, channel: &str, record_id: Option<u64>, path: &Path) -> Result<()> {
     use windows::core::HSTRING;
     use windows::Win32::System::EventLog::{
         EvtExportLog, EvtExportLogChannelPath, EvtExportLogOverwrite,
     };
 
-    if let Some(rid) = record_id {
-        if !channel.is_empty() {
-            let query = format!("*[System[EventRecordID={}]]", rid);
-            let result = unsafe {
-                EvtExportLog(
-                    None,
-                    &HSTRING::from(channel),
-                    &HSTRING::from(&query),
-                    &HSTRING::from(path.as_os_str()),
-                    EvtExportLogChannelPath.0 | EvtExportLogOverwrite.0,
-                )
-            };
-            match result {
-                Ok(()) => {
+    let rid = record_id.ok_or_else(|| anyhow!("Cannot export EVTX: no record id"))?;
+    if channel.is_empty() {
+        return Err(anyhow!("Cannot export EVTX: empty channel"));
+    }
+
+    let path = crate::long_path::long_path(path);
+    let query = format!("*[System[EventRecordID={}]]", rid);
+
+    for attempt in 0..EVTX_EXPORT_MAX_ATTEMPTS {
+        let result = unsafe {
+            EvtExportLog(
+                None,
+                &HSTRING::from(channel),
+                &HSTRING::from(&query),
+                &HSTRING::from(path.as_os_str()),
+                EvtExportLogChannelPath.0 | EvtExportLogOverwrite.0,
+            )
+        };
+
+        match result {
+            Ok(()) => match exported_has_records(&path) {
+                Ok(true) => {
                     tracing::info!(
                         "Wrote EVTX via EvtExportLog: {} (channel={}, rid={})",
                         path.display(),
@@ -47,35 +63,74 @@ pub fn write_evtx(xml: &str, channel: &str, record_id: Option<u64>, path: &Path)
                     );
                     return Ok(());
                 }
+                Ok(false) => {
+                    tracing::warn!(
+                        "EvtExportLog succeeded but produced an empty EVTX for {} (channel={}, rid={}, attempt {}): query matched 0 records",
+                        path.display(),
+                        channel,
+                        rid,
+                        attempt + 1
+                    );
+                }
                 Err(e) => {
                     tracing::warn!(
-                        "EvtExportLog failed for {} (rid={}): {} — event may have rotated out of log retention, writing XML fallback",
+                        "EvtExportLog wrote an unreadable EVTX for {} (channel={}, rid={}, attempt {}): {}",
                         path.display(),
+                        channel,
                         rid,
+                        attempt + 1,
                         e
                     );
                 }
+            },
+            Err(e) => {
+                tracing::warn!(
+                    "EvtExportLog failed for {} (channel={}, rid={}, attempt {}): {}",
+                    path.display(),
+                    channel,
+                    rid,
+                    attempt + 1,
+                    e
+                );
             }
+        }
+
+        if attempt + 1 < EVTX_EXPORT_MAX_ATTEMPTS {
+            sleep(Duration::from_secs(
+                EVTX_EXPORT_BACKOFF_SECS[attempt as usize],
+            ));
         }
     }
 
-    // Fallback: write raw XML as .xml (not .evtx — invalid binary would break downstream tools)
-    let xml_path = path.with_extension("xml");
-    std::fs::write(&xml_path, xml)
-        .with_context(|| format!("Failed to write XML fallback: {}", xml_path.display()))?;
-    tracing::warn!(
-        "Wrote XML fallback (not valid EVTX): {} — use EvtExportLog on Windows for binary EVTX",
-        xml_path.display()
-    );
-    Ok(())
+    // Remove the header-only `.evtx` so no invalid binary is committed.
+    if path.exists() {
+        let _ = std::fs::remove_file(&path);
+    }
+
+    Err(anyhow!(
+        "EvtExportLog produced no records for {} (channel={}, rid={}) after {} attempts — \
+         the event likely rotated out of log retention; the rule will be re-captured on a later cycle",
+        path.display(),
+        channel,
+        rid,
+        EVTX_EXPORT_MAX_ATTEMPTS
+    ))
 }
 
-/// Non-Windows fallback: write raw XML as .xml (no Windows API available).
+/// Verify the exported file contains at least one parseable record.
+#[cfg(windows)]
+fn exported_has_records(path: &Path) -> Result<bool> {
+    let path = crate::long_path::long_path(path);
+    let events = input_evtx::parse_evtx_file(&path)
+        .with_context(|| format!("Failed to parse exported EVTX {}", path.display()))?;
+    Ok(!events.is_empty())
+}
+
+/// Non-Windows has no `EvtExportLog`: error so the rule is skipped this cycle
+/// rather than producing an unreadable file.
 #[cfg(not(windows))]
-pub fn write_evtx(xml: &str, _channel: &str, _record_id: Option<u64>, path: &Path) -> Result<()> {
-    let xml_path = path.with_extension("xml");
-    std::fs::write(&xml_path, xml)
-        .with_context(|| format!("Failed to write XML: {}", xml_path.display()))?;
-    tracing::info!("Wrote XML (non-Windows): {}", xml_path.display());
-    Ok(())
+pub fn write_evtx(_xml: &str, _channel: &str, _record_id: Option<u64>, _path: &Path) -> Result<()> {
+    Err(anyhow!(
+        "EVTX export via EvtExportLog is Windows-only; no local data on non-Windows"
+    ))
 }

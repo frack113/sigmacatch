@@ -14,15 +14,12 @@ use tracing_subscriber::{
     fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer, Registry,
 };
 
-/// Initialise les deux couches de logging :
-/// - **stderr** : format lisible par un humain (niveau + message), niveau info par défaut
-/// - **fichier** : format structuré complet (module, fichier, ligne), niveau configurable
+/// Initialise les deux couches de logging : stderr lisible + fichier structuré.
 pub fn init(config: &Config) -> Result<WorkerGuard> {
     let log_dir = PathBuf::from("logs");
     fs::create_dir_all(&log_dir)
         .with_context(|| format!("Failed to create log directory: {}", log_dir.display()))?;
 
-    // === Console (stderr) — format lisible ===
     let stderr_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
@@ -33,7 +30,6 @@ pub fn init(config: &Config) -> Result<WorkerGuard> {
         .with_line_number(false)
         .with_filter(stderr_filter);
 
-    // === Fichier — format structuré complet ===
     let file_appender = tracing_appender::rolling::RollingFileAppender::builder()
         .rotation(tracing_appender::rolling::Rotation::DAILY)
         .max_log_files(3)

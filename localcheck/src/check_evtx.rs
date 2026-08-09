@@ -260,7 +260,6 @@ fn main() {
             continue;
         }
 
-        // Clone events for debug output before they're consumed
         let events_for_debug = events.clone();
 
         // JSON format check: when a committed <rule_id>.json exists, verify our

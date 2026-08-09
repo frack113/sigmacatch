@@ -24,7 +24,7 @@ Every 30s: generate regression triplet for each matched rule
     ↓
 sigma/regression_data/<rule_rel_path>/
     ├── <rule_id>.json    ← flat event (Sigma keys)
-    ├── <rule_id>.evtx    ← valid EVTX (via EvtExportLog) or .xml fallback
+    ├── <rule_id>.evtx    ← valid EVTX (via EvtExportLog, validated ≥1 record; no data on non-Windows)
     └── info.yml          ← SigmaHQ-compatible metadata
     ↓
 commit + push to fork (continuous until Ctrl+C)
@@ -45,6 +45,7 @@ git:
   email: "you@example.com"
   github_token: ""          # GitHub token (or set GITHUB_TOKEN env var) — required for HTTP transport when network is active
   transport: http           # http or ssh
+  ssh_key_path: ""          # path to SSH private key (optional, only needed for SSH)
   sigma_repo_url: "https://github.com/SigmaHQ/sigma.git"
   sigma_repo_path: "sigma"
   offline: false            # true = skip pull at startup (use existing repo as-is)
