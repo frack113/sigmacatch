@@ -25,7 +25,7 @@ use anyhow::Result;
 use grit_lib::objects::ObjectId;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::branch::{create_branch, switch_head};
@@ -275,21 +275,20 @@ impl SigmaRepo {
             }
         };
         if let Err(e) = outcome {
-            let cause = if self.token.is_none() {
-                "missing GitHub token (set git.github_token in config.yaml or GITHUB_TOKEN env)"
-            } else if matches!(self.transport, GitTransport::Ssh) {
+            let cause = if matches!(self.transport, GitTransport::Ssh) {
                 "SSH key invalid or ssh binary unavailable"
+            } else if self.token.is_none() {
+                "missing GitHub token (set git.github_token in config.yaml or GITHUB_TOKEN env)"
             } else {
                 "network unreachable, rate-limited, or authentication failed"
             };
             warn!(
                 "Failed to fetch sigmacatch/* branches from origin ({}): {}\
                  the skip set will only cover the checked-out worktree.\
-                 Re-runs on this repo can still resolve pending-PR data.",
+                 Re-runs on this repo can still resolve pending-PR data: {e}",
                 sanitize_url(&remote_url),
                 cause,
             );
-            debug!("fetch_sigmacatch_branches detail: {e}");
         }
         Ok(())
     }
@@ -745,10 +744,10 @@ fn collect_tree_rule_ids(
 }
 
 const MAX_REGRESSION_TREE_DEPTH: u32 = 32;
-/// Maximum EVTX blob size we are willing to parse in memory (16 MiB).
+/// Maximum EVTX blob size we are willing to parse in memory (64 MiB).
 /// Larger blobs are treated as broken so the rule gets re-captured instead of
 /// consuming unbounded RAM on a corrupted or synthetic blob.
-const MAX_EVTX_BLOB_SIZE: usize = 16 * 1024 * 1024;
+const MAX_EVTX_BLOB_SIZE: usize = 64 * 1024 * 1024;
 
 fn collect_tree_rule_ids_depth(
     odb: &grit_lib::odb::Odb,
