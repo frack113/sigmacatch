@@ -27,7 +27,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process;
 
-const DEFAULT_OUTPUT: &str = "run_atomic.ps";
+const DEFAULT_OUTPUT: &str = "run_atomic.ps1";
 const SLEEP_SECONDS: u64 = 30;
 const TIMEOUT_SECONDS: u64 = 120;
 
