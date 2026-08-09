@@ -395,7 +395,6 @@ mod tests {
         let tmp = tempdir().unwrap();
         let (git_dir, odb) = make_committed_repo(&tmp);
 
-        // Count loose objects before packing
         let objects_dir = git_dir.join("objects");
         let loose_before: usize = std::fs::read_dir(&objects_dir)
             .unwrap()
@@ -408,10 +407,8 @@ mod tests {
             .sum();
         assert!(loose_before > 0, "should have loose objects to pack");
 
-        // Pack
         pack_loose_objects(&git_dir).unwrap();
 
-        // After packing, no loose objects should remain (except pack/info dirs)
         let loose_after: usize = std::fs::read_dir(&objects_dir)
             .unwrap()
             .filter_map(|e| e.ok())
@@ -426,7 +423,6 @@ mod tests {
             "all loose objects should be removed after packing"
         );
 
-        // Pack and idx files should exist
         let pack_dir = objects_dir.join("pack");
         assert!(pack_dir.exists(), "pack directory should exist");
         let pack_files: Vec<_> = std::fs::read_dir(&pack_dir)
@@ -442,7 +438,6 @@ mod tests {
         assert!(!pack_files.is_empty(), "a .pack file should be created");
         assert!(!idx_files.is_empty(), "a .idx file should be created");
 
-        // Object should still be readable via ODB (now from pack)
         let head_oid = crate::plumbing::resolve_head(&git_dir).unwrap();
         assert!(
             odb.read(&head_oid).is_ok(),
@@ -474,10 +469,8 @@ mod tests {
         assert_eq!(pack_files.len(), 1);
         assert_eq!(idx_files.len(), 1);
 
-        // Read the idx file and verify its structure
-        let idx_data = std::fs::read(&idx_files[0].path()).unwrap();
+        let idx_data = std::fs::read(idx_files[0].path()).unwrap();
 
-        // Magic + version
         assert_eq!(&idx_data[0..4], IDX_MAGIC);
         assert_eq!(
             u32::from_be_bytes([idx_data[4], idx_data[5], idx_data[6], idx_data[7]]),
@@ -489,7 +482,6 @@ mod tests {
         let total_count = u32::from_be_bytes([fanout[252], fanout[253], fanout[254], fanout[255]]);
         assert!(total_count > 0, "fanout must report at least one object");
 
-        // OIDs start at 1032, each 20 bytes
         let oid_start = 1032;
         let crc_start = oid_start + (total_count as usize) * 20;
         let offset_table_start = crc_start + (total_count as usize) * 4;
@@ -508,12 +500,10 @@ mod tests {
         let (git_dir, odb) = make_committed_repo(&tmp);
         let head_oid = crate::plumbing::resolve_head(&git_dir).unwrap();
 
-        // Read the commit before packing
         let before = odb.read(&head_oid).unwrap();
 
         pack_loose_objects(&git_dir).unwrap();
 
-        // Read after packing — should yield identical data
         let after = odb.read(&head_oid).unwrap();
         assert_eq!(before.kind, after.kind, "object kind must survive packing");
         assert_eq!(before.data, after.data, "object data must survive packing");

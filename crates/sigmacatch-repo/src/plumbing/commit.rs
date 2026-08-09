@@ -102,7 +102,6 @@ ZfG1KaT0PtFDJ/XFSqtiAAAAEHVzZXJAZXhhbXBsZS5jb20BAgMEBQ==
         let git_dir = tmp.join(".git");
         init_repo(&git_dir, tmp, "https://example.com/sigma.git").unwrap();
 
-        // Write an initial file and commit it unsigned so we have a parent.
         std::fs::write(tmp.join("README.md"), "# test\n").unwrap();
         let odb = open_odb(&git_dir);
         let mut index = grit_lib::index::Index::new();
@@ -137,7 +136,6 @@ ZfG1KaT0PtFDJ/XFSqtiAAAAEHVzZXJAZXhhbXBsZS5jb20BAgMEBQ==
         let path = dir.join("id_ed25519");
         std::fs::write(&path, TEST_KEY).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-        // Generate the public key and write it as the allowed signers file.
         let pub_key = Command::new("ssh-keygen")
             .args(["-y", "-f", path.to_str().unwrap()])
             .output()
@@ -192,7 +190,6 @@ ZfG1KaT0PtFDJ/XFSqtiAAAAEHVzZXJAZXhhbXBsZS5jb20BAgMEBQ==
         let (git_dir, work_tree) = setup_repo(tmp.path());
         let key = write_test_key(&git_dir, tmp.path());
 
-        // Stage a new file.
         std::fs::write(work_tree.join("new.txt"), "hello\n").unwrap();
         let mut index = grit_lib::index::Index::new();
         crate::plumbing::add_file_to_index(
@@ -204,7 +201,6 @@ ZfG1KaT0PtFDJ/XFSqtiAAAAEHVzZXJAZXhhbXBsZS5jb20BAgMEBQ==
         .unwrap();
         write_index(&git_dir, &index).unwrap();
 
-        // Commit with our signing key.
         let odb = open_odb(&git_dir);
         let tree = write_tree_from_index(&odb, &index, "").unwrap();
         commit_tree(
@@ -266,7 +262,7 @@ ZfG1KaT0PtFDJ/XFSqtiAAAAEHVzZXJAZXhhbXBsZS5jb20BAgMEBQ==
         crate::plumbing::add_file_to_index(
             &git_dir,
             &tmp.path().join("README.md"),
-            &tmp.path(),
+            tmp.path(),
             &mut index,
         )
         .unwrap();

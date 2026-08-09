@@ -48,9 +48,8 @@ impl DetectionEngine {
             parse_pipeline(WINDOWS_PIPELINE).map_err(|e| anyhow!("windows pipeline: {e}"))?;
         let mut engine = Self::create_engine(&flatten, &windows)?;
 
-        // Use add_rules (references) instead of add_collection(&to_collection())
-        // to avoid cloning the entire Vec<SigmaRule> — add_rules takes &[SigmaRule]
-        // and rebuilds indexes once at the end.
+        // add_rules (&[SigmaRule]) instead of add_collection avoids cloning the
+        // whole Vec; indexes are rebuilt once at the end.
         let errors = engine.add_rules(rules.rules());
         if !errors.is_empty() {
             for (idx, err) in &errors {
@@ -96,9 +95,8 @@ impl DetectionEngine {
         Ok(())
     }
 
-    /// Build the rule_id string → Uuid lookup map directly from the HashMap keys,
-    /// avoiding redundant Uuid::parse_str on file stems. The `rule_paths` keys
-    /// are already parsed UUIDs from `rule.id`, so we just stringify them.
+    /// Build the rule_id string → Uuid map from the HashMap keys — already
+    /// parsed UUIDs, so stringifying avoids redundant Uuid::parse_str.
     fn build_rule_id_map(rule_paths: &HashMap<Uuid, PathBuf>) -> HashMap<String, Uuid> {
         let mut map: HashMap<String, Uuid> = HashMap::with_capacity(rule_paths.len());
         for uuid in rule_paths.keys() {

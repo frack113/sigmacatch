@@ -45,13 +45,11 @@ pub struct SigmaRepo {
     // User info for git commits (defaults from Config)
     author: String,
     email: String,
-    // Transport configuration
     token: Option<zeroize::Zeroizing<String>>,
     transport: GitTransport,
     ssh_key_path: Option<String>,
     // Optional ed25519 key for signing regression commits (pure-Rust ssh-key)
     signing_key: Option<PathBuf>,
-    // Operation modes
     offline: bool,
     contrib: bool,
 }
@@ -279,13 +277,12 @@ impl SigmaRepo {
 
     /// Collect the rule ids that already have regression data on any remote
     /// `sigmacatch/*` branch (pending PRs not yet merged into main), without
-    /// touching the working tree.
-    /// Rule ids committed on remote `sigmacatch/*` branches, used to skip rules
-    /// awaiting merge. Walks each branch's `regression_data/` tree for files
-    /// whose stem is a `Uuid` (the generator commits `<rule_id>.json` +
-    /// `<rule_id>.evtx` + `info.yml` as one atomic commit). Rules whose EVTX is
-    /// broken (empty export) are excluded so they get re-captured. Best-effort
-    /// offline: only the locally fetched refs are scanned.
+    /// touching the working tree. Walks each branch's `regression_data/` tree
+    /// for files whose stem is a `Uuid` (the generator commits `<rule_id>.json`,
+    /// `<rule_id>.evtx` and `info.yml` in one atomic commit). Rules whose EVTX
+    /// is broken (empty export) are excluded so they get re-captured.
+    ///
+    /// Best-effort offline: only the locally fetched refs are scanned.
     pub fn pending_regression_rule_ids(&self) -> Result<Vec<Uuid>> {
         let git_dir = self.repo_path.join(".git");
         let branches = crate::plumbing::list_sigmacatch_remote_refs(&git_dir)?;

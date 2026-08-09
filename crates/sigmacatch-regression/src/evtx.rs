@@ -22,10 +22,10 @@ const EVTX_EXPORT_BACKOFF_SECS: [u64; (EVTX_EXPORT_MAX_ATTEMPTS - 1) as usize] =
 
 /// Write a valid EVTX file from a matched event.
 ///
-/// `EvtExportLog` returns success even when the query matched zero records
-/// (header-only file), so every successful call is re-parsed; a file with no
-/// records is retried (the live-log race may be transient) then treated as
-/// failure. The empty `.evtx` is removed and an error is returned.
+/// `EvtExportLog` returns success even for a zero-record match (header-only
+/// file), so every successful call is re-parsed; an empty file is retried
+/// (the live-log race may be transient) then treated as failure and the
+/// `.evtx` is removed.
 #[cfg(windows)]
 pub fn write_evtx(_xml: &str, channel: &str, record_id: Option<u64>, path: &Path) -> Result<()> {
     use windows::core::HSTRING;
@@ -117,7 +117,7 @@ pub fn write_evtx(_xml: &str, channel: &str, record_id: Option<u64>, path: &Path
     ))
 }
 
-/// Verify the exported file actually contains at least one parseable record.
+/// Verify the exported file contains at least one parseable record.
 #[cfg(windows)]
 fn exported_has_records(path: &Path) -> Result<bool> {
     let path = crate::long_path::long_path(path);

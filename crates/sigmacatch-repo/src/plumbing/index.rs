@@ -140,11 +140,9 @@ pub(crate) fn add_file_to_index(
     let path_str = rel.to_string_lossy().replace('\\', "/");
     let path_bytes = path_str.as_bytes().to_vec();
 
-    // Preserve the mode recorded in the parent tree for this path. On Windows
-    // (non-unix) is_exec_file is always false, so a path that upstream stores
-    // at mode 100755 (e.g. .evtx files checked into SigmaHQ) would otherwise be
-    // re-staged as 100644 and produce spurious mode-change diffs. Reuse the
-    // parent mode when the path already exists in HEAD.
+    // Preserve the parent-tree mode: on Windows (non-unix) is_exec_file is
+    // always false, so a path upstream stores at 100755 (e.g. .evtx files)
+    // would otherwise be re-staged as 100644 and produce spurious mode diffs.
     if let Some(parent_mode) = lookup_parent_mode(git_dir, &path_str) {
         mode = parent_mode;
     }
@@ -317,7 +315,6 @@ mod tests {
         )
         .unwrap();
 
-        // Read the new HEAD commit tree and collect all blob paths.
         let odb = open_odb(&git_dir);
         let head_oid = resolve_head(&git_dir).unwrap();
         let head_obj = odb.read(&head_oid).unwrap();

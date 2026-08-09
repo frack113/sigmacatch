@@ -152,7 +152,6 @@ pub(crate) fn git_commit(
     let staged_index = grit_lib::index::Index::load(&index_path)
         .map_err(|e| anyhow::anyhow!("Failed to load index: {}", e))?;
 
-    // Merge parent tree entries + staged changes into a single tree
     let parent_oid = resolve_head(git_dir)?;
     let parent_obj = odb
         .read(&parent_oid)
@@ -160,11 +159,10 @@ pub(crate) fn git_commit(
     let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)
         .map_err(|e| anyhow::anyhow!("Failed to parse HEAD commit: {}", e))?;
 
-    // Merge the full parent (HEAD) tree under the staged entries. The parent
-    // tree is added at stage 0 unconditionally; staged entries are then overlaid
-    // with `add_or_replace`, so the staged blob content wins. There is no
-    // staged-paths filtering step — that was the site of a prior tree-amputation
-    // bug (inverted condition) and is no longer needed.
+    // Add the full parent (HEAD) tree at stage 0, then overlay the staged
+    // entries with `add_or_replace` so staged blob content wins. There is no
+    // staged-paths filtering — that was the site of a prior tree-amputation
+    // bug (inverted condition).
     let mut merged_index = grit_lib::index::Index::new();
     add_tree_to_index(&odb, parent_commit.tree, "", &mut merged_index)?;
     for entry in &staged_index.entries {
