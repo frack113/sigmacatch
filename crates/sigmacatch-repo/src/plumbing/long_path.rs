@@ -70,7 +70,8 @@ mod tests {
     #[test]
     fn long_path_over_260_chars_adds_prefix() {
         let long_name = "a".repeat(250);
-        let p = Path::new(&format!(r"C:\{}", long_name));
+        let full_path = format!(r"C:\{}", long_name);
+        let p = Path::new(&full_path);
         let result = long_path(p);
         assert!(
             result.to_string_lossy().starts_with(r"\\?\"),

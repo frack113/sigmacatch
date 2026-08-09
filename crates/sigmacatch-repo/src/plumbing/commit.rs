@@ -84,6 +84,7 @@ mod tests {
     use crate::plumbing::{init_repo, open_odb, write_index};
     use grit_lib::objects::{CommitData, ObjectKind};
     use grit_lib::write_tree::write_tree_from_index;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
@@ -135,6 +136,7 @@ ZfG1KaT0PtFDJ/XFSqtiAAAAEHVzZXJAZXhhbXBsZS5jb20BAgMEBQ==
     fn write_test_key(git_dir: &std::path::Path, dir: &std::path::Path) -> std::path::PathBuf {
         let path = dir.join("id_ed25519");
         std::fs::write(&path, TEST_KEY).unwrap();
+        #[cfg(unix)]
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         let pub_key = Command::new("ssh-keygen")
             .args(["-y", "-f", path.to_str().unwrap()])

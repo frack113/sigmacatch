@@ -156,7 +156,7 @@ pub(crate) enum SshMode {
 /// disabled by writing `~/.ssh/config` with `StrictHostKeyChecking no` (see
 /// `ensure_ssh_host_config`). `GIT_SSH_COMMAND` is unsupported on Windows because
 /// grit-lib runs it via `sh -c` which requires a POSIX shell.
-pub(crate) fn build_ssh_shell_command(ssh_key_path: Option<&str>) -> SshMode {
+pub(crate) fn build_ssh_shell_command(_ssh_key_path: Option<&str>) -> SshMode {
     if let Ok(cmd) = std::env::var("GIT_SSH") {
         if !cmd.is_empty() {
             debug!("Using GIT_SSH from environment");
@@ -178,12 +178,12 @@ pub(crate) fn build_ssh_shell_command(ssh_key_path: Option<&str>) -> SshMode {
         // cannot be passed as args. The key is wired via IdentityFile in
         // ~/.ssh/config by ensure_ssh_host_config() instead.
         debug!("Resolved ssh path on Windows: {}", ssh_bin,);
-        return SshMode::Program(vec![ssh_bin.into()]);
+        SshMode::Program(vec![ssh_bin.into()])
     }
     #[cfg(not(windows))]
     {
         let mut cmd = "ssh -o StrictHostKeyChecking=no".to_string();
-        if let Some(key) = ssh_key_path {
+        if let Some(key) = _ssh_key_path {
             cmd.push_str(&format!(" -i {}", shell_escape(key)));
         }
         SshMode::ShellCommand(cmd)

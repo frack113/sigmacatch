@@ -563,7 +563,7 @@ mod tests {
 
         let evtx = dir.join(format!("{id}.evtx"));
         std::fs::write(&evtx, b"not-an-evtx").unwrap();
-        assert!(!data_file_is_valid(dir, &id), "unparseable EVTX → invalid");
+        assert!(!data_file_is_valid(dir, &id), "unparsable EVTX → invalid");
 
         std::fs::remove_file(&evtx).unwrap();
         let json = dir.join(format!("{id}.json"));

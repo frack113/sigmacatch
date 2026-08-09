@@ -203,12 +203,16 @@ impl EventCollector {
                         }
                         if tx.blocking_send(event).is_err() {
                             // Receiver dropped — close remaining handles and exit
-                            for j in (i + 1)..events_fetched as usize {
-                                if event_handles[j] != 0 {
+                            for handle in event_handles
+                                .iter_mut()
+                                .take(events_fetched as usize)
+                                .skip(i + 1)
+                            {
+                                if *handle != 0 {
                                     unsafe {
-                                        let _ = EvtClose(EVT_HANDLE(event_handles[j]));
+                                        let _ = EvtClose(EVT_HANDLE(*handle));
                                     }
-                                    event_handles[j] = 0;
+                                    *handle = 0;
                                 }
                             }
                             unsafe {
@@ -220,12 +224,16 @@ impl EventCollector {
                         if total_sent >= MAX_EVENTS {
                             // Zero out unprocessed handles in the current batch to
                             // avoid leaking Winevt handles on break.
-                            for j in (i + 1)..events_fetched as usize {
-                                if event_handles[j] != 0 {
+                            for handle in event_handles
+                                .iter_mut()
+                                .take(events_fetched as usize)
+                                .skip(i + 1)
+                            {
+                                if *handle != 0 {
                                     unsafe {
-                                        let _ = EvtClose(EVT_HANDLE(event_handles[j]));
+                                        let _ = EvtClose(EVT_HANDLE(*handle));
                                     }
-                                    event_handles[j] = 0;
+                                    *handle = 0;
                                 }
                             }
                             tracing::warn!(
