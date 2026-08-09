@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[package]
+name = "tools"
+version = "0.3.0"
+edition = "2021"
+license = "MIT"
+
+[[bin]]
+name = "check_filter"
+path = "src/check_filter.rs"
+
+[[bin]]
+name = "check_evtx"
+path = "src/check_evtx.rs"
+
+[[bin]]
+name = "check_dry_run"
+path = "src/check_dry_run.rs"
+
+[[bin]]
+name = "check_channels"
+path = "src/check_channels.rs"
+
+[[bin]]
+name = "list_rules"
+path = "src/list_rules.rs"
+
+[[bin]]
+name = "get_atomic"
+path = "src/get_atomic.rs"
+
+[[bin]]
+name = "coverage"
+path = "src/coverage.rs"
+
+[dependencies]
+sigmacatch-config = { path = "../crates/sigmacatch-config" }
+sigmacatch-rule = { path = "../crates/sigmacatch-rule" }
+sigmacatch-detection = { path = "../crates/sigmacatch-detection" }
+sigmacatch-regression = { path = "../crates/sigmacatch-regression" }
+sigmacatch-repo = { path = "../crates/sigmacatch-repo" }
+input-evtx = { path = "../crates/input-evtx" }
+
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Com",
+    "Win32_System_EventLog",
+    "Win32_System_Threading",
+] }

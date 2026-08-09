@@ -1685,18 +1685,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
-name = "localcheck"
-version = "0.3.0"
-dependencies = [
- "input-evtx",
- "serde_json",
- "sigmacatch-detection",
- "sigmacatch-regression",
- "sigmacatch-rule",
- "uuid",
-]
-
-[[package]]
 name = "log"
 version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3457,6 +3445,24 @@ checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
  "rustls",
  "tokio",
+]
+
+[[package]]
+name = "tools"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "input-evtx",
+ "serde",
+ "serde_json",
+ "sigmacatch-config",
+ "sigmacatch-detection",
+ "sigmacatch-regression",
+ "sigmacatch-repo",
+ "sigmacatch-rule",
+ "tokio",
+ "uuid",
+ "windows",
 ]
 
 [[package]]

@@ -48,7 +48,7 @@ Applied profile:
 
 ## Workspace
 
-The project is a cargo workspace of 11 packages (2 binary crates — `sigmacatch` with 1 bin, `localcheck` with 2 bins — and 9 libraries):
+The project is a cargo workspace of 11 packages (2 binary crates — `sigmacatch` with 1 bin, `tools` with 6 bins — and 9 libraries):
 
 ```bash
 # Build everything
@@ -65,7 +65,7 @@ cargo build -p sigmacatch-regression
 cargo build -p sigmacatch-types
 cargo build -p sigmacatch-repo
 cargo build -p input-evtx
-cargo build -p localcheck
+cargo build -p tools
 ```
 
 ## Binaries
@@ -73,8 +73,12 @@ cargo build -p localcheck
 | Binary | Path | Description |
 |---|---|---|
 | `sigmacatch` | `sigmacatch/src/main.rs` | Headless capture + evaluation + regression generation |
-| `check_filter` | `localcheck/src/check_filter.rs` | Validates `SigmaFilterConfig` against real Sigma rules (ground-truth counts, no CLI args) |
-| `check_evtx` | `localcheck/src/check_evtx.rs` | Batch validation of Sigma engine against .evtx regression data |
+| `check_dry_run` | `tools/src/check_dry_run.rs` | Git diagnostics (token, fork, API, info/refs, repo state) |
+| `check_channels` | `tools/src/check_channels.rs` | Resolves and lists the collected Windows channels |
+| `list_rules` | `tools/src/list_rules.rs` | Lists the loaded rules (techniques, ART link) |
+| `check_filter` | `tools/src/check_filter.rs` | Validates `SigmaFilterConfig` against real Sigma rules (ground-truth counts, no CLI args) |
+| `check_evtx` | `tools/src/check_evtx.rs` | Batch validation of Sigma engine against .evtx regression data |
+| `get_atomic` | `tools/src/get_atomic.rs` | Generates `run_atomic.ps` (chained `Invoke-AtomicTest`) for rules without regression data |
 
 Observed sizes (x86_64-pc-windows-msvc cross, release): `sigmacatch.exe` ~10.4 MB,
 `check_evtx.exe` ~4.0 MB, `check_filter.exe` ~0.9 MB.

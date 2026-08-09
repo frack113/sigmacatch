@@ -12,7 +12,7 @@
 //!   5. Report per-rule pass/fail + summary
 //!
 //! Usage:
-//!   cargo run --release --bin check_evtx
+//!   cargo run --release --bin check_evtx [--json]
 
 use input_evtx::parse_evtx_bytes;
 use sigmacatch_detection::DetectionEngine;
@@ -25,27 +25,26 @@ use uuid::Uuid;
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
 
+#[derive(serde::Serialize, Default)]
 struct ValidationStats {
     total: usize,
     passed: usize,
     skipped: usize,
-    failed: Vec<(String, String)>,
+    failed: Vec<RuleResult>,
     json_checked: usize,
     json_ok: usize,
-    json_mismatch: Vec<(String, String)>,
+    json_mismatch: Vec<RuleResult>,
+}
+
+#[derive(serde::Serialize)]
+struct RuleResult {
+    rule_name: String,
+    error: String,
 }
 
 impl ValidationStats {
     fn new() -> Self {
-        Self {
-            total: 0,
-            passed: 0,
-            skipped: 0,
-            failed: Vec::new(),
-            json_checked: 0,
-            json_ok: 0,
-            json_mismatch: Vec::new(),
-        }
+        Self::default()
     }
 
     fn add_pass(&mut self) {
@@ -57,7 +56,7 @@ impl ValidationStats {
     }
 
     fn add_fail(&mut self, rule_name: String, error: String) {
-        self.failed.push((rule_name, error));
+        self.failed.push(RuleResult { rule_name, error });
     }
 
     fn add_json_ok(&mut self) {
@@ -67,7 +66,16 @@ impl ValidationStats {
 
     fn add_json_mismatch(&mut self, rule_name: String, error: String) {
         self.json_checked += 1;
-        self.json_mismatch.push((rule_name, error));
+        self.json_mismatch.push(RuleResult { rule_name, error });
+    }
+
+    fn pass_rate(&self) -> f64 {
+        let evaluated = self.passed + self.failed.len();
+        if evaluated > 0 {
+            (self.passed as f64 / evaluated as f64) * 100.0
+        } else {
+            0.0
+        }
     }
 
     fn print_summary(&self) {
@@ -78,15 +86,7 @@ impl ValidationStats {
         println!("  Passed:          {}", self.passed);
         println!("  Skipped:         {}", self.skipped);
         println!("  Failed:          {}", self.failed.len());
-        let evaluated = self.passed + self.failed.len();
-        println!(
-            "  Pass rate:       {:.1}%",
-            if evaluated > 0 {
-                (self.passed as f64 / evaluated as f64) * 100.0
-            } else {
-                0.0
-            }
-        );
+        println!("  Pass rate:       {:.1}%", self.pass_rate());
 
         if self.json_checked > 0 {
             println!();
@@ -100,15 +100,15 @@ impl ValidationStats {
 
         if !self.failed.is_empty() {
             println!("\nFailed rules:");
-            for (name, error) in &self.failed {
-                println!("  FAIL {} — {}", name, error);
+            for r in &self.failed {
+                println!("  FAIL {} — {}", r.rule_name, r.error);
             }
         }
 
         if !self.json_mismatch.is_empty() {
             println!("\nJSON format mismatches:");
-            for (name, error) in &self.json_mismatch {
-                println!("  MISMATCH {} — {}", name, error);
+            for r in &self.json_mismatch {
+                println!("  MISMATCH {} — {}", r.rule_name, r.error);
             }
         }
     }
@@ -158,6 +158,13 @@ fn first_diff_path(a: &serde_json::Value, b: &serde_json::Value) -> Option<Strin
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 fn main() {
+    let mut json_output = false;
+    for arg in std::env::args().skip(1) {
+        if arg == "--json" {
+            json_output = true;
+        }
+    }
+
     let rules = match SigmahqRules::new() {
         Ok(r) => r,
         Err(e) => {
@@ -165,14 +172,10 @@ fn main() {
             process::exit(1);
         }
     };
-    println!("Found {} total rules", rules.len());
-
     let rules = rules.filter(SigmaFilterConfig {
         product: "windows".to_string(),
         ..Default::default()
     });
-    println!("  → {} windows rules after filtering", rules.len());
-    println!();
 
     let regression = match SigmahqRegression::new() {
         Ok(r) => r,
@@ -185,8 +188,6 @@ fn main() {
         eprintln!("No regression entries found — nothing to validate");
         process::exit(1);
     }
-    println!("Found {} regression entry(ies)", regression.len());
-    println!();
 
     let mut engine = match DetectionEngine::new(&rules) {
         Ok(e) => e,
@@ -195,10 +196,6 @@ fn main() {
             process::exit(1);
         }
     };
-    println!("Engine ready — {} rule(s) loaded.\n", engine.rule_count());
-
-    println!("Running validation...");
-    println!();
 
     let mut stats = ValidationStats::new();
 
@@ -207,24 +204,21 @@ fn main() {
             Some(e) => e,
             None => {
                 stats.total += 1;
-                println!("[FAIL] No entry");
+                if !json_output {
+                    println!("[FAIL] No entry");
+                }
                 continue;
             }
         };
-
-        print!(
-            "  [{:>4}/{:<4}] {:<50} ... ",
-            i + 1,
-            regression.len(),
-            entry.rule_name
-        );
 
         let raw = match regression.get_raw_data(i) {
             Some(r) => r,
             None => {
                 stats.total += 1;
                 stats.add_fail(entry.rule_name.clone(), "No raw data".to_string());
-                println!("[FAIL] No raw data");
+                if !json_output {
+                    println!("[FAIL] No raw data");
+                }
                 continue;
             }
         };
@@ -238,14 +232,18 @@ fn main() {
                         entry.rule_name.clone(),
                         format!("Failed to load EVTX: {}", e),
                     );
-                    println!("[FAIL] Failed to load EVTX: {}", e);
+                    if !json_output {
+                        println!("[FAIL] Failed to load EVTX: {}", e);
+                    }
                     continue;
                 }
             },
             _ => {
                 stats.total += 1;
                 stats.add_skip();
-                println!("[SKIP] {} (EVTX check only)", entry.logtype.as_str());
+                if !json_output {
+                    println!("[SKIP] {} (EVTX check only)", entry.logtype.as_str());
+                }
                 continue;
             }
         };
@@ -256,7 +254,9 @@ fn main() {
                 entry.rule_name.clone(),
                 "EMPTY — evtx produced no events".to_string(),
             );
-            println!("[FAIL] EMPTY — evtx produced no events");
+            if !json_output {
+                println!("[FAIL] EMPTY — evtx produced no events");
+            }
             continue;
         }
 
@@ -270,7 +270,9 @@ fn main() {
                 .any(|e| e.event_json_raw == expected);
             if reproduced {
                 stats.add_json_ok();
-                println!("    [JSON OK] parse_winevt_xml_raw reproduces committed JSON");
+                if !json_output {
+                    println!("    [JSON OK] parse_winevt_xml_raw reproduces committed JSON");
+                }
             } else {
                 let diff = events_for_debug
                     .iter()
@@ -282,7 +284,11 @@ fn main() {
                     entry.rule_name.clone(),
                     format!("no EVTX record reproduces committed JSON{detail}"),
                 );
-                println!("    [JSON MISMATCH] no EVTX record reproduces committed JSON{detail}");
+                if !json_output {
+                    println!(
+                        "    [JSON MISMATCH] no EVTX record reproduces committed JSON{detail}"
+                    );
+                }
             }
         }
 
@@ -304,26 +310,13 @@ fn main() {
                     matched.join(", ")
                 ),
             );
-            println!(
-                "[FAIL] RULE NOT MATCHED — expected '{}' ({} alert(s), matched: {})",
-                entry.rule_id,
-                alerts.len(),
-                matched.join(", ")
-            );
-
-            // Debug: explain rule against each event
-            for event in &events_for_debug {
-                if let Some(explanation) = engine.explain_rule(&entry.rule_id, event) {
-                    println!("  --- explain_rule trace ---");
-                    if let Ok(json) = serde_json::to_string_pretty(&explanation) {
-                        println!("  {}", json.replace('\n', "\n  "));
-                    }
-                }
-                println!("  --- event JSON ---");
-                if let Ok(json) = serde_json::to_string_pretty(&event.event_json) {
-                    println!("  {}", json.replace('\n', "\n  "));
-                }
-                println!();
+            if !json_output {
+                println!(
+                    "[FAIL] RULE NOT MATCHED — expected '{}' ({} alert(s), matched: {})",
+                    entry.rule_id,
+                    alerts.len(),
+                    matched.join(", ")
+                );
             }
             continue;
         }
@@ -336,16 +329,36 @@ fn main() {
                 entry.rule_name.clone(),
                 "MATCH COUNT MISMATCH — expected >= 1 (got 0)".to_string(),
             );
-            println!("[FAIL] MATCH COUNT MISMATCH — expected >= 1 (got 0)");
+            if !json_output {
+                println!("[FAIL] MATCH COUNT MISMATCH — expected >= 1 (got 0)");
+            }
             continue;
         }
 
         stats.total += 1;
         stats.add_pass();
-        println!("[PASS] {} alert(s), rule matched", rule_alert_count);
+        if !json_output {
+            println!("[PASS] {} alert(s), rule matched", rule_alert_count);
+        }
     }
 
-    stats.print_summary();
+    if json_output {
+        let output = serde_json::json!({
+            "total": stats.total,
+            "passed": stats.passed,
+            "skipped": stats.skipped,
+            "failed_count": stats.failed.len(),
+            "pass_rate": stats.pass_rate(),
+            "json_checked": stats.json_checked,
+            "json_ok": stats.json_ok,
+            "failed": stats.failed,
+            "json_mismatch": stats.json_mismatch,
+        });
+        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+    } else {
+        println!("\nRunning validation...\n");
+        stats.print_summary();
+    }
 
     if !stats.failed.is_empty() || !stats.json_mismatch.is_empty() {
         process::exit(1);

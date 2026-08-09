@@ -1,13 +1,13 @@
 # Tools
 
-Dev tools in the `localcheck` crate, each with its own purpose. They stay out of the
+Dev tools in the `tools` crate, each with its own purpose. They stay out of the
 main `sigmacatch` binary so its dependency tree stays lean.
 
 ## check_evtx
 
-**File:** `localcheck/src/check_evtx.rs`
+**File:** `tools/src/check_evtx.rs`
 
-**Usage:** `cargo run --release --bin check_evtx`
+**Usage:** `cargo run --release --bin check_evtx [--json]`
 
 **Purpose:** Batch validation of the Sigma detection engine against SigmaHQ regression data.
 
@@ -88,9 +88,9 @@ cargo run --release --bin check_evtx
 
 ## check_filter
 
-**File:** `localcheck/src/check_filter.rs`
+**File:** `tools/src/check_filter.rs`
 
-**Usage:** `cargo run --release --bin check_filter`
+**Usage:** `cargo run --release --bin check_filter [--json]`
 
 **Purpose:** Validates `SigmaFilterConfig` (product / status / level / author) against the real
 Sigma rule set. No CLI args — runs every filter combination automatically.
@@ -170,10 +170,154 @@ cargo run --release --bin check_filter
 
 ---
 
+## check_dry_run
+
+**File:** `tools/src/check_dry_run.rs`
+
+**Usage:** `cargo run --release --bin check_dry_run [--json]`
+
+**Purpose:** git diagnostics of the former `--dry-run` sigmacatch flag (moved here to keep the
+main binary lean). Reuses `Config::load_with_cli` + `dry_run_git` from `sigmacatch-config`.
+Accepts the same flags as the main binary (`--author`, `-o`/`--offline`,
+`-c`/`--contrib`, `--help`).
+
+### Pipeline
+
+1. `parse_args()` + `Config::load_with_cli("config.yaml", cli)`
+2. `dry_run_git(&config)` → token resolution (config + env), fork detection (HTTP HEAD),
+   API `/user` check, git smart HTTP info/refs endpoint, local `sigma/` repo state
+3. Detailed report of each step → identify the failure point
+
+---
+
+## check_channels
+
+**File:** `tools/src/check_channels.rs`
+
+**Usage:** `cargo run --release --bin check_channels [--json]`
+
+**Purpose:** resolves and lists the Windows channels the engine would collect (former
+`--channels-only` sigmacatch flag, moved here).
+
+### Pipeline
+
+1. `Config::load("config.yaml")` (filter section)
+2. Loads Sigma rules from `./sigma` + filter config
+3. `DetectionEngine::new(&rules)` → `resolve_channels(&custom_map)` (incl. custom_channels.yaml)
+4. Prints the channel list (exit 1 if none)
+
+---
+
+## list_rules
+
+**File:** `tools/src/list_rules.rs`
+
+**Usage:** `cargo run --release --bin list_rules [--json]`
+
+**Purpose:** lists the loaded rules with their path (former `--list-rules` sigmacatch flag,
+moved here).
+
+### Pipeline
+
+1. `Config::load("config.yaml")` (filter section)
+2. Loads Sigma rules from `./sigma` + filter config
+3. Per rule: id, title, status, level, techniques (`attack.*` tags), path, ART link (first
+   sub-technique)
+
+---
+
+## get_atomic
+
+**File:** `tools/src/get_atomic.rs`
+
+**Usage:** `cargo run --release --bin get_atomic [--output run_atomic.ps] [--getprereqs] [--json]`
+
+**Purpose:** generates a `run_atomic.ps1` script chaining `Invoke-AtomicTest
+T1xxx.xxx` commands for the ATT&CK techniques of rules **without regression
+data** according to the config filter. The script is copied to the Windows VM
+and run manually; sigmacatch (continuous loop) captures the generated events
+and produces the regression data.
+
+### Pipeline
+
+1. `Config::load("config.yaml")` (filter section + `git.sigma_repo_path`)
+2. Loads Sigma rules from `./sigma` + filter config
+3. Skip set = rules with valid regression data (local `regression_data/`)
+   ∪ ids on pending remote `sigmacatch/*` branches
+4. For each remaining rule: `rule.attack_techniques()` (`SigmaRuleExt`
+   extension trait from `sigmacatch-rule`)
+5. Dedupe + sort techniques (BTreeSet) — one `Invoke-AtomicTest` per technique
+6. Writes `run_atomic.ps1` (or `--output <path>`) + report
+
+### Generated script
+
+```powershell
+$ErrorActionPreference = "Continue"
+Import-Module Invoke-AtomicRedTeam
+# 12 rule(s) without regression data — 7 technique(s)
+Start-Sleep -Seconds 5
+Invoke-AtomicTest T1055.001 -TimeoutSeconds 120
+Start-Sleep -Seconds 30
+Invoke-AtomicTest T1547.001 -TimeoutSeconds 120
+...
+```
+
+- `Start-Sleep 30` between tests → lets sigmacatch collect the events
+- `-TimeoutSeconds 120` → prevents a blocking test from freezing the chain
+- Rules without an `attack.*` tag are counted and listed in the report (no
+  `Invoke-AtomicTest` generated for them)
+
+### Limitations
+
+No coverage guarantee: a rule with a specific condition may not match the event
+produced by the ART test. Rules that still have no data are re-listed on the
+next run (the skip set only excludes what is already generated).
+
+---
+
+## channel_health
+
+**File:** `tools/src/channel_health.rs`
+
+**Usage:** `cargo run --release --bin channel_health [--json] [--channel <name>]`
+
+**Purpose:** Windows-only diagnostic to check Winevt channel health (event count, last event, status).
+On non-Windows: stub JSON output.
+
+### Pipeline
+
+1. `Config::load("config.yaml")` (filter section)
+2. Loads Sigma rules from `./sigma` + filter config
+3. `DetectionEngine::new(&rules)` → `resolve_channels(&custom_map)`
+4. Per channel: `EvtOpenChannelEnum` + `EvtQuery` (sample up to 1000 events)
+5. JSON/text report (exit 1 if no channels)
+
+---
+
+## coverage
+
+**File:** `tools/src/coverage.rs`
+
+**Usage:** `cargo run --release --bin coverage`
+
+**Purpose:** big-picture coverage stats for the current filter config. JSON output:
+total rules, rules with local regression, rules pending on remote branches,
+coverage percentage.
+
+### Pipeline
+
+1. `Config::load("config.yaml")` (filter section)
+2. Loads all Sigma rules from `./sigma` + filter config
+3. Scan local `regression_data/` → skip set
+4. `SigmaRepo::pending_regression_rule_ids()` → skip set remote branches
+5. Compute coverage % → JSON
+
+---
+
 ## How to add a tool
 
-1. Create `localcheck/src/<name>.rs` with a docstring at the top
-2. Add the entry to `localcheck/Cargo.toml`:
+1. Create `tools/src/<name>.rs` with a docstring at the top
+2. Add the entry to `tools/Cargo.toml`:
 
 ```toml
 [[bin]]
@@ -181,5 +325,5 @@ name = "<name>"
 path = "src/<name>.rs"
 ```
 
-1. Add only the dependencies the tool needs to `localcheck/Cargo.toml`
+1. Add only the dependencies the tool needs to `tools/Cargo.toml`
 2. Document here with usage and pipeline

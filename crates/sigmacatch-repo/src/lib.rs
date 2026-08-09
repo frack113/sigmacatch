@@ -77,6 +77,11 @@ impl SigmaRepo {
         self.email = email.to_string();
     }
 
+    /// Override the local sigma repository path (default: `./sigma`).
+    pub fn set_repo_path(&mut self, path: PathBuf) {
+        self.repo_path = path;
+    }
+
     /// Set HTTP transport with a GitHub token.
     pub fn set_info_http(&mut self, token: &str) {
         self.transport = GitTransport::Http;

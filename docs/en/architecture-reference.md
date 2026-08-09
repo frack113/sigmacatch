@@ -32,9 +32,9 @@ sigmacatch/
 ├── sigmacatch/                    # Binary crate
 │   └── src/
 │       └── main.rs                # Orchestration: continuous loop + process_and_generate + commit/push
-├── localcheck/                    # Dev tools (check_filter, check_evtx)
+├── tools/                    # Dev tools (check_dry_run, check_channels, list_rules, check_filter, check_evtx, get_atomic)
 └── crates/
-    ├── sigmacatch-config/         # Config YAML, CLI parsing, custom_channels.yaml, dry-run git diagnostics
+    ├── sigmacatch-config/         # Config YAML, CLI parsing, custom_channels.yaml, dry-run git diagnostics (check_dry_run)
     ├── sigmacatch-logger/         # Two-layer tracing subscriber (stderr info + daily rolling file debug)
     ├── sigmacatch-rule/           # SigmahqRules: load (parse_sigma_yaml), filter, dedupe, remove_id
     ├── sigmacatch-detection/      # DetectionEngine wrapper + embedded pipelines (windows.yml, flatten_winevt.yml) + channel_resolver
@@ -42,7 +42,7 @@ sigmacatch/
     ├── sigmacatch-regression/     # SigmahqRegression, InfoYml, RegressionData, triplet validation
     ├── sigmacatch-types/          # Shared types: Event, Alert, RegressionHeader, Product + XML parsing + logsource mapping tables
     ├── sigmacatch-repo/           # grit-lib wrapper: SigmaRepo, git operations
-    └── input-evtx/                # EVTX file parser → Event (used by localcheck)
+    └── input-evtx/                # EVTX file parser → Event (used by tools)
 ```
 
 ---
@@ -93,7 +93,7 @@ no shell). When `ssh_key_path` is set, every regression commit is **signed** wit
 (`ssh-key`): the `gpgsig` header is inserted between the committer line and the message, like
 `git commit -S` with `gpg.format = ssh`, so GitHub shows the commit as "Verified".
 
-**CLI flags:** `--author <name>`, `--dry-run`, `--channels-only`, `--all-rules`, `--list-rules`, `--offline`, `--contrib`, `--help` / `-h`.
+**CLI flags:** `--author <name>`, `-a`/`--all-rules`, `-o`/`--offline`, `-c`/`--contrib`, `-v`/`--verbose`, `--help` / `-h`. The diagnostics (git dry-run, channels, rule list) are `tools` tools: `check_dry_run`, `check_channels`, `list_rules`.
 
 ---
 
@@ -107,8 +107,6 @@ parse_args() → CliArgs
 Config::load_with_cli("config.yaml", cli)
     ├── missing → write defaults → exit(1) with instructions
     └── --author <name> overrides git.author before validation
-    ↓
---dry-run → dry_run_git() (token/fork/API/info-refs diagnostics) → exit
     ↓
 [windows] setup_console() (UTF-8 codepage + VT processing)
     ↓
@@ -188,8 +186,7 @@ SigmahqRules::new()                 # loads ./sigma
     ↓
 rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size })
     ├── stats() → rules_loaded, filtered_product/status/level/author
-    ├── 0 rules loaded → bail with a clear error message
-    └── --list-rules → print each rule in a 7-line card (ID, title, status, level, techniques, path, ART link) separated by dashes + exit
+    └── 0 rules loaded → bail with a clear error message
 ```
 
 > Rules with existing regression data are excluded from the Sigma engine — this skip-at-load
@@ -208,8 +205,6 @@ DetectionEngine::new(&rules)
 cycle_channels = engine.resolve_channels(&custom_map)
     ├── reads post-pipeline CompiledRule.logsource → service:category → channel list (deduped, sorted)
     └── 0 channels → warn + return Ok (nothing to collect)
-    ↓
---channels-only → print channels + exit
 ```
 
 ### Step 5 — Continuous collection
@@ -437,7 +432,7 @@ regression_tests_info:
 
 ### Logger (`crates/sigmacatch-logger/src/lib.rs`)
 
-- **stderr layer**: `info` level, ANSI colors, filterable via `RUST_LOG`
+- **stderr layer**: `error` level by default, `info` with `-v`/`--verbose`, ANSI colors, filterable via `RUST_LOG`
 - **file layer**: `debug` level (configurable), daily rotation
 - `logs/sigmacatch.YYYY-MM-DD.log`
 
@@ -459,7 +454,7 @@ regression_tests_info:
 | `chrono` | dates |
 | `uuid` | UUID v4 for info.yml + rule IDs |
 | `phf` | static hash maps for taxonomy tables (in `sigmacatch-types`) + channel resolution (in `sigmacatch-detection/src/channel_resolver.rs`) |
-| `evtx` | EVTX file parsing (input-evtx crate, used by localcheck/check_evtx) |
+| `evtx` | EVTX file parsing (input-evtx crate, used by tools/check_evtx) |
 | `roxmltree` | XML parsing for Winevt events (in `sigmacatch-types`) |
 | `windows` | Winevt API (cfg-gated: windows only, features: Foundation, System, Security, Com, Console, Threading) |
 | `tempfile` (dev) | integration tests |
@@ -484,14 +479,23 @@ cargo xwin build --release --target x86_64-pc-windows-msvc   # cross-compile Win
 
 ```text
 sigmacatch
-    [--author <name>]      # override git.author from config
-    [--dry-run]            # git diagnostics only (no collection)
-    [--channels-only]      # print resolved channels and exit
-    [--all-rules]          # disable the skip set (load every rule)
-    [--list-rules]         # print rules without regression data and exit
-    [--offline]            # skip the pull at startup (force offline)
-    [--contrib]            # enable push to the remote fork
-    [--help], [-h]         # print this help and exit
+    [-a], [--all-rules]    # disables the skip set (loads all rules)
+    [-c], [--contrib]      # enables push to the remote fork
+    [-o], [--offline]      # skips pull at startup (forces offline)
+    [-v], [--verbose]      # shows info-level logs on stderr
+    [--author <name>]      # overrides git.author from config
+    [--help], [-h]         # shows help and exits
+```
+
+Diagnostics moved to `tools`:
+
+```text
+check_dry_run              # git diagnostics (token, fork, API, info/refs, repo state)
+check_channels             # print the resolved channels
+list_rules                 # print the loaded rules (id, title, status, level, techniques, path, ART link)
+check_filter               # validate SigmaFilterConfig against the rules (ground truth)
+check_evtx                 # validate the regression data (evtx + json + engine match)
+get_atomic                 # generate run_atomic.ps (Invoke-AtomicTest) for rules without regression data
 ```
 
 Config is auto-created on first run with defaults. Edit `config.yaml` before running.
