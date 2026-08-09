@@ -5,11 +5,14 @@
 
 pub use rsigma_parser::{parse_sigma_yaml, Level, LogSource, SigmaCollection, SigmaRule, Status};
 
+pub use crate::attack::SigmaRuleExt;
 pub(crate) use crate::discover::find_rules_dirs;
 pub use crate::thresholds::{LoadStats, MinLevel, MinStatus};
 
 pub(crate) mod discover;
 pub(crate) mod thresholds;
+
+mod attack;
 
 // Note: init_from_sigma_path was removed; use SigmahqRules::new() for production,
 // SigmahqRules::new_from_path() for tests with custom directories.

@@ -12,33 +12,10 @@
 //!   cargo run --release --bin list_rules
 
 use sigmacatch_config::Config;
-use sigmacatch_rule::{SigmahqRules, Status};
+use sigmacatch_rule::{SigmaRuleExt, SigmahqRules, Status};
 use std::path::{Path, PathBuf};
 use std::process;
 use uuid::Uuid;
-
-/// Extract MITRE ATT&CK technique IDs from a rule's tags.
-/// Returns sub-technique tags (e.g. "t1071.004") first, then tactical group
-/// tags (e.g. "command-and-control"), with the "attack." prefix stripped.
-fn extract_attack_techniques(rule: &sigmacatch_rule::SigmaRule) -> Vec<String> {
-    let mut sub_techs: Vec<String> = Vec::new();
-    let mut groups: Vec<String> = Vec::new();
-    for tag in &rule.tags {
-        if let Some(rest) = tag.strip_prefix("attack.") {
-            if rest.starts_with('t') {
-                sub_techs.push(rest.to_string());
-            } else if !rest.starts_with('g')
-                && !rest.starts_with('s')
-                && !rest.starts_with(|c: char| c.is_ascii_digit())
-            {
-                // tactical group tag (e.g. "command-and-control"), skip g/s IDs
-                groups.push(rest.to_string());
-            }
-        }
-    }
-    sub_techs.extend(groups);
-    sub_techs
-}
 
 fn main() {
     let config = match Config::load(&PathBuf::from("config.yaml")) {
@@ -82,7 +59,7 @@ fn main() {
                     .replace('\\', "/")
             })
             .unwrap_or_default();
-        let techniques = extract_attack_techniques(rule);
+        let techniques = rule.attack_techniques();
         let art_link = techniques
             .iter()
             .find(|t| t.starts_with('t'))

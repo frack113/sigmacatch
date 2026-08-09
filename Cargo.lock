@@ -3457,6 +3457,7 @@ dependencies = [
  "sigmacatch-config",
  "sigmacatch-detection",
  "sigmacatch-regression",
+ "sigmacatch-repo",
  "sigmacatch-rule",
  "tokio",
  "uuid",

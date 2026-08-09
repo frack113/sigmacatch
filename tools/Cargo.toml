@@ -27,11 +27,16 @@ path = "src/check_channels.rs"
 name = "list_rules"
 path = "src/list_rules.rs"
 
+[[bin]]
+name = "get_atomic"
+path = "src/get_atomic.rs"
+
 [dependencies]
 sigmacatch-config = { path = "../crates/sigmacatch-config" }
 sigmacatch-rule = { path = "../crates/sigmacatch-rule" }
 sigmacatch-detection = { path = "../crates/sigmacatch-detection" }
 sigmacatch-regression = { path = "../crates/sigmacatch-regression" }
+sigmacatch-repo = { path = "../crates/sigmacatch-repo" }
 input-evtx = { path = "../crates/input-evtx" }
 
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
