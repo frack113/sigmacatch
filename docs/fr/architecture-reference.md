@@ -32,7 +32,7 @@ sigmacatch/
 ├── sigmacatch/                    # Crate binaire
 │   └── src/
 │       └── main.rs                # Orchestration : boucle continue + process_and_generate + commit/push
-├── localcheck/                    # Outils de dev (check_dry_run, check_channels, list_rules, check_filter, check_evtx)
+├── tools/                    # Outils de dev (check_dry_run, check_channels, list_rules, check_filter, check_evtx, get_atomic)
 └── crates/
     ├── sigmacatch-config/         # Config YAML, parsing CLI, custom_channels.yaml, diagnostics git dry-run (check_dry_run)
     ├── sigmacatch-logger/         # Abonnement tracing à deux couches (stderr info + fichier journal rolling debug)
@@ -42,7 +42,7 @@ sigmacatch/
     ├── sigmacatch-regression/     # SigmahqRegression, InfoYml, RegressionData, validation triplet
     ├── sigmacatch-types/          # Types partagés : Event, Alert, RegressionHeader, Product + parsing XML + tables de mapping logsource
     ├── sigmacatch-repo/           # wrapper grit-lib : SigmaRepo, opérations git
-    └── input-evtx/                # Parser fichiers EVTX → Event (utilisé par localcheck)
+    └── input-evtx/                # Parser fichiers EVTX → Event (utilisé par tools)
 ```
 
 ---
@@ -93,7 +93,7 @@ Quand `ssh_key_path` est renseigné, chaque commit de régression est **signé**
 (`ssh-key`) : l'en-tête `gpgsig` est inséré entre la ligne committer et le message, comme
 `git commit -S` avec `gpg.format = ssh`, pour que GitHub affiche le commit "Verified".
 
-**CLI flags :** `--author <name>`, `--all-rules`, `--offline`, `--contrib`, `--help` / `-h`. Les diagnostics (dry-run git, channels, liste des règles) sont des tools `localcheck` : `check_dry_run`, `check_channels`, `list_rules`.
+**CLI flags :** `--author <name>`, `--all-rules`, `--offline`, `--contrib`, `--help` / `-h`. Les diagnostics (dry-run git, channels, liste des règles) sont des tools `tools` : `check_dry_run`, `check_channels`, `list_rules`.
 
 ---
 
@@ -473,7 +473,7 @@ regression_tests_info:
 | `chrono` | dates |
 | `uuid` | UUID v4 pour info.yml + ids de règles |
 | `phf` | hash maps statiques pour les tables de taxonomie (dans `sigmacatch-types`) + résolution de channels (dans `sigmacatch-detection/src/channel_resolver.rs`) |
-| `evtx` | parsing de fichiers EVTX (crate input-evtx, utilisé par localcheck/check_evtx) |
+| `evtx` | parsing de fichiers EVTX (crate input-evtx, utilisé par tools/check_evtx) |
 | `roxmltree` | parsing XML pour les events Winevt (dans `sigmacatch-types`) |
 | `windows` | API Winevt (cfg-gated : windows uniquement, features : Foundation, System, Security, Com, Console, Threading) |
 | `tempfile` (dev) | tests d'intégration |
@@ -505,7 +505,7 @@ sigmacatch
     [--help], [-h]         # affiche cette aide et exit
 ```
 
-Diagnostics déplacés vers `localcheck` :
+Diagnostics déplacés vers `tools` :
 
 ```text
 check_dry_run              # diagnostics git (token, fork, API, info/refs, état repo)
@@ -513,6 +513,7 @@ check_channels             # affiche les channels résolus
 list_rules                 # affiche les règles chargées (id, titre, status, niveau, techniques, chemin, lien ART)
 check_filter               # valide SigmaFilterConfig contre les règles (ground-truth)
 check_evtx                 # valide les données de régression (evtx + json + match moteur)
+get_atomic                 # génère run_atomic.ps (Invoke-AtomicTest) pour les règles sans regression data
 ```
 
 La config est auto-créée au premier run avec des défauts. Éditez `config.yaml` avant de lancer.

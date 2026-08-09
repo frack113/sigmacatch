@@ -1,11 +1,11 @@
 # Tools
 
-Dev tools in the `localcheck` crate, each with its own purpose. They stay out of the
+Dev tools in the `tools` crate, each with its own purpose. They stay out of the
 main `sigmacatch` binary so its dependency tree stays lean.
 
 ## check_evtx
 
-**File:** `localcheck/src/check_evtx.rs`
+**File:** `tools/src/check_evtx.rs`
 
 **Usage:** `cargo run --release --bin check_evtx`
 
@@ -88,7 +88,7 @@ cargo run --release --bin check_evtx
 
 ## check_filter
 
-**File:** `localcheck/src/check_filter.rs`
+**File:** `tools/src/check_filter.rs`
 
 **Usage:** `cargo run --release --bin check_filter`
 
@@ -172,7 +172,7 @@ cargo run --release --bin check_filter
 
 ## check_dry_run
 
-**File:** `localcheck/src/check_dry_run.rs`
+**File:** `tools/src/check_dry_run.rs`
 
 **Usage:** `cargo run --release --bin check_dry_run`
 
@@ -191,7 +191,7 @@ Accepts the same flags as the main binary (`--author`, `--offline`, `--contrib`,
 
 ## check_channels
 
-**File:** `localcheck/src/check_channels.rs`
+**File:** `tools/src/check_channels.rs`
 
 **Usage:** `cargo run --release --bin check_channels`
 
@@ -209,7 +209,7 @@ Accepts the same flags as the main binary (`--author`, `--offline`, `--contrib`,
 
 ## list_rules
 
-**File:** `localcheck/src/list_rules.rs`
+**File:** `tools/src/list_rules.rs`
 
 **Usage:** `cargo run --release --bin list_rules`
 
@@ -225,10 +225,59 @@ moved here).
 
 ---
 
+## get_atomic
+
+**File:** `tools/src/get_atomic.rs`
+
+**Usage:** `cargo run --release --bin get_atomic [--output run_atomic.ps]`
+
+**Purpose:** generates a `run_atomic.ps` script chaining `Invoke-AtomicTest
+T1xxx.xxx` commands for the ATT&CK techniques of rules **without regression
+data** according to the config filter. The script is copied to the Windows VM
+and run manually; sigmacatch (continuous loop) captures the generated events
+and produces the regression data.
+
+### Pipeline
+
+1. `Config::load("config.yaml")` (filter section + `git.sigma_repo_path`)
+2. Loads Sigma rules from `./sigma` + filter config
+3. Skip set = rules with valid regression data (local `regression_data/`)
+   ∪ ids on pending remote `sigmacatch/*` branches
+4. For each remaining rule: `rule.attack_techniques()` (`SigmaRuleExt`
+   extension trait from `sigmacatch-rule`)
+5. Dedupe + sort techniques (BTreeSet) — one `Invoke-AtomicTest` per technique
+6. Writes `run_atomic.ps` (or `--output <path>`) + report
+
+### Generated script
+
+```powershell
+$ErrorActionPreference = "Continue"
+Import-Module Invoke-AtomicRedTeam
+# 12 rule(s) without regression data — 7 technique(s)
+Start-Sleep -Seconds 5
+Invoke-AtomicTest T1055.001 -TimeoutSeconds 120
+Start-Sleep -Seconds 30
+Invoke-AtomicTest T1547.001 -TimeoutSeconds 120
+...
+```
+
+- `Start-Sleep 30` between tests → lets sigmacatch collect the events
+- `-TimeoutSeconds 120` → prevents a blocking test from freezing the chain
+- Rules without an `attack.*` tag are counted and listed in the report (no
+  `Invoke-AtomicTest` generated for them)
+
+### Limitations
+
+No coverage guarantee: a rule with a specific condition may not match the event
+produced by the ART test. Rules that still have no data are re-listed on the
+next run (the skip set only excludes what is already generated).
+
+---
+
 ## How to add a tool
 
-1. Create `localcheck/src/<name>.rs` with a docstring at the top
-2. Add the entry to `localcheck/Cargo.toml`:
+1. Create `tools/src/<name>.rs` with a docstring at the top
+2. Add the entry to `tools/Cargo.toml`:
 
 ```toml
 [[bin]]
@@ -236,5 +285,5 @@ name = "<name>"
 path = "src/<name>.rs"
 ```
 
-1. Add only the dependencies the tool needs to `localcheck/Cargo.toml`
+1. Add only the dependencies the tool needs to `tools/Cargo.toml`
 2. Document here with usage and pipeline

@@ -10,7 +10,7 @@ sigmacatch/
 ├── crates/
 │   ├── sigmacatch-config/        # Config YAML + parsing CLI + custom_channels.yaml + diagnostics git dry-run
 │   ├── sigmacatch-logger/        # Abonnement tracing à deux couches (stderr info + fichier journal rolling debug)
-│   ├── sigmacatch-rule/          # SigmahqRules : chargement de règles (parse_sigma_yaml), filtre, dédupe, remove_id
+│   ├── sigmacatch-rule/          # SigmahqRules : chargement de règles (parse_sigma_yaml), filtre, dédupe, remove_id + SigmaRuleExt (techniques ATT&CK)
 │   ├── sigmacatch-detection/     # Wrapper DetectionEngine + pipelines embarquées (windows.yml, flatten_winevt.yml) + channel_resolver
 │   ├── input-windows-channels/   # Collecteur Winevt multi-channel (cfg(windows))
 │   ├── sigmacatch-regression/    # SigmahqRegression (get_sigma_id, add, retire), InfoYml, triplet
@@ -20,13 +20,14 @@ sigmacatch/
 ├── sigmacatch/                   # Binaire + orchestration
 │   └── src/
 │       └── main.rs               # Config + init repo + boucle continue + process_and_generate + commit/push
-└── localcheck/                   # Outils de dev (hors du crate principal)
+└── tools/                   # Outils de dev (hors du crate principal)
     └── src/
         ├── check_dry_run.rs      # Diagnostics git (token/fork/API/info-refs/état repo)
         ├── check_channels.rs     # Résout et liste les channels Windows collectés
         ├── list_rules.rs         # Liste les règles chargées (techniques, lien ART)
         ├── check_filter.rs       # Valide SigmaFilterConfig contre les vraies règles Sigma (comptage ground-truth)
-        └── check_evtx.rs         # Validation batch du moteur Sigma contre les données .evtx
+        ├── check_evtx.rs         # Validation batch du moteur Sigma contre les données .evtx
+        └── get_atomic.rs         # Génère run_atomic.ps (Invoke-AtomicTest) pour les règles sans regression data
 ```
 
 ## Arborescence
@@ -35,12 +36,13 @@ sigmacatch/
 sigmacatch/src/
 └── main.rs              # Binaire : orchestration, boucle continue, process_and_generate
 
-localcheck/src/
+tools/src/
 ├── check_dry_run.rs      # Outil de diagnostics git (config.yaml + dry_run_git)
 ├── check_channels.rs     # Outil de résolution de channels (filtre config.yaml)
 ├── list_rules.rs         # Outil de listing des règles (filtre config.yaml)
 ├── check_filter.rs       # Outil de validation des filtres (pas d'args CLI, charge ./sigma lui-même)
-└── check_evtx.rs         # Outil de validation batch (exit 1 sur entrée vide / aucun match)
+├── check_evtx.rs         # Outil de validation batch (exit 1 sur entrée vide / aucun match)
+└── get_atomic.rs         # Outil de génération run_atomic.ps (règles sans regression data)
 ```
 
 Il n'y a pas de `config.rs` / `logger.rs` / `repo.rs` dans le binaire — ces modules ont été
@@ -58,7 +60,7 @@ sigmacatch ──┬── sigmacatch-config       (Config, CliArgs, diagnostics
              ├── sigmacatch-types        (Event, Alert, RegressionHeader, Product, EventProducer, parsing XML)
              └── sigmacatch-repo         (SigmaRepo, wrapper grit-lib)
 
-localcheck ──┬── sigmacatch-rule         (SigmahqRules + SigmaFilterConfig)
+tools ──┬── sigmacatch-rule         (SigmahqRules + SigmaFilterConfig)
              ├── sigmacatch-detection    (DetectionEngine)
              ├── sigmacatch-regression   (SigmahqRegression)
              └── input-evtx              (parse_evtx_bytes)

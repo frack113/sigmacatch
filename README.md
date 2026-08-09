@@ -75,7 +75,7 @@ Rules missing a `status` or `level` field are always accepted.
 | `--contrib` | Enable push to the remote fork for this run |
 | `--help`, `-h` | Print help and exit |
 
-Dev tools in `localcheck/` (run with `cargo run --release --bin <tool>`): `check_dry_run` (git diagnostics), `check_channels` (resolved channels), `list_rules` (loaded rules with techniques + ART link), `check_filter`, `check_evtx`.
+Dev tools in `tools/` (run with `cargo run --release --bin <tool>`): `check_dry_run` (git diagnostics), `check_channels` (resolved channels), `list_rules` (loaded rules with techniques + ART link), `check_filter`, `check_evtx`, `get_atomic` (generates `run_atomic.ps` for rules without regression data).
 
 ## Git clone performance (grit-lib vs native git)
 
@@ -141,7 +141,7 @@ The project is a cargo workspace of 11 crates (9 libraries + 2 binary crates):
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
 | `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, GitHub fork detection, commit workflow |
 | `input-evtx` | Parse EVTX files into `Event` objects for the detection engine |
-| `localcheck` | Dev tools: `check_dry_run` (git diag), `check_channels` (channels), `list_rules` (rules), `check_filter` (filter validation), `check_evtx` (regression validation) |
+| `tools` | Dev tools: `check_dry_run` (git diag), `check_channels` (channels), `list_rules` (rules), `check_filter` (filter validation), `check_evtx` (regression validation), `get_atomic` (generates `run_atomic.ps`) |
 
 ## Built with
 
