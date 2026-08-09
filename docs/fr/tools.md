@@ -7,7 +7,7 @@ binaire principal `sigmacatch` pour garder son arbre de dépendances léger.
 
 **Fichier :** `tools/src/check_evtx.rs`
 
-**Usage :** `cargo run --release --bin check_evtx`
+**Usage :** `cargo run --release --bin check_evtx [--json]`
 
 **Fonction :** Batch validation du moteur de détection Sigma contre les données de régression SigmaHQ.
 
@@ -90,7 +90,7 @@ cargo run --release --bin check_evtx
 
 **Fichier :** `tools/src/check_filter.rs`
 
-**Usage :** `cargo run --release --bin check_filter`
+**Usage :** `cargo run --release --bin check_filter [--json]`
 
 **Fonction :** Valide `SigmaFilterConfig` (product / status / level / author) contre le vrai jeu
 de règles Sigma. Pas d'args CLI — exécute toutes les combinaisons de filtres automatiquement.
@@ -174,7 +174,7 @@ cargo run --release --bin check_filter
 
 **Fichier :** `tools/src/check_dry_run.rs`
 
-**Usage :** `cargo run --release --bin check_dry_run`
+**Usage :** `cargo run --release --bin check_dry_run [--json]`
 
 **Fonction :** diagnostics git de l'ancien flag `--dry-run` de sigmacatch (déplacé ici pour
 simplifier le binaire principal). Réutilise `Config::load_with_cli` + `dry_run_git` de
@@ -194,7 +194,7 @@ simplifier le binaire principal). Réutilise `Config::load_with_cli` + `dry_run_
 
 **Fichier :** `tools/src/check_channels.rs`
 
-**Usage :** `cargo run --release --bin check_channels`
+**Usage :** `cargo run --release --bin check_channels [--json]`
 
 **Fonction :** résout et liste les channels Windows que le moteur collecterait (ancien
 `--channels-only` de sigmacatch, déplacé ici).
@@ -212,7 +212,7 @@ simplifier le binaire principal). Réutilise `Config::load_with_cli` + `dry_run_
 
 **Fichier :** `tools/src/list_rules.rs`
 
-**Usage :** `cargo run --release --bin list_rules`
+**Usage :** `cargo run --release --bin list_rules [--json]`
 
 **Fonction :** liste les règles chargées avec leur chemin (ancien `--list-rules` de sigmacatch,
 déplacé ici).
@@ -230,7 +230,7 @@ déplacé ici).
 
 **Fichier :** `tools/src/get_atomic.rs`
 
-**Usage :** `cargo run --release --bin get_atomic [--output run_atomic.ps1]`
+**Usage :** `cargo run --release --bin get_atomic [--output run_atomic.ps] [--getprereqs] [--json]`
 
 **Fonction :** génère un script `run_atomic.ps1` qui chaîne les commandes
 `Invoke-AtomicTest T1xxx.xxx` pour les techniques ATT&CK des règles **sans
@@ -272,6 +272,45 @@ Invoke-AtomicTest T1547.001 -TimeoutSeconds 120
 Pas de garantie de couverture : une règle avec une condition spécifique peut ne
 pas matcher l'event produit par le test ART. Les règles restées sans data sont
 re-listées au prochain run (le skip set n'exclut que ce qui est déjà généré).
+
+---
+
+## channel_health
+
+**Fichier :** `tools/src/channel_health.rs`
+
+**Usage :** `cargo run --release --bin channel_health [--json] [--channel <name>]`
+
+**Fonction :** diagnostic Windows-only pour vérifier la santé des channels Winevt (compteur
+d'events, dernier event, statut). Sur non-Windows : stub JSON.
+
+### Pipeline
+
+1. `Config::load("config.yaml")` (section filter)
+2. Charge les règles Sigma depuis `./sigma` + filtre config
+3. `DetectionEngine::new(&rules)` → `resolve_channels(&custom_map)`
+4. Pour chaque channel : `EvtOpenChannelEnum` + `EvtQuery` (échantillon 1000 events max)
+5. Rapport JSON/texte (exit 1 si aucun channel)
+
+---
+
+## coverage
+
+**Fichier :** `tools/src/coverage.rs`
+
+**Usage :** `cargo run --release --bin coverage`
+
+**Fonction :** statistiques de couverture globale pour la config filtre actuelle.
+Sortie JSON : règles totales, rules avec régression locale, rules en attente sur
+branches remote, pourcentage de couverture.
+
+### Pipeline
+
+1. `Config::load("config.yaml")` (section filter)
+2. Charge toutes les règles Sigma depuis `./sigma` + filtre config
+3. Scan local `regression_data/` → skip set
+4. `SigmaRepo::pending_regression_rule_ids()` → skip set branches remote
+5. Calcul % couverture → JSON
 
 ---
 

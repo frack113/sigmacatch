@@ -7,7 +7,7 @@ main `sigmacatch` binary so its dependency tree stays lean.
 
 **File:** `tools/src/check_evtx.rs`
 
-**Usage:** `cargo run --release --bin check_evtx`
+**Usage:** `cargo run --release --bin check_evtx [--json]`
 
 **Purpose:** Batch validation of the Sigma detection engine against SigmaHQ regression data.
 
@@ -90,7 +90,7 @@ cargo run --release --bin check_evtx
 
 **File:** `tools/src/check_filter.rs`
 
-**Usage:** `cargo run --release --bin check_filter`
+**Usage:** `cargo run --release --bin check_filter [--json]`
 
 **Purpose:** Validates `SigmaFilterConfig` (product / status / level / author) against the real
 Sigma rule set. No CLI args — runs every filter combination automatically.
@@ -174,7 +174,7 @@ cargo run --release --bin check_filter
 
 **File:** `tools/src/check_dry_run.rs`
 
-**Usage:** `cargo run --release --bin check_dry_run`
+**Usage:** `cargo run --release --bin check_dry_run [--json]`
 
 **Purpose:** git diagnostics of the former `--dry-run` sigmacatch flag (moved here to keep the
 main binary lean). Reuses `Config::load_with_cli` + `dry_run_git` from `sigmacatch-config`.
@@ -193,7 +193,7 @@ Accepts the same flags as the main binary (`--author`, `--offline`, `--contrib`,
 
 **File:** `tools/src/check_channels.rs`
 
-**Usage:** `cargo run --release --bin check_channels`
+**Usage:** `cargo run --release --bin check_channels [--json]`
 
 **Purpose:** resolves and lists the Windows channels the engine would collect (former
 `--channels-only` sigmacatch flag, moved here).
@@ -211,7 +211,7 @@ Accepts the same flags as the main binary (`--author`, `--offline`, `--contrib`,
 
 **File:** `tools/src/list_rules.rs`
 
-**Usage:** `cargo run --release --bin list_rules`
+**Usage:** `cargo run --release --bin list_rules [--json]`
 
 **Purpose:** lists the loaded rules with their path (former `--list-rules` sigmacatch flag,
 moved here).
@@ -229,7 +229,7 @@ moved here).
 
 **File:** `tools/src/get_atomic.rs`
 
-**Usage:** `cargo run --release --bin get_atomic [--output run_atomic.ps1]`
+**Usage:** `cargo run --release --bin get_atomic [--output run_atomic.ps] [--getprereqs] [--json]`
 
 **Purpose:** generates a `run_atomic.ps1` script chaining `Invoke-AtomicTest
 T1xxx.xxx` commands for the ATT&CK techniques of rules **without regression
@@ -271,6 +271,45 @@ Invoke-AtomicTest T1547.001 -TimeoutSeconds 120
 No coverage guarantee: a rule with a specific condition may not match the event
 produced by the ART test. Rules that still have no data are re-listed on the
 next run (the skip set only excludes what is already generated).
+
+---
+
+## channel_health
+
+**File:** `tools/src/channel_health.rs`
+
+**Usage:** `cargo run --release --bin channel_health [--json] [--channel <name>]`
+
+**Purpose:** Windows-only diagnostic to check Winevt channel health (event count, last event, status).
+On non-Windows: stub JSON output.
+
+### Pipeline
+
+1. `Config::load("config.yaml")` (filter section)
+2. Loads Sigma rules from `./sigma` + filter config
+3. `DetectionEngine::new(&rules)` → `resolve_channels(&custom_map)`
+4. Per channel: `EvtOpenChannelEnum` + `EvtQuery` (sample up to 1000 events)
+5. JSON/text report (exit 1 if no channels)
+
+---
+
+## coverage
+
+**File:** `tools/src/coverage.rs`
+
+**Usage:** `cargo run --release --bin coverage`
+
+**Purpose:** big-picture coverage stats for the current filter config. JSON output:
+total rules, rules with local regression, rules pending on remote branches,
+coverage percentage.
+
+### Pipeline
+
+1. `Config::load("config.yaml")` (filter section)
+2. Loads all Sigma rules from `./sigma` + filter config
+3. Scan local `regression_data/` → skip set
+4. `SigmaRepo::pending_regression_rule_ids()` → skip set remote branches
+5. Compute coverage % → JSON
 
 ---
 
