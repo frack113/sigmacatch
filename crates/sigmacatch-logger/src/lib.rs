@@ -15,13 +15,17 @@ use tracing_subscriber::{
 };
 
 /// Initialise les deux couches de logging : stderr lisible + fichier structuré.
-pub fn init(config: &Config) -> Result<WorkerGuard> {
+/// When `verbose` is false, stderr only shows `error` level messages.
+pub fn init(config: &Config, verbose: bool) -> Result<WorkerGuard> {
     let log_dir = PathBuf::from("logs");
     fs::create_dir_all(&log_dir)
         .with_context(|| format!("Failed to create log directory: {}", log_dir.display()))?;
 
-    let stderr_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let stderr_filter = if verbose {
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
+    } else {
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("error"))
+    };
 
     let stderr_layer = fmt::layer()
         .with_writer(std::io::stderr)

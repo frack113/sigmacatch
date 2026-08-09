@@ -402,6 +402,7 @@ pub struct CliArgs {
     pub all_rules: bool,
     pub offline: bool,
     pub contrib: bool,
+    pub verbose: bool,
 }
 
 const HELP: &str = "\
@@ -411,9 +412,10 @@ USAGE:
     sigmacatch [OPTIONS]
 
 FLAGS:
-    --all-rules        Skip rules that already have regression data
-    --offline          Skip pull at startup (existing repo required)
-    --contrib          Enable push to remote fork (requires git.contrib=true)
+    -a, --all-rules    Load all rules (skip those with existing regression data)
+    -c, --contrib      Enable push to remote fork (requires git.contrib=true)
+    -o, --offline      Skip pull at startup (existing repo required)
+    -v, --verbose      Enable verbose logging (info level on stderr)
     --help             Print this help and exit
 
 OPTIONS:
@@ -433,6 +435,7 @@ pub fn parse_args() -> CliArgs {
     let mut all_rules = false;
     let mut offline = false;
     let mut contrib = false;
+    let mut verbose = false;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -440,9 +443,10 @@ pub fn parse_args() -> CliArgs {
                 i += 1;
                 author = args.get(i).cloned();
             }
-            "--all-rules" => all_rules = true,
-            "--offline" => offline = true,
-            "--contrib" => contrib = true,
+            "-a" | "--all-rules" => all_rules = true,
+            "-c" | "--contrib" => contrib = true,
+            "-o" | "--offline" => offline = true,
+            "-v" | "--verbose" => verbose = true,
             unknown => {
                 eprintln!("Error: unknown flag `{}`", unknown);
                 std::process::exit(1);
@@ -455,6 +459,7 @@ pub fn parse_args() -> CliArgs {
         all_rules,
         offline,
         contrib,
+        verbose,
     }
 }
 

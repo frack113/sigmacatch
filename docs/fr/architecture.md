@@ -75,7 +75,7 @@ dépend de `rsigma-parser`. `sigmacatch-config` dépend de `sigmacatch-repo` + `
 
 ```text
 1. parse_args() + Config::load_with_cli("config.yaml", cli)
-2. init_logger() → tracing (stderr info + fichier debug)
+2. init_logger(verbose) → tracing (stderr `error` par défaut, `info` avec `-v`, fichier debug)
 3. ensure_dirs() → dossier repo sigma + logs/
 4. SigmaRepo init (remote_url = fork, branche de travail, token) → init() [clone/fetch]
    └── set_git_operations(offline, contrib) → set_working_branch() → check_remote_working_branch() (garde sur branche du même jour)

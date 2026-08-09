@@ -70,9 +70,10 @@ Rules missing a `status` or `level` field are always accepted.
 | Flag | Description |
 |------|-------------|
 | `--author <name>` | Override detected username |
-| `--all-rules` | Load all rules — skip set is disabled |
-| `--offline` | Skip pull at startup (use existing repo as-is) |
-| `--contrib` | Enable push to the remote fork for this run |
+| `-a`, `--all-rules` | Load all rules — skip set is disabled |
+| `-c`, `--contrib` | Enable push to the remote fork for this run |
+| `-o`, `--offline` | Skip pull at startup (use existing repo as-is) |
+| `-v`, `--verbose` | Show info-level logs on stderr (default: errors only) |
 | `--help`, `-h` | Print help and exit |
 
 Dev tools in `tools/` (run with `cargo run --release --bin <tool>`): `check_dry_run` (git diagnostics), `check_channels` (resolved channels), `list_rules` (loaded rules with techniques + ART link), `check_filter`, `check_evtx`, `get_atomic` (generates `run_atomic.ps` for rules without regression data).
@@ -133,7 +134,7 @@ The project is a cargo workspace of 11 crates (9 libraries + 2 binary crates):
 |---|---|
 | `sigmacatch` | Binary + orchestration (continuous loop) |
 | `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml + dry-run git diagnostics |
-| `sigmacatch-logger` | Two-layer tracing subscriber (stderr info + daily rolling file debug) |
+| `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug) |
 | `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication, channel resolution |
 | `sigmacatch-detection` | Thin wrapper around rsigma-eval (pipelines, bloom, LogSourceExtractor) |
 | `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) |

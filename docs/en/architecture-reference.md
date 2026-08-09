@@ -93,7 +93,7 @@ no shell). When `ssh_key_path` is set, every regression commit is **signed** wit
 (`ssh-key`): the `gpgsig` header is inserted between the committer line and the message, like
 `git commit -S` with `gpg.format = ssh`, so GitHub shows the commit as "Verified".
 
-**CLI flags:** `--author <name>`, `--all-rules`, `--offline`, `--contrib`, `--help` / `-h`. The diagnostics (git dry-run, channels, rule list) are `tools` tools: `check_dry_run`, `check_channels`, `list_rules`.
+**CLI flags:** `--author <name>`, `-a`/`--all-rules`, `-o`/`--offline`, `-c`/`--contrib`, `-v`/`--verbose`, `--help` / `-h`. The diagnostics (git dry-run, channels, rule list) are `tools` tools: `check_dry_run`, `check_channels`, `list_rules`.
 
 ---
 
@@ -432,7 +432,7 @@ regression_tests_info:
 
 ### Logger (`crates/sigmacatch-logger/src/lib.rs`)
 
-- **stderr layer**: `info` level, ANSI colors, filterable via `RUST_LOG`
+- **stderr layer**: `error` level by default, `info` with `-v`/`--verbose`, ANSI colors, filterable via `RUST_LOG`
 - **file layer**: `debug` level (configurable), daily rotation
 - `logs/sigmacatch.YYYY-MM-DD.log`
 
@@ -479,11 +479,12 @@ cargo xwin build --release --target x86_64-pc-windows-msvc   # cross-compile Win
 
 ```text
 sigmacatch
-    [--author <name>]      # override git.author from config
-    [--all-rules]          # disable the skip set (load every rule)
-    [--offline]            # skip the pull at startup (force offline)
-    [--contrib]            # enable push to the remote fork
-    [--help], [-h]         # print this help and exit
+    [-a], [--all-rules]    # disables the skip set (loads all rules)
+    [-c], [--contrib]      # enables push to the remote fork
+    [-o], [--offline]      # skips pull at startup (forces offline)
+    [-v], [--verbose]      # shows info-level logs on stderr
+    [--author <name>]      # overrides git.author from config
+    [--help], [-h]         # shows help and exits
 ```
 
 Diagnostics moved to `tools`:

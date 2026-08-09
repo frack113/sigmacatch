@@ -178,8 +178,8 @@ cargo run --release --bin check_filter
 
 **Fonction :** diagnostics git de l'ancien flag `--dry-run` de sigmacatch (déplacé ici pour
 simplifier le binaire principal). Réutilise `Config::load_with_cli` + `dry_run_git` de
-`sigmacatch-config`. Accepte les mêmes flags que le binaire principal (`--author`, `--offline`,
-`--contrib`, `--help`).
+`sigmacatch-config`. Accepte les mêmes flags que le binaire principal (`--author`, `-o`/`--offline`,
+`-c`/`--contrib`, `--help`).
 
 ### Pipeline
 

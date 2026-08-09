@@ -93,7 +93,7 @@ Quand `ssh_key_path` est renseigné, chaque commit de régression est **signé**
 (`ssh-key`) : l'en-tête `gpgsig` est inséré entre la ligne committer et le message, comme
 `git commit -S` avec `gpg.format = ssh`, pour que GitHub affiche le commit "Verified".
 
-**CLI flags :** `--author <name>`, `--all-rules`, `--offline`, `--contrib`, `--help` / `-h`. Les diagnostics (dry-run git, channels, liste des règles) sont des tools `tools` : `check_dry_run`, `check_channels`, `list_rules`.
+**CLI flags :** `--author <name>`, `-a`/`--all-rules`, `-o`/`--offline`, `-c`/`--contrib`, `-v`/`--verbose`, `--help` / `-h`. Les diagnostics (dry-run git, channels, liste des règles) sont des tools `tools` : `check_dry_run`, `check_channels`, `list_rules`.
 
 ---
 
@@ -451,7 +451,7 @@ regression_tests_info:
 
 ### Logger (`crates/sigmacatch-logger/src/lib.rs`)
 
-- **Couche stderr** : niveau `info`, couleurs ANSI, filtrable via `RUST_LOG`
+- **Couche stderr** : niveau `error` par défaut, `info` avec `-v`/`--verbose`, couleurs ANSI, filtrable via `RUST_LOG`
 - **Couche fichier** : niveau `debug` (configurable), rotation journalière
 - `logs/sigmacatch.YYYY-MM-DD.log`
 
@@ -498,10 +498,11 @@ cargo xwin build --release --target x86_64-pc-windows-msvc   # cross-compile Win
 
 ```text
 sigmacatch
+    [-a], [--all-rules]    # désactive le skip set (charge toutes les règles)
+    [-c], [--contrib]      # active le push au remote fork
+    [-o], [--offline]      # skip le pull au startup (force offline)
+    [-v], [--verbose]      # affiche les logs info sur stderr
     [--author <name>]      # écrase git.author de la config
-    [--all-rules]          # désactive le skip set (charge toutes les règles)
-    [--offline]            # skip le pull au startup (force offline)
-    [--contrib]            # active le push au remote fork
     [--help], [-h]         # affiche cette aide et exit
 ```
 

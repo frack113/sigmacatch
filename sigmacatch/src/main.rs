@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
     #[cfg(windows)]
     setup_console();
 
-    let _guard = init_logger(&config)?;
+    let _guard = init_logger(&config, cli.verbose)?;
 
     info!(
         "Sigma Regression Generator v{} — build {}",
