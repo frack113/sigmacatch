@@ -12,10 +12,7 @@
 //!   cargo run --release --bin channel_health [--json] [--channel <name>]
 
 #[cfg(windows)]
-use windows::Win32::System::EventLog::{
-    EvtClose, EvtNextChannelEnum, EvtOpenChannelEnum, EvtQuery, EvtQueryChannelPath, EvtRender,
-    EvtRenderFlags, EvtRenderFlags_EvtRenderEventXml,
-};
+use windows::Win32::System::EventLog::{EvtClose, EvtNext, EvtOpenChannelEnum, EvtQuery};
 
 use sigmacatch_config::Config;
 use sigmacatch_detection::DetectionEngine;
@@ -128,7 +125,7 @@ fn main() {
 fn check_channels_windows(channels: &[String], filter: Option<&str>) -> ChannelHealthReport {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
-    use windows::Win32::System::EventLog::{EvtClose, EvtNextChannelEnum, EvtOpenChannelEnum};
+    use windows::Win32::System::EventLog::{EvtClose, EvtNext, EvtOpenChannelEnum, EvtQuery};
 
     let mut results: Vec<ChannelHealth> = Vec::new();
     let mut total_events: u64 = 0;
@@ -161,27 +158,37 @@ fn check_channels_windows(channels: &[String], filter: Option<&str>) -> ChannelH
                     health.status = "ok".to_string();
 
                     // Query events to count them (sample first 1000)
-                    match windows::Win32::System::EventLog::EvtQuery(None, wquery.as_ptr(), 0) {
+                    match windows::Win32::System::EventLog::EvtQuery(
+                        None,
+                        wquery.as_ptr(),
+                        wquery.as_ptr(),
+                        0,
+                    ) {
                         Ok(query_handle) => {
                             let mut event_count: u32 = 0;
-                            let mut event_handle: *mut () = std::ptr::null_mut();
+                            let mut events = [0isize; 1];
+                            let mut returned = 0u32;
                             loop {
+                                events.fill(0);
+                                returned = 0;
                                 let rc = windows::Win32::System::EventLog::EvtNext(
                                     query_handle,
-                                    1,
-                                    &mut event_handle as *mut _ as *mut _,
+                                    &mut events,
                                     1000,
                                     0,
+                                    &mut returned,
                                 );
-                                if rc.is_err() {
+                                if rc.is_err() || returned == 0 {
                                     break;
                                 }
                                 event_count += 1;
                                 if event_count >= 1000 {
                                     break;
                                 }
-                                if !event_handle.is_null() {
-                                    windows::Win32::System::EventLog::EvtClose(event_handle);
+                                if events[0] != 0 {
+                                    unsafe {
+                                        windows::Win32::System::EventLog::EvtClose(events[0])
+                                    };
                                 }
                             }
                             health.event_count = event_count as u64;
