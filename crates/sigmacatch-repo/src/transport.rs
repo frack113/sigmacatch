@@ -196,6 +196,9 @@ fn shell_escape(s: &str) -> String {
 }
 
 /// HTTP client implementing grit-lib's `HttpClient` trait with GitHub token auth.
+/// Not `Sync` — constructed inside a single `spawn_blocking` closure and never
+/// shared across threads. Restoring `Mutex` would be needed if concurrent use
+/// is introduced in the future.
 pub struct AuthHttpClient {
     client: reqwest::blocking::Client,
     token: Option<Zeroizing<String>>,

@@ -283,7 +283,7 @@ impl SigmaRepo {
                 "network unreachable, rate-limited, or authentication failed"
             };
             warn!(
-                "Failed to fetch sigmacatch/* branches from origin ({}): {}\
+                "Failed to fetch sigmacatch/* branches from origin ({}): {}. \
                  the skip set will only cover the checked-out worktree.\
                  Re-runs on this repo can still resolve pending-PR data: {e}",
                 sanitize_url(&remote_url),
