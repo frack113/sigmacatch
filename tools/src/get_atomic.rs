@@ -17,7 +17,7 @@
 //! sigmacatch captures the generated events and produces the regression data.
 //!
 //! Usage:
-//!   cargo run --release --bin get_atomic [--output run_atomic.ps]
+//!   cargo run --release --bin get_atomic [--output run_atomic.ps] [--getprereqs]
 
 use sigmacatch_config::Config;
 use sigmacatch_regression::SigmahqRegression;
@@ -31,8 +31,14 @@ const DEFAULT_OUTPUT: &str = "run_atomic.ps";
 const SLEEP_SECONDS: u64 = 30;
 const TIMEOUT_SECONDS: u64 = 120;
 
-fn parse_args() -> PathBuf {
+struct Args {
+    output: PathBuf,
+    get_prereqs: bool,
+}
+
+fn parse_args() -> Args {
     let mut output = PathBuf::from(DEFAULT_OUTPUT);
+    let mut get_prereqs = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -43,12 +49,17 @@ fn parse_args() -> PathBuf {
                     process::exit(1);
                 }
             },
+            "--getprereqs" => {
+                get_prereqs = true;
+            }
             "--help" | "-h" => {
                 println!(
                     "get_atomic: generate run_atomic.ps for rules without regression data\n\n\
-                     Usage: get_atomic [--output <path>]\n\n\
+                     Usage: get_atomic [--output <path>] [--getprereqs]\n\n\
                      Options:\n\
-                     \x20 --output <path>  write the script to <path> (default: run_atomic.ps)"
+                     \x20 --output <path>    write the script to <path> (default: run_atomic.ps)\n\
+                     \x20 --getprereqs       generate Invoke-AtomicTest with -GetPrereqs flag\n\
+                                          (downloads/installs prerequisites without running tests)"
                 );
                 process::exit(0);
             }
@@ -58,7 +69,10 @@ fn parse_args() -> PathBuf {
             }
         }
     }
-    output
+    Args {
+        output,
+        get_prereqs,
+    }
 }
 
 /// Extract the ATT&CK techniques usable as `Invoke-AtomicTest` targets
@@ -71,7 +85,9 @@ fn atomic_techniques(rule: &sigmacatch_rule::SigmaRule) -> Vec<String> {
 }
 
 fn main() {
-    let output = parse_args();
+    let args = parse_args();
+    let output = &args.output;
+    let get_prereqs = args.get_prereqs;
 
     let config = match Config::load(&PathBuf::from("config.yaml")) {
         Ok(c) => c,
@@ -152,20 +168,32 @@ fn main() {
     ));
     script.push_str("Start-Sleep -Seconds 5\n");
     for technique in &techniques {
-        script.push_str(&format!(
-            "Invoke-AtomicTest {technique} -TimeoutSeconds {TIMEOUT_SECONDS}\n"
-        ));
-        script.push_str(&format!("Start-Sleep -Seconds {SLEEP_SECONDS}\n"));
+        if get_prereqs {
+            script.push_str(&format!(
+                "Invoke-AtomicTest {technique} -TimeoutSeconds {TIMEOUT_SECONDS} -GetPrereqs\n"
+            ));
+        } else {
+            script.push_str(&format!(
+                "Invoke-AtomicTest {technique} -TimeoutSeconds {TIMEOUT_SECONDS}\n"
+            ));
+            script.push_str(&format!("Start-Sleep -Seconds {SLEEP_SECONDS}\n"));
+        }
     }
 
-    if let Err(e) = std::fs::write(&output, script) {
+    if let Err(e) = std::fs::write(output, script) {
         eprintln!("Failed to write {}: {}", output.display(), e);
         process::exit(1);
     }
 
+    let mode = if get_prereqs {
+        "get-prereqs"
+    } else {
+        "execute"
+    };
     println!(
-        "Wrote {} ({rules_without_data} rules, {} techniques)",
+        "Wrote {} [{}] ({rules_without_data} rules, {} techniques)",
         output.display(),
+        mode,
         techniques.len()
     );
     if !rules_without_attack_tag.is_empty() {
