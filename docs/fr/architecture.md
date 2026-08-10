@@ -27,7 +27,8 @@ sigmacatch/
         ├── list_rules.rs         # Liste les règles chargées (techniques, lien ART)
         ├── check_filter.rs       # Valide SigmaFilterConfig contre les vraies règles Sigma (comptage ground-truth)
         ├── check_evtx.rs         # Validation batch du moteur Sigma contre les données .evtx
-        └── get_atomic.rs         # Génère run_atomic.ps (Invoke-AtomicTest) pour les règles sans regression data
+        ├── get_atomic.rs         # Génère run_atomic.ps (Invoke-AtomicTest) pour les règles sans regression data
+        └── coverage.rs           # Statistiques de couverture des règles (locales + branches en attente)
 ```
 
 ## Arborescence
@@ -42,7 +43,8 @@ tools/src/
 ├── list_rules.rs         # Outil de listing des règles (filtre config.yaml)
 ├── check_filter.rs       # Outil de validation des filtres (pas d'args CLI, charge ./sigma lui-même)
 ├── check_evtx.rs         # Outil de validation batch (exit 1 sur entrée vide / aucun match)
-└── get_atomic.rs         # Outil de génération run_atomic.ps (règles sans regression data)
+├── get_atomic.rs         # Outil de génération run_atomic.ps (règles sans regression data)
+└── coverage.rs           # Outil de stats de couverture (règles locales + branches remote en attente)
 ```
 
 Il n'y a pas de `config.rs` / `logger.rs` / `repo.rs` dans le binaire — ces modules ont été

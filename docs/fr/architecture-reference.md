@@ -32,7 +32,7 @@ sigmacatch/
 ├── sigmacatch/                    # Crate binaire
 │   └── src/
 │       └── main.rs                # Orchestration : boucle continue + process_and_generate + commit/push
-├── tools/                    # Outils de dev (check_dry_run, check_channels, list_rules, check_filter, check_evtx, get_atomic)
+├── tools/                    # Outils de dev (check_dry_run, check_channels, list_rules, check_filter, check_evtx, get_atomic, coverage)
 └── crates/
     ├── sigmacatch-config/         # Config YAML, parsing CLI, custom_channels.yaml, diagnostics git dry-run (check_dry_run)
     ├── sigmacatch-logger/         # Abonnement tracing à deux couches (stderr info + fichier journal rolling debug)
@@ -87,8 +87,11 @@ Les flags CLI `--offline` / `--contrib` forcent ces valeurs à `true`.
 
 **Transport SSH :** `git.transport: ssh` clone/fetch/push via la clé privée `ssh_key_path`. Au startup,
 `ensure_ssh_host_config()` (`transport.rs`) écrit les directives `IdentityFile`/`UserKnownHostsFile`
-dans `~/.ssh/config` (idempotent) ; sur Windows l'exécutable `ssh` est résolu via les chemins standards
-(OpenSSH de Windows, Git for Windows) et utilisé en exec direct (`SshCommand::Program`, pas de shell).
+dans `~/.ssh/config` (idempotent, **écriture atomique** tmp + rename) ; sur Windows l'exécutable `ssh`
+est résolu via les chemins standards (OpenSSH de Windows, Git for Windows) et utilisé en exec direct
+(`SshCommand::Program`, pas de shell). Un échec du **pull SSH est définitif** (pas de fallback HTTPS) :
+le message d'erreur catégorise la cause (binaire `ssh` manquant ou clé invalide) et renvoie vers
+`transport: http` — le retry HTTP n'est possible qu'en changeant la config.
 Quand `ssh_key_path` est renseigné, chaque commit de régression est **signé** en ed25519 pur Rust
 (`ssh-key`) : l'en-tête `gpgsig` est inséré entre la ligne committer et le message, comme
 `git commit -S` avec `gpg.format = ssh`, pour que GitHub affiche le commit "Verified".
@@ -129,6 +132,7 @@ SigmaRepo::new()
     ├── set_remote_url(fork_url) → init() [async]
     │       ├── repo incomplet/absent + offline → bail actionnable
     │       ├── repo existant → pull étroit de la branche courante (skip si offline)
+    │       │       └── HEAD déjà sur la branche de travail (re-run même jour) → skip du master-switch
     │       └── sinon → clone complet (full-history, protocole v2) + pack
     ├── set_working_branch(branch_name)         # fetch namespace sigmacatch/* (skip si offline) + create_branch
     │   └── switch_to_working_branch()          # matérialise l'arbre de la branche (miroir exact du commit)
@@ -183,6 +187,7 @@ existing_rules: HashSet<Uuid> = regression.get_sigma_id().collect()
     │   └── ids extraits des noms de fichiers <uuid>.json|evtx (jamais de checkout)
     │   └── validation des blobs <uuid>.evtx : parse ≥ 1 record, sinon id exclu
     │       (auto-guérison : données vides commitées → règle régénérée)
+    │       └── blob > 64 MiB (MAX_EVTX_BLOB_SIZE) → traité comme cassé, id exclu (RAM bornée)
     ├── valid ∪ broken : seuls valid \ broken entrent dans le skip set
     └── HashSet union → dédupe des ids partagés entre branches / avec le worktree
     ↓
@@ -515,6 +520,7 @@ list_rules                 # affiche les règles chargées (id, titre, status, n
 check_filter               # valide SigmaFilterConfig contre les règles (ground-truth)
 check_evtx                 # valide les données de régression (evtx + json + match moteur)
 get_atomic                 # génère run_atomic.ps (Invoke-AtomicTest) pour les règles sans regression data
+coverage                   # stats de couverture des règles (locales + branches remote en attente)
 ```
 
 La config est auto-créée au premier run avec des défauts. Éditez `config.yaml` avant de lancer.

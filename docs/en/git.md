@@ -16,11 +16,13 @@ A `depth=1` would leave the ODB without the ancestors of the tips → broken pus
 
 ### Working branch `sigmacatch/<date>`
 
-Based on the remote ref if present (else HEAD) to keep fast-forward. The narrow pull does not update `refs/remotes/origin/sigmacatch/<date>` → fetch of the `sigmacatch/*` namespace (glob, single fetch, best-effort: network failure = `warn!` and continue with the worktree only) before `create_branch`. Branch missing from the fork → no-op.
+Based on the remote ref if present (else HEAD) to keep fast-forward. The narrow pull does not update `refs/remotes/origin/sigmacatch/<date>` → fetch of the `sigmacatch/*` namespace (glob, single fetch, best-effort: network failure = `warn!` with a categorized cause — SSH key/ssh binary vs missing token vs network — and continue with the worktree only) before `create_branch`. Branch missing from the fork → no-op.
+
+**Master-switch skip (same-day re-run)**: `is_head_on_working_branch()` inspects the HEAD target (`symbolic_ref_target`) before `switch_to_tracking_branch()`. If HEAD is already on `refs/heads/sigmacatch/<date>`, the master → working-branch round-trip is skipped (avoids a needless round-trip, fixes Windows without ssh). A same-day re-run therefore stays on the working branch directly.
 
 ### Multi-branch skip set (pending PRs)
 
-`pending_regression_rule_ids()` (`SigmaRepo`) scans the trees of ALL remote `sigmacatch/*` branches (never a checkout — `list_refs` + in-RAM walk of `regression_data/`, ids extracted from `<uuid>.<ext>` filenames). Union with the worktree → a fresh VM does not re-capture data from a still-open PR of another day; the new PR diff stays based on main (previous PR data never included). `<uuid>.evtx` blobs are validated (parse ≥ 1 record): an empty/corrupt EVTX excludes the rule from the skip set (self-healing of empty commits). Offline = best-effort (already-fetched refs only).
+`pending_regression_rule_ids()` (`SigmaRepo`) scans the trees of ALL remote `sigmacatch/*` branches (never a checkout — `list_refs` + in-RAM walk of `regression_data/`, ids extracted from `<uuid>.<ext>` filenames). Union with the worktree → a fresh VM does not re-capture data from a still-open PR of another day; the new PR diff stays based on main (previous PR data never included). `<uuid>.evtx` blobs are validated (parse ≥ 1 record): an empty/corrupt EVTX — **or one > 64 MiB** (`MAX_EVTX_BLOB_SIZE`) — excludes the rule from the skip set (self-healing of empty commits, bounded RAM). Offline = best-effort (already-fetched refs only).
 
 ### Remote working-branch guard
 
@@ -42,6 +44,6 @@ Based on the remote ref if present (else HEAD) to keep fast-forward. The narrow 
 
 `git.contrib` is opt-in: `true` (or `--contrib`) enables pushing to the fork; `false` (default) = local commits only, no push. `needs_network()` = `!offline || contrib` — a GitHub token is required only when a network operation (pull or push) is active.
 
-**SSH transport**: `git.transport: ssh` + `ssh_key_path` (ed25519 key). `ensure_ssh_host_config()` writes the `IdentityFile`/`UserKnownHostsFile` directives into `~/.ssh/config` before transport ops (idempotent); on Windows, `ssh` is resolved via Windows OpenSSH / Git for Windows and executed directly (`SshCommand::Program`). When `ssh_key_path` is set, every regression commit is signed with pure-Rust ed25519 (`ssh-key`, `gpgsig` header like `git commit -S` + `gpg.format = ssh`) → GitHub shows "Verified".
+**SSH transport**: `git.transport: ssh` + `ssh_key_path` (ed25519 key). `ensure_ssh_host_config()` writes the `IdentityFile`/`UserKnownHostsFile` directives into `~/.ssh/config` before transport ops (idempotent, **atomic write** tmp + rename to avoid a partial file); on Windows, `ssh` is resolved via Windows OpenSSH / Git for Windows and executed directly (`SshCommand::Program`). When `ssh_key_path` is set, every regression commit is signed with pure-Rust ed25519 (`ssh-key`, `gpgsig` header like `git commit -S` + `gpg.format = ssh`) → GitHub shows "Verified". **SSH pull failure = abort** (no HTTPS fallback): if the `ssh` binary is missing (Windows without Git for Windows) or the key is invalid, the error message says so explicitly and points to `transport: http` — retry is HTTP-only when the config uses HTTP.
 
 See `config.yaml` and the general invariants in [`architecture-reference.md`](architecture-reference.md) for the full configuration.

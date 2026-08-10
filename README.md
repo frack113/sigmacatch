@@ -76,7 +76,7 @@ Rules missing a `status` or `level` field are always accepted.
 | `-v`, `--verbose` | Show info-level logs on stderr (default: errors only) |
 | `--help`, `-h` | Print help and exit |
 
-Dev tools in `tools/` (run with `cargo run --release --bin <tool>`): `check_dry_run` (git diagnostics), `check_channels` (resolved channels), `list_rules` (loaded rules with techniques + ART link), `check_filter`, `check_evtx`, `get_atomic` (generates `run_atomic.ps` for rules without regression data).
+Dev tools in `tools/` (run with `cargo run --release --bin <tool>`): `check_dry_run` (git diagnostics), `check_channels` (resolved channels), `list_rules` (loaded rules with techniques + ART link), `check_filter`, `check_evtx`, `get_atomic` (generates `run_atomic.ps` for rules without regression data), `coverage` (rule coverage stats).
 
 ## Git clone performance (grit-lib vs native git)
 
@@ -121,6 +121,7 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 | Architecture | [EN](docs/en/architecture.md) | [FR](docs/fr/architecture.md) |
 | Architecture reference | [EN](docs/en/architecture-reference.md) | [FR](docs/fr/architecture-reference.md) |
 | Build | [EN](docs/en/build.md) | [FR](docs/fr/build.md) |
+| Git | [EN](docs/en/git.md) | [FR](docs/fr/git.md) |
 | Output format | [EN](docs/en/output-format.md) | [FR](docs/fr/output-format.md) |
 | Regression data format | [EN](docs/en/regression-data-format.md) | [FR](docs/fr/regression-data-format.md) |
 | Nice-to-have | [EN](docs/en/nice-to-have.md) | [FR](docs/fr/nice-to-have.md) |
@@ -142,7 +143,7 @@ The project is a cargo workspace of 11 crates (9 libraries + 2 binary crates):
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
 | `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, GitHub fork detection, commit workflow |
 | `input-evtx` | Parse EVTX files into `Event` objects for the detection engine |
-| `tools` | Dev tools: `check_dry_run` (git diag), `check_channels` (channels), `list_rules` (rules), `check_filter` (filter validation), `check_evtx` (regression validation), `get_atomic` (generates `run_atomic.ps`) |
+| `tools` | Dev tools: `check_dry_run` (git diag), `check_channels` (channels), `list_rules` (rules), `check_filter` (filter validation), `check_evtx` (regression validation), `get_atomic` (generates `run_atomic.ps`), `coverage` (rule coverage stats) |
 
 ## Built with
 
