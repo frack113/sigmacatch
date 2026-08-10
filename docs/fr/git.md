@@ -16,11 +16,13 @@ Un `depth=1` laisserait l'ODB sans les ancêtres des tips → push cassé après
 
 ### Branche de travail `sigmacatch/<date>`
 
-Basée sur la remote ref si présente (sinon HEAD) pour garder le fast-forward. Le pull étroit ne met pas à jour `refs/remotes/origin/sigmacatch/<date>` → fetch du namespace `sigmacatch/*` (glob, un fetch, best-effort : panne réseau = `warn!` et on continue avec le worktree uniquement) avant `create_branch`. Branche absente du fork → no-op.
+Basée sur la remote ref si présente (sinon HEAD) pour garder le fast-forward. Le pull étroit ne met pas à jour `refs/remotes/origin/sigmacatch/<date>` → fetch du namespace `sigmacatch/*` (glob, un fetch, best-effort : panne réseau = `warn!` avec cause catégorisée — clé SSH/ssh binaire vs token manquant vs réseau — et on continue avec le worktree uniquement) avant `create_branch`. Branche absente du fork → no-op.
+
+**Skip du master-switch (re-run même jour)** : `is_head_on_working_branch()` inspecte la cible de HEAD (`symbolic_ref_target`) avant `switch_to_tracking_branch()`. Si HEAD est déjà sur `refs/heads/sigmacatch/<date>`, le va-et-vient master → branche de travail est sauté (évite l'aller-retour inutile, fixe le cas Windows sans ssh). Un re-run du même jour reste donc sur la branche de travail directement.
 
 ### Skip-set multi-branches (PR en attente)
 
-`pending_regression_rule_ids()` (`SigmaRepo`) scanne les arbres de **toutes** les branches remote `sigmacatch/*` (jamais checkout — `list_refs` + marche `regression_data/` en RAM, ids extraits des noms `<uuid>.<ext>`). Union avec le worktree → une VM fraîche ne recapture pas les données d'un PR d'un autre jour encore ouvert ; le diff du nouveau PR reste basé sur main (données des PR précédents jamais incluses). Les blobs `<uuid>.evtx` sont validés (parse ≥ 1 record) : un EVTX vide/corrompu exclut la règle du skip set (auto-guérison des commits vides). Offline = best-effort (refs déjà fetchées).
+`pending_regression_rule_ids()` (`SigmaRepo`) scanne les arbres de **toutes** les branches remote `sigmacatch/*` (jamais checkout — `list_refs` + marche `regression_data/` en RAM, ids extraits des noms `<uuid>.<ext>`). Union avec le worktree → une VM fraîche ne recapture pas les données d'un PR d'un autre jour encore ouvert ; le diff du nouveau PR reste basé sur main (données des PR précédents jamais incluses). Les blobs `<uuid>.evtx` sont validés (parse ≥ 1 record) : un EVTX vide/corrompu **ou > 64 MiB** (`MAX_EVTX_BLOB_SIZE`) exclut la règle du skip set (auto-guérison des commits vides, RAM bornée). Offline = best-effort (refs déjà fetchées).
 
 ### Remote working-branch guard
 
@@ -42,6 +44,6 @@ Basée sur la remote ref si présente (sinon HEAD) pour garder le fast-forward. 
 
 `git.contrib` est opt-in : `true` (ou `--contrib`) active le push sur le fork ; `false` (défaut) = commits locaux, aucun push. `needs_network()` = `!offline || contrib` — token GitHub requis seulement si une opération réseau (pull ou push) est active.
 
-**Transport SSH** : `git.transport: ssh` + `ssh_key_path` (clé ed25519). `ensure_ssh_host_config()` écrit les directives `IdentityFile`/`UserKnownHostsFile` dans `~/.ssh/config` avant les ops de transport (idempotent) ; sur Windows, `ssh` est résolu via OpenSSH de Windows / Git for Windows et exécuté en direct (`SshCommand::Program`). Quand `ssh_key_path` est renseigné, chaque commit de régression est signé en ed25519 pure Rust (`ssh-key`, en-tête `gpgsig` comme `git commit -S` + `gpg.format = ssh`) → GitHub affiche "Verified".
+**Transport SSH** : `git.transport: ssh` + `ssh_key_path` (clé ed25519). `ensure_ssh_host_config()` écrit les directives `IdentityFile`/`UserKnownHostsFile` dans `~/.ssh/config` avant les ops de transport (idempotent, **écriture atomique** tmp + rename pour éviter un fichier partiel) ; sur Windows, `ssh` est résolu via OpenSSH de Windows / Git for Windows et exécuté en direct (`SshCommand::Program`). Quand `ssh_key_path` est renseigné, chaque commit de régression est signé en ed25519 pure Rust (`ssh-key`, en-tête `gpgsig` comme `git commit -S` + `gpg.format = ssh`) → GitHub affiche "Verified". **Échec du pull SSH = abort** (pas de fallback HTTPS) : si le binaire `ssh` manque (Windows sans Git for Windows) ou la clé est invalide, le pull est retenté en HTTP uniquement si `transport: http` — le message d'erreur le dit explicitement.
 
 Voir `config.yaml` et les invariants généraux dans [`architecture-reference.md`](architecture-reference.md) pour la configuration complète.

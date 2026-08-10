@@ -6,7 +6,6 @@
 //! helpers used by the plumbing and porcelain layers.
 
 use anyhow::Result;
-use std::sync::Mutex;
 use tracing::{debug, info};
 use zeroize::Zeroizing;
 
@@ -197,9 +196,12 @@ fn shell_escape(s: &str) -> String {
 }
 
 /// HTTP client implementing grit-lib's `HttpClient` trait with GitHub token auth.
+/// Not `Sync` — constructed inside a single `spawn_blocking` closure and never
+/// shared across threads. Restoring `Mutex` would be needed if concurrent use
+/// is introduced in the future.
 pub struct AuthHttpClient {
     client: reqwest::blocking::Client,
-    token: Mutex<Option<Zeroizing<String>>>,
+    token: Option<Zeroizing<String>>,
 }
 
 impl AuthHttpClient {
@@ -210,15 +212,11 @@ impl AuthHttpClient {
             .connect_timeout(std::time::Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::limited(10))
             .build()?;
-        Ok(Self {
-            client,
-            token: Mutex::new(token),
-        })
+        Ok(Self { client, token })
     }
 
     fn add_auth(&self, url: &str) -> String {
-        let token = self.token.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(t) = token.as_deref() {
+        if let Some(t) = self.token.as_deref() {
             if url.starts_with("https://") {
                 if let Some(rest) = url.strip_prefix("https://") {
                     return format!("https://x-access-token:{t}@{rest}");
@@ -370,7 +368,9 @@ pub fn ensure_ssh_host_config(ssh_key_path: Option<&str>) -> Result<()> {
     if let Some(key) = ssh_key_path {
         content.push_str(&format!("    IdentityFile {key}\n"));
     }
-    std::fs::write(&config_path, content)?;
+    let tmp_path = ssh_dir.join("config.tmp");
+    std::fs::write(&tmp_path, &content)?;
+    std::fs::rename(&tmp_path, &config_path)?;
     let key_suffix = if let Some(key) = ssh_key_path {
         format!(", IdentityFile {key}")
     } else {

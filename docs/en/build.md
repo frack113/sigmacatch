@@ -48,7 +48,7 @@ Applied profile:
 
 ## Workspace
 
-The project is a cargo workspace of 11 packages (2 binary crates — `sigmacatch` with 1 bin, `tools` with 6 bins — and 9 libraries):
+The project is a cargo workspace of 11 packages (2 binary crates — `sigmacatch` with 1 bin, `tools` with 7 bins — and 9 libraries):
 
 ```bash
 # Build everything
@@ -79,6 +79,7 @@ cargo build -p tools
 | `check_filter` | `tools/src/check_filter.rs` | Validates `SigmaFilterConfig` against real Sigma rules (ground-truth counts, no CLI args) |
 | `check_evtx` | `tools/src/check_evtx.rs` | Batch validation of Sigma engine against .evtx regression data |
 | `get_atomic` | `tools/src/get_atomic.rs` | Generates `run_atomic.ps` (chained `Invoke-AtomicTest`) for rules without regression data |
+| `coverage` | `tools/src/coverage.rs` | Rule coverage stats (local + pending remote branches) |
 
 Observed sizes (x86_64-pc-windows-msvc cross, release): `sigmacatch.exe` ~10.4 MB,
 `check_evtx.exe` ~4.0 MB, `check_filter.exe` ~0.9 MB.

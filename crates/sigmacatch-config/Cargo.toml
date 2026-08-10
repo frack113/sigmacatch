@@ -3,7 +3,7 @@
 
 [package]
 name = "sigmacatch-config"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 license = "MIT"
 description = "Application configuration: Config, GitConfig, SigmaFilterConfig, LogConfig"
@@ -21,4 +21,4 @@ sigmacatch-rule = { path = "../sigmacatch-rule" }
 sigmacatch-types = { path = "../sigmacatch-types" }
 
 [dev-dependencies]
-tempfile = "3.12"
+tempfile = "3.27"

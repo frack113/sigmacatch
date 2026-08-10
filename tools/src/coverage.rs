@@ -3,7 +3,7 @@
 
 //! coverage: big-picture coverage stats for the current filter config.
 //!
-//! Outputs JSON with:
+//! Outputs:
 //!   - total_sigma_rules: total rules matching the filter
 //!   - rules_with_regression: rules already having regression data locally
 //!   - pending_regression_rules: rules with regression data on remote branches
@@ -22,6 +22,13 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 fn main() {
+    let mut json_output = false;
+    for arg in std::env::args().skip(1) {
+        if arg == "--json" {
+            json_output = true;
+        }
+    }
+
     let config = match Config::load(&PathBuf::from("config.yaml")) {
         Ok(c) => c,
         Err(e) => {
@@ -74,18 +81,31 @@ fn main() {
     let rules_without_data = total_rules - rules_with_data;
     let coverage_pct = (rules_with_data as f64 / total_rules as f64) * 100.0;
 
-    let output = serde_json::json!({
-        "total_sigma_rules": total_rules,
-        "rules_with_regression": rules_with_data,
-        "rules_without_data": rules_without_data,
-        "coverage_pct": (coverage_pct * 10.0).round() / 10.0,
-        "filter": {
-            "product": config.filter.product,
-            "min_status": config.filter.min_status,
-            "min_level": config.filter.min_level,
-            "author": config.filter.author,
-        },
-    });
-
-    println!("{}", serde_json::to_string_pretty(&output).unwrap());
+    if json_output {
+        let output = serde_json::json!({
+            "total_sigma_rules": total_rules,
+            "rules_with_regression": rules_with_data,
+            "rules_without_data": rules_without_data,
+            "coverage_pct": (coverage_pct * 10.0).round() / 10.0,
+            "filter": {
+                "product": config.filter.product,
+                "min_status": config.filter.min_status,
+                "min_level": config.filter.min_level,
+                "author": config.filter.author,
+            },
+        });
+        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+    } else {
+        println!(
+            "{} rules match the filter (product={}, min_status={:?}, min_level={:?}, author={:?})",
+            total_rules,
+            config.filter.product,
+            config.filter.min_status,
+            config.filter.min_level,
+            config.filter.author,
+        );
+        println!("  {rules_with_data} with regression data (local + pending branches)");
+        println!("  {rules_without_data} still need regression data");
+        println!("  coverage: {:.1}%", coverage_pct);
+    }
 }

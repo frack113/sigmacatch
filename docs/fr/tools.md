@@ -275,30 +275,11 @@ re-listées au prochain run (le skip set n'exclut que ce qui est déjà génér�
 
 ---
 
-## channel_health
-
-**Fichier :** `tools/src/channel_health.rs`
-
-**Usage :** `cargo run --release --bin channel_health [--json] [--channel <name>]`
-
-**Fonction :** diagnostic Windows-only pour vérifier la santé des channels Winevt (compteur
-d'events, dernier event, statut). Sur non-Windows : stub JSON.
-
-### Pipeline
-
-1. `Config::load("config.yaml")` (section filter)
-2. Charge les règles Sigma depuis `./sigma` + filtre config
-3. `DetectionEngine::new(&rules)` → `resolve_channels(&custom_map)`
-4. Pour chaque channel : `EvtOpenChannelEnum` + `EvtQuery` (échantillon 1000 events max)
-5. Rapport JSON/texte (exit 1 si aucun channel)
-
----
-
 ## coverage
 
 **Fichier :** `tools/src/coverage.rs`
 
-**Usage :** `cargo run --release --bin coverage`
+**Usage :** `cargo run --release --bin coverage [--json]`
 
 **Fonction :** statistiques de couverture globale pour la config filtre actuelle.
 Sortie JSON : règles totales, rules avec régression locale, rules en attente sur

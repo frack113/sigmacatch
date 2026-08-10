@@ -3,7 +3,7 @@
 
 [package]
 name = "sigmacatch-logger"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 license = "MIT"
 description = "Two-layer tracing subscriber: stderr info + daily rolling file debug"

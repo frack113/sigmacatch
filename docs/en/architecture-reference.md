@@ -32,7 +32,7 @@ sigmacatch/
 ├── sigmacatch/                    # Binary crate
 │   └── src/
 │       └── main.rs                # Orchestration: continuous loop + process_and_generate + commit/push
-├── tools/                    # Dev tools (check_dry_run, check_channels, list_rules, check_filter, check_evtx, get_atomic)
+├── tools/                    # Dev tools (check_dry_run, check_channels, list_rules, check_filter, check_evtx, get_atomic, coverage)
 └── crates/
     ├── sigmacatch-config/         # Config YAML, CLI parsing, custom_channels.yaml, dry-run git diagnostics (check_dry_run)
     ├── sigmacatch-logger/         # Two-layer tracing subscriber (stderr info + daily rolling file debug)
@@ -87,9 +87,12 @@ The CLI flags `--offline` / `--contrib` force these values to `true`.
 
 **SSH transport:** `git.transport: ssh` clones/fetches/pushes via the `ssh_key_path` private key. At
 startup, `ensure_ssh_host_config()` (`transport.rs`) writes the `IdentityFile`/`UserKnownHostsFile`
-directives into `~/.ssh/config` (idempotent); on Windows the `ssh` binary is resolved through the
-standard locations (Windows OpenSSH, Git for Windows) and used with direct exec (`SshCommand::Program`,
-no shell). When `ssh_key_path` is set, every regression commit is **signed** with pure-Rust ed25519
+directives into `~/.ssh/config` (idempotent, **atomic write** tmp + rename); on Windows the `ssh`
+executable is resolved via standard paths (Windows OpenSSH, Git for Windows) and used as a direct
+exec (`SshCommand::Program`, no shell). A **failed SSH pull is final** (no HTTPS fallback): the error
+message categorizes the cause (missing `ssh` binary or invalid key) and points to `transport: http` —
+an HTTP retry only happens with the config switched to HTTP.
+When `ssh_key_path` is set, every regression commit is **signed** with pure-Rust ed25519
 (`ssh-key`): the `gpgsig` header is inserted between the committer line and the message, like
 `git commit -S` with `gpg.format = ssh`, so GitHub shows the commit as "Verified".
 
@@ -129,6 +132,7 @@ SigmaRepo::new()
     ├── set_remote_url(fork_url) → init() [async]
     │       ├── incomplete/missing repo + offline → actionable bail
     │       ├── existing repo → narrow pull of current branch (skipped if offline)
+    │       │       └── HEAD already on working branch (same-day re-run) → skip the master switch
     │       └── otherwise → full clone (full-history, protocol v2) + pack
     ├── set_working_branch(branch_name)         # fetch target branch (skipped if offline) + create_branch
     │   └── switch_to_working_branch()          # materializes the branch tree (exact commit mirror)
@@ -191,7 +195,9 @@ rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author,
 
 > Rules with existing regression data are excluded from the Sigma engine — this skip-at-load
 > is the only load-time optimization. After generation, a rule is removed and the engine is
-> reloaded in one batch (see Step 7).
+> reloaded in one batch (see Step 7). The skip set is built from the worktree ∪ the remote
+> `sigmacatch/*` branches (pending PRs, see git.md); `<uuid>.evtx` blobs are validated (parse
+> ≥ 1 record, and ≤ 64 MiB) so empty/corrupt/oversized data does not skip the rule (re-captured).
 
 ### Step 4 — Channel resolution
 
@@ -496,6 +502,7 @@ list_rules                 # print the loaded rules (id, title, status, level, t
 check_filter               # validate SigmaFilterConfig against the rules (ground truth)
 check_evtx                 # validate the regression data (evtx + json + engine match)
 get_atomic                 # generate run_atomic.ps (Invoke-AtomicTest) for rules without regression data
+coverage                   # rule coverage stats (local + pending remote branches)
 ```
 
 Config is auto-created on first run with defaults. Edit `config.yaml` before running.
