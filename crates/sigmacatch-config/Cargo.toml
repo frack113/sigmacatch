@@ -21,4 +21,4 @@ sigmacatch-rule = { path = "../sigmacatch-rule" }
 sigmacatch-types = { path = "../sigmacatch-types" }
 
 [dev-dependencies]
-tempfile = "3.12"
+tempfile = "3.27"

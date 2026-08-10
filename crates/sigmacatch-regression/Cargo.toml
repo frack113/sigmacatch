@@ -23,4 +23,4 @@ windows = { version = "0.62", features = [
 ] }
 
 [dev-dependencies]
-tempfile = "3.12"
+tempfile = "3.27"
