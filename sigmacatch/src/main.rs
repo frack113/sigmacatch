@@ -175,12 +175,18 @@ async fn main() -> Result<()> {
         PathBuf::from("custom_channels.yaml").as_path(),
     );
     let mut engine = DetectionEngine::new(&rules)?;
-    let cycle_channels = engine.resolve_channels(&custom_map);
-
-    if cycle_channels.is_empty() {
-        warn!("0 channels resolved — nothing to collect");
-        return Ok(());
-    }
+    let cycle_channels = if config.collector == sigmacatch_config::Collector::Winevt {
+        let channels = engine.resolve_channels(&custom_map);
+        if channels.is_empty() {
+            warn!("0 channels resolved — nothing to collect");
+            return Ok(());
+        }
+        channels
+    } else {
+        #[cfg(not(windows))]
+        warn!("collector: etw is a no-op on non-Windows — no events will be collected");
+        Vec::new()
+    };
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
     let stx = shutdown_tx.clone();
@@ -203,8 +209,17 @@ async fn main() -> Result<()> {
     let producer_channels = cycle_channels.clone();
     let collector_stop = shutdown_rx.clone();
     let collector_handle = tokio::spawn(async move {
-        let collector = input_windows_channels::EventCollector::new(producer_channels);
-        if let Err(e) = collector.run(tx, collector_stop).await {
+        let result = match config.collector {
+            sigmacatch_config::Collector::Winevt => {
+                let collector = input_windows_channels::EventCollector::new(producer_channels);
+                collector.run(tx, collector_stop).await
+            }
+            sigmacatch_config::Collector::Etw => {
+                let collector = input_windows_etw::EventCollector::new();
+                collector.run(tx, collector_stop).await
+            }
+        };
+        if let Err(e) = result {
             warn!("Collector finished with error: {}", e);
         }
     });

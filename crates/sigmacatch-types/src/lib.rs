@@ -301,6 +301,8 @@ static PROVIDER_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_map!
     "Microsoft-Windows-Kernel-Registry" => "registry",
     "Microsoft-Windows-DNS-Client" => "dns",
     "Microsoft-Windows-SmbClient" => "smbclient",
+    "Microsoft-Windows-WMI-Activity" => "wmi",
+    "Microsoft-Windows-TaskScheduler" => "taskscheduler",
 };
 
 /// Resolve category from channel + event_id (subcategory overrides take precedence).

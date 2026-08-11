@@ -107,6 +107,17 @@ impl LogLevel {
 /// Re-export Product from sigmacatch_types for rule filtering.
 pub use sigmacatch_types::Product;
 
+/// Event collection backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Collector {
+    /// Winevt API (`EvtQueryW`/`EvtNext`) multi-channel collection (default).
+    #[default]
+    Winevt,
+    /// Direct ETW collection via ferrisetw (real-time providers).
+    Etw,
+}
+
 /// Re-export rule filter config from sigmacatch_rule.
 pub use sigmacatch_rule::SigmaFilterConfig;
 
@@ -140,6 +151,9 @@ pub struct Config {
     pub filter: SigmaFilterConfig,
     #[serde(default)]
     pub git: GitConfig,
+    /// Event collection backend: `winevt` (default) or `etw`.
+    #[serde(default)]
+    pub collector: Collector,
 }
 
 impl Config {
@@ -984,5 +998,27 @@ mod tests {
         let config = Config::load_with_cli(&path, &cli).unwrap();
         assert!(config.git.is_offline(), "CLI --offline must enable offline");
         assert!(config.git.is_contrib(), "CLI --contrib must enable contrib");
+    }
+
+    #[test]
+    fn test_collector_defaults_to_winevt() {
+        let config = Config::default();
+        assert_eq!(config.collector, Collector::Winevt);
+    }
+
+    #[test]
+    fn test_collector_parses_etw_from_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "git:").unwrap();
+            writeln!(file, "  author: my-user").unwrap();
+            writeln!(file, "  email: me@example.com").unwrap();
+            writeln!(file, "  github_token: ghp_token").unwrap();
+            writeln!(file, "collector: etw").unwrap();
+        }
+        let config = Config::load(&path).unwrap();
+        assert_eq!(config.collector, Collector::Etw);
     }
 }

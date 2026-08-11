@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[package]
+name = "input-windows-etw"
+version = "0.3.1"
+edition = "2021"
+description = "ETW event collector via ferrisetw (cfg(windows), real-time providers)"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+sigmacatch-types = { path = "../sigmacatch-types" }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "signal"] }
+tracing = "0.1"
+
+[target.'cfg(windows)'.dependencies]
+ferrisetw = "1.2.0"
