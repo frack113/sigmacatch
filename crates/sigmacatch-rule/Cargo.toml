@@ -3,10 +3,10 @@
 
 [package]
 name = "sigmacatch-rule"
-version = "0.3.1"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Sigma rule management: loading, filtering, scanning, and AST indexing"
-license = "MIT"
+license.workspace = true
 
 [dependencies]
 anyhow = "1.0"
