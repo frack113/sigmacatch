@@ -12,7 +12,7 @@ license = "MIT"
 anyhow = "1.0"
 async-trait = "0.1"
 sigmacatch-types = { path = "../sigmacatch-types" }
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "signal"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "signal", "macros"] }
 tracing = "0.1"
 
 [target.'cfg(windows)'.dependencies]
