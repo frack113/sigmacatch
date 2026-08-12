@@ -28,9 +28,6 @@ sigmacatch-types = { path = "../crates/sigmacatch-types" }
 # Crate workspace — Windows channel mappings (replaces sigma-mapping)
 input-windows-channels = { path = "../crates/input-windows-channels" }
 
-# Crate workspace — ETW event collector
-input-windows-etw = { path = "../crates/input-windows-etw" }
-
 # Crate workspace — SigmaHQ regression data format
 sigmacatch-regression = { path = "../crates/sigmacatch-regression" }
 
@@ -57,6 +54,9 @@ uuid = { version = "1", features = ["v4"] }
 tempfile = "3.27"
 
 [target.'cfg(windows)'.dependencies]
+# Crate workspace — ETW event collector
+input-windows-etw = { path = "../crates/input-windows-etw" }
+
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_System_Com",

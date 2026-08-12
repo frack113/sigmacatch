@@ -74,7 +74,11 @@ impl Default for EventCollector {
 
 #[async_trait]
 impl EventProducer for EventCollector {
-    async fn run(self, tx: mpsc::Sender<Event>, stop: watch::Receiver<bool>) -> anyhow::Result<()> {
+    async fn run(
+        self: Box<Self>,
+        tx: mpsc::Sender<Event>,
+        stop: watch::Receiver<bool>,
+    ) -> anyhow::Result<()> {
         for path in &self.files {
             if *stop.borrow() {
                 break;

@@ -205,6 +205,9 @@ impl Config {
         if cli.contrib {
             config.git.contrib = Some(true);
         }
+        if let Some(c) = cli.collector {
+            config.collector = c;
+        }
         config.validate()?;
         Ok(config)
     }
@@ -226,6 +229,10 @@ impl Config {
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
+        #[cfg(not(windows))]
+        if self.collector == Collector::Etw {
+            anyhow::bail!("collector: 'etw' requires Windows — use 'winevt'");
+        }
         if self.git.author == "sigmacatch" {
             anyhow::bail!(
                 "config: 'git.author' is the placeholder 'sigmacatch'. \
@@ -413,6 +420,7 @@ pub struct CustomChannels {
 #[derive(Debug, Clone, Default)]
 pub struct CliArgs {
     pub author: Option<String>,
+    pub collector: Option<Collector>,
     pub all_rules: bool,
     pub offline: bool,
     pub contrib: bool,
@@ -433,7 +441,8 @@ FLAGS:
     --help             Print this help and exit
 
 OPTIONS:
-    --author <NAME>    Override GitHub username from config.yaml
+    --author <NAME>           Override GitHub username from config.yaml
+    --collector <winevt|etw>  Override event collector from config.yaml
 ";
 
 /// Parse CLI arguments from environment.
@@ -446,6 +455,7 @@ pub fn parse_args() -> CliArgs {
         }
     }
     let mut author = None;
+    let mut collector = None;
     let mut all_rules = false;
     let mut offline = false;
     let mut contrib = false;
@@ -456,6 +466,18 @@ pub fn parse_args() -> CliArgs {
             "--author" => {
                 i += 1;
                 author = args.get(i).cloned();
+            }
+            "--collector" => {
+                i += 1;
+                collector = args.get(i).and_then(|v| match v.as_str() {
+                    "winevt" => Some(Collector::Winevt),
+                    "etw" => Some(Collector::Etw),
+                    _ => None,
+                });
+                if collector.is_none() {
+                    eprintln!("Error: invalid value for `--collector` (expected winevt or etw)");
+                    std::process::exit(1);
+                }
             }
             "-a" | "--all-rules" => all_rules = true,
             "-c" | "--contrib" => contrib = true,
@@ -470,6 +492,7 @@ pub fn parse_args() -> CliArgs {
     }
     CliArgs {
         author,
+        collector,
         all_rules,
         offline,
         contrib,
@@ -1001,13 +1024,24 @@ mod tests {
     }
 
     #[test]
-    fn test_collector_defaults_to_winevt() {
+    fn test_collector_winevt_default() {
+        let c: Collector = Default::default();
+        assert_eq!(c, Collector::Winevt);
         let config = Config::default();
         assert_eq!(config.collector, Collector::Winevt);
     }
 
     #[test]
-    fn test_collector_parses_etw_from_yaml() {
+    fn test_collector_etw_roundtrip() {
+        let yaml = "collector: etw";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.collector, Collector::Etw);
+        let out = serde_yaml::to_string(&config.collector).unwrap();
+        assert_eq!(out.trim(), "etw");
+    }
+
+    #[test]
+    fn test_collector_defaults_to_winevt_when_absent_in_yaml() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.yaml");
         {
@@ -1016,9 +1050,37 @@ mod tests {
             writeln!(file, "  author: my-user").unwrap();
             writeln!(file, "  email: me@example.com").unwrap();
             writeln!(file, "  github_token: ghp_token").unwrap();
-            writeln!(file, "collector: etw").unwrap();
         }
-        let config = Config::load(&path).unwrap();
-        assert_eq!(config.collector, Collector::Etw);
+        let cli = CliArgs::default();
+        let config = Config::load_with_cli(&path, &cli).unwrap();
+        assert_eq!(config.collector, Collector::Winevt);
+    }
+
+    #[test]
+    fn test_cli_collector_overrides_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "git:").unwrap();
+            writeln!(file, "  author: my-user").unwrap();
+            writeln!(file, "  email: me@example.com").unwrap();
+            writeln!(file, "  github_token: ghp_token").unwrap();
+        }
+        let cli = CliArgs {
+            collector: Some(Collector::Etw),
+            ..CliArgs::default()
+        };
+        #[cfg(not(windows))]
+        {
+            // On non-Windows, etw is rejected by validate(): assert the error is explicit.
+            let err = Config::load_with_cli(&path, &cli).unwrap_err();
+            assert!(err.to_string().contains("requires Windows"));
+        }
+        #[cfg(windows)]
+        {
+            let config = Config::load_with_cli(&path, &cli).unwrap();
+            assert_eq!(config.collector, Collector::Etw);
+        }
     }
 }

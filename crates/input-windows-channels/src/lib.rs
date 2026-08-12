@@ -61,7 +61,11 @@ impl EventCollector {
 
 #[async_trait]
 impl EventProducer for EventCollector {
-    async fn run(self, tx: mpsc::Sender<Event>, stop: watch::Receiver<bool>) -> anyhow::Result<()> {
+    async fn run(
+        self: Box<Self>,
+        tx: mpsc::Sender<Event>,
+        stop: watch::Receiver<bool>,
+    ) -> anyhow::Result<()> {
         let tx = Arc::new(tx);
         let mut handles = JoinSet::new();
 

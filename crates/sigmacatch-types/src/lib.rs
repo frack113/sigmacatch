@@ -842,7 +842,7 @@ pub trait EventProducer: Send {
     /// Run the producer, sending collected events into `tx`.
     /// Stops when `stop` is set to `true` or when the receiver is dropped.
     async fn run(
-        self,
+        self: Box<Self>,
         tx: mpsc::Sender<Event>,
         stop: tokio::sync::watch::Receiver<bool>,
     ) -> anyhow::Result<()>;

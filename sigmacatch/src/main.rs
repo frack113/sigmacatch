@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 use anyhow::Result;
-use sigmacatch_config::{self, parse_args, Config};
+use sigmacatch_config::{self, parse_args, Collector, Config};
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_logger::init as init_logger;
 use sigmacatch_regression::SigmahqRegression;
@@ -175,7 +175,7 @@ async fn main() -> Result<()> {
         PathBuf::from("custom_channels.yaml").as_path(),
     );
     let mut engine = DetectionEngine::new(&rules)?;
-    let cycle_channels = if config.collector == sigmacatch_config::Collector::Winevt {
+    let cycle_channels = if config.collector == Collector::Winevt {
         let channels = engine.resolve_channels(&custom_map);
         if channels.is_empty() {
             warn!("0 channels resolved — nothing to collect");
@@ -206,24 +206,27 @@ async fn main() -> Result<()> {
     sigmacatch_regression::clean_partial_artifacts(&output_base);
 
     let (tx, mut rx) = mpsc::channel::<Event>(100_000);
-    let producer_channels = cycle_channels.clone();
     let collector_stop = shutdown_rx.clone();
+    #[cfg(windows)]
+    let collector: Box<dyn EventProducer> = match config.collector {
+        Collector::Winevt => Box::new(input_windows_channels::EventCollector::new(
+            cycle_channels.clone(),
+        )),
+        Collector::Etw => Box::new(input_windows_etw::EventCollector::new()),
+    };
+    #[cfg(not(windows))]
+    let collector: Box<dyn EventProducer> = Box::new(input_windows_channels::EventCollector::new(
+        cycle_channels.clone(),
+    ));
     let collector_handle = tokio::spawn(async move {
-        let result = match config.collector {
-            sigmacatch_config::Collector::Winevt => {
-                let collector = input_windows_channels::EventCollector::new(producer_channels);
-                collector.run(tx, collector_stop).await
-            }
-            sigmacatch_config::Collector::Etw => {
-                let collector = input_windows_etw::EventCollector::new();
-                collector.run(tx, collector_stop).await
-            }
-        };
-        if let Err(e) = result {
+        if let Err(e) = collector.run(tx, collector_stop).await {
             warn!("Collector finished with error: {}", e);
         }
     });
-    info!("Continuous collector started");
+    info!(
+        "Continuous collector started (mode: {:?})",
+        config.collector
+    );
 
     let mut generate_interval = tokio::time::interval(std::time::Duration::from_secs(30));
     generate_interval.tick().await; // skip immediate first tick
