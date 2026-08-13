@@ -9,7 +9,6 @@ use std::path::Path;
 #[cfg(windows)]
 use std::thread::sleep;
 #[cfg(windows)]
-#[cfg(windows)]
 use std::time::Duration;
 
 /// Total `EvtExportLog` attempts (initial + retries) before giving up.
@@ -22,12 +21,44 @@ const EVTX_EXPORT_BACKOFF_SECS: [u64; (EVTX_EXPORT_MAX_ATTEMPTS - 1) as usize] =
 
 /// Write a valid EVTX file from a matched event.
 ///
+/// For Winevt-collected events, `EvtExportLog` re-exports the live-log event
+/// by record id + channel. For ETW-collected events (indicated by `is_etw`),
+/// the event was synthesized from raw ETW data and never existed in the live
+/// Event Log; `EvtExportLog` would always return an empty export, so we use
+/// the pure-Rust EVTX writer directly instead.
+///
 /// `EvtExportLog` returns success even for a zero-record match (header-only
 /// file), so every successful call is re-parsed; an empty file is retried
 /// (the live-log race may be transient) then treated as failure and the
 /// `.evtx` is removed.
 #[cfg(windows)]
-pub fn write_evtx(_xml: &str, channel: &str, record_id: Option<u64>, path: &Path) -> Result<()> {
+pub fn write_evtx(
+    xml: &str,
+    channel: &str,
+    record_id: Option<u64>,
+    is_etw: bool,
+    path: &Path,
+) -> Result<()> {
+    if is_etw {
+        let rid = record_id.ok_or_else(|| anyhow!("Cannot write EVTX: no record id"))?;
+        sigmacatch_evtx_writer::write_evtx_from_xml(xml, rid, path)?;
+        if !exported_has_records(path)? {
+            let _ = std::fs::remove_file(path);
+            return Err(anyhow!(
+                "evtx-writer produced an unreadable EVTX for {} (rid={})",
+                path.display(),
+                rid
+            ));
+        }
+        tracing::info!(
+            "Wrote EVTX via evtx-writer: {} (channel={}, rid={})",
+            path.display(),
+            channel,
+            rid
+        );
+        return Ok(());
+    }
+
     use windows::core::HSTRING;
     use windows::Win32::System::EventLog::{
         EvtExportLog, EvtExportLogChannelPath, EvtExportLogOverwrite,
@@ -126,11 +157,15 @@ fn exported_has_records(path: &Path) -> Result<bool> {
     Ok(!events.is_empty())
 }
 
-/// Non-Windows has no `EvtExportLog`: error so the rule is skipped this cycle
-/// rather than producing an unreadable file.
+/// Non-Windows has no `EvtExportLog` and no EVTX writer: error so the rule
+/// is skipped this cycle rather than producing an unreadable file.
 #[cfg(not(windows))]
-pub fn write_evtx(_xml: &str, _channel: &str, _record_id: Option<u64>, _path: &Path) -> Result<()> {
-    Err(anyhow!(
-        "EVTX export via EvtExportLog is Windows-only; no local data on non-Windows"
-    ))
+pub fn write_evtx(
+    _xml: &str,
+    _channel: &str,
+    _record_id: Option<u64>,
+    _is_etw: bool,
+    _path: &Path,
+) -> Result<()> {
+    Err(anyhow!("EVTX export is not available on non-Windows"))
 }

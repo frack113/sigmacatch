@@ -13,6 +13,7 @@ members = [
     "crates/input-evtx",
     "crates/input-windows-channels",
     "crates/input-windows-etw",
+    "crates/sigmacatch-evtx-writer",
     "crates/sigmacatch-rule",
     "crates/sigmacatch-repo",
     "tools",

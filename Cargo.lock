@@ -2990,6 +2990,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sigmacatch-evtx-writer"
+version = "0.3.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "crc32fast",
+ "evtx",
+ "input-evtx",
+ "roxmltree",
+ "tempfile",
+]
+
+[[package]]
 name = "sigmacatch-logger"
 version = "0.3.1"
 dependencies = [
@@ -3009,6 +3022,7 @@ dependencies = [
  "input-evtx",
  "serde",
  "serde_json",
+ "sigmacatch-evtx-writer",
  "sigmacatch-types",
  "tempfile",
  "tracing",

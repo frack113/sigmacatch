@@ -16,7 +16,7 @@ use std::collections::HashSet;
 use tracing::{error, info, info_span, warn};
 use uuid::Uuid;
 
-use crate::evtx::write_evtx;
+pub use crate::evtx::write_evtx;
 use crate::info::InfoYml;
 use crate::logtype::LogType;
 
@@ -178,7 +178,10 @@ impl SigmahqRegression {
         serde_json::from_str(&content).ok()
     }
 
-    pub fn add(&mut self, alert: &Alert) -> Option<Vec<String>> {
+    pub fn add<F>(&mut self, alert: &Alert, write_fn: F) -> Option<Vec<String>>
+    where
+        F: Fn(&str, &str, Option<u64>, bool, &Path) -> Result<()>,
+    {
         let output_path = self.output_path.as_ref()?;
         let rule_id = &alert.rule_id;
         if self.retired.contains(rule_id) {
@@ -219,7 +222,7 @@ impl SigmahqRegression {
         reg.add_alert(alert.clone());
 
         let _gen_span = info_span!("generate", rule_id = %rule_id).entered();
-        let evtx_ext = match reg.generate(write_evtx) {
+        let evtx_ext = match reg.generate(write_fn) {
             Ok(ext) => ext,
             Err(e) => {
                 error!("Failed to generate regression for {}: {}", rule_id, e);
@@ -319,7 +322,7 @@ impl RegressionData {
 
     fn generate<F>(&self, write_fn: F) -> Result<String>
     where
-        F: Fn(&str, &str, Option<u64>, &Path) -> Result<()>,
+        F: Fn(&str, &str, Option<u64>, bool, &Path) -> Result<()>,
     {
         let rule_dir = self.rule_dir()?;
         let rule_dir = crate::long_path::long_path(&rule_dir);
@@ -344,6 +347,7 @@ impl RegressionData {
                 alert.raw_xml(),
                 alert.channel(),
                 alert.record_id(),
+                alert.is_etw,
                 &evtx_path,
             ) {
                 // EVTX failed (empty export or non-Windows): drop the partial `.json`

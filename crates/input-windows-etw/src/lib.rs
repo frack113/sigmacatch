@@ -183,6 +183,7 @@ fn handle_event(
             return;
         }
     };
+    event.is_etw = true;
     event.inject_logsource_fields();
     if tx.blocking_send(event).is_err() {
         warn!("ETW receiver dropped — stopping trace");

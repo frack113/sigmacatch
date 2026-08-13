@@ -217,6 +217,7 @@ impl DetectionEngine {
                     event_json_raw: event.event_json_raw.clone(),
                     event_json: event.event_json.clone(),
                     event_raw: event.event_raw.clone(),
+                    is_etw: event.is_etw,
                 };
                 self.alerts.push(alert);
             }

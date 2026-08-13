@@ -14,6 +14,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 tracing = "0.1"
 
 sigmacatch-types = { path = "../sigmacatch-types" }
+sigmacatch-evtx-writer = { path = "../sigmacatch-evtx-writer" }
 input-evtx = { path = "../input-evtx" }
 
 [target.'cfg(windows)'.dependencies]

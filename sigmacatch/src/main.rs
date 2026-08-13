@@ -17,6 +17,8 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+type EvtxWriteFn = Box<dyn Fn(&str, &str, Option<u64>, bool, &Path) -> anyhow::Result<()>>;
+
 #[cfg(windows)]
 fn setup_console() {
     use windows::Win32::System::Console::*;
@@ -105,6 +107,8 @@ async fn main() -> Result<()> {
         Err(e) => anyhow::bail!("Failed to load regression data: {e}"),
     };
     regression.set_author(config.git.author.clone());
+
+    let write_fn: EvtxWriteFn = Box::new(sigmacatch_regression::write_evtx);
 
     let existing_rules: HashSet<Uuid> = if cli.all_rules {
         HashSet::new()
@@ -243,7 +247,7 @@ async fn main() -> Result<()> {
                 engine.put_events(vec![event]);
             }
             _ = generate_interval.tick() => {
-                let batches = process_and_generate(&mut engine, &mut rules, &mut regression);
+                let batches = process_and_generate(&mut engine, &mut rules, &mut regression, &write_fn);
 
                 if !batches.is_empty() {
                     upload_regression(&sigma_repo, batches, &mut branch_pushed, &push_branch);
@@ -274,7 +278,7 @@ async fn main() -> Result<()> {
     }
     drop(rx);
 
-    let batches = process_and_generate(&mut engine, &mut rules, &mut regression);
+    let batches = process_and_generate(&mut engine, &mut rules, &mut regression, &write_fn);
 
     if !batches.is_empty() {
         upload_regression(&sigma_repo, batches, &mut branch_pushed, &push_branch);
@@ -310,11 +314,15 @@ fn upload_regression(
     }
 }
 
-fn process_and_generate(
+fn process_and_generate<F>(
     engine: &mut DetectionEngine,
     rules: &mut SigmahqRules,
     regression: &mut SigmahqRegression,
-) -> Vec<(Uuid, Vec<String>)> {
+    write_fn: F,
+) -> Vec<(Uuid, Vec<String>)>
+where
+    F: Fn(&str, &str, Option<u64>, bool, &Path) -> anyhow::Result<()>,
+{
     engine.process_events();
     let alerts = engine.get_alerts();
 
@@ -337,7 +345,7 @@ fn process_and_generate(
     let mut batches: Vec<(Uuid, Vec<String>)> = Vec::new();
     let mut retired_ids: Vec<Uuid> = Vec::new();
     for alert in alerts {
-        if let Some(files) = regression.add(&alert) {
+        if let Some(files) = regression.add(&alert, &write_fn) {
             // AD-4: retire the rule once its data is generated. `add()` returns
             // None for an already-retired/existing rule, so each rule_id appears
             // at most once per batch.

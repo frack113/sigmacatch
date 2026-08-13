@@ -57,6 +57,7 @@ impl EventCollector {
                 event_json_raw,
                 event_json,
                 event_raw,
+                is_etw: false,
             };
             event.inject_logsource_fields();
             events.push(event);
@@ -126,6 +127,7 @@ pub fn parse_evtx_bytes(data: &[u8]) -> Result<Vec<Event>> {
             event_json_raw,
             event_json,
             event_raw,
+            is_etw: false,
         };
         event.inject_logsource_fields();
         events.push(event);

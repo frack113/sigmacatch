@@ -64,6 +64,9 @@ pub struct Event {
     /// Used by the detection engine — makes field paths easier in Sigma rules.
     pub event_json: Value,
     pub event_raw: Vec<u8>,
+    /// True when this event was synthesized from ETW raw data rather than
+    /// re-exported from the live Event Log. Affects EVTX generation.
+    pub is_etw: bool,
 }
 
 impl Event {
@@ -72,6 +75,7 @@ impl Event {
             event_json_raw,
             event_json,
             event_raw,
+            is_etw: false,
         }
     }
 
@@ -85,6 +89,7 @@ impl Event {
             event_json_raw: json_raw,
             event_json: json,
             event_raw: raw,
+            is_etw: false,
         })
     }
 
@@ -763,6 +768,8 @@ pub struct Alert {
     /// Used by the detection engine.
     pub event_json: Value,
     pub event_raw: Vec<u8>,
+    /// True when this alert came from an ETW-synthesized event.
+    pub is_etw: bool,
 }
 
 impl Alert {
@@ -1576,6 +1583,7 @@ mod tests {
             event_json_raw: event.event_json_raw.clone(),
             event_json: event.event_json.clone(),
             event_raw: event.event_raw.clone(),
+            is_etw: false,
         };
 
         assert!(alert.event_json_raw["Event"]["EventData"]["Command Line"]
