@@ -103,6 +103,7 @@ impl EventCollector {
         // Guard against stop firing before the trace has started: if stop is
         // already set, abort immediately so process() never blocks forever.
         if *stop.borrow() {
+            let _ = stop_trace_by_name(SESSION);
             return Ok(());
         }
 
@@ -119,6 +120,7 @@ impl EventCollector {
         // builder.start(), abort the trace before process() blocks.
         if *stop.borrow() {
             trace_task.abort();
+            let _ = stop_trace_by_name(SESSION);
             return Ok(());
         }
 
@@ -236,8 +238,17 @@ fn synthesize_winevt_xml(
                 let parser = ferrisetw::parser::Parser::create(record, &schema);
                 let mapping = field_maps::field_map_for_provider(kind);
                 for etw_name in mapping.etw_names() {
-                    if let Some(value) = parse_etw_property(&parser, etw_name) {
-                        etw_fields.insert(etw_name.to_string(), value);
+                    match parse_etw_property(&parser, etw_name) {
+                        Ok(Some(value)) => {
+                            etw_fields.insert(etw_name.to_string(), value);
+                        }
+                        Ok(None) => {}
+                        // Parser cursor is undefined after the caught panic:
+                        // keep the fields parsed so far and drop the rest.
+                        Err(()) => {
+                            warn!("ETW property parse panicked for '{etw_name}' ({provider_name}); fields parsed so far are kept");
+                            break;
+                        }
                     }
                 }
             }
@@ -297,10 +308,14 @@ fn synthesize_winevt_xml(
 /// Tries the scalar types the subscribed providers emit (strings, IP
 /// addresses, integers, bools); returns `None` when the property is absent or
 /// of an unsupported type. ferrisetw's `TryParse<String>` panics on
-/// `InTypeCountedString` — a known upstream limitation. Wrapped in
-/// `catch_unwind` to prevent the panic from killing the trace loop.
+/// `InTypeCountedString` — a known upstream limitation. The panic is caught
+/// and reported as `Err(())`: the parser cursor is left in an undefined state
+/// after it, so the caller must stop reading further properties.
 #[cfg(windows)]
-fn parse_etw_property(parser: &ferrisetw::parser::Parser<'_, '_>, name: &str) -> Option<String> {
+fn parse_etw_property(
+    parser: &ferrisetw::parser::Parser<'_, '_>,
+    name: &str,
+) -> Result<Option<String>, ()> {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if let Ok(s) = parser.try_parse::<String>(name) {
             return (!s.is_empty()).then_some(s);
@@ -325,7 +340,7 @@ fn parse_etw_property(parser: &ferrisetw::parser::Parser<'_, '_>, name: &str) ->
         }
         None
     }));
-    result.ok().flatten()
+    result.map_err(|_| ())
 }
 
 /// Escape a string for a Winevt XML text/attribute value.

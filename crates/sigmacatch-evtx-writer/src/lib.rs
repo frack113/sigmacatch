@@ -20,6 +20,10 @@ const CHUNK_HEADER_SIZE: usize = 512;
 const RECORD_HEADER_SIZE: usize = 24;
 const RECORD_START: usize = CHUNK_HEADER_SIZE;
 
+/// `HeaderSize` field value used by Windows-produced files (evtx 0.12.2
+/// fixture `security.evtx` reads 128).
+const CHUNK_HEADER_FIELD_SIZE: u32 = 128;
+
 /// Write a single-record EVTX file containing the given Winevt XML.
 ///
 /// The record header timestamp is derived from the event's `TimeCreated`
@@ -37,6 +41,9 @@ pub fn write_evtx_from_xml_with_time(
     filetime: u64,
     path: &Path,
 ) -> Result<()> {
+    if record_id == 0 || record_id == u64::MAX {
+        bail!("record_id must be in 1..=u64::MAX-1, got {record_id}");
+    }
     let chunk = build_chunk(record_id, filetime, xml)?;
     let file = build_file_header(record_id);
 
@@ -70,10 +77,10 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
     }
     let read_u16 = |i: usize| -> Result<u16> {
         let hi = (bytes[i] as char)
-            .to_digit(16)
+            .to_digit(10)
             .and_then(|d| u16::try_from(d).ok());
         let lo = (bytes[i + 1] as char)
-            .to_digit(16)
+            .to_digit(10)
             .and_then(|d| u16::try_from(d).ok());
         match (hi, lo) {
             (Some(hi), Some(lo)) => Ok(hi * 10 + lo),
@@ -86,12 +93,22 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
     let hour = u32::from(read_u16(11)?);
     let minute = u32::from(read_u16(14)?);
     let second = u32::from(read_u16(17)?);
-    if !(1..=12).contains(&month)
-        || !(1..=31).contains(&day)
-        || hour > 23
-        || minute > 59
-        || second > 60
-    {
+    if !(1..=12).contains(&month) || hour > 23 || minute > 59 || second > 60 {
+        bail!("malformed SystemTime: {system_time}");
+    }
+    let max_day = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => unreachable!(),
+    };
+    if day == 0 || day > max_day {
         bail!("malformed SystemTime: {system_time}");
     }
 
@@ -123,6 +140,9 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
             }
             let off_h = read_u16(i + 1)? as i64;
             let off_m = read_u16(i + 4)? as i64;
+            if off_h > 23 || off_m > 59 {
+                bail!("malformed SystemTime timezone: {system_time}");
+            }
             offset_secs = off_h * 3600 + off_m * 60;
             if b == b'-' {
                 offset_secs = -offset_secs;
@@ -145,13 +165,18 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
     let unix_ns = unix_secs as i128 * 1_000_000_000 + i128::from(fraction_ns)
         - offset_secs as i128 * 1_000_000_000;
     const UNIX_TO_FILETIME_NS: i128 = 116_444_736_000_000_000;
-    Ok((unix_ns + UNIX_TO_FILETIME_NS).div_euclid(100) as u64)
+    let filetime = (unix_ns + UNIX_TO_FILETIME_NS).div_euclid(100);
+    if filetime < 0 {
+        bail!("SystemTime before 1601: {system_time}");
+    }
+    Ok(filetime as u64)
 }
 
 fn now_filetime() -> u64 {
     use chrono::Utc;
-    let unix_ns = i128::from(Utc::now().timestamp()) * 1_000_000_000
-        + i128::from(Utc::now().timestamp_subsec_nanos());
+    let now = Utc::now();
+    let unix_ns =
+        i128::from(now.timestamp()) * 1_000_000_000 + i128::from(now.timestamp_subsec_nanos());
     const UNIX_TO_FILETIME_NS: i128 = 116_444_736_000_000_000;
     ((unix_ns + UNIX_TO_FILETIME_NS).div_euclid(100)) as u64
 }
@@ -181,11 +206,18 @@ fn build_chunk(record_id: u64, filetime: u64, xml: &str) -> Result<[u8; CHUNK_SI
     }
 
     let mut encoder = Encoder::default();
+    encoder.out.extend_from_slice(&[0x0f, 0x01, 0x01, 0x00]);
     encoder.encode_element(root)?;
 
     let binxml = &encoder.out;
     let record_size = align8(RECORD_HEADER_SIZE + 4 + binxml.len());
     let free_space_offset = RECORD_START + record_size;
+    if free_space_offset > CHUNK_SIZE {
+        bail!(
+            "EVTX record too large ({} bytes) for a {CHUNK_SIZE}-byte chunk",
+            record_size
+        );
+    }
     let string_table_offset = free_space_offset;
 
     let mut chunk = [0u8; CHUNK_SIZE];
@@ -194,8 +226,8 @@ fn build_chunk(record_id: u64, filetime: u64, xml: &str) -> Result<[u8; CHUNK_SI
     put_u64(&mut chunk, 16, record_id);
     put_u64(&mut chunk, 24, record_id);
     put_u64(&mut chunk, 32, record_id);
-    put_u32(&mut chunk, 40, CHUNK_HEADER_SIZE as u32);
-    put_u32(&mut chunk, 44, 0);
+    put_u32(&mut chunk, 40, CHUNK_HEADER_FIELD_SIZE);
+    put_u32(&mut chunk, 44, (RECORD_START + RECORD_HEADER_SIZE) as u32);
     put_u32(&mut chunk, 48, free_space_offset as u32);
     put_u32(&mut chunk, 52, 0);
 
@@ -331,7 +363,12 @@ impl Encoder {
             for child in node.children() {
                 match child.node_type() {
                     NodeType::Element => self.encode_element(child)?,
-                    NodeType::Text => self.emit_value(child.text().unwrap_or("")),
+                    NodeType::Text => {
+                        let text = child.text().unwrap_or("");
+                        if !text.trim().is_empty() {
+                            self.emit_value(text);
+                        }
+                    }
                     other => bail!("unsupported XML node type {other:?} in event XML"),
                 }
             }
@@ -475,5 +512,56 @@ mod tests {
             event.event_json_raw["Event"]["EventData"]["TaskName"],
             r"\MyTask & More"
         );
+    }
+
+    #[test]
+    fn record_binxml_starts_with_fragment_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("event.evtx");
+        write_evtx_from_xml(SAMPLE_XML, 1, &path).unwrap();
+        let data = std::fs::read(&path).unwrap();
+        let binxml_start = FILE_HEADER_SIZE + RECORD_START + RECORD_HEADER_SIZE;
+        assert_eq!(
+            &data[binxml_start..binxml_start + 4],
+            &[0x0f, 0x01, 0x01, 0x00]
+        );
+    }
+
+    #[test]
+    fn oversized_xml_bails_instead_of_panicking() {
+        let huge_value = "x".repeat(40_000);
+        let xml = format!(
+            r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event"><EventData><Data Name="Blob">{huge_value}</Data></EventData></Event>"#
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("event.evtx");
+        assert!(write_evtx_from_xml(&xml, 1, &path).is_err());
+    }
+
+    #[test]
+    fn invalid_dates_and_timestamps_bail() {
+        assert!(system_time_to_filetime("2026-02-31T00:00:00Z").is_err());
+        assert!(system_time_to_filetime("2026-02-29T00:00:00Z").is_err());
+        assert!(system_time_to_filetime("2024-02-30T00:00:00Z").is_err());
+        assert!(system_time_to_filetime("2026-01-01T12:00:00+99:99").is_err());
+        assert!(system_time_to_filetime("0001-01-01T00:00:00Z").is_err());
+        assert!(system_time_to_filetime("202A-01-01T00:00:00Z").is_err());
+        assert!(system_time_to_filetime("2026-13-01T00:00:00Z").is_err());
+        assert!(system_time_to_filetime("2026-01-01T25:00:00Z").is_err());
+    }
+
+    #[test]
+    fn leap_years_are_accepted() {
+        assert!(system_time_to_filetime("2024-02-29T00:00:00Z").is_ok());
+        assert!(system_time_to_filetime("2000-02-29T00:00:00Z").is_ok());
+        assert!(system_time_to_filetime("1900-02-29T00:00:00Z").is_err());
+    }
+
+    #[test]
+    fn zero_or_max_record_id_bails() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("event.evtx");
+        assert!(write_evtx_from_xml(SAMPLE_XML, 0, &path).is_err());
+        assert!(write_evtx_from_xml(SAMPLE_XML, u64::MAX, &path).is_err());
     }
 }
