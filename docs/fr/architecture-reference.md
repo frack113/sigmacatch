@@ -70,6 +70,8 @@ filter:
   min_level: "critical"       # niveau minimum des règles (inclusif) : informational < low < medium < high < critical
   author: ""                  # filtre par author (optionnel, vide = pas de filtre)
   max_rule_size: 1048576      # octets (1MB par défaut, min 1024, max 10MB)
+regression:
+  max_failed_cycles: 3        # règle bloquée (plus de re-capture) après N cycles consécutifs d'échec EVTX (min 1)
 ```
 
 **Filtrage des règles :** `product`, `min_status`, `min_level` et `author` sont appliqués par `SigmahqRules::filter()`.

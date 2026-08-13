@@ -58,6 +58,8 @@ filter:
   min_level: "critical"     # load rules with level >= this threshold
   author: ""                # filter rules by author (optional, empty = no filter)
   max_rule_size: 1048576    # bytes (1MB default)
+regression:
+  max_failed_cycles: 3      # block a rule (no more re-capture) after N consecutive EVTX failure cycles
 ```
 
 Rules below the configured `min_status` / `min_level` thresholds are skipped at load time.
