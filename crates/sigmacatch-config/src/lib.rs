@@ -142,6 +142,28 @@ impl Default for LogConfig {
     }
 }
 
+/// Regression generation configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RegressionConfig {
+    /// Number of consecutive failed cycles after which a rule is blocked
+    /// (logged, removed from the skip-set, no more re-capture). Default: 3.
+    #[serde(default = "default_max_failed_cycles")]
+    pub max_failed_cycles: u32,
+}
+
+fn default_max_failed_cycles() -> u32 {
+    3
+}
+
+impl Default for RegressionConfig {
+    fn default() -> Self {
+        Self {
+            max_failed_cycles: default_max_failed_cycles(),
+        }
+    }
+}
+
 /// Main application configuration.
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -154,6 +176,8 @@ pub struct Config {
     /// Event collection backend: `winevt` (default) or `etw`.
     #[serde(default)]
     pub collector: Collector,
+    #[serde(default)]
+    pub regression: RegressionConfig,
 }
 
 impl Config {
@@ -348,6 +372,13 @@ impl Config {
             anyhow::bail!(
                 "config: 'filter.max_rule_size' exceeds maximum allowed value (10MB), got {}",
                 self.filter.max_rule_size
+            );
+        }
+
+        if self.regression.max_failed_cycles < 1 {
+            anyhow::bail!(
+                "config: 'regression.max_failed_cycles' must be at least 1, got {}",
+                self.regression.max_failed_cycles
             );
         }
 

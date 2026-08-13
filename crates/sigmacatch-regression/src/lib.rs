@@ -8,13 +8,24 @@ mod info;
 pub mod logtype;
 mod long_path;
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use sigmacatch_types::{Alert, RegressionHeader};
-use std::collections::HashSet;
 use tracing::{error, info, info_span, warn};
 use uuid::Uuid;
+
+/// Maximum EVTX blob size the skip-set scan is willing to parse in memory
+/// (64 MiB). Larger blobs are treated as broken so the rule gets re-captured
+/// instead of consuming unbounded RAM on a corrupted or synthetic blob.
+const MAX_EVTX_BLOB_SIZE: usize = 64 * 1024 * 1024;
+
+/// A rule whose EVTX generation keeps failing is blocked (logged, dropped
+/// from the active skip-set, no more re-capture) after this many consecutive
+/// failed cycles. Configurable at runtime via `SigmahqRegression::set_max_failed_cycles`
+/// (config.yaml `regression.max_failed_cycles`); this is the default.
+pub const DEFAULT_MAX_FAILED_CYCLES: u32 = 3;
 
 pub use crate::evtx::write_evtx;
 use crate::info::InfoYml;
@@ -26,6 +37,26 @@ use crate::logtype::LogType;
 fn data_file_is_valid(dir: &Path, rule_id: &Uuid) -> bool {
     let evtx = crate::long_path::long_path(&dir.join(format!("{}.evtx", rule_id)));
     if evtx.exists() {
+        match std::fs::metadata(&evtx) {
+            Ok(m) if m.len() as usize > MAX_EVTX_BLOB_SIZE => {
+                warn!(
+                    "rule {} excluded from skip-set: EVTX exceeds {} MiB (will be re-captured)",
+                    rule_id,
+                    MAX_EVTX_BLOB_SIZE / 1024 / 1024
+                );
+                return false;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                warn!(
+                    "rule {} excluded from skip-set: cannot stat {} ({}); will be re-captured",
+                    rule_id,
+                    evtx.display(),
+                    e
+                );
+                return false;
+            }
+        }
         return match input_evtx::parse_evtx_file(&evtx) {
             Ok(events) => !events.is_empty(),
             Err(_) => false,
@@ -80,12 +111,15 @@ impl RegressionEntry {
     }
 }
 
-#[derive(Default)]
 pub struct SigmahqRegression {
     entries: Vec<(PathBuf, InfoYml, RegressionEntry)>,
     author: String,
     output_path: Option<PathBuf>,
     retired: HashSet<Uuid>,
+    failed_cycles: HashMap<Uuid, u32>,
+    failed_this_cycle: HashSet<Uuid>,
+    blocked: Vec<Uuid>,
+    max_failed_cycles: u32,
 }
 
 impl SigmahqRegression {
@@ -109,7 +143,21 @@ impl SigmahqRegression {
             author: String::new(),
             output_path: Some(regression_path.to_path_buf()),
             retired: HashSet::new(),
+            failed_cycles: HashMap::new(),
+            failed_this_cycle: HashSet::new(),
+            blocked: Vec::new(),
+            max_failed_cycles: DEFAULT_MAX_FAILED_CYCLES,
         })
+    }
+
+    /// Configure the consecutive-failure bound after which a rule is blocked.
+    /// Clamped to a minimum of 1. Default: `DEFAULT_MAX_FAILED_CYCLES` (3).
+    pub fn set_max_failed_cycles(&mut self, max: u32) {
+        self.max_failed_cycles = max.max(1);
+    }
+
+    pub fn max_failed_cycles(&self) -> u32 {
+        self.max_failed_cycles
     }
 
     pub fn set_author(&mut self, author: String) {
@@ -163,6 +211,42 @@ impl SigmahqRegression {
         let dir = info_path.parent()?;
         let data_path = resolve_data_file(dir, &rule_id)?;
         std::fs::read(&data_path).ok()
+    }
+
+    /// Rules whose EVTX generation failed for the configured number of
+    /// consecutive cycles. Drain so the caller can drop them from the active
+    /// engine (no more re-capture). In-memory only — reset on the next startup.
+    pub fn take_blocked(&mut self) -> Vec<Uuid> {
+        std::mem::take(&mut self.blocked)
+    }
+
+    /// Open a new failure-counting cycle. Called once per batch by the
+    /// orchestrator; ensures a rule counts at most one failed generation per
+    /// cycle (multiple alerts for the same rule in one batch).
+    pub fn begin_cycle(&mut self) {
+        self.failed_this_cycle.clear();
+    }
+
+    /// Track a failed EVTX generation. After `self.max_failed_cycles`
+    /// consecutive failures the rule is blocked: logged as `error!` and
+    /// retired so it is no longer re-captured. At most one failure per rule
+    /// per cycle is counted (`begin_cycle` opens a new cycle), so a rule with
+    /// several matching events in a single batch is not blocked early.
+    fn note_generation_failure(&mut self, rule_id: &Uuid) {
+        if !self.failed_this_cycle.insert(*rule_id) {
+            return;
+        }
+        let count = self.failed_cycles.entry(*rule_id).or_insert(0);
+        *count += 1;
+        if *count >= self.max_failed_cycles {
+            error!(
+                "Rule {} blocked after {} consecutive EVTX generation failures — no more re-capture",
+                rule_id, *count
+            );
+            self.failed_cycles.remove(rule_id);
+            self.retired.insert(*rule_id);
+            self.blocked.push(*rule_id);
+        }
     }
 
     /// Read the committed raw event JSON (`<rule_id>.json`), if present.
@@ -226,6 +310,7 @@ impl SigmahqRegression {
             Ok(ext) => ext,
             Err(e) => {
                 error!("Failed to generate regression for {}: {}", rule_id, e);
+                self.note_generation_failure(rule_id);
                 return None;
             }
         };
@@ -556,6 +641,44 @@ fn clean_recursive(dir: &Path, depth: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sigmacatch_types::Event;
+
+    /// Build an alert that mirrors what the ETW path produces: an event
+    /// synthesized from raw ETW data (Story 1.2/1.3) with a synthetic record
+    /// id and `is_etw = true`, matched by the detection engine.
+    fn synthetic_etw_alert(rule_id: Uuid) -> Alert {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Microsoft-Windows-Kernel-Process" Guid="{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}"/>
+    <EventID>1</EventID>
+    <Version>5</Version>
+    <Level>4</Level>
+    <Task>1</Task>
+    <Opcode>0</Opcode>
+    <Keywords>0x8000000000000000</Keywords>
+    <TimeCreated SystemTime="2024-01-01T00:00:00.0000000Z"/>
+    <EventRecordID>7</EventRecordID>
+    <Channel>Microsoft-Windows-Sysmon/Operational</Channel>
+    <Computer>localhost</Computer>
+  </System>
+  <EventData>
+    <Data Name="Image">C:\Windows\System32\cmd.exe</Data>
+    <Data Name="CommandLine">cmd.exe /c whoami</Data>
+  </EventData>
+</Event>"#;
+        let event = Event::from_xml(xml).expect("synthetic ETW XML must parse");
+        Alert {
+            rule_id,
+            rule_title: "Test ETW Rule".to_string(),
+            description: Some("integration test".to_string()),
+            rule_path: None,
+            severity: "critical".to_string(),
+            event_json_raw: event.event_json_raw.clone(),
+            event_json: event.event_json.clone(),
+            event_raw: event.event_raw.clone(),
+            is_etw: true,
+        }
+    }
 
     #[test]
     fn test_data_file_is_valid_detects_broken_evtx() {
@@ -675,5 +798,162 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// End-to-end downstream pipeline for an ETW alert (AC 9): the existing
+    /// regression pipeline turns the alert into a valid json+evtx+info.yml
+    /// triplet without any pipeline-aval change. `rule_path` is `None` so no
+    /// sigma rule file is touched; everything lives in a tempdir.
+    #[test]
+    fn test_etw_alert_generates_valid_triplet() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("regression_data");
+        let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
+        let rule_id = Uuid::parse_str("7595ba94-cf3b-4471-aa03-4f6baa9e5fad").unwrap();
+        let alert = synthetic_etw_alert(rule_id);
+
+        // Mirrors the `write_evtx` ETW branch: pure-Rust writer + re-parse
+        // validation (the retry sleep loop is Windows-only).
+        let write_fn = |xml: &str,
+                        _channel: &str,
+                        record_id: Option<u64>,
+                        is_etw: bool,
+                        path: &Path|
+         -> anyhow::Result<()> {
+            assert!(is_etw, "only the ETW writer path is exercised");
+            let rid = record_id.unwrap_or(1);
+            sigmacatch_evtx_writer::write_evtx_from_xml(xml, rid, path)?;
+            let events = input_evtx::parse_evtx_file(path)?;
+            if events.is_empty() {
+                let _ = std::fs::remove_file(path);
+                anyhow::bail!("evtx-writer produced an empty EVTX");
+            }
+            Ok(())
+        };
+
+        let files = reg.add(&alert, write_fn).expect("triplet generated");
+
+        assert_eq!(files.len(), 3, "triplet = json + evtx + info.yml");
+
+        let rule_dir = base.join("rules").join(rule_id.to_string());
+        let json_path = rule_dir.join(format!("{rule_id}.json"));
+        let evtx_path = rule_dir.join(format!("{rule_id}.evtx"));
+        let info_path = rule_dir.join("info.yml");
+
+        assert!(info_path.exists());
+        let info = InfoYml::load(&info_path).unwrap();
+        assert_eq!(info.rule_metadata[0].id, rule_id);
+        assert_eq!(info.regression_tests_info[0].test_type, "evtx");
+        assert_eq!(
+            info.regression_tests_info[0].path,
+            format!("regression_data/rules/{rule_id}/{rule_id}.evtx")
+        );
+
+        assert!(json_path.exists());
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+        assert_eq!(json["Event"]["System"]["EventRecordID"], 7);
+        assert_eq!(
+            json["Event"]["EventData"]["CommandLine"],
+            "cmd.exe /c whoami"
+        );
+
+        assert!(evtx_path.exists());
+        let events = input_evtx::parse_evtx_file(&evtx_path).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].record_id(), Some(7));
+    }
+
+    /// A rule whose EVTX generation keeps failing is blocked after the
+    /// configured number of consecutive failed cycles (AC 7): logged, retired,
+    /// no more re-capture. Multiple failing alerts in one batch count as a
+    /// single failed cycle.
+    #[test]
+    fn test_failed_cycles_blocks_rule_after_max() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("regression_data");
+        let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
+        let rule_id = Uuid::new_v4();
+        let alert = synthetic_etw_alert(rule_id);
+
+        let failing = |_xml: &str,
+                       _channel: &str,
+                       _record_id: Option<u64>,
+                       _is_etw: bool,
+                       _path: &Path|
+         -> anyhow::Result<()> { anyhow::bail!("generation failure") };
+
+        // Cycle 1: two failing alerts for the same rule count as one failure.
+        assert!(reg.add(&alert, failing).is_none());
+        assert!(reg.add(&alert, failing).is_none());
+        assert!(reg.take_blocked().is_empty(), "not blocked yet");
+        reg.begin_cycle();
+
+        // Cycle 2.
+        assert!(reg.add(&alert, failing).is_none());
+        assert!(reg.take_blocked().is_empty(), "not blocked yet");
+        reg.begin_cycle();
+
+        // Cycle 3: default bound (3) reached → blocked.
+        assert!(reg.add(&alert, failing).is_none());
+        assert_eq!(reg.take_blocked(), vec![rule_id]);
+
+        // Retired: any further attempt is short-circuited without generating.
+        assert!(reg.add(&alert, failing).is_none());
+        assert!(reg.take_blocked().is_empty());
+    }
+
+    /// The block bound is configurable via `set_max_failed_cycles` and
+    /// clamped to a minimum of 1.
+    #[test]
+    fn test_max_failed_cycles_configurable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("regression_data");
+        let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
+        let rule_id = Uuid::new_v4();
+        let alert = synthetic_etw_alert(rule_id);
+
+        let failing = |_xml: &str,
+                       _channel: &str,
+                       _record_id: Option<u64>,
+                       _is_etw: bool,
+                       _path: &Path|
+         -> anyhow::Result<()> { anyhow::bail!("generation failure") };
+
+        reg.set_max_failed_cycles(2);
+        assert_eq!(reg.max_failed_cycles(), 2);
+
+        assert!(reg.add(&alert, failing).is_none());
+        assert!(
+            reg.take_blocked().is_empty(),
+            "bound 2: not blocked after 1"
+        );
+        reg.begin_cycle();
+        assert!(reg.add(&alert, failing).is_none());
+        assert_eq!(reg.take_blocked(), vec![rule_id]);
+
+        // Clamp: 0 is not allowed, so it becomes 1.
+        let second_id = Uuid::new_v4();
+        let second_alert = synthetic_etw_alert(second_id);
+        reg.set_max_failed_cycles(0);
+        assert_eq!(reg.max_failed_cycles(), 1);
+        assert!(reg.add(&second_alert, failing).is_none());
+        assert_eq!(reg.take_blocked(), vec![second_id]);
+    }
+
+    /// The `MAX_EVTX_BLOB_SIZE` guard (AC 8/10) also applies to the local
+    /// skip-set scan: an oversized blob is treated as broken so the rule is
+    /// re-captured instead of parsing unbounded memory.
+    #[test]
+    fn test_oversized_evtx_is_treated_as_broken() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let id = Uuid::new_v4();
+        let evtx = dir.join(format!("{id}.evtx"));
+        let file = std::fs::File::create(&evtx).unwrap();
+        file.set_len((MAX_EVTX_BLOB_SIZE as u64) + 1).unwrap();
+        drop(file);
+
+        assert!(!data_file_is_valid(dir, &id));
     }
 }

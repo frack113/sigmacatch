@@ -107,6 +107,7 @@ async fn main() -> Result<()> {
         Err(e) => anyhow::bail!("Failed to load regression data: {e}"),
     };
     regression.set_author(config.git.author.clone());
+    regression.set_max_failed_cycles(config.regression.max_failed_cycles);
 
     let write_fn: EvtxWriteFn = Box::new(sigmacatch_regression::write_evtx);
 
@@ -330,6 +331,10 @@ where
         return Vec::new();
     }
 
+    // Open a new failure-counting cycle: a rule with several alerts in this
+    // batch counts at most one failed EVTX generation toward its block bound.
+    regression.begin_cycle();
+
     let unique_match_count = {
         let ids: std::collections::HashSet<&Uuid> = alerts.iter().map(|a| &a.rule_id).collect();
         ids.len()
@@ -353,6 +358,10 @@ where
             batches.push((alert.rule_id, files));
         }
     }
+
+    // Rules blocked after the configured number of consecutive EVTX failures
+    // are dropped from the active engine too (no more re-capture in a loop).
+    retired_ids.extend(regression.take_blocked());
 
     // AD-4: exclude retired rules and reload the engine once per batch to
     // avoid a full recompile per alert.
