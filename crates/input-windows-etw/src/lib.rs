@@ -100,6 +100,12 @@ impl EventCollector {
             builder = builder.enable(provider);
         }
 
+        // Guard against stop firing before the trace has started: if stop is
+        // already set, abort immediately so process() never blocks forever.
+        if *stop.borrow() {
+            return Ok(());
+        }
+
         let trace_task = tokio::task::spawn_blocking(move || {
             let (mut trace, _handle) = builder
                 .start()
@@ -108,6 +114,13 @@ impl EventCollector {
                 .process()
                 .map_err(|e| anyhow::anyhow!("ETW trace processing failed: {e:?}"))
         });
+
+        // Re-check after spawn_blocking has begun: if stop fired during
+        // builder.start(), abort the trace before process() blocks.
+        if *stop.borrow() {
+            trace_task.abort();
+            return Ok(());
+        }
 
         let stopper = tokio::spawn(async move {
             tokio::select! {
@@ -284,32 +297,35 @@ fn synthesize_winevt_xml(
 /// Tries the scalar types the subscribed providers emit (strings, IP
 /// addresses, integers, bools); returns `None` when the property is absent or
 /// of an unsupported type. ferrisetw's `TryParse<String>` panics on
-/// `InTypeCountedString` — a known upstream limitation, no public property-type
-/// API exists to guard against it.
+/// `InTypeCountedString` — a known upstream limitation. Wrapped in
+/// `catch_unwind` to prevent the panic from killing the trace loop.
 #[cfg(windows)]
 fn parse_etw_property(parser: &ferrisetw::parser::Parser<'_, '_>, name: &str) -> Option<String> {
-    if let Ok(s) = parser.try_parse::<String>(name) {
-        return (!s.is_empty()).then_some(s);
-    }
-    if let Ok(ip) = parser.try_parse::<std::net::IpAddr>(name) {
-        return Some(ip.to_string());
-    }
-    if let Ok(n) = parser.try_parse::<u8>(name) {
-        return Some(n.to_string());
-    }
-    if let Ok(n) = parser.try_parse::<u16>(name) {
-        return Some(n.to_string());
-    }
-    if let Ok(n) = parser.try_parse::<u32>(name) {
-        return Some(n.to_string());
-    }
-    if let Ok(n) = parser.try_parse::<u64>(name) {
-        return Some(n.to_string());
-    }
-    if let Ok(b) = parser.try_parse::<bool>(name) {
-        return Some(b.to_string());
-    }
-    None
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if let Ok(s) = parser.try_parse::<String>(name) {
+            return (!s.is_empty()).then_some(s);
+        }
+        if let Ok(ip) = parser.try_parse::<std::net::IpAddr>(name) {
+            return Some(ip.to_string());
+        }
+        if let Ok(n) = parser.try_parse::<u8>(name) {
+            return Some(n.to_string());
+        }
+        if let Ok(n) = parser.try_parse::<u16>(name) {
+            return Some(n.to_string());
+        }
+        if let Ok(n) = parser.try_parse::<u32>(name) {
+            return Some(n.to_string());
+        }
+        if let Ok(n) = parser.try_parse::<u64>(name) {
+            return Some(n.to_string());
+        }
+        if let Ok(b) = parser.try_parse::<bool>(name) {
+            return Some(b.to_string());
+        }
+        None
+    }));
+    result.ok().flatten()
 }
 
 /// Escape a string for a Winevt XML text/attribute value.
