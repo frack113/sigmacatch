@@ -2,7 +2,7 @@
 
 ## Cargo workspace
 
-Le projet est un cargo workspace de 11 packages (2 crates binaires + 9 bibliothèques) :
+Le projet est un cargo workspace de 13 packages (2 crates binaires + 11 bibliothèques) :
 
 ```text
 sigmacatch/
@@ -13,13 +13,18 @@ sigmacatch/
 │   ├── sigmacatch-rule/          # SigmahqRules : chargement de règles (parse_sigma_yaml), filtre, dédupe, remove_id + SigmaRuleExt (techniques ATT&CK)
 │   ├── sigmacatch-detection/     # Wrapper DetectionEngine + pipelines embarquées (windows.yml, flatten_winevt.yml) + channel_resolver
 │   ├── input-windows-channels/   # Collecteur Winevt multi-channel (cfg(windows))
+│   ├── input-windows-etw/        # Collecteur ETW direct via ferrisetw (18 providers, routing générique provider→channel)
 │   ├── sigmacatch-regression/    # SigmahqRegression (get_sigma_id, add, retire), InfoYml, triplet
 │   ├── sigmacatch-types/         # Types partagés : Event, Alert, RegressionHeader + parsing XML + tables de mapping logsource
 │   ├── sigmacatch-repo/          # wrapper grit-lib + SigmaRepo + opérations git
+│   ├── sigmacatch-evtx-writer/   # Writer EVTX pur Rust (sans API winevt) + validation re-parse
 │   └── input-evtx/               # Parser fichiers EVTX → Event
-├── sigmacatch/                   # Binaire + orchestration
+├── sigmacatch/                   # Lib + 2 binaires (boucle continue)
 │   └── src/
-│       └── main.rs               # Config + init repo + boucle continue + process_and_generate + commit/push
+│       ├── lib.rs                # runner partagé (pipeline commun aux 2 binaires)
+│       ├── runner.rs             # Config + init repo + boucle continue + process_and_generate + commit/push
+│       ├── main_winevt.rs        # bin `sigmacatch-channel` : collecteur Winevt multi-channel
+│       └── main_etw.rs           # bin `sigmacatch-etw` : collecteur ETW direct (ferrisetw)
 └── tools/                   # Outils de dev (hors du crate principal)
     └── src/
         ├── check_dry_run.rs      # Diagnostics git (token/fork/API/info-refs/état repo)
@@ -35,7 +40,10 @@ sigmacatch/
 
 ```text
 sigmacatch/src/
-└── main.rs              # Binaire : orchestration, boucle continue, process_and_generate
+├── lib.rs                # runner partagé (pipeline commun aux 2 binaires)
+├── runner.rs             # run<C: CollectorKind> : config, repo init, event loop, commit/push
+├── main_winevt.rs        # bin `sigmacatch-channel` : collecteur Winevt multi-channel
+└── main_etw.rs           # bin `sigmacatch-etw` : collecteur ETW direct (ferrisetw)
 
 tools/src/
 ├── check_dry_run.rs      # Outil de diagnostics git (config.yaml + dry_run_git)
@@ -47,6 +55,17 @@ tools/src/
 └── coverage.rs           # Outil de stats de couverture (règles locales + branches remote en attente)
 ```
 
+## Collecteurs
+
+Deux binaires sont produits, chacun embarquant un seul collecteur (features cargo `winevt`/`etw`, `required-features` par bin) :
+
+| Binaire | Crate | Description |
+|---|---|---|
+| `sigmacatch-channel` | `input-windows-channels` | API Winevt native (`EvtQueryW`/`EvtNext`/`EvtRender`), multi-channel, rejouable |
+| `sigmacatch-etw` | `input-windows-etw` | Collecte ETW directe via ferrisetw, 18 providers (9 Sysmon-masquerade + 9 génériques), routing générique provider→channel, EventID réel conservé |
+
+Le collecteur ETW couvre les mêmes channels que le collecteur Winevt (Security, Defender, Firewall, Sysmon, …) en résolvant provider→channel à partir d'une table de mapping, et en gardant le vrai EventID. Pour les providers génériques, les champs `EventData` sont fournis par des field maps par provider (fidelité variable). Sur non-Windows, le collecteur ETW est un stub no-op avec un `warn!`.
+
 Il n'y a pas de `config.rs` / `logger.rs` / `repo.rs` dans le binaire — ces modules ont été
 déplacés dans les crates `sigmacatch-config`, `sigmacatch-logger` et `sigmacatch-repo`.
 
@@ -54,18 +73,20 @@ déplacés dans les crates `sigmacatch-config`, `sigmacatch-logger` et `sigmacat
 
 ```text
 sigmacatch ──┬── sigmacatch-config       (Config, CliArgs, diagnostics dry-run)
-             ├── sigmacatch-logger       (init tracing)
-             ├── sigmacatch-rule         (SigmahqRules : load/filter/remove_id)
-             ├── sigmacatch-detection    (DetectionEngine : pipelines + bloom + LogSourceExtractor + resolve_channels)
-             ├── input-windows-channels  (EventCollector : Winevt multi-channel)
-             ├── sigmacatch-regression   (SigmahqRegression : skip set + génération triplet)
-             ├── sigmacatch-types        (Event, Alert, RegressionHeader, Product, EventProducer, parsing XML)
-             └── sigmacatch-repo         (SigmaRepo, wrapper grit-lib)
+              ├── sigmacatch-logger       (init tracing)
+              ├── sigmacatch-rule         (SigmahqRules : load/filter/remove_id)
+              ├── sigmacatch-detection    (DetectionEngine : pipelines + bloom + LogSourceExtractor + resolve_channels)
+              ├── input-windows-channels  (feature winevt, bin `sigmacatch-channel`)
+              ├── input-windows-etw       (feature etw, bin `sigmacatch-etw`)
+              ├── sigmacatch-regression   (SigmahqRegression : skip set + génération triplet)
+              ├── sigmacatch-evtx-writer  (writer EVTX pur Rust + validation)
+              ├── sigmacatch-types        (Event, Alert, RegressionHeader, Product, EventProducer, parsing XML)
+              └── sigmacatch-repo         (SigmaRepo, wrapper grit-lib)
 
 tools ──┬── sigmacatch-rule         (SigmahqRules + SigmaFilterConfig)
-             ├── sigmacatch-detection    (DetectionEngine)
-             ├── sigmacatch-regression   (SigmahqRegression)
-             └── input-evtx              (parse_evtx_bytes)
+              ├── sigmacatch-detection    (DetectionEngine)
+              ├── sigmacatch-regression   (SigmahqRegression)
+              └── input-evtx              (parse_evtx_bytes)
 ```
 
 `sigmacatch-detection` dépend de `sigmacatch-rule` + `sigmacatch-types` + `rsigma-eval`.
@@ -89,7 +110,9 @@ dépend de `rsigma-parser`. `sigmacatch-config` dépend de `sigmacatch-repo` + `
 8. DetectionEngine::new(&rules)  (pipelines + bloom + LogSourceExtractor)
    └── cycle_channels = engine.resolve_channels(&custom_map) ; 0 channels → warn + return
 9. output_base = <sigma_repo_path>/regression_data ; clean_partial_artifacts()
-10. EventCollector::new(cycle_channels).run(tx, stop) → task tokio
+10. runner::run(kind) — le collecteur est injecté par chaque bin via le trait `CollectorKind` :
+    ├── sigmacatch-channel (winevt)  → EventCollector::new(cycle_channels).run(tx, stop)
+    └── sigmacatch-etw (etw) → EventCollector::new().run(tx, stop) (pas de channels, routing provider→channel interne)
 11. Boucle : tokio::select!
     ├── shutdown_rx (Ctrl+C) → break
     ├── event depuis rx → engine.put_events(vec![event])

@@ -16,7 +16,7 @@ Load rules → skip existing regression → filter Windows → apply pipeline
     ↓
 Resolve channels from rules (logsource → channel mapping)
     ↓
-Continuous collector (live Windows events via EvtQueryW) → mpsc
+Continuous collector → mpsc (bin `sigmacatch-channel`: EvtQueryW; bin `sigmacatch-etw`: ETW via ferrisetw)
     ↓
 Sigma engine evaluates every event against all loaded rules
     ↓
@@ -34,7 +34,7 @@ commit + push to fork (continuous until Ctrl+C)
 
 ```bash
 cargo build --release
-./target/release/sigmacatch
+./target/release/sigmacatch-channel
 ```
 
 On first run, a `config.yaml` is created with defaults:
@@ -131,17 +131,19 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 
 ## Workspace
 
-The project is a cargo workspace of 11 crates (9 libraries + 2 binary crates):
+The project is a cargo workspace of 13 crates (11 libraries + 2 binary crates):
 
 | Crate | Purpose |
 |---|---|
-| `sigmacatch` | Binary + orchestration (continuous loop) |
+| `sigmacatch` | Lib + 2 binaries (`sigmacatch-channel` winevt, `sigmacatch-etw`) + shared runner (continuous loop) |
 | `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml + dry-run git diagnostics |
 | `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug) |
 | `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication, channel resolution |
 | `sigmacatch-detection` | Thin wrapper around rsigma-eval (pipelines, bloom, LogSourceExtractor) |
-| `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) |
+| `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) — bin `sigmacatch-channel` |
+| `input-windows-etw` | Direct ETW collector via ferrisetw (18 providers, provider→channel routing) — bin `sigmacatch-etw` |
 | `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, regression triplet generation |
+| `sigmacatch-evtx-writer` | Pure Rust EVTX writer + re-parse validation |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
 | `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, GitHub fork detection, commit workflow |
 | `input-evtx` | Parse EVTX files into `Event` objects for the detection engine |

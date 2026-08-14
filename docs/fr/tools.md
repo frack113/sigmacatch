@@ -1,7 +1,7 @@
 # Outils
 
 Outils de dev dans le crate `tools`, chacun avec sa propre fonction. Ils restent hors du
-binaire principal `sigmacatch` pour garder son arbre de dépendances léger.
+binaire principal `sigmacatch-channel` pour garder son arbre de dépendances léger.
 
 ## check_evtx
 
@@ -176,7 +176,7 @@ cargo run --release --bin check_filter
 
 **Usage :** `cargo run --release --bin check_dry_run [--json]`
 
-**Fonction :** diagnostics git de l'ancien flag `--dry-run` de sigmacatch (déplacé ici pour
+**Fonction :** diagnostics git de l'ancien flag `--dry-run` de sigmacatch-channel (déplacé ici pour
 simplifier le binaire principal). Réutilise `Config::load_with_cli` + `dry_run_git` de
 `sigmacatch-config`. Accepte les mêmes flags que le binaire principal (`--author`, `-o`/`--offline`,
 `-c`/`--contrib`, `--help`).
@@ -197,7 +197,7 @@ simplifier le binaire principal). Réutilise `Config::load_with_cli` + `dry_run_
 **Usage :** `cargo run --release --bin check_channels [--json]`
 
 **Fonction :** résout et liste les channels Windows que le moteur collecterait (ancien
-`--channels-only` de sigmacatch, déplacé ici).
+`--channels-only` de sigmacatch-channel, déplacé ici).
 
 ### Pipeline
 
@@ -214,7 +214,7 @@ simplifier le binaire principal). Réutilise `Config::load_with_cli` + `dry_run_
 
 **Usage :** `cargo run --release --bin list_rules [--json]`
 
-**Fonction :** liste les règles chargées avec leur chemin (ancien `--list-rules` de sigmacatch,
+**Fonction :** liste les règles chargées avec leur chemin (ancien `--list-rules` de sigmacatch-channel,
 déplacé ici).
 
 ### Pipeline
@@ -235,7 +235,7 @@ déplacé ici).
 **Fonction :** génère un script `run_atomic.ps1` qui chaîne les commandes
 `Invoke-AtomicTest T1xxx.xxx` pour les techniques ATT&CK des règles **sans
 regression data** selon le filtre config. Le script est copié sur la VM Windows
-et exécuté manuellement ; sigmacatch (boucle continue) capte les events
+et exécuté manuellement ; sigmacatch-channel (boucle continue) capte les events
 générés et produit la regression data.
 
 ### Pipeline
@@ -262,7 +262,7 @@ Invoke-AtomicTest T1547.001 -TimeoutSeconds 120
 ...
 ```
 
-- `Start-Sleep 30` entre les tests → laisse sigmacatch collecter les events
+- `Start-Sleep 30` entre les tests → laisse sigmacatch-channel collecter les events
 - `-TimeoutSeconds 120` → évite qu'un test bloquant fige la chaîne
 - Les règles sans tag `attack.*` sont comptées et listées dans le rapport (pas
   de `Invoke-AtomicTest` généré pour elles)

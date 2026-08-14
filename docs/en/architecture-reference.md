@@ -6,7 +6,7 @@
 
 ## 1. Overview
 
-Headless tool that captures real Windows events via **Windows Event Log API** (winevt), matches them against SigmaHQ rules, and outputs structured regression data.
+Headless tool that captures real Windows events via **Windows Event Log API** (winevt) or **ETW** (ferrisetw), matches them against SigmaHQ rules, and outputs structured regression data.
 
 **Continuous run (one process until Ctrl+C):**
 
@@ -15,12 +15,14 @@ Headless tool that captures real Windows events via **Windows Event Log API** (w
 3. Build the skip set from existing regression data
 4. Load the Sigma engine (rsigma-eval) with bloom pre-filter + LogSourceExtractor
 5. Resolve channels from the loaded rules
-6. Spawn a continuous collector (winevt, one task per channel)
+6. Spawn a continuous collector (injected by the binary via the `CollectorKind` trait):
+   - **bin `sigmacatch-channel` (winevt)**: one task per channel (EvtQueryW/EvtNext/EvtRender)
+   - **bin `sigmacatch-etw` (etw)**: ferrisetw subscription on 18 providers, generic provider→channel routing, real EventID preserved
 7. Evaluate every event against all loaded rules (FIFO API)
 8. Every 30s: generate regression output for matched rules, commit (per rule) + push (if contrib) to the fork
 9. On Ctrl+C: final flush → commit → push branch to fork (only when `git.contrib: true`)
 
-**Platform:** Windows (winevt + Sysmon required for rich events). Linux/macOS: collector is a no-op stub — the pipeline still runs end-to-end for testing.
+**Platform:** Windows (winevt or etw required for rich events). Linux/macOS: collector is a no-op stub — the pipeline still runs end-to-end for testing.
 
 ---
 
@@ -28,10 +30,13 @@ Headless tool that captures real Windows events via **Windows Event Log API** (w
 
 ```text
 sigmacatch/
-├── Cargo.toml                     # Workspace root (11 packages)
-├── sigmacatch/                    # Binary crate
+├── Cargo.toml                     # Workspace root (13 packages)
+├── sigmacatch/                    # Lib + 2 binaries
 │   └── src/
-│       └── main.rs                # Orchestration: continuous loop + process_and_generate + commit/push
+│       ├── lib.rs                 # shared runner (pipeline common to both binaries)
+│       ├── runner.rs              # run<C: CollectorKind>: config + repo init + event loop + commit/push
+│       ├── main_winevt.rs         # bin `sigmacatch-channel`: multi-channel Winevt collector
+│       └── main_etw.rs            # bin `sigmacatch-etw`: direct ETW collector (ferrisetw)
 ├── tools/                    # Dev tools (check_dry_run, check_channels, list_rules, check_filter, check_evtx, get_atomic, coverage)
 └── crates/
     ├── sigmacatch-config/         # Config YAML, CLI parsing, custom_channels.yaml, dry-run git diagnostics (check_dry_run)
@@ -39,6 +44,7 @@ sigmacatch/
     ├── sigmacatch-rule/           # SigmahqRules: load (parse_sigma_yaml), filter, dedupe, remove_id
     ├── sigmacatch-detection/      # DetectionEngine wrapper + embedded pipelines (windows.yml, flatten_winevt.yml) + channel_resolver
     ├── input-windows-channels/    # Multi-channel Winevt collector (EventProducer)
+    ├── input-windows-etw/         # Direct ETW collector via ferrisetw (18 providers, generic provider→channel routing)
     ├── sigmacatch-regression/     # SigmahqRegression, InfoYml, RegressionData, triplet validation
     ├── sigmacatch-types/          # Shared types: Event, Alert, RegressionHeader, Product + XML parsing + logsource mapping tables
     ├── sigmacatch-repo/           # grit-lib wrapper: SigmaRepo, git operations
@@ -98,7 +104,7 @@ When `ssh_key_path` is set, every regression commit is **signed** with pure-Rust
 (`ssh-key`): the `gpgsig` header is inserted between the committer line and the message, like
 `git commit -S` with `gpg.format = ssh`, so GitHub shows the commit as "Verified".
 
-**CLI flags:** `--author <name>`, `-a`/`--all-rules`, `-o`/`--offline`, `-c`/`--contrib`, `-v`/`--verbose`, `--help` / `-h`. The diagnostics (git dry-run, channels, rule list) are `tools` tools: `check_dry_run`, `check_channels`, `list_rules`.
+**CLI flags:** `--author <name>`, `-a`/`--all-rules`, `-o`/`--offline`, `-c`/`--contrib`, `-v`/`--verbose`, `--help` / `-h`. The collector is chosen by the binary (cargo features `winevt`/`etw`, no flag). The diagnostics (git dry-run, channels, rule list) are `tools` tools: `check_dry_run`, `check_channels`, `list_rules`.
 
 ---
 
@@ -223,7 +229,10 @@ clean_partial_artifacts(&output_base)     # removes dirs with json/evtx but no i
     ↓
 let (tx, rx) = mpsc::channel::<Event>(100_000)
     ↓
-EventCollector::new(cycle_channels).run(tx, stop)   # tokio task, one task per channel
+[bin sigmacatch-channel] kind.build(&cycle_channels).run(tx, stop)
+    └── EventCollector::new(cycle_channels)   # tokio task, one task per channel
+[bin sigmacatch-etw] kind.build(&[]).run(tx, stop)
+    └── EventCollector::new()                 # tokio task, ferrisetw multi-provider subscription
 ```
 
 **Per-channel loop (`collect_continuous`, spawned with `spawn_blocking`):**
@@ -411,7 +420,7 @@ regression_tests_info:
 - `remove_id(&Uuid)`, `get(&Uuid)`, `rules()` / `iter()`, `to_collection()`, `rule_paths()`
 - Channel resolution no longer lives here — it moved to `DetectionEngine::resolve_channels` (§10)
 
-### EventCollector (`crates/input-windows-channels/src/lib.rs`)
+### EventCollector (`crates/input-windows-channels/src/lib.rs`) — Winevt
 
 - Multi-channel Windows Event Log collector, implements `EventProducer` (single module, no more `collector.rs`)
 - `new(channels)` → `run(self, tx, stop)` async; one blocking task per channel
@@ -420,6 +429,16 @@ regression_tests_info:
 - Observability: permanent exclusion on `ERROR_EVT_CHANNEL_NOT_FOUND` (single `error!`),
   liveness logs ("initial query OK", "still alive" every 60s, progress every 10s),
   `warn!` when events are fetched but dropped at render/parse, record-id rollover detection
+
+### EventCollector (`crates/input-windows-etw/src/lib.rs`) — ETW
+
+- Direct ETW collector via ferrisetw, implements `EventProducer` (single module)
+- `new()` → `run(self, tx, stop)` async; single subscription, no explicit channels
+- 18 providers (9 Sysmon-masquerade + 9 generic) with verified GUIDs
+- Generic routing: provider name → channel via `PROVIDER_NAME_TO_CHANNEL` (phf), real EventID preserved
+- Field fidelity: per-provider field maps (Sysmon → EventID 1/3/7/11 with rename; Security/Defender/Firewall/NTLM/SMB/LSA → identity maps)
+- Unknown providers → `sigmacatch/etw-unmapped` channel, real EventID, `warn!`
+- Non-Windows: no-op stub with `warn!`
 
 ### EVTX Writer (`sigmacatch-regression/src/evtx.rs`)
 
@@ -462,12 +481,13 @@ regression_tests_info:
 | `chrono` | dates |
 | `uuid` | UUID v4 for info.yml + rule IDs |
 | `phf` | static hash maps for taxonomy tables (in `sigmacatch-types`) + channel resolution (in `sigmacatch-detection/src/channel_resolver.rs`) |
+| `ferrisetw` | direct ETW collection (cfg(windows), in `input-windows-etw`) |
 | `evtx` | EVTX file parsing (input-evtx crate, used by tools/check_evtx) |
 | `roxmltree` | XML parsing for Winevt events (in `sigmacatch-types`) |
 | `windows` | Winevt API (cfg-gated: windows only, features: Foundation, System, Security, Com, Console, Threading) |
 | `tempfile` (dev) | integration tests |
 
-**Removed:** `ratatui`, `crossterm`, `quick-xml`, `winevt-writer`, `tdh`, `ntapi`, `ferrisetw`
+**Removed:** `ratatui`, `crossterm`, `quick-xml`, `winevt-writer`, `tdh`, `ntapi`
 
 ---
 
@@ -486,7 +506,7 @@ cargo xwin build --release --target x86_64-pc-windows-msvc   # cross-compile Win
 ## 9. CLI
 
 ```text
-sigmacatch
+sigmacatch-channel
     [-a], [--all-rules]    # disables the skip set (loads all rules)
     [-c], [--contrib]      # enables push to the remote fork
     [-o], [--offline]      # skips pull at startup (forces offline)
@@ -528,7 +548,7 @@ Embedded transformation pipeline (loaded via `include_str!` in `sigmacatch-detec
 
 ### Channel resolution (`crates/sigmacatch-detection/src/channel_resolver.rs`)
 
-- **Post-pipeline logsource** : `resolve_channels` reads `CompiledRule.logsource` (post-pipeline, publicly exposed by rsigma-eval 0.21) via `DetectionEngine::resolve_channels(&custom_map)` in `main.rs` — resolved at engine creation time, no extra cost (no re-transform).
+- **Post-pipeline logsource** : `resolve_channels` reads `CompiledRule.logsource` (post-pipeline, publicly exposed by rsigma-eval 0.21) via `DetectionEngine::resolve_channels(&custom_map)` in `runner.rs` — resolved at engine creation time, no extra cost (no re-transform).
 - `SERVICE_CHANNELS` : static `phf::Map<service, &[channel]>` — service → Windows Event Log channels mapping (runtime, not a generated table).
 - `CATEGORY_CHANNELS` : categories the pipeline does NOT route (`ps_classic_*`, `ps_module`, `ps_script`).
 - Lookup : `service` present → `SERVICE_CHANNELS[service]` + `custom_map` (from `custom_channels.yaml`, `channel → service`) ; else `category` → `CATEGORY_CHANNELS[category]`.
