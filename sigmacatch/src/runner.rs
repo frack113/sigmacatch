@@ -1,23 +1,43 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+
 use anyhow::Result;
-use sigmacatch_config::{self, parse_args, Collector, Config};
+use sigmacatch_config::{self, parse_args, Config};
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_logger::init as init_logger;
 use sigmacatch_regression::SigmahqRegression;
 use sigmacatch_repo::SigmaRepo;
 use sigmacatch_rule::SigmahqRules;
-
 use sigmacatch_types::{Event, EventProducer};
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
 use tokio::signal;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
 type EvtxWriteFn = Box<dyn Fn(&str, &str, Option<u64>, bool, &Path) -> anyhow::Result<()>>;
+
+/// Collector-specific behaviour injected by each binary.
+pub trait CollectorKind {
+    /// Binary name used in log messages.
+    fn name(&self) -> &'static str;
+
+    /// Short description of the collection mode (startup log).
+    fn mode(&self) -> &'static str;
+
+    /// Channels to collect, or `None` when the collector does not need channel
+    /// resolution (ETW). `Some(empty)` means nothing to collect (early exit).
+    fn channels(
+        &self,
+        engine: &DetectionEngine,
+        custom_map: &HashMap<String, String>,
+    ) -> Option<Vec<String>>;
+
+    /// Build the collector for the resolved channels.
+    fn build(&self, channels: &[String]) -> Box<dyn EventProducer>;
+}
 
 #[cfg(windows)]
 fn setup_console() {
@@ -34,8 +54,8 @@ fn setup_console() {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// Run the sigmacatch pipeline with the given collector.
+pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     let cli = parse_args();
 
     let config_path = PathBuf::from("config.yaml");
@@ -57,8 +77,10 @@ async fn main() -> Result<()> {
     );
 
     info!(
-        "Sigmacatch started for {} <{}>",
-        config.git.author, config.git.email
+        "{} started for {} <{}>",
+        kind.name(),
+        config.git.author,
+        config.git.email
     );
     let branch_name = format!("sigmacatch/{}", chrono::Local::now().format("%Y%m%d"));
     info!("Branch name: {branch_name}");
@@ -121,9 +143,6 @@ async fn main() -> Result<()> {
                 existing.len()
             );
         }
-        // Union with rules committed on pending `sigmacatch/*` PR branches
-        // (not yet merged into main): a fresh VM only sees main, so without
-        // this scan an open PR's rules would be re-captured and duplicated.
         match sigma_repo.pending_regression_rule_ids() {
             Ok(pending) => {
                 if !pending.is_empty() {
@@ -180,17 +199,15 @@ async fn main() -> Result<()> {
         PathBuf::from("custom_channels.yaml").as_path(),
     );
     let mut engine = DetectionEngine::new(&rules)?;
-    let cycle_channels = if config.collector == Collector::Winevt {
-        let channels = engine.resolve_channels(&custom_map);
-        if channels.is_empty() {
-            warn!("0 channels resolved — nothing to collect");
-            return Ok(());
+    let cycle_channels = match kind.channels(&engine, &custom_map) {
+        Some(channels) => {
+            if channels.is_empty() {
+                warn!("0 channels resolved — nothing to collect");
+                return Ok(());
+            }
+            channels
         }
-        channels
-    } else {
-        #[cfg(not(windows))]
-        warn!("collector: etw is a no-op on non-Windows — no events will be collected");
-        Vec::new()
+        None => Vec::new(),
     };
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
@@ -212,26 +229,13 @@ async fn main() -> Result<()> {
 
     let (tx, mut rx) = mpsc::channel::<Event>(100_000);
     let collector_stop = shutdown_rx.clone();
-    #[cfg(windows)]
-    let collector: Box<dyn EventProducer> = match config.collector {
-        Collector::Winevt => Box::new(input_windows_channels::EventCollector::new(
-            cycle_channels.clone(),
-        )),
-        Collector::Etw => Box::new(input_windows_etw::EventCollector::new()),
-    };
-    #[cfg(not(windows))]
-    let collector: Box<dyn EventProducer> = Box::new(input_windows_channels::EventCollector::new(
-        cycle_channels.clone(),
-    ));
+    let collector = kind.build(&cycle_channels);
     let collector_handle = tokio::spawn(async move {
         if let Err(e) = collector.run(tx, collector_stop).await {
             warn!("Collector finished with error: {}", e);
         }
     });
-    info!(
-        "Continuous collector started (mode: {:?})",
-        config.collector
-    );
+    info!("Continuous collector started ({})", kind.mode());
 
     let mut generate_interval = tokio::time::interval(std::time::Duration::from_secs(30));
     generate_interval.tick().await; // skip immediate first tick
@@ -257,10 +261,6 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Signal the collector to stop and wait for it to exit (dropping its Sender
-    // clones), then drain the remaining events. Draining before the collector
-    // exits would never terminate: it only stops when the receiver is dropped,
-    // and the receiver is needed for the drain.
     info!("Final flush — draining remaining events");
     let collector_stop = std::time::Duration::from_secs(30);
     match tokio::time::timeout(collector_stop, collector_handle).await {
@@ -285,7 +285,7 @@ async fn main() -> Result<()> {
         upload_regression(&sigma_repo, batches, &mut branch_pushed, &push_branch);
     }
 
-    info!("Sigmacatch finished");
+    info!("{} finished", kind.name());
     Ok(())
 }
 
@@ -331,8 +331,6 @@ where
         return Vec::new();
     }
 
-    // Open a new failure-counting cycle: a rule with several alerts in this
-    // batch counts at most one failed EVTX generation toward its block bound.
     regression.begin_cycle();
 
     let unique_match_count = {
@@ -351,20 +349,13 @@ where
     let mut retired_ids: Vec<Uuid> = Vec::new();
     for alert in alerts {
         if let Some(files) = regression.add(&alert, &write_fn) {
-            // AD-4: retire the rule once its data is generated. `add()` returns
-            // None for an already-retired/existing rule, so each rule_id appears
-            // at most once per batch.
             retired_ids.push(alert.rule_id);
             batches.push((alert.rule_id, files));
         }
     }
 
-    // Rules blocked after the configured number of consecutive EVTX failures
-    // are dropped from the active engine too (no more re-capture in a loop).
     retired_ids.extend(regression.take_blocked());
 
-    // AD-4: exclude retired rules and reload the engine once per batch to
-    // avoid a full recompile per alert.
     if !retired_ids.is_empty() {
         for id in &retired_ids {
             rules.remove_id(id);
