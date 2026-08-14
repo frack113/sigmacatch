@@ -22,9 +22,17 @@ pub struct EtwProvider {
     pub level: u8,
 }
 
-/// The 9 providers the collector subscribes to (kernel providers, DNS, PS,
-/// WMI, SCM, TaskScheduler). Kernel providers need admin rights to enable.
-pub const PROVIDERS: [EtwProvider; 9] = [
+/// Providers the collector subscribes to.
+///
+/// The first 9 are the high-fidelity Sysmon-style providers (kernel providers,
+/// DNS, PS, WMI, SCM, TaskScheduler) — their events are masqueraded as Sysmon
+/// EventIDs by [`crate::mapper`]. The rest are the additional Windows channels
+/// (Security, Defender, Firewall, NTLM, SMB, LSA, CAPI2, CodeIntegrity, …)
+/// routed generically by provider name → channel (real EventID kept) via
+/// [`crate::mapper::channel_for_provider`]. Kernel providers and Security-Auditing
+/// need admin rights to enable.
+pub const PROVIDERS: [EtwProvider; 18] = [
+    // ─── Sysmon-style (high-fidelity, opcode → Sysmon EventID) ───────────────
     EtwProvider {
         name: "Microsoft-Windows-Kernel-Process",
         guid: "22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716",
@@ -76,6 +84,61 @@ pub const PROVIDERS: [EtwProvider; 9] = [
     EtwProvider {
         name: "Microsoft-Windows-TaskScheduler",
         guid: "de7b24ea-73c8-4a09-985d-5bdadcfa9017",
+        keywords: u64::MAX,
+        level: 4,
+    },
+    // ─── Generic channels (provider → channel, real EventID kept) ────────────
+    EtwProvider {
+        name: "Microsoft-Windows-Security-Auditing",
+        guid: "54849625-5478-4994-a5ba-3e3b0328c30d",
+        keywords: 0x9000_0000_0000_0000, // Audit Success (0x8020…) + Failure (0x8010…)
+        level: 4,
+    },
+    EtwProvider {
+        name: "Microsoft-Windows-Windows Defender",
+        guid: "11cd958a-c507-4ef3-b3f2-5fd9dfbd2c78",
+        keywords: u64::MAX,
+        level: 4,
+    },
+    EtwProvider {
+        name: "Microsoft-Windows-Windows Firewall With Advanced Security",
+        guid: "d1bc9aff-2abf-4d71-9146-ecb2a986eb85",
+        keywords: u64::MAX,
+        level: 4,
+    },
+    EtwProvider {
+        name: "NTLM Security Protocol",
+        guid: "c92cf544-91b3-4dc0-8e11-c580339a0bf8",
+        keywords: u64::MAX,
+        level: 4,
+    },
+    EtwProvider {
+        name: "Microsoft-Windows-SMBClient",
+        guid: "988c59c5-0a1c-45b6-a555-0c62276e327d",
+        keywords: u64::MAX,
+        level: 4,
+    },
+    EtwProvider {
+        name: "Local Security Authority (LSA)",
+        guid: "cc85922f-db41-11d2-9244-006008269001",
+        keywords: u64::MAX,
+        level: 4,
+    },
+    EtwProvider {
+        name: "Microsoft-Windows-Bits-Client",
+        guid: "ef1cc15b-46c1-414e-bb95-e76b077bd51e",
+        keywords: u64::MAX,
+        level: 4,
+    },
+    EtwProvider {
+        name: "Microsoft-Windows-CAPI2",
+        guid: "5bbca4a8-b209-48dc-a8c7-b23d3e5216fb",
+        keywords: u64::MAX,
+        level: 4,
+    },
+    EtwProvider {
+        name: "Microsoft-Windows-CodeIntegrity",
+        guid: "4ee76bd8-3cf4-44a0-a0ac-3937643e37a3",
         keywords: u64::MAX,
         level: 4,
     },

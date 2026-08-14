@@ -1519,6 +1519,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "ferrisetw",
+ "phf",
  "sigmacatch-types",
  "tokio",
  "tracing",

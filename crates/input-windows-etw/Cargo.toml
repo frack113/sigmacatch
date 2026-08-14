@@ -14,6 +14,7 @@ async-trait = "0.1"
 sigmacatch-types = { path = "../sigmacatch-types" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "signal", "macros"] }
 tracing = "0.1"
+phf = { version = "0.14", features = ["macros"] }
 
 [target.'cfg(windows)'.dependencies]
 ferrisetw = "1.2.0"

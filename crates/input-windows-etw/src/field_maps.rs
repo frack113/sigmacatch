@@ -19,6 +19,21 @@ pub enum ProviderKind {
     WmiActivity,
     Scm,
     TaskScheduler,
+    /// `Microsoft-Windows-Security-Auditing` (Security channel: 4624/4625 logon,
+    /// 4688 process creation, 4697 service install, 4768/4769 Kerberos, 4776
+    /// NTLM, 5140/5145 file share, …). Field names are identical to the Winevt
+    /// `EventData` names, so the mapping is an identity over the known set.
+    Security,
+    /// `Microsoft-Windows-Windows Defender` (Operational channel).
+    Defender,
+    /// `Microsoft-Windows-Windows Firewall With Advanced Security` (Firewall channel).
+    Firewall,
+    /// `NTLM Security Protocol` (NTLM/Operational channel).
+    Ntlm,
+    /// `Microsoft-Windows-SMBClient` (SMBClient/Security channel).
+    Smb,
+    /// `Local Security Authority (LSA)` (LSA/Operational channel).
+    Lsa,
 }
 
 #[derive(Debug, Clone)]
@@ -30,6 +45,16 @@ impl FieldMapping {
     pub fn new(sigma_to_etw: &[(&'static str, &'static str)]) -> Self {
         Self {
             etw_to_sigma: sigma_to_etw.iter().map(|(s, e)| (*e, *s)).collect(),
+        }
+    }
+
+    /// Build a mapping where every ETW field name is also its Sigma name
+    /// (used by channels whose `EventData` names already match Sigma, e.g.
+    /// the Security channel). The argument list is the set of ETW property
+    /// names to parse and forward.
+    pub fn identity(names: &[&'static str]) -> Self {
+        Self {
+            etw_to_sigma: names.iter().map(|n| (*n, *n)).collect(),
         }
     }
 
@@ -119,6 +144,147 @@ pub fn field_map_for_provider(kind: ProviderKind) -> &'static FieldMapping {
                 FieldMapping::new(&[("TaskName", "TaskName"), ("UserContext", "UserName")])
             })
         }
+        ProviderKind::Security => {
+            static MAP: std::sync::OnceLock<FieldMapping> = std::sync::OnceLock::new();
+            MAP.get_or_init(|| {
+                // ETW property names == Winevt EventData names for the Security
+                // channel, so the map is an identity over the known set.
+                FieldMapping::identity(&[
+                    // String/integer fields first: if `try_parse::<String>`
+                    // panics on a SID/HexInt64/GUID typed field, the parser loop
+                    // stops, so the risky types are listed last to avoid losing
+                    // the common string fields.
+                    "SubjectUserName",
+                    "SubjectDomainName",
+                    "TargetUserName",
+                    "TargetDomainName",
+                    "WorkstationName",
+                    "IpAddress",
+                    "IpPort",
+                    "LogonType",
+                    "LogonProcessName",
+                    "AuthenticationPackageName",
+                    "KeyLength",
+                    "ProcessId",
+                    "ProcessName",
+                    "ParentProcessName",
+                    "TokenElevationType",
+                    "MandatoryLabel",
+                    "ServiceName",
+                    "ServiceFileName",
+                    "ServiceStartType",
+                    "ServiceType",
+                    "ServiceAccount",
+                    "Status",
+                    "FailureCode",
+                    "SubStatus",
+                    "TicketOptions",
+                    "TicketEncryptionType",
+                    "PreAuthType",
+                    "CertThumbprint",
+                    "TargetServerName",
+                    "ObjectName",
+                    "ObjectType",
+                    "AccessList",
+                    "AccessMask",
+                    "PrivilegeList",
+                    "Computer",
+                    "HostName",
+                    "PackageName",
+                    "UserPrincipalName",
+                    // SID / HexInt64 / GUID typed fields last.
+                    "SubjectUserSid",
+                    "SubjectLogonId",
+                    "TargetUserSid",
+                    "TargetLogonId",
+                    "TargetLogonGuid",
+                    "TargetLinkedLogonId",
+                    "HandleId",
+                ])
+            })
+        }
+        ProviderKind::Defender => {
+            static MAP: std::sync::OnceLock<FieldMapping> = std::sync::OnceLock::new();
+            MAP.get_or_init(|| {
+                FieldMapping::identity(&[
+                    "ProductName",
+                    "ProductVersion",
+                    "ThreatName",
+                    "ThreatId",
+                    "SeverityId",
+                    "CategoryName",
+                    "DetectionSource",
+                    "ProcessName",
+                    "ProcessId",
+                    "OldValue",
+                    "NewValue",
+                    "Action",
+                    "ErrorCode",
+                ])
+            })
+        }
+        ProviderKind::Firewall => {
+            static MAP: std::sync::OnceLock<FieldMapping> = std::sync::OnceLock::new();
+            MAP.get_or_init(|| {
+                FieldMapping::identity(&[
+                    "ModifyingUser",
+                    "ModifyingApplication",
+                    "RuleName",
+                    "RuleAction",
+                    "RuleDirection",
+                    "Action",
+                    "FilterName",
+                    "LayerName",
+                    "Weight",
+                ])
+            })
+        }
+        ProviderKind::Ntlm => {
+            static MAP: std::sync::OnceLock<FieldMapping> = std::sync::OnceLock::new();
+            MAP.get_or_init(|| {
+                FieldMapping::identity(&[
+                    "TargetUserName",
+                    "TargetDomainName",
+                    "WorkstationName",
+                    "ClientUserName",
+                    "ClientDomainName",
+                    "UserName",
+                    "DomainName",
+                    "Status",
+                    "SubStatus",
+                ])
+            })
+        }
+        ProviderKind::Smb => {
+            static MAP: std::sync::OnceLock<FieldMapping> = std::sync::OnceLock::new();
+            MAP.get_or_init(|| {
+                FieldMapping::identity(&[
+                    "ServerName",
+                    "ShareName",
+                    "ClientAddress",
+                    "ClientUserName",
+                    "UserName",
+                    "FileName",
+                    "IpAddress",
+                    "Status",
+                ])
+            })
+        }
+        ProviderKind::Lsa => {
+            static MAP: std::sync::OnceLock<FieldMapping> = std::sync::OnceLock::new();
+            MAP.get_or_init(|| {
+                FieldMapping::identity(&[
+                    "TargetUserName",
+                    "TargetDomainName",
+                    "WorkstationName",
+                    "ProcessName",
+                    "ProcessId",
+                    "StatusCode",
+                    "SubStatus",
+                    "PolicyName",
+                ])
+            })
+        }
     }
 }
 
@@ -164,6 +330,12 @@ pub fn provider_kind_for_name(name: &str) -> Option<ProviderKind> {
         "Microsoft-Windows-WMI-Activity" => Some(ProviderKind::WmiActivity),
         "Service Control Manager" => Some(ProviderKind::Scm),
         "Microsoft-Windows-TaskScheduler" => Some(ProviderKind::TaskScheduler),
+        "Microsoft-Windows-Security-Auditing" => Some(ProviderKind::Security),
+        "Microsoft-Windows-Windows Defender" => Some(ProviderKind::Defender),
+        "Microsoft-Windows-Windows Firewall With Advanced Security" => Some(ProviderKind::Firewall),
+        "NTLM Security Protocol" => Some(ProviderKind::Ntlm),
+        "Microsoft-Windows-SMBClient" => Some(ProviderKind::Smb),
+        "Local Security Authority (LSA)" => Some(ProviderKind::Lsa),
         _ => None,
     }
 }
@@ -333,7 +505,69 @@ mod tests {
             provider_kind_for_name("Microsoft-Windows-TaskScheduler"),
             Some(ProviderKind::TaskScheduler)
         );
+        assert_eq!(
+            provider_kind_for_name("Microsoft-Windows-Security-Auditing"),
+            Some(ProviderKind::Security)
+        );
+        assert_eq!(
+            provider_kind_for_name("Microsoft-Windows-Windows Defender"),
+            Some(ProviderKind::Defender)
+        );
+        assert_eq!(
+            provider_kind_for_name("Microsoft-Windows-Windows Firewall With Advanced Security"),
+            Some(ProviderKind::Firewall)
+        );
+        assert_eq!(
+            provider_kind_for_name("NTLM Security Protocol"),
+            Some(ProviderKind::Ntlm)
+        );
+        assert_eq!(
+            provider_kind_for_name("Microsoft-Windows-SMBClient"),
+            Some(ProviderKind::Smb)
+        );
+        assert_eq!(
+            provider_kind_for_name("Local Security Authority (LSA)"),
+            Some(ProviderKind::Lsa)
+        );
         assert_eq!(provider_kind_for_name("Microsoft-Windows-Foo"), None);
+    }
+
+    #[test]
+    fn test_generic_maps_are_non_empty() {
+        // Each generic provider must actually forward fields (otherwise the
+        // channel routing from the previous step would emit empty EventData).
+        assert!(!field_map_for_provider(ProviderKind::Security)
+            .etw_names()
+            .is_empty());
+        assert!(!field_map_for_provider(ProviderKind::Defender)
+            .etw_names()
+            .is_empty());
+        assert!(!field_map_for_provider(ProviderKind::Firewall)
+            .etw_names()
+            .is_empty());
+        assert!(!field_map_for_provider(ProviderKind::Ntlm)
+            .etw_names()
+            .is_empty());
+        assert!(!field_map_for_provider(ProviderKind::Smb)
+            .etw_names()
+            .is_empty());
+        assert!(!field_map_for_provider(ProviderKind::Lsa)
+            .etw_names()
+            .is_empty());
+    }
+
+    #[test]
+    fn test_security_identity_map() {
+        let mapping = field_map_for_provider(ProviderKind::Security);
+        // Identity maps keep the ETW name as the Sigma name.
+        assert_eq!(
+            mapping.etw_name_to_sigma_name("TargetUserName"),
+            Some("TargetUserName")
+        );
+        assert_eq!(
+            mapping.etw_name_to_sigma_name("IpAddress"),
+            Some("IpAddress")
+        );
     }
 
     #[test]

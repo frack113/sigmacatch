@@ -62,6 +62,72 @@ pub fn synthetic_channel_for_sysmon_eid(sysmon_eid: u16) -> &'static str {
     }
 }
 
+/// Provider name → Windows event channel for generic (non-Sysmon) routing.
+///
+/// When an ETW record has no Sysmon EventID equivalent (`map_to_sysmon_id`
+/// returns `None`), the record's real EventID is kept and the event is routed to
+/// the channel this table maps its provider to. The channel keys must match the
+/// `CHANNEL_TO_SERVICE` table in `sigmacatch-types` so `inject_logsource_fields`
+/// derives the correct `service`/`category`. This is the extension point for
+/// covering more Winevt channels via ETW — adding a provider to `PROVIDERS`
+/// only requires a matching entry here (no EventID enumeration needed).
+pub static PROVIDER_NAME_TO_CHANNEL: phf::Map<&'static str, &'static str> = phf::phf_map! {
+    "Microsoft-Windows-Security-Auditing" => "Security",
+    "Microsoft-Windows-Windows Defender" => "Microsoft-Windows-Windows Defender/Operational",
+    "Microsoft-Windows-Windows Firewall With Advanced Security" => "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall",
+    "NTLM Security Protocol" => "Microsoft-Windows-NTLM/Operational",
+    "Microsoft-Windows-SMBClient" => "Microsoft-Windows-SmbClient/Security",
+    "Local Security Authority (LSA)" => "Microsoft-Windows-LSA/Operational",
+    "Microsoft-Windows-Bits-Client" => "Microsoft-Windows-Bits-Client/Operational",
+    "Microsoft-Windows-CAPI2" => "Microsoft-Windows-CAPI2/Operational",
+    "Microsoft-Windows-CodeIntegrity" => "Microsoft-Windows-CodeIntegrity/Operational",
+    "Microsoft-Windows-DNS-Client" => "Microsoft-Windows-DNS Client Events/Operational",
+    "Microsoft-Windows-PowerShell" => "Microsoft-Windows-PowerShell/Operational",
+    "Microsoft-Windows-WMI-Activity" => "Microsoft-Windows-WMI-Activity/Operational",
+    "Service Control Manager" => "System",
+    "Microsoft-Windows-TaskScheduler" => "Microsoft-Windows-TaskScheduler/Operational",
+    "Microsoft-Windows-Kernel-Process" => "Microsoft-Windows-Sysmon/Operational",
+    "Microsoft-Windows-Kernel-Network" => "Microsoft-Windows-Sysmon/Operational",
+    "Microsoft-Windows-Kernel-File" => "Microsoft-Windows-Sysmon/Operational",
+    "Microsoft-Windows-Kernel-Registry" => "Microsoft-Windows-Sysmon/Operational",
+    "OpenSSH" => "OpenSSH/Operational",
+    "Microsoft-Windows-SENSE" => "Microsoft-Windows-SENSE/Operational",
+    "Microsoft-Windows-Shell-Core" => "Microsoft-Windows-Shell-Core/Operational",
+    "Microsoft-Windows-TerminalServices-LocalSessionManager" => "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational",
+    "Microsoft-Windows-DriverFrameworks-UserMode" => "Microsoft-Windows-DriverFrameworks-UserMode/Operational",
+    "Microsoft-Windows-Hyper-V-Worker" => "Microsoft-Windows-Hyper-V-Worker",
+    "Microsoft-Windows-Ntfs" => "Microsoft-Windows-Ntfs/Operational",
+    "Microsoft-Windows-LDAP-Client" => "Microsoft-Windows-LDAP-Client/Debug",
+    "Microsoft-Windows-Diagnosis-Scripted" => "Microsoft-Windows-Diagnosis-Scripted/Operational",
+    "Microsoft-Windows-PrintService" => "Microsoft-Windows-PrintService/Operational",
+    "Microsoft-Windows-DHCP-Server" => "Microsoft-Windows-DHCP-Server/Operational",
+    "Microsoft-Windows-Kernel-EventTracing" => "Microsoft-Windows-Kernel-EventTracing",
+    "Microsoft-Windows-Kernel-ShimEngine" => "Microsoft-Windows-Kernel-ShimEngine/Operational",
+    "Microsoft-Windows-AppModel-Runtime" => "Microsoft-Windows-AppModel-Runtime/Admin",
+    "Microsoft-Windows-AppXDeploymentServer" => "Microsoft-Windows-AppXDeploymentServer/Operational",
+    "Microsoft-Windows-AppxPackagingOM" => "Microsoft-Windows-AppxPackaging/Operational",
+    "Microsoft-Windows-Application-Experience" => "Microsoft-Windows-Application-Experience/Program-Telemetry",
+    "Microsoft-Windows-BitLocker" => "Microsoft-Windows-BitLocker/BitLocker Management",
+    "Microsoft-Windows-CertificateServicesClient-Lifecycle-System" => "Microsoft-Windows-CertificateServicesClient-Lifecycle-System/Operational",
+    "Microsoft-Windows-IIS-Configuration" => "Microsoft-IIS-Configuration/Operational",
+    "Microsoft-ServiceBus-Client" => "Microsoft-ServiceBus-Client/Operational",
+    "Microsoft-Windows-VHDMP" => "Microsoft-Windows-VHDMP/Operational",
+    "Microsoft-Windows-Security-Mitigations" => "Microsoft-Windows-Security-Mitigations/User Mode",
+    "Microsoft-Windows-DNS-Server" => "DNS Server",
+    "Microsoft-Windows-DNS-Server-Analytical" => "Microsoft-Windows-DNS-Server/Analytical",
+    "Microsoft-Windows-DNS-Server-Audit" => "Microsoft-Windows-DNS-Server/Audit",
+    "Microsoft-Windows-AppLocker" => "Microsoft-Windows-AppLocker/EXE and DLL",
+    "MSExchange Management" => "MSExchange Management",
+    "Windows PowerShell" => "Windows PowerShell",
+};
+
+/// Route an ETW provider to its Windows event channel for generic (non-Sysmon)
+/// events, keeping the record's real EventID. Returns `None` when the provider
+/// is unknown — the caller then routes to the dedicated unmapped channel.
+pub fn channel_for_provider(provider_name: &str) -> Option<&'static str> {
+    PROVIDER_NAME_TO_CHANNEL.get(provider_name).copied()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,5 +240,38 @@ mod tests {
             synthetic_channel_for_sysmon_eid(106),
             "Microsoft-Windows-TaskScheduler/Operational"
         );
+    }
+
+    #[test]
+    fn test_channel_for_provider() {
+        assert_eq!(
+            channel_for_provider("Microsoft-Windows-Security-Auditing"),
+            Some("Security")
+        );
+        assert_eq!(
+            channel_for_provider("Microsoft-Windows-Windows Defender"),
+            Some("Microsoft-Windows-Windows Defender/Operational")
+        );
+        assert_eq!(
+            channel_for_provider("NTLM Security Protocol"),
+            Some("Microsoft-Windows-NTLM/Operational")
+        );
+        assert_eq!(
+            channel_for_provider("Microsoft-Windows-SMBClient"),
+            Some("Microsoft-Windows-SmbClient/Security")
+        );
+        assert_eq!(channel_for_provider("Unknown-Provider"), None);
+    }
+
+    #[test]
+    fn test_provider_channel_keys_match_service_table() {
+        // Every generic channel must be a key in sigmacatch-types'
+        // CHANNEL_TO_SERVICE so inject_logsource_fields derives the service.
+        for channel in PROVIDER_NAME_TO_CHANNEL.values() {
+            assert!(
+                sigmacatch_types::CHANNEL_TO_SERVICE.get(channel).is_some(),
+                "channel '{channel}' is not in CHANNEL_TO_SERVICE"
+            );
+        }
     }
 }

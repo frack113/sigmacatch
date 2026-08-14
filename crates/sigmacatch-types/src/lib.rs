@@ -187,7 +187,7 @@ impl Event {
 // ─── LogSource mapping tables ───────────────────────────────────────────────
 
 /// Channel → Sigma service name.
-static CHANNEL_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_map! {
+pub static CHANNEL_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_map! {
     "Application" => "application",
     "System" => "system",
     "Security" => "security",

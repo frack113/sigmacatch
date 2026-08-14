@@ -174,19 +174,30 @@ fn handle_event(
     tx: &mpsc::Sender<Event>,
 ) {
     let raw_eid = record.event_id();
-    let (sysmon_eid, channel) = match mapper::map_to_sysmon_id(
+    // High-fidelity Sysmon-style mapping for the 9 known providers (opcode →
+    // Sysmon EventID). Everything else is routed generically: the record's real
+    // EventID is kept and the provider name selects the destination channel, so
+    // unknown EventIDs (Security, Defender, Firewall, NTLM, …) are covered without
+    // enumeration. Unknown providers fall back to the dedicated unmapped channel.
+    let (event_id, channel) = match mapper::map_to_sysmon_id(
         record.opcode(),
         raw_eid,
         u128::from(record.provider_id()),
     ) {
-        Some(eid) => (eid, mapper::synthetic_channel_for_sysmon_eid(eid)),
-        None => (raw_eid, "sigmacatch/etw-unmapped"),
+        Some(sysmon_eid) => (
+            sysmon_eid,
+            mapper::synthetic_channel_for_sysmon_eid(sysmon_eid),
+        ),
+        None => (
+            raw_eid,
+            mapper::channel_for_provider(provider_name).unwrap_or("sigmacatch/etw-unmapped"),
+        ),
     };
     let kind = field_maps::provider_kind_for_name(provider_name);
     let xml = synthesize_winevt_xml(
         record,
         schema_locator,
-        sysmon_eid,
+        event_id,
         channel,
         provider_name,
         kind,
@@ -215,7 +226,7 @@ fn handle_event(
 fn synthesize_winevt_xml(
     record: &ferrisetw::EventRecord,
     schema_locator: &ferrisetw::SchemaLocator,
-    sysmon_eid: u16,
+    event_id: u16,
     channel: &str,
     provider_name: &str,
     kind: Option<field_maps::ProviderKind>,
@@ -285,7 +296,7 @@ fn synthesize_winevt_xml(
         r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
       <System>
         <Provider Name="{provider_name}" Guid="{provider_guid_fmt}"/>
-        <EventID>{sysmon_eid}</EventID>
+        <EventID>{event_id}</EventID>
         <Version>5</Version>
         <Level>4</Level>
         <Task>1</Task>
