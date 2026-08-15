@@ -1491,7 +1491,7 @@ dependencies = [
 
 [[package]]
 name = "input-evtx"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1502,7 +1502,7 @@ dependencies = [
 
 [[package]]
 name = "input-windows-channels"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1519,10 +1519,15 @@ dependencies = [
  "anyhow",
  "async-trait",
  "ferrisetw",
+ "hex",
+ "md5",
  "phf",
+ "sha1",
+ "sha2 0.11.0",
  "sigmacatch-types",
  "tokio",
  "tracing",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -1736,6 +1741,12 @@ checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
  "regex-automata",
 ]
+
+[[package]]
+name = "md5"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 
 [[package]]
 name = "memchr"
@@ -2938,7 +2949,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sigmacatch"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2960,7 +2971,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-config"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "reqwest",
@@ -2976,7 +2987,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-detection"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "phf",
@@ -2992,7 +3003,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-evtx-writer"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3005,7 +3016,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-logger"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "sigmacatch-config",
@@ -3016,7 +3027,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-regression"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3034,7 +3045,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-repo"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3057,7 +3068,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-rule"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "dunce",
@@ -3071,7 +3082,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-types"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3561,7 +3572,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "input-evtx",
