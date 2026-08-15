@@ -230,6 +230,10 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<Event>(100_000);
     let collector_stop = shutdown_rx.clone();
     let collector = kind.build(&cycle_channels);
+    // Keep a clone of the sender in the main task so we can drop it
+    // after the loop breaks, forcing the channel to close once the
+    // collector finishes.
+    let main_tx = tx.clone();
     let collector_handle = tokio::spawn(async move {
         if let Err(e) = collector.run(tx, collector_stop).await {
             warn!("Collector finished with error: {}", e);
@@ -241,6 +245,9 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     generate_interval.tick().await; // skip immediate first tick
 
     let mut branch_pushed = false;
+    let max_runs = cli.max_runs;
+    let mut runs_completed: u32 = 0;
+    let mut max_runs_reached = false;
 
     loop {
         tokio::select! {
@@ -253,6 +260,17 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
             }
             _ = generate_interval.tick() => {
                 let batches = process_and_generate(&mut engine, &mut rules, &mut regression, &write_fn);
+                runs_completed += 1;
+                info!("Cycle {} completed", runs_completed);
+
+                if let Some(limit) = max_runs {
+                    if runs_completed >= limit {
+                        info!("Reached max-runs limit ({}), shutting down", limit);
+                        max_runs_reached = true;
+                        let _ = shutdown_tx.send(true);
+                        break;
+                    }
+                }
 
                 if !batches.is_empty() {
                     upload_regression(&sigma_repo, batches, &mut branch_pushed, &push_branch);
@@ -262,27 +280,53 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     }
 
     info!("Final flush — draining remaining events");
-    let collector_stop = std::time::Duration::from_secs(30);
-    match tokio::time::timeout(collector_stop, collector_handle).await {
+    let collector_stop = std::time::Duration::from_secs(10);
+    let collector_abort = collector_handle.abort_handle();
+    match tokio::time::timeout(collector_stop, async {
+        // Drop the sender reference held by the main task so the channel
+        // closes as soon as the collector stops — this lets the drain
+        // complete immediately instead of waiting for the 5s timeout.
+        drop(main_tx);
+        collector_handle.await
+    })
+    .await
+    {
         Ok(join_result) => {
             if let Err(e) = join_result {
                 warn!("Collector task join error: {}", e);
             }
         }
-        Err(_) => warn!(
-            "Collector did not stop within {:?} — forcing shutdown",
-            collector_stop
-        ),
+        Err(_) => {
+            warn!(
+                "Collector did not stop within {:?} — aborting",
+                collector_stop
+            );
+            collector_abort.abort();
+        }
     }
-    while let Some(event) = rx.recv().await {
-        engine.put_events(vec![event]);
+    let drain_stop = std::time::Duration::from_secs(5);
+    match tokio::time::timeout(drain_stop, async {
+        while let Some(event) = rx.recv().await {
+            engine.put_events(vec![event]);
+        }
+    })
+    .await
+    {
+        Ok(()) => {}
+        Err(_) => {
+            warn!(
+                "Event drain timed out — dropping {} buffered events",
+                rx.len()
+            );
+        }
     }
     drop(rx);
 
-    let batches = process_and_generate(&mut engine, &mut rules, &mut regression, &write_fn);
-
-    if !batches.is_empty() {
-        upload_regression(&sigma_repo, batches, &mut branch_pushed, &push_branch);
+    if !max_runs_reached {
+        let batches = process_and_generate(&mut engine, &mut rules, &mut regression, &write_fn);
+        if !batches.is_empty() {
+            upload_regression(&sigma_repo, batches, &mut branch_pushed, &push_branch);
+        }
     }
 
     info!("{} finished", kind.name());

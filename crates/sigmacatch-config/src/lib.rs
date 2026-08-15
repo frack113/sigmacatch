@@ -435,6 +435,8 @@ pub struct CliArgs {
     pub offline: bool,
     pub contrib: bool,
     pub verbose: bool,
+    /// Maximum number of collection cycles before auto-exit (0 = unlimited).
+    pub max_runs: Option<u32>,
 }
 
 const HELP: &str = "\
@@ -447,6 +449,7 @@ FLAGS:
     -a, --all-rules    Load all rules (skip those with existing regression data)
     -c, --contrib      Enable push to remote fork (requires git.contrib=true)
     -o, --offline      Skip pull at startup (existing repo required)
+    -r, --max-runs <N> Exit after N collection cycles (0 = unlimited)
     -v, --verbose      Enable verbose logging (info level on stderr)
     --help             Print this help and exit
 
@@ -468,6 +471,7 @@ pub fn parse_args() -> CliArgs {
     let mut offline = false;
     let mut contrib = false;
     let mut verbose = false;
+    let mut max_runs: Option<u32> = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -478,6 +482,25 @@ pub fn parse_args() -> CliArgs {
             "-a" | "--all-rules" => all_rules = true,
             "-c" | "--contrib" => contrib = true,
             "-o" | "--offline" => offline = true,
+            "-r" | "--max-runs" => {
+                i += 1;
+                if let Some(n) = args.get(i) {
+                    match n.parse::<u32>() {
+                        Ok(v) if v > 0 => max_runs = Some(v),
+                        Ok(_) => {
+                            eprintln!("Error: --max-runs must be > 0");
+                            std::process::exit(1);
+                        }
+                        Err(_) => {
+                            eprintln!("Error: --max-runs requires a numeric value");
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    eprintln!("Error: --max-runs requires a value");
+                    std::process::exit(1);
+                }
+            }
             "-v" | "--verbose" => verbose = true,
             unknown => {
                 eprintln!("Error: unknown flag `{}`", unknown);
@@ -492,6 +515,7 @@ pub fn parse_args() -> CliArgs {
         offline,
         contrib,
         verbose,
+        max_runs,
     }
 }
 
