@@ -16,9 +16,11 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tracing::info;
 
-/// Timeout in ms for each EvtNext call.
+/// Timeout in ms for each EvtNext call. Kept short so the collector can
+/// respond to shutdown signals within a bounded window even while blocked
+/// inside the native Winevt API.
 #[cfg(windows)]
-const EVT_NEXT_TIMEOUT_MS: u32 = 5000;
+const EVT_NEXT_TIMEOUT_MS: u32 = 1000;
 
 /// Maximum events to collect per channel before the initial drain is capped.
 #[cfg(windows)]
@@ -29,8 +31,9 @@ const MAX_EVENTS: usize = 100_000;
 const ERROR_BACKOFF_MS: u64 = 5_000;
 
 /// Idle poll interval in ms when a channel has no new events (normal state).
+/// Kept short so the collector checks the shutdown signal frequently.
 #[cfg(windows)]
-const IDLE_POLL_MS: u64 = 1_000;
+const IDLE_POLL_MS: u64 = 100;
 
 /// Number of consecutive empty incremental cycles before probing for a record-id rollover.
 #[cfg(windows)]
@@ -282,6 +285,9 @@ impl EventCollector {
                     }
                 }
                 std::thread::sleep(std::time::Duration::from_millis(IDLE_POLL_MS));
+                if *stop.borrow() {
+                    break;
+                }
             } else {
                 empty_cycles = 0;
                 sent_lifetime += total_sent as u64;
