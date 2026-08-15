@@ -19,5 +19,9 @@ _bmad/
 _bmad-output/
 AGENTS.md
 
+# tooling (local use only — not for commit)
+tools/vm/
+tools/winrm/
+
 # docs build
 /site/
