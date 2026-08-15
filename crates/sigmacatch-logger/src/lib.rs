@@ -11,8 +11,14 @@ use std::fs;
 use std::path::PathBuf;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{
-    fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer, Registry,
+    filter::Directive, fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
+    Registry,
 };
+
+/// The `evtx` crate logs `info!("Initializing string cache")` once per parsed
+/// EVTX chunk; with large exported files this floods both layers. The noise is
+/// suppressed at `warn` for that target only.
+const EVTX_NOISE_DIRECTIVE: &str = "evtx=warn";
 
 /// Initialise les deux couches de logging : stderr lisible + fichier structuré.
 /// When `verbose` is false, stderr only shows `error` level messages.
@@ -25,7 +31,8 @@ pub fn init(config: &Config, verbose: bool) -> Result<WorkerGuard> {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
     } else {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("error"))
-    };
+    }
+    .add_directive(noise_directive());
 
     let stderr_layer = fmt::layer()
         .with_writer(std::io::stderr)
@@ -43,7 +50,8 @@ pub fn init(config: &Config, verbose: bool) -> Result<WorkerGuard> {
         .expect("failed to build rolling file appender");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
-    let file_filter = EnvFilter::new(config.log.level_file.as_str());
+    let file_filter =
+        EnvFilter::new(config.log.level_file.as_str()).add_directive(noise_directive());
 
     let file_layer = fmt::layer()
         .with_writer(non_blocking)
@@ -59,4 +67,8 @@ pub fn init(config: &Config, verbose: bool) -> Result<WorkerGuard> {
         .init();
 
     Ok(guard)
+}
+
+fn noise_directive() -> Directive {
+    EVTX_NOISE_DIRECTIVE.parse().expect("valid directive")
 }
