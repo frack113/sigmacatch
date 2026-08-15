@@ -30,7 +30,7 @@ Basée sur la remote ref si présente (sinon HEAD) pour garder le fast-forward. 
 
 ### Worktree = miroir exact du commit
 
-`checkout_main_branch` (`plumbing/checkout.rs`) supprime tout fichier absent de l'arbre (`.git` jamais touché) → skip-set déterministe au startup (les restes d'un push raté ne polluent pas).
+`checkout_main_branch` (`plumbing/checkout.rs`) supprime tout fichier absent de l'arbre (`.git` jamais touché) → skip-set déterministe au startup (les restes d'un push raté ne polluent pas). **Exception offline** : le checkout du worktree est sauté (`offline: true`), les fichiers locaux sont laissés intacts — les suppressions/modifs faites pour des tests survivent au restart.
 
 ### Clone grit complet = objets loose
 

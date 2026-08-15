@@ -219,7 +219,9 @@ impl SigmaRepo {
     /// Creates it from the remote tracking ref (or HEAD for a fresh branch),
     /// then materializes and reconciles the working tree so the on-disk state
     /// is an exact mirror of the branch (files already pushed to the fork are
-    /// present; stale local files are removed).
+    /// present; stale local files are removed). In offline mode the tree
+    /// checkout is skipped: the on-disk files are left untouched, so local
+    /// edits/deletions made for testing survive the restart.
     ///
     /// The whole `sigmacatch/*` namespace is fetched first (glob refspec, one
     /// fetch): the pull in `init()` only fetches the default branch now, so
@@ -243,7 +245,11 @@ impl SigmaRepo {
             self.fetch_sigmacatch_branches(&git_dir)?;
         }
         create_branch(&git_dir, &branch_name)?;
-        crate::plumbing::checkout_main_branch(&git_dir, &self.repo_path)?;
+        if self.offline {
+            info!("Offline mode — skipping working-tree checkout (on-disk files kept as-is)");
+        } else {
+            crate::plumbing::checkout_main_branch(&git_dir, &self.repo_path)?;
+        }
         Ok(())
     }
 
@@ -1054,6 +1060,29 @@ mod tests {
         let mut repo = SigmaRepo::new();
         repo.set_git_operations(true, true);
         assert!(repo.contrib_enabled());
+    }
+
+    /// In offline mode `switch_to_working_branch` must leave the worktree
+    /// untouched: a tracked file deleted locally for testing is not restored at
+    /// startup (the tree checkout/reconcile step is skipped).
+    #[test]
+    fn test_switch_to_working_branch_offline_keeps_deleted_files_deleted() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_committed_repo(&tmp);
+
+        let mut repo = SigmaRepo::new();
+        repo.repo_path = tmp.path().to_path_buf();
+        repo.offline = true;
+        repo.set_working_branch("sigmacatch/20260803".to_string())
+            .unwrap();
+        std::fs::remove_file(tmp.path().join("a.txt")).unwrap();
+
+        repo.set_working_branch("sigmacatch/20260803".to_string())
+            .unwrap();
+        assert!(
+            !tmp.path().join("a.txt").exists(),
+            "offline startup must not restore locally deleted tracked files"
+        );
     }
 
     /// A commit failure mid-batch must roll the local branch back to its
