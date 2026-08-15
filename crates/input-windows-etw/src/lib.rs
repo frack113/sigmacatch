@@ -32,14 +32,45 @@ mod providers;
 #[cfg(windows)]
 use providers::PROVIDERS;
 
+#[cfg(windows)]
+mod enrich;
 #[cfg(any(windows, test))]
 mod field_maps;
 #[cfg(any(windows, test))]
+mod filekey;
+#[cfg(any(windows, test))]
 mod mapper;
+#[cfg(any(windows, test))]
+mod paths;
+#[cfg(any(windows, test))]
+mod pe;
+#[cfg(windows)]
+mod process_query;
+#[cfg(any(windows, test))]
+mod process_table;
+#[cfg(any(windows, test))]
+mod sysmon;
+#[cfg(windows)]
+use enrich::SharedEnrich;
 
 /// Name of the ETW trace session (also used to stop it by name).
 #[cfg_attr(not(windows), allow(dead_code))]
 const SESSION: &str = "sigmacatch-etw";
+
+/// Provider GUID of Sysmon, used when masquerading events into the Sysmon channel.
+#[cfg_attr(not(windows), allow(dead_code))]
+const SYSMON_PROVIDER_GUID: &str = "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}";
+
+/// Sysmon `Version` header value for a masqueraded EventID (per the Sysmon
+/// manifest: 2 for the registry/file events, 5 otherwise).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn sysmon_header_version(event_id: u16) -> u32 {
+    if matches!(event_id, 11 | 12 | 13 | 14 | 23) {
+        2
+    } else {
+        5
+    }
+}
 
 /// ETW event collector.
 pub struct EventCollector;
@@ -88,13 +119,16 @@ impl EventCollector {
         info!("ETW collector starting (session '{SESSION}')");
 
         let mut builder = UserTrace::new().named(SESSION.to_string());
+        let enrich: std::sync::Arc<SharedEnrich> =
+            std::sync::Arc::new(enrich::EnrichState::new().into());
         for seed in PROVIDERS {
             let tx = tx.clone();
+            let enrich = std::sync::Arc::clone(&enrich);
             let provider = Provider::by_guid(GUID::from(seed.guid))
                 .level(seed.level)
                 .any(seed.keywords)
                 .add_callback(move |record, schema_locator| {
-                    handle_event(record, schema_locator, seed.name, &tx);
+                    handle_event(record, schema_locator, seed.name, &tx, &enrich);
                 })
                 .build();
             builder = builder.enable(provider);
@@ -172,6 +206,7 @@ fn handle_event(
     schema_locator: &ferrisetw::SchemaLocator,
     provider_name: &'static str,
     tx: &mpsc::Sender<Event>,
+    enrich: &std::sync::Arc<SharedEnrich>,
 ) {
     let raw_eid = record.event_id();
     // High-fidelity Sysmon-style mapping for the 9 known providers (opcode →
@@ -190,7 +225,8 @@ fn handle_event(
         ),
         None => (
             raw_eid,
-            mapper::channel_for_provider(provider_name).unwrap_or("sigmacatch/etw-unmapped"),
+            mapper::channel_for_provider(provider_name)
+                .unwrap_or_else(|| mapper::unmapped_channel_for_masquerade(provider_name)),
         ),
     };
     let kind = field_maps::provider_kind_for_name(provider_name);
@@ -201,6 +237,7 @@ fn handle_event(
         channel,
         provider_name,
         kind,
+        enrich,
     );
     let mut event = match Event::from_xml(&xml) {
         Ok(e) => e,
@@ -230,6 +267,7 @@ fn synthesize_winevt_xml(
     channel: &str,
     provider_name: &str,
     kind: Option<field_maps::ProviderKind>,
+    enrich: &std::sync::Arc<SharedEnrich>,
 ) -> String {
     static NEXT_RECORD_ID: AtomicU64 = AtomicU64::new(0);
     static SCHEMA_WARNED: AtomicBool = AtomicBool::new(false);
@@ -238,10 +276,41 @@ fn synthesize_winevt_xml(
     let time_created = filetime_to_iso8601(record.raw_timestamp());
     let provider_guid_fmt = format!("{{{:?}}}", record.provider_id());
 
+    // Events routed to the Sysmon channel are masqueraded as a real Sysmon
+    // event: Sysmon provider name/GUID, per-EID version, Task = EventID and the
+    // Execution/Security elements a Sysmon header carries. Every other channel
+    // keeps its real provider identity (needed by inject_logsource_fields and
+    // the EVTX regression data).
+    let is_sysmon = channel == "Microsoft-Windows-Sysmon/Operational";
+    let (provider_attr, guid_attr, version, task, execution, security) = if is_sysmon {
+        (
+            "Microsoft-Windows-Sysmon",
+            SYSMON_PROVIDER_GUID,
+            sysmon_header_version(event_id),
+            event_id,
+            format!(
+                "        <Execution ProcessID=\"{}\" ThreadID=\"{}\"/>",
+                record.process_id(),
+                record.thread_id()
+            ),
+            r#"        <Security UserID="S-1-5-18"/>"#.to_string(),
+        )
+    } else {
+        (
+            provider_name,
+            provider_guid_fmt.as_str(),
+            5,
+            1u16,
+            String::new(),
+            String::new(),
+        )
+    };
+
     // Parse only the ETW fields mapped to Sysmon/Sigma names and rename them.
     // Unmapped fields are ignored (spec sanitization); unknown providers yield
     // an empty EventData. `Schema::properties()` is pub(crate) upstream, so
     // the field map is the source of known names instead.
+    let mut enrich = enrich.lock().unwrap_or_else(|p| p.into_inner());
     let mut etw_fields: HashMap<String, String> = HashMap::new();
     if let Some(kind) = kind {
         match schema_locator.event_schema(record) {
@@ -269,10 +338,13 @@ fn synthesize_winevt_xml(
             Err(_) => {}
         }
     }
-    let renamed = match kind {
+    let mut renamed = match kind {
         Some(kind) => field_maps::rename_fields(&etw_fields, kind),
         None => etw_fields,
     };
+    // Enrich with the *raw* ETW EventID: the assembly logic selects on the
+    // provider's native events, which all collapse to one Sysmon EventID.
+    enrich.enrich(provider_name, record.event_id(), record, &mut renamed);
 
     // Build the EventData XML fragment in deterministic order.
     let mut event_data_lines: Vec<String> = renamed
@@ -295,16 +367,18 @@ fn synthesize_winevt_xml(
     format!(
         r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
       <System>
-        <Provider Name="{provider_name}" Guid="{provider_guid_fmt}"/>
+        <Provider Name="{provider_attr}" Guid="{guid_attr}"/>
         <EventID>{event_id}</EventID>
-        <Version>5</Version>
+        <Version>{version}</Version>
         <Level>4</Level>
-        <Task>1</Task>
+        <Task>{task}</Task>
         <Opcode>0</Opcode>
         <Keywords>0x8000000000000000</Keywords>
         <TimeCreated SystemTime="{time_created}"/>
         <EventRecordID>{record_id}</EventRecordID>
+        {execution}
         <Channel>{channel}</Channel>
+        {security}
         <Computer>localhost</Computer>
       </System>
       <EventData>
@@ -381,6 +455,25 @@ fn filetime_to_iso8601(filetime: i64) -> String {
     )
 }
 
+/// FILETIME (100ns intervals since 1601-01-01 UTC) → Sysmon `CreationUtcTime`
+/// format (`YYYY-MM-DD HH:MM:SS.mmm`, millisecond precision, UTC).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn filetime_quad_to_sysmon_utc(filetime_quad: i64) -> String {
+    const FILETIME_TO_UNIX_EPOCH_100NS: i64 = 116_444_736_000_000_000;
+
+    let total = filetime_quad - FILETIME_TO_UNIX_EPOCH_100NS;
+    let (secs, subsec_100ns) = (total.div_euclid(10_000_000), total.rem_euclid(10_000_000));
+    let (days, secs_of_day) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+    let (year, month, day) = civil_from_days(days);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}:{:02}.{:03}",
+        secs_of_day / 3_600,
+        (secs_of_day % 3_600) / 60,
+        secs_of_day % 60,
+        subsec_100ns / 10_000,
+    )
+}
+
 /// Days since 1970-01-01 → civil (year, month, day) via the days-from-civil
 /// algorithm (Howard Hinnant).
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -404,6 +497,28 @@ mod tests {
     #[test]
     fn test_session_name_constant() {
         assert_eq!(SESSION, "sigmacatch-etw");
+    }
+
+    #[test]
+    fn test_sysmon_header_version() {
+        assert_eq!(sysmon_header_version(1), 5);
+        assert_eq!(sysmon_header_version(3), 5);
+        assert_eq!(sysmon_header_version(7), 5);
+        assert_eq!(sysmon_header_version(11), 2);
+        assert_eq!(sysmon_header_version(12), 2);
+        assert_eq!(sysmon_header_version(13), 2);
+        assert_eq!(sysmon_header_version(14), 2);
+        assert_eq!(sysmon_header_version(22), 5);
+        assert_eq!(sysmon_header_version(23), 2);
+        assert_eq!(sysmon_header_version(19), 5);
+    }
+
+    #[test]
+    fn test_sysmon_provider_guid_constant() {
+        assert_eq!(
+            SYSMON_PROVIDER_GUID,
+            "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}"
+        );
     }
 
     #[test]

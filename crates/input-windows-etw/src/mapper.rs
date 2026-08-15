@@ -86,10 +86,6 @@ pub static PROVIDER_NAME_TO_CHANNEL: phf::Map<&'static str, &'static str> = phf:
     "Microsoft-Windows-WMI-Activity" => "Microsoft-Windows-WMI-Activity/Operational",
     "Service Control Manager" => "System",
     "Microsoft-Windows-TaskScheduler" => "Microsoft-Windows-TaskScheduler/Operational",
-    "Microsoft-Windows-Kernel-Process" => "Microsoft-Windows-Sysmon/Operational",
-    "Microsoft-Windows-Kernel-Network" => "Microsoft-Windows-Sysmon/Operational",
-    "Microsoft-Windows-Kernel-File" => "Microsoft-Windows-Sysmon/Operational",
-    "Microsoft-Windows-Kernel-Registry" => "Microsoft-Windows-Sysmon/Operational",
     "OpenSSH" => "OpenSSH/Operational",
     "Microsoft-Windows-SENSE" => "Microsoft-Windows-SENSE/Operational",
     "Microsoft-Windows-Shell-Core" => "Microsoft-Windows-Shell-Core/Operational",
@@ -126,6 +122,32 @@ pub static PROVIDER_NAME_TO_CHANNEL: phf::Map<&'static str, &'static str> = phf:
 /// is unknown — the caller then routes to the dedicated unmapped channel.
 pub fn channel_for_provider(provider_name: &str) -> Option<&'static str> {
     PROVIDER_NAME_TO_CHANNEL.get(provider_name).copied()
+}
+
+/// Channel for an ETW event of a Sysmon-masquerade provider that has no
+/// Sysmon EventID equivalent.
+///
+/// An unmapped kernel event (e.g. Kernel-File NameCreate 10, SetLinkPath 28)
+/// must **never** land in `Microsoft-Windows-Sysmon/Operational` with its raw
+/// EventID — that collides with a real Sysmon EventID (ETW 10 → Sysmon 10
+/// `process_access`, ETW 11 → Sysmon 11 `file_event`, ETW 28 →
+/// `file_block_shredding`) and mis-routes the category. Instead it goes to a
+/// dedicated `sigmacatch/etw-*` channel, registered in `CHANNEL_TO_SERVICE`
+/// (service `etw`) so `inject_logsource_fields` derives a real logsource and
+/// the event is not evaluated fail-open against every rule.
+pub fn unmapped_channel_for_masquerade(provider_name: &str) -> &'static str {
+    match provider_name {
+        "Microsoft-Windows-Kernel-Process" => "sigmacatch/etw-kernel-process",
+        "Microsoft-Windows-Kernel-File" => "sigmacatch/etw-kernel-file",
+        "Microsoft-Windows-Kernel-Network" => "sigmacatch/etw-kernel-network",
+        "Microsoft-Windows-Kernel-Registry" => "sigmacatch/etw-kernel-registry",
+        "Microsoft-Windows-DNS-Client" => "sigmacatch/etw-dns-client",
+        "Microsoft-Windows-PowerShell" => "sigmacatch/etw-powershell",
+        "Microsoft-Windows-WMI-Activity" => "sigmacatch/etw-wmi-activity",
+        "Service Control Manager" => "sigmacatch/etw-service-control-manager",
+        "Microsoft-Windows-TaskScheduler" => "sigmacatch/etw-task-scheduler",
+        _ => "sigmacatch/etw-unmapped",
+    }
 }
 
 #[cfg(test)]
@@ -261,6 +283,49 @@ mod tests {
             Some("Microsoft-Windows-SmbClient/Security")
         );
         assert_eq!(channel_for_provider("Unknown-Provider"), None);
+    }
+
+    #[test]
+    fn test_unmapped_channel_for_masquerade() {
+        assert_eq!(
+            unmapped_channel_for_masquerade("Microsoft-Windows-Kernel-File"),
+            "sigmacatch/etw-kernel-file"
+        );
+        assert_eq!(
+            unmapped_channel_for_masquerade("Microsoft-Windows-Kernel-Process"),
+            "sigmacatch/etw-kernel-process"
+        );
+        assert_eq!(
+            unmapped_channel_for_masquerade("Microsoft-Windows-Kernel-Network"),
+            "sigmacatch/etw-kernel-network"
+        );
+        assert_eq!(
+            unmapped_channel_for_masquerade("Microsoft-Windows-Kernel-Registry"),
+            "sigmacatch/etw-kernel-registry"
+        );
+        assert_eq!(
+            unmapped_channel_for_masquerade("Microsoft-Windows-Foo"),
+            "sigmacatch/etw-unmapped"
+        );
+    }
+
+    #[test]
+    fn test_unmapped_channels_registered_in_service_table() {
+        // Every dedicated unmapped channel must resolve a service so
+        // inject_logsource_fields derives a real logsource (never fail-open).
+        for name in [
+            "Microsoft-Windows-Kernel-Process",
+            "Microsoft-Windows-Kernel-File",
+            "Microsoft-Windows-Kernel-Network",
+            "Microsoft-Windows-Kernel-Registry",
+            "Unknown-Provider",
+        ] {
+            let channel = unmapped_channel_for_masquerade(name);
+            assert!(
+                sigmacatch_types::CHANNEL_TO_SERVICE.get(channel).is_some(),
+                "channel '{channel}' is not in CHANNEL_TO_SERVICE"
+            );
+        }
     }
 
     #[test]

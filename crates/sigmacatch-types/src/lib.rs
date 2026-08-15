@@ -242,6 +242,19 @@ pub static CHANNEL_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_m
     "PowerShellCore/Operational" => "powershell",
     "Microsoft-Windows-TaskScheduler/Operational" => "taskscheduler",
     "Microsoft-Windows-WMI-Activity/Operational" => "wmi",
+    // Dedicated channels for unmapped ETW events of Sysmon-masquerade providers
+    // (mapper::unmapped_channel_for_masquerade). Service `etw` gives them a real
+    // logsource so they are never evaluated fail-open against every rule.
+    "sigmacatch/etw-kernel-process" => "etw",
+    "sigmacatch/etw-kernel-file" => "etw",
+    "sigmacatch/etw-kernel-network" => "etw",
+    "sigmacatch/etw-kernel-registry" => "etw",
+    "sigmacatch/etw-dns-client" => "etw",
+    "sigmacatch/etw-powershell" => "etw",
+    "sigmacatch/etw-wmi-activity" => "etw",
+    "sigmacatch/etw-service-control-manager" => "etw",
+    "sigmacatch/etw-task-scheduler" => "etw",
+    "sigmacatch/etw-unmapped" => "etw",
 };
 
 /// Channel:EventID → Sigma category.

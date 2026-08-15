@@ -15,6 +15,27 @@ sigmacatch-types = { path = "../sigmacatch-types" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "signal", "macros"] }
 tracing = "0.1"
 phf = { version = "0.14", features = ["macros"] }
+# PE hashing for Sysmon-style Hashes (SHA256/MD5/SHA1/IMPHASH). Pure-Rust; used
+# from pe.rs (cfg windows at runtime, tests on any platform).
+hex = "0.4"
+md5 = "0.7"
+sha1 = "0.11"
+sha2 = "0.11"
 
 [target.'cfg(windows)'.dependencies]
 ferrisetw = "1.2.0"
+# Winevt-free process/path resolution for event enrichment (PID→Image, PEB
+# CommandLine/CurrentDirectory, token User/IntegrityLevel/LogonId, NT→Win32
+# path translation) + PE version info (GetFileVersionInfoW) + MachineGuid
+# registry read. Features are the minimal set used by process_query.rs/
+# paths.rs/pe.rs.
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Wdk_System_Threading",
+] }

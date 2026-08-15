@@ -48,7 +48,11 @@ pub const PROVIDERS: [EtwProvider; 18] = [
     EtwProvider {
         name: "Microsoft-Windows-Kernel-File",
         guid: "edd08927-9cc4-4e65-b970-c2560fb5c289",
-        keywords: 0xE90,
+        // FILENAME(0x10)|FILEIO(0x20)|CREATE(0x80)|READ(0x100)|WRITE(0x200)
+        // |DELETE_PATH(0x400)|RENAME_SETLINK_PATH(0x800). FILEIO is required so
+        // Close(14)/Read(15)/Write(16) are delivered — Close purges the
+        // FileObject→FileName table, Read/Write resolve names through it.
+        keywords: 0xFB0,
         level: 4,
     },
     EtwProvider {

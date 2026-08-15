@@ -14,6 +14,7 @@ pub enum ProviderKind {
     Process,
     File,
     Network,
+    Registry,
     Dns,
     PowerShell,
     WmiActivity,
@@ -69,6 +70,10 @@ impl FieldMapping {
 }
 
 /// Return the field mapping for a given provider kind.
+///
+/// Only real ETW fields are listed: enrichment fields (`ParentImage`,
+/// `CommandLine`, `User`, `UtcTime`, `CreationUtcTime`, …) are synthesized at
+/// event assembly time ([`crate::enrich`]), never parsed from the record.
 pub fn field_map_for_provider(kind: ProviderKind) -> &'static FieldMapping {
     match kind {
         ProviderKind::Process => {
@@ -76,23 +81,50 @@ pub fn field_map_for_provider(kind: ProviderKind) -> &'static FieldMapping {
             MAP.get_or_init(|| {
                 FieldMapping::new(&[
                     ("Image", "ImageName"),
-                    ("ParentImage", "ParentImageName"),
-                    ("CommandLine", "CommandLine"),
-                    ("ParentCommandLine", "ParentCommandLine"),
                     ("ProcessId", "ProcessID"),
                     ("ParentProcessId", "ParentProcessID"),
-                    ("User", "UserName"),
-                    ("LogonId", "LogonId"),
-                    ("LogonGuid", "LogonGuid"),
-                    ("CurrentDirectory", "CurrentDirectory"),
-                    ("IntegrityLevel", "IntegrityLevel"),
+                    ("TerminalSessionId", "SessionID"),
+                    // Parsed raw, then converted to CreationUtcTime at
+                    // assembly time (enrich.rs) and removed from EventData.
+                    ("CreateTime", "CreateTime"),
+                    // ProcessStop / ImageLoad internals (no Sysmon equivalent,
+                    // kept identity for template parity).
+                    ("ExitTime", "ExitTime"),
+                    ("ExitCode", "ExitCode"),
+                    ("TokenElevationType", "TokenElevationType"),
+                    ("HandleCount", "HandleCount"),
+                    ("CommitCharge", "CommitCharge"),
+                    ("CommitPeak", "CommitPeak"),
+                    ("ImageBase", "ImageBase"),
+                    ("ImageSize", "ImageSize"),
+                    ("ImageCheckSum", "ImageCheckSum"),
+                    ("TimeDateStamp", "TimeDateStamp"),
+                    ("DefaultBase", "DefaultBase"),
                 ])
             })
         }
         ProviderKind::File => {
             static MAP: std::sync::OnceLock<FieldMapping> = std::sync::OnceLock::new();
             MAP.get_or_init(|| {
-                FieldMapping::new(&[("TargetFilename", "FileName"), ("Image", "ImageName")])
+                FieldMapping::new(&[
+                    ("TargetFilename", "FileName"),
+                    ("TargetFilename", "FilePath"),
+                    // FileObject/FileKey/IO-fields are real manifest fields kept
+                    // identity: FileObject/FileKey drive the FileKey table and
+                    // the Close purge, the rest are preserved for fidelity.
+                    ("FileObject", "FileObject"),
+                    ("FileKey", "FileKey"),
+                    ("Irp", "Irp"),
+                    ("ThreadId", "ThreadId"),
+                    ("CreateOptions", "CreateOptions"),
+                    ("CreateAttributes", "CreateAttributes"),
+                    ("ShareAccess", "ShareAccess"),
+                    ("ByteOffset", "ByteOffset"),
+                    ("IOSize", "IOSize"),
+                    ("IOFlags", "IOFlags"),
+                    ("ExtraInformation", "ExtraInformation"),
+                    ("InfoClass", "InfoClass"),
+                ])
             })
         }
         ProviderKind::Network => {
@@ -103,7 +135,37 @@ pub fn field_map_for_provider(kind: ProviderKind) -> &'static FieldMapping {
                     ("DestinationPort", "dport"),
                     ("SourceIp", "saddr"),
                     ("SourcePort", "sport"),
-                    ("Protocol", "Protocol"),
+                    ("ProcessId", "PID"),
+                    ("size", "size"),
+                    ("mss", "mss"),
+                    ("sackopt", "sackopt"),
+                    ("tsopt", "tsopt"),
+                    ("wsopt", "wsopt"),
+                    ("rcvwin", "rcvwin"),
+                    ("rcvwinscale", "rcvwinscale"),
+                    ("sndwinscale", "sndwinscale"),
+                    ("seqnum", "seqnum"),
+                    ("connid", "connid"),
+                ])
+            })
+        }
+        ProviderKind::Registry => {
+            static MAP: std::sync::OnceLock<FieldMapping> = std::sync::OnceLock::new();
+            MAP.get_or_init(|| {
+                FieldMapping::identity(&[
+                    "KeyObject",
+                    "Status",
+                    "Disposition",
+                    "BaseObject",
+                    "BaseName",
+                    "RelativeName",
+                    "KeyName",
+                    "ValueName",
+                    "Type",
+                    "DataSize",
+                    "InfoClass",
+                    "Index",
+                    "EntryCount",
                 ])
             })
         }
@@ -313,6 +375,143 @@ pub fn rename_fields(
         .collect()
 }
 
+/// Return the exact ETW template field names for a provider kind and EventID,
+/// from the provider manifests (Win10 18990).
+///
+/// This is the source of truth for *which fields really exist*: the rename maps
+/// are the union over the provider's events, this is the per-event projection.
+/// Unknown (kind, EventID) pairs return an empty slice — the record is kept as
+/// a minimal event (EventID + channel only).
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn template_for_event(kind: ProviderKind, event_id: u16) -> &'static [&'static str] {
+    match kind {
+        ProviderKind::Process => match event_id {
+            1 => &[
+                "ProcessID",
+                "CreateTime",
+                "ParentProcessID",
+                "SessionID",
+                "ImageName",
+            ],
+            2 => &[
+                "ProcessID",
+                "CreateTime",
+                "ExitTime",
+                "ExitCode",
+                "TokenElevationType",
+                "HandleCount",
+                "CommitCharge",
+                "CommitPeak",
+                "ImageName",
+            ],
+            10 => &[
+                "ImageBase",
+                "ImageSize",
+                "ProcessID",
+                "ImageCheckSum",
+                "TimeDateStamp",
+                "DefaultBase",
+                "ImageName",
+            ],
+            _ => &[],
+        },
+        ProviderKind::File => match event_id {
+            10 | 11 => &["FileKey", "FileName"],
+            12 => &[
+                "Irp",
+                "ThreadId",
+                "FileObject",
+                "CreateOptions",
+                "CreateAttributes",
+                "ShareAccess",
+                "FileName",
+            ],
+            13 | 14 => &["Irp", "ThreadId", "FileObject", "FileKey"],
+            15 | 16 => &[
+                "ByteOffset",
+                "Irp",
+                "ThreadId",
+                "FileObject",
+                "FileKey",
+                "IOSize",
+                "IOFlags",
+            ],
+            26..=28 => &[
+                "Irp",
+                "ThreadId",
+                "FileObject",
+                "FileKey",
+                "ExtraInformation",
+                "InfoClass",
+                "FilePath",
+            ],
+            _ => &[],
+        },
+        ProviderKind::Network => match event_id {
+            // connectionattempted (12) and connectionaccepted (15) — the events
+            // mapped to Sysmon 3.
+            12 | 15 => &[
+                "PID",
+                "size",
+                "daddr",
+                "saddr",
+                "dport",
+                "sport",
+                "mss",
+                "sackopt",
+                "tsopt",
+                "wsopt",
+                "rcvwin",
+                "rcvwinscale",
+                "sndwinscale",
+                "seqnum",
+                "connid",
+            ],
+            _ => &[],
+        },
+        ProviderKind::Registry => match event_id {
+            1 | 2 => &[
+                "BaseObject",
+                "KeyObject",
+                "Status",
+                "Disposition",
+                "BaseName",
+                "RelativeName",
+            ],
+            3 | 4 | 12 | 13 | 14 | 15 => &["KeyObject", "Status", "KeyName"],
+            5 => &[
+                "KeyObject",
+                "Status",
+                "Type",
+                "DataSize",
+                "KeyName",
+                "ValueName",
+            ],
+            6 => &["KeyObject", "Status", "KeyName", "ValueName"],
+            7 | 8 => &[
+                "KeyObject",
+                "Status",
+                "InfoClass",
+                "DataSize",
+                "KeyName",
+                "ValueName",
+            ],
+            9 => &[
+                "KeyObject",
+                "Status",
+                "Index",
+                "InfoClass",
+                "DataSize",
+                "KeyName",
+            ],
+            10 => &["KeyObject", "Status", "EntryCount", "DataSize", "KeyName"],
+            _ => &[],
+        },
+        // Generic channels keep the whole union map; no per-event template.
+        _ => &[],
+    }
+}
+
 /// Return the provider kind for a known ETW provider name, if any.
 ///
 /// Unknown providers map to `None`: their fields are not parsed and the event
@@ -322,9 +521,7 @@ pub fn provider_kind_for_name(name: &str) -> Option<ProviderKind> {
         "Microsoft-Windows-Kernel-Process" => Some(ProviderKind::Process),
         "Microsoft-Windows-Kernel-File" => Some(ProviderKind::File),
         "Microsoft-Windows-Kernel-Network" => Some(ProviderKind::Network),
-        // Registry fields are not in the spec; the Process map covers the
-        // kernel event subset that overlaps (TargetObject/Details excluded).
-        "Microsoft-Windows-Kernel-Registry" => Some(ProviderKind::Process),
+        "Microsoft-Windows-Kernel-Registry" => Some(ProviderKind::Registry),
         "Microsoft-Windows-DNS-Client" => Some(ProviderKind::Dns),
         "Microsoft-Windows-PowerShell" => Some(ProviderKind::PowerShell),
         "Microsoft-Windows-WMI-Activity" => Some(ProviderKind::WmiActivity),
@@ -347,45 +544,60 @@ mod tests {
     #[test]
     fn test_process_fields() {
         let mut etw = HashMap::new();
-        etw.insert("ImageName".to_string(), "/usr/bin/foo".to_string());
-        etw.insert("CommandLine".to_string(), "foo --bar".to_string());
-        etw.insert("ParentImageName".to_string(), "/usr/bin/bar".to_string());
+        etw.insert(
+            "ImageName".to_string(),
+            "C:\\Windows\\System32\\cmd.exe".to_string(),
+        );
         etw.insert("ProcessID".to_string(), "4242".to_string());
-        etw.insert("UserName".to_string(), "papa".to_string());
+        etw.insert("ParentProcessID".to_string(), "1".to_string());
+        etw.insert("SessionID".to_string(), "2".to_string());
         let renamed = rename_fields(&etw, ProviderKind::Process);
-        assert_eq!(renamed.get("Image"), Some(&"/usr/bin/foo".to_string()));
-        assert_eq!(renamed.get("CommandLine"), Some(&"foo --bar".to_string()));
         assert_eq!(
-            renamed.get("ParentImage"),
-            Some(&"/usr/bin/bar".to_string())
+            renamed.get("Image"),
+            Some(&"C:\\Windows\\System32\\cmd.exe".to_string())
         );
         assert_eq!(renamed.get("ProcessId"), Some(&"4242".to_string()));
-        assert_eq!(renamed.get("User"), Some(&"papa".to_string()));
+        assert_eq!(renamed.get("ParentProcessId"), Some(&"1".to_string()));
+        assert_eq!(renamed.get("TerminalSessionId"), Some(&"2".to_string()));
         assert_eq!(renamed.get("ImageName"), None); // renamed away
+                                                    // Enrichment fields are synthesized at assembly time, not renamed from
+                                                    // phantom ETW properties.
+        assert!(!renamed.contains_key("CommandLine"));
+        assert!(!renamed.contains_key("ParentImage"));
+        assert!(!renamed.contains_key("User"));
     }
 
     #[test]
     fn test_file_fields() {
         let mut etw = HashMap::new();
-        etw.insert("FileName".to_string(), "/etc/passwd".to_string());
-        etw.insert("ImageName".to_string(), "/usr/bin/cat".to_string());
+        etw.insert(
+            "FileName".to_string(),
+            "C:\\Windows\\System32\\WER.dll".to_string(),
+        );
+        etw.insert("FileObject".to_string(), "0xffffc0001234".to_string());
         let renamed = rename_fields(&etw, ProviderKind::File);
         assert_eq!(renamed.get("FileName"), None);
         assert_eq!(
             renamed.get("TargetFilename"),
-            Some(&"/etc/passwd".to_string())
+            Some(&"C:\\Windows\\System32\\WER.dll".to_string())
         );
-        assert_eq!(renamed.get("Image"), Some(&"/usr/bin/cat".to_string()));
+        // FileObject is parsed for the file-object table, not renamed away.
+        assert_eq!(
+            renamed.get("FileObject"),
+            Some(&"0xffffc0001234".to_string())
+        );
+        // File events have no ImageName — it is enriched from the process table.
+        assert!(!renamed.contains_key("Image"));
     }
 
     #[test]
     fn test_network_fields() {
         let mut etw = HashMap::new();
-        etw.insert("DestinationIp".to_string(), "192.168.1.1".to_string());
-        etw.insert("DestinationPort".to_string(), "443".to_string());
-        etw.insert("SourceIp".to_string(), "10.0.0.1".to_string());
-        etw.insert("SourcePort".to_string(), "12345".to_string());
-        etw.insert("Protocol".to_string(), "TCP".to_string());
+        etw.insert("daddr".to_string(), "192.168.1.1".to_string());
+        etw.insert("dport".to_string(), "443".to_string());
+        etw.insert("saddr".to_string(), "10.0.0.1".to_string());
+        etw.insert("sport".to_string(), "12345".to_string());
+        etw.insert("PID".to_string(), "4242".to_string());
         let renamed = rename_fields(&etw, ProviderKind::Network);
         assert_eq!(
             renamed.get("DestinationIp"),
@@ -394,7 +606,7 @@ mod tests {
         assert_eq!(renamed.get("DestinationPort"), Some(&"443".to_string()));
         assert_eq!(renamed.get("SourceIp"), Some(&"10.0.0.1".to_string()));
         assert_eq!(renamed.get("SourcePort"), Some(&"12345".to_string()));
-        assert_eq!(renamed.get("Protocol"), Some(&"TCP".to_string()));
+        assert_eq!(renamed.get("ProcessId"), Some(&"4242".to_string()));
     }
 
     #[test]
@@ -483,7 +695,7 @@ mod tests {
         );
         assert_eq!(
             provider_kind_for_name("Microsoft-Windows-Kernel-Registry"),
-            Some(ProviderKind::Process)
+            Some(ProviderKind::Registry)
         );
         assert_eq!(
             provider_kind_for_name("Microsoft-Windows-DNS-Client"),
@@ -576,6 +788,86 @@ mod tests {
         let names = mapping.etw_names();
         assert!(names.contains(&"ImageName"));
         assert!(names.contains(&"ProcessID"));
-        assert!(names.contains(&"UserName"));
+        assert!(names.contains(&"SessionID"));
+        assert!(!names.contains(&"UserName")); // enrichment, not an ETW field
+        assert!(!names.contains(&"ParentImageName"));
+    }
+
+    #[test]
+    fn test_templates_exact_manifest_fields() {
+        assert_eq!(
+            template_for_event(ProviderKind::Process, 1),
+            &[
+                "ProcessID",
+                "CreateTime",
+                "ParentProcessID",
+                "SessionID",
+                "ImageName"
+            ]
+        );
+        assert_eq!(
+            template_for_event(ProviderKind::File, 12),
+            &[
+                "Irp",
+                "ThreadId",
+                "FileObject",
+                "CreateOptions",
+                "CreateAttributes",
+                "ShareAccess",
+                "FileName",
+            ]
+        );
+        assert_eq!(
+            template_for_event(ProviderKind::File, 14),
+            &["Irp", "ThreadId", "FileObject", "FileKey"]
+        );
+        assert_eq!(
+            template_for_event(ProviderKind::Network, 12),
+            &[
+                "PID",
+                "size",
+                "daddr",
+                "saddr",
+                "dport",
+                "sport",
+                "mss",
+                "sackopt",
+                "tsopt",
+                "wsopt",
+                "rcvwin",
+                "rcvwinscale",
+                "sndwinscale",
+                "seqnum",
+                "connid",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_templates_unknown_empty() {
+        assert!(template_for_event(ProviderKind::Process, 99).is_empty());
+        assert!(template_for_event(ProviderKind::Dns, 1).is_empty());
+    }
+
+    #[test]
+    fn test_template_fields_are_in_union_map() {
+        // Every per-event template field must be parsable: the rename map (the
+        // parser's field set) is the union over all templates.
+        for kind in [
+            ProviderKind::Process,
+            ProviderKind::File,
+            ProviderKind::Network,
+            ProviderKind::Registry,
+        ] {
+            let mapping = field_map_for_provider(kind);
+            for event_id in 0..=255u16 {
+                for field in template_for_event(kind, event_id) {
+                    assert!(
+                        mapping.etw_name_to_sigma_name(field).is_some(),
+                        "{kind:?} template field '{field}' is missing from the union map"
+                    );
+                }
+            }
+        }
     }
 }
