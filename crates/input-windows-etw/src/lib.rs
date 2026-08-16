@@ -441,12 +441,12 @@ fn escape_xml(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+pub(crate) const FILETIME_TO_UNIX_EPOCH_100NS: i64 = 116_444_736_000_000_000;
+
 /// FILETIME (100ns intervals since 1601-01-01 UTC) → ISO 8601 UTC string with
 /// 7 fractional digits, matching the Winevt `TimeCreated` format.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn filetime_to_iso8601(filetime: i64) -> String {
-    const FILETIME_TO_UNIX_EPOCH_100NS: i64 = 116_444_736_000_000_000;
-
     let total = filetime - FILETIME_TO_UNIX_EPOCH_100NS;
     let (secs, subsec_100ns) = (total.div_euclid(10_000_000), total.rem_euclid(10_000_000));
     let (days, secs_of_day) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
@@ -463,8 +463,6 @@ fn filetime_to_iso8601(filetime: i64) -> String {
 /// format (`YYYY-MM-DD HH:MM:SS.mmm`, millisecond precision, UTC).
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn filetime_quad_to_sysmon_utc(filetime_quad: i64) -> String {
-    const FILETIME_TO_UNIX_EPOCH_100NS: i64 = 116_444_736_000_000_000;
-
     let total = filetime_quad - FILETIME_TO_UNIX_EPOCH_100NS;
     let (secs, subsec_100ns) = (total.div_euclid(10_000_000), total.rem_euclid(10_000_000));
     let (days, secs_of_day) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));

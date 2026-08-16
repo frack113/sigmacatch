@@ -187,10 +187,10 @@ pub fn snapshot() -> ProcessTable {
     // `table.get(parent_pid)`, so only the parent PID is stored here.
     for (pid, image, create_time, parent_pid) in rows {
         table.upsert_snapshot(pid, image, create_time);
-        if let Some(ppid) = parent_pid {
-            if let Some(entry) = table.get_mut(pid) {
-                entry.parent_pid = Some(ppid);
-            }
+        if let Some(ppid) = parent_pid
+            && let Some(entry) = table.get_mut(pid)
+        {
+            entry.parent_pid = Some(ppid);
         }
     }
     table
