@@ -22,7 +22,7 @@ Basée sur la remote ref si présente (sinon HEAD) pour garder le fast-forward. 
 
 ### Skip-set multi-branches (PR en attente)
 
-`pending_regression_rule_ids()` (`SigmaRepo`) scanne les arbres de **toutes** les branches remote `sigmacatch/*` (jamais checkout — `list_refs` + marche `regression_data/` en RAM, ids extraits des noms `<uuid>.<ext>`). Union avec le worktree → une VM fraîche ne recapture pas les données d'un PR d'un autre jour encore ouvert ; le diff du nouveau PR reste basé sur main (données des PR précédents jamais incluses). Les blobs `<uuid>.evtx` sont validés (parse ≥ 1 record) : un EVTX vide/corrompu **ou > 64 MiB** (`MAX_EVTX_BLOB_SIZE`) exclut la règle du skip set (auto-guérison des commits vides, RAM bornée). Offline = best-effort (refs déjà fetchées).
+`pending_regression_rule_ids()` (`SigmaRepo`) scanne les arbres de **toutes** les branches remote `sigmacatch/*` (jamais checkout — `list_refs` + marche `regression_data/` en RAM, ids extraits des noms `<uuid>.<ext>`). Union avec le worktree → une VM fraîche ne recapture pas les données d'un PR d'un autre jour encore ouvert ; le diff du nouveau PR reste basé sur main (données des PR précédents jamais incluses). Les blobs `<uuid>.evtx` sont validés (parse ≥ 1 record) : un EVTX vide/corrompu **ou > 64 MiB** (`MAX_EVTX_BLOB_SIZE`) exclut la règle du skip set (auto-guérison des commits vides, RAM bornée). Mode offline : scan sauté entièrement (aucune lecture de refs locale) — le skip set ne couvre que le worktree.
 
 ### Remote working-branch guard
 
@@ -30,11 +30,11 @@ Basée sur la remote ref si présente (sinon HEAD) pour garder le fast-forward. 
 
 ### Worktree = miroir exact du commit
 
-`checkout_main_branch` (`plumbing/checkout.rs`) supprime tout fichier absent de l'arbre (`.git` jamais touché) → skip-set déterministe au startup (les restes d'un push raté ne polluent pas). **Exception offline** : le checkout du worktree est sauté (`offline: true`), les fichiers locaux sont laissés intacts — les suppressions/modifs faites pour des tests survivent au restart.
+`checkout_main_branch` (`plumbing/checkout.rs`) supprime tout fichier absent de l'arbre (`.git` jamais touché) → skip-set déterministe au startup (les restes d'un push raté ne polluent pas). **Mode offline** : toutes les opérations git sont des no-op (`init`, working-branch, checkout, commit, push) — les fichiers locaux sont laissés intacts, un `.git` n'est même pas requis (zip sigma extrait), les suppressions/modifs faites pour des tests survivent au restart.
 
 ### Clone grit complet = objets loose
 
-`is_repo_complete` accepte un repo dès que HEAD résout vers un commit lisible dans l'ODB (pas de `objects/pack`/`packed-refs` requis) ; repo illisible → supprimé + re-cloné.
+`is_repo_complete` accepte un repo dès que HEAD résout vers un commit lisible dans l'ODB (pas de `objects/pack`/`packed-refs` requis) ; repo illisible → supprimé + re-cloné (online uniquement — en offline le repo est utilisé tel quel sans vérification).
 
 ### Pack après chaque clone/fetch
 
@@ -42,8 +42,8 @@ Basée sur la remote ref si présente (sinon HEAD) pour garder le fast-forward. 
 
 ## Configuration git
 
-`git.contrib` est opt-in : `true` (ou `--contrib`) active le push sur le fork ; `false` (défaut) = commits locaux, aucun push. `needs_network()` = `!offline || contrib` — token GitHub requis seulement si une opération réseau (pull ou push) est active.
+`git.contrib` est opt-in : `true` (ou `--contrib`) active le push sur le fork ; `false` (défaut) = commits locaux, aucun push. `needs_network()` = `!offline || contrib` — token GitHub requis seulement si une opération réseau (pull ou push) est active. **`offline: true` neutralise `contrib`** (forcé à `false`, `warn!`) : aucun push ne sera jamais tenté en mode offline.
 
-**Transport SSH** : `git.transport: ssh` + `ssh_key_path` (clé ed25519). `ensure_ssh_host_config()` écrit les directives `IdentityFile`/`UserKnownHostsFile` dans `~/.ssh/config` avant les ops de transport (idempotent, **écriture atomique** tmp + rename pour éviter un fichier partiel) ; sur Windows, `ssh` est résolu via OpenSSH de Windows / Git for Windows et exécuté en direct (`SshCommand::Program`). Quand `ssh_key_path` est renseigné, chaque commit de régression est signé en ed25519 pure Rust (`ssh-key`, en-tête `gpgsig` comme `git commit -S` + `gpg.format = ssh`) → GitHub affiche "Verified". **Échec du pull SSH = abort** (pas de fallback HTTPS) : si le binaire `ssh` manque (Windows sans Git for Windows) ou la clé est invalide, le pull est retenté en HTTP uniquement si `transport: http` — le message d'erreur le dit explicitement.
+**Transport SSH** : `git.transport: ssh` + `ssh_key_path` (clé ed25519). `ensure_ssh_host_config()` écrit les directives `IdentityFile`/`UserKnownHostsFile` dans `~/.ssh/config` avant les ops de transport (idempotent, **écriture atomique** tmp + rename pour éviter un fichier partiel ; sautée en mode offline) ; sur Windows, `ssh` est résolu via OpenSSH de Windows / Git for Windows et exécuté en direct (`SshCommand::Program`). Quand `ssh_key_path` est renseigné, chaque commit de régression est signé en ed25519 pure Rust (`ssh-key`, en-tête `gpgsig` comme `git commit -S` + `gpg.format = ssh`) → GitHub affiche "Verified". **Échec du pull SSH = abort** (pas de fallback HTTPS) : si le binaire `ssh` manque (Windows sans Git for Windows) ou la clé est invalide, le pull est retenté en HTTP uniquement si `transport: http` — le message d'erreur le dit explicitement.
 
 Voir `config.yaml` et les invariants généraux dans [`architecture-reference.md`](architecture-reference.md) pour la configuration complète.

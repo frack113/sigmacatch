@@ -100,10 +100,10 @@ dépend de `rsigma-parser`. `sigmacatch-config` dépend de `sigmacatch-repo` + `
 1. parse_args() + Config::load_with_cli("config.yaml", cli)
 2. init_logger(verbose) → tracing (stderr `error` par défaut, `info` avec `-v`, fichier debug)
 3. ensure_dirs() → dossier repo sigma + logs/
-4. SigmaRepo init (remote_url = fork, branche de travail, token) → init() [clone/fetch]
-   └── set_git_operations(offline, contrib) → set_working_branch() → check_remote_working_branch() (garde sur branche du même jour)
+4. SigmaRepo init (remote_url = fork, branche de travail, token) → init() [clone/fetch] — no-op en offline (pas de `.git` requis)
+   └── set_git_operations(offline, contrib) → set_working_branch() → check_remote_working_branch() (garde sur branche du même jour) ; offline → contrib forcé à false, toutes les ops no-op
 5. SigmahqRegression::new() → charge les info.yml existants depuis ./sigma/regression_data
-   └── existing_rules = regression.get_sigma_id() ∪ sigma_repo.pending_regression_rule_ids() (branches remote sigmacatch/* en attente) → HashSet<Uuid> (vide avec --all-rules)
+   └── existing_rules = regression.get_sigma_id() ∪ sigma_repo.pending_regression_rule_ids() (branches remote sigmacatch/* en attente ; scan sauté en offline) → HashSet<Uuid> (vide avec --all-rules)
 6. SigmahqRules::new() → chargement + dédupe ; remove_id() par règle skipée
     └── filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size }) ; 0 règles → bail
 7. custom_map = load_custom_channel_mapping("custom_channels.yaml")

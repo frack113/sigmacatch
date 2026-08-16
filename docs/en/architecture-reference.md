@@ -66,8 +66,8 @@ git:
   ssh_key_path: ""            # path to SSH private key (optional, only needed for SSH)
   sigma_repo_url: "https://github.com/SigmaHQ/sigma.git"
   sigma_repo_path: "sigma"    # local path to the sigma repo (relative, no '..' traversal, not absolute)
-  offline: false              # true = skip pull at startup (existing repo required). false (default) = pull
-  contrib: false              # true = push to the remote fork. false (default) = local commits only
+  offline: false              # true = zero git operations (no pull/clone/commit/push, on-disk files used as-is). false (default) = pull
+  contrib: false              # true = push to the remote fork. false (default) = local commits only. Neutralized (forced to false) when offline: true
 log:
   level_file: "debug"
 filter:
@@ -88,14 +88,20 @@ rules without `status`/`level` are always accepted. If 0 rules remain, the progr
 is required, HTTP transport requires a token (config or `GITHUB_TOKEN` env) when `needs_network()`
 is true — i.e. `offline: false` or `contrib: true`; a fully offline run (`offline: true` +
 `contrib: false`) needs no token. `sigma_repo_path` is validated against traversal/absolute paths.
+`offline: true` **neutralizes** `contrib` (forced to `false`, with a `warn!`): the combination is not
+an error, but no push will ever be attempted.
 
-**Offline / contrib:** `offline: true` uses the existing repo as-is (no pull, complete repo required).
+**Offline / contrib:** `offline: true` skips **all** git operations — no pull, no fetch, no checkout,
+no commit, no push; the `sigma/` directory is used as-is and does not even need a `.git` (an extracted
+zip is enough). The regression triplet is always written to disk; only commit/push are skipped.
 `contrib: true` enables the push to the fork at the end; by default (`false`) commits stay local.
-The CLI flags `--offline` / `--contrib` force these values to `true`.
+The CLI flags `--offline` / `--contrib` force these values to `true` (`--offline` always wins over
+`--contrib`).
 
 **SSH transport:** `git.transport: ssh` clones/fetches/pushes via the `ssh_key_path` private key. At
 startup, `ensure_ssh_host_config()` (`transport.rs`) writes the `IdentityFile`/`UserKnownHostsFile`
-directives into `~/.ssh/config` (idempotent, **atomic write** tmp + rename); on Windows the `ssh`
+directives into `~/.ssh/config` (idempotent, **atomic write** tmp + rename, skipped in offline mode);
+on Windows the `ssh`
 executable is resolved via standard paths (Windows OpenSSH, Git for Windows) and used as a direct
 exec (`SshCommand::Program`, no shell). A **failed SSH pull is final** (no HTTPS fallback): the error
 message categorizes the cause (missing `ssh` binary or invalid key) and points to `transport: http` —
@@ -138,13 +144,13 @@ SigmaRepo::new()
     ├── [ssh_key_path set] set_signing_key(key_path)   # signs every commit (ed25519, gpgsig)
     ├── set_git_operations(offline, contrib)   # controls pull at startup + final push
     ├── set_remote_url(fork_url) → init() [async]
-    │       ├── incomplete/missing repo + offline → actionable bail
-    │       ├── existing repo → narrow pull of current branch (skipped if offline)
+    │       ├── [offline] → immediate no-op (on-disk files used as-is, .git optional)
+    │       ├── existing repo → narrow pull of current branch
     │       │       └── HEAD already on working branch (same-day re-run) → skip the master switch
     │       └── otherwise → full clone (full-history, protocol v2) + pack
-    ├── set_working_branch(branch_name)         # fetch target branch (skipped if offline) + create_branch
+    ├── set_working_branch(branch_name)         # fetch sigmacatch/* namespace + create_branch (no-op offline)
     │   └── switch_to_working_branch()          # materializes the branch tree (exact commit mirror)
-    └── check_remote_working_branch()   # guard: rejects orphan/amputated same-day branch
+    └── check_remote_working_branch()   # guard: rejects orphan/amputated same-day branch (no-op offline)
 ```
 
 ### Post-processing: loose-object pack
@@ -509,7 +515,7 @@ cargo xwin build --release --target x86_64-pc-windows-msvc   # cross-compile Win
 sigmacatch-channel
     [-a], [--all-rules]    # disables the skip set (loads all rules)
     [-c], [--contrib]      # enables push to the remote fork
-    [-o], [--offline]      # skips pull at startup (forces offline)
+    [-o], [--offline]      # skips all git operations (forces offline, no commit/push)
     [-v], [--verbose]      # shows info-level logs on stderr
     [--author <name>]      # overrides git.author from config
     [--help], [-h]         # shows help and exits

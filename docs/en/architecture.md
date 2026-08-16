@@ -100,8 +100,8 @@ depends on `rsigma-parser`. `sigmacatch-config` depends on `sigmacatch-repo` + `
 1. parse_args() + Config::load_with_cli("config.yaml", cli)
 2. init_logger(verbose) → tracing (stderr `error` by default, `info` with `-v`, file debug)
 3. ensure_dirs() → sigma repo dir + logs/
-4. SigmaRepo init (remote_url = fork, working branch, token) → init() [clone/fetch]
-   └── set_git_operations(offline, contrib) → set_working_branch() → check_remote_working_branch() (guard on same-day branch)
+4. SigmaRepo init (remote_url = fork, working branch, token) → init() [clone/fetch] — no-op offline (no `.git` required)
+   └── set_git_operations(offline, contrib) → set_working_branch() → check_remote_working_branch() (guard on same-day branch); offline → contrib forced false, all ops no-op
 5. SigmahqRegression::new() → loads existing info.yml from ./sigma/regression_data
    └── existing_rules = regression.get_sigma_id() → HashSet<Uuid> (empty with --all-rules)
 6. SigmahqRules::new() → load + dedupe; remove_id() per skipped rule

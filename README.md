@@ -48,7 +48,7 @@ git:
   ssh_key_path: ""          # path to SSH private key (optional, only needed for SSH)
   sigma_repo_url: "https://github.com/SigmaHQ/sigma.git"
   sigma_repo_path: "sigma"
-  offline: false            # true = skip pull at startup (use existing repo as-is)
+  offline: false            # true = zero git operations (no pull/clone/commit/push; on-disk files used as-is, .git optional)
   contrib: true             # true = push commits to remote fork. Default: false (local commits only)
 log:
   level_file: "debug"
@@ -65,7 +65,7 @@ regression:
 Rules below the configured `min_status` / `min_level` thresholds are skipped at load time.
 Rules missing a `status` or `level` field are always accepted.
 
-**Contrib is opt-in** (`git.contrib: true` or `--contrib`): pushes regression commits to your fork. By default (`false`) commits stay local. The GitHub token is only required when a network operation is active (`offline: false` or `contrib: true`).
+**Contrib is opt-in** (`git.contrib: true` or `--contrib`): pushes regression commits to your fork. By default (`false`) commits stay local. The GitHub token is only required when a network operation is active (`offline: false` or `contrib: true`). **`offline: true` neutralizes `contrib`** (forced to `false`, `warn!`): no push in offline mode.
 
 ### CLI flags
 
@@ -74,7 +74,7 @@ Rules missing a `status` or `level` field are always accepted.
 | `--author <name>` | Override detected username |
 | `-a`, `--all-rules` | Load all rules — skip set is disabled |
 | `-c`, `--contrib` | Enable push to the remote fork for this run |
-| `-o`, `--offline` | Skip pull at startup (use existing repo as-is) |
+| `-o`, `--offline` | Skip all git operations (use on-disk files as-is; no commit/push) |
 | `-v`, `--verbose` | Show info-level logs on stderr (default: errors only) |
 | `--help`, `-h` | Print help and exit |
 

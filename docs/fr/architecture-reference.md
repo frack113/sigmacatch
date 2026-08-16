@@ -66,8 +66,8 @@ git:
   ssh_key_path: ""            # path to SSH private key (optionnel, seulement pour SSH)
   sigma_repo_url: "https://github.com/SigmaHQ/sigma.git"
   sigma_repo_path: "sigma"    # chemin local du repo sigma (relatif, pas de '..', pas absolu)
-  offline: false              # true = skip le pull au startup (repo existant requis). false (défaut) = pull
-  contrib: false              # true = push au remote fork. false (défaut) = commits locaux uniquement
+  offline: false              # true = zéro opération git (pas de pull/clone/commit/push, fichiers locaux utilisés tels quels). false (défaut) = pull
+  contrib: false              # true = push au remote fork. false (défaut) = commits locaux uniquement. Neutralisé (forcé à false) si offline: true
 log:
   level_file: "debug"
 filter:
@@ -88,14 +88,20 @@ les règles sans `status`/`level` sont toujours acceptées. Si 0 règle reste, l
 est requis, et `sigma_repo_path` est validé contre le traversal/les chemins absolus. Le transport HTTP
 exige un token (config ou env `GITHUB_TOKEN`) quand `needs_network()` est vrai — c.-à-d. `offline: false`
 ou `contrib: true` ; un run entièrement offline (`offline: true` + `contrib: false`) n'a pas besoin de token.
+`offline: true` **neutralise** `contrib` (forcé à `false`, avec un `warn!`) : les deux combinés ne sont pas
+une erreur, mais aucun push ne sera tenté.
 
-**Offline / contrib :** `offline: true` utilise le repo existant tel quel (pas de pull, repo complet requis).
-`contrib: true` active le push sur le fork à la fin ; par défaut (`false`) les commits restent locaux.
-Les flags CLI `--offline` / `--contrib` forcent ces valeurs à `true`.
+**Offline / contrib :** `offline: true` saute **toutes** les opérations git — pas de pull, pas de fetch,
+pas de checkout, pas de commit, pas de push ; le dossier `sigma/` est utilisé tel quel et n'a même pas
+besoin d'un `.git` (un zip extrait suffit). Le triplet de régression est toujours écrit sur disque ;
+seuls commit/push sont sautés. `contrib: true` active le push sur le fork à la fin ; par défaut (`false`)
+les commits restent locaux. Les flags CLI `--offline` / `--contrib` forcent ces valeurs à `true`
+(`--offline` gagne toujours sur `--contrib`).
 
 **Transport SSH :** `git.transport: ssh` clone/fetch/push via la clé privée `ssh_key_path`. Au startup,
 `ensure_ssh_host_config()` (`transport.rs`) écrit les directives `IdentityFile`/`UserKnownHostsFile`
-dans `~/.ssh/config` (idempotent, **écriture atomique** tmp + rename) ; sur Windows l'exécutable `ssh`
+dans `~/.ssh/config` (idempotent, **écriture atomique** tmp + rename, sautée en mode offline) ;
+sur Windows l'exécutable `ssh`
 est résolu via les chemins standards (OpenSSH de Windows, Git for Windows) et utilisé en exec direct
 (`SshCommand::Program`, pas de shell). Un échec du **pull SSH est définitif** (pas de fallback HTTPS) :
 le message d'erreur catégorise la cause (binaire `ssh` manquant ou clé invalide) et renvoie vers
@@ -138,13 +144,13 @@ SigmaRepo::new()
     ├── [ssh_key_path défini] set_signing_key(key_path)   # signe chaque commit (ed25519, gpgsig)
     ├── set_git_operations(offline, contrib)   # contrôle le pull au startup + le push final
     ├── set_remote_url(fork_url) → init() [async]
-    │       ├── repo incomplet/absent + offline → bail actionnable
-    │       ├── repo existant → pull étroit de la branche courante (skip si offline)
+    │       ├── [offline] → no-op immédiat (fichiers locaux utilisés tels quels, .git optionnel)
+    │       ├── repo existant → pull étroit de la branche courante
     │       │       └── HEAD déjà sur la branche de travail (re-run même jour) → skip du master-switch
     │       └── sinon → clone complet (full-history, protocole v2) + pack
-    ├── set_working_branch(branch_name)         # fetch namespace sigmacatch/* (skip si offline) + create_branch
+    ├── set_working_branch(branch_name)         # fetch namespace sigmacatch/* + create_branch (no-op offline)
     │   └── switch_to_working_branch()          # matérialise l'arbre de la branche (miroir exact du commit)
-    └── check_remote_working_branch()   # garde : rejette une branche du même jour orpheline/amputée
+    └── check_remote_working_branch()   # garde : rejette une branche du même jour orpheline/amputée (no-op offline)
 ```
 
 ### Post-traitement : pack des objets loose
@@ -222,7 +228,8 @@ rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author,
 > `+refs/heads/sigmacatch/*:refs/remotes/origin/sigmacatch/*`). Le scan est purement en RAM
 > (`list_refs` + marche des objets arbre), jamais de checkout : le worktree reste un miroir
 > exact de la branche du jour, donc le diff du nouveau PR reste basé sur main et ne contient
-> jamais les données des PR précédents. Offline = best-effort (refs déjà fetchées).
+> jamais les données des PR précédents. En mode offline, le scan est sauté
+> entièrement (aucune lecture de refs locale) : le skip set ne couvre que le worktree.
 
 ### Étape 4 — Résolution des channels
 
@@ -527,7 +534,7 @@ cargo xwin build --release --target x86_64-pc-windows-msvc   # cross-compile Win
 sigmacatch-channel
     [-a], [--all-rules]    # désactive le skip set (charge toutes les règles)
     [-c], [--contrib]      # active le push au remote fork
-    [-o], [--offline]      # skip le pull au startup (force offline)
+    [-o], [--offline]      # skip toutes les opérations git (force offline, pas de commit/push)
     [-v], [--verbose]      # affiche les logs info sur stderr
     [--author <name>]      # écrase git.author de la config
     [--help], [-h]         # affiche cette aide et exit
