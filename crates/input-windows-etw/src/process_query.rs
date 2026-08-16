@@ -496,6 +496,7 @@ fn query_logon_id_with(handle: HANDLE) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::FILETIME_TO_UNIX_EPOCH_100NS;
 
     #[test]
     fn test_filetime_quad_round_trip() {
