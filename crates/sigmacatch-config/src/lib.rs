@@ -33,12 +33,14 @@ pub struct GitConfig {
     /// Local path to store the sigma repository.
     #[serde(default = "default_sigma_repo_path")]
     pub sigma_repo_path: String,
-    /// Enable offline mode: skip git pull/fetch at startup (use existing repo as-is).
+    /// Enable offline mode: skip all git operations (no pull/fetch/checkout/
+    /// commit/push). On-disk files are used as-is; `.git` is not required.
     /// Default: false (pull enabled). Set to true for air-gapped environments.
     #[serde(default)]
     pub offline: Option<bool>,
     /// Enable contrib workflow: push commits to remote fork.
     /// Default: false (no push, local commits only). Set to true to contribute.
+    /// Neutralized (forced to false) when offline is enabled.
     #[serde(default)]
     pub contrib: Option<bool>,
 }
@@ -52,7 +54,7 @@ fn default_sigma_repo_path() -> String {
 }
 
 impl GitConfig {
-    /// Returns true if offline mode is enabled (skip pull).
+    /// Returns true if offline mode is enabled (all git operations skipped).
     pub fn is_offline(&self) -> bool {
         self.offline.unwrap_or(false)
     }
@@ -200,7 +202,8 @@ impl Config {
     }
 
     pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
-        let config = Self::load_unvalidated(path)?;
+        let mut config = Self::load_unvalidated(path)?;
+        config.normalize_git();
         config.validate()?;
         Ok(config)
     }
@@ -216,8 +219,21 @@ impl Config {
         if cli.contrib {
             config.git.contrib = Some(true);
         }
+        config.normalize_git();
         config.validate()?;
         Ok(config)
+    }
+
+    /// Fully offline mode wins over contrib: force `contrib = false` so a run
+    /// with `offline: true` can never attempt a network push. Emitted on stderr
+    /// (not `tracing`) because this runs before the logger subscriber exists.
+    fn normalize_git(&mut self) {
+        if self.git.is_offline() && self.git.is_contrib() {
+            eprintln!(
+                "⚠️  config: 'git.contrib' is ignored because 'git.offline' is enabled — no push will be attempted"
+            );
+            self.git.contrib = Some(false);
+        }
     }
 
     pub fn save(&self, path: &PathBuf) -> anyhow::Result<()> {
@@ -264,55 +280,58 @@ impl Config {
                 self.git.email
             );
         }
-        // Validate SSH key path if configured
-        if let Some(ref key_path) = self.git.ssh_key_path {
-            if !key_path.is_empty() {
-                let path = std::path::Path::new(key_path);
-                if !path.is_absolute() {
-                    anyhow::bail!(
-                        "config: SSH key path '{}' is not absolute (transport={}); \
-                         use a full path like /home/user/.ssh/id or C:\\Users\\user\\.ssh\\id",
-                        key_path,
-                        self.git.transport
-                    );
-                }
-                let meta = std::fs::metadata(key_path).map_err(|_| {
-                    anyhow::anyhow!(
-                        "config: SSH key path '{}' does not exist (transport={}); \
-                         remove ssh_key_path from config or switch to transport = http",
-                        key_path,
-                        self.git.transport
-                    )
-                })?;
-                if !meta.is_file() {
-                    anyhow::bail!(
-                        "config: SSH key path '{}' is not a file (transport={}); \
-                         remove ssh_key_path from config or switch to transport = http",
-                        key_path,
-                        self.git.transport
-                    );
-                }
-                #[cfg(unix)]
-                {
-                    let mode = meta.permissions().mode() & 0o777;
-                    if mode & 0o077 != 0 {
-                        tracing::warn!(
-                            "config: SSH key '{}' has overly permissive mode 0{:o} — should be 0600. \
-                             SSH may refuse to use it. Run: chmod 600 {}",
+        // Validate SSH key path if configured. Skipped offline: no network op
+        // can use the key, so a stale path must not block an offline startup.
+        if self.git.needs_network() {
+            if let Some(ref key_path) = self.git.ssh_key_path {
+                if !key_path.is_empty() {
+                    let path = std::path::Path::new(key_path);
+                    if !path.is_absolute() {
+                        anyhow::bail!(
+                            "config: SSH key path '{}' is not absolute (transport={}); \
+                             use a full path like /home/user/.ssh/id or C:\\Users\\user\\.ssh\\id",
                             key_path,
-                            mode,
-                            key_path
+                            self.git.transport
                         );
                     }
-                    // Also check that the key is readable by the current user
-                    if mode & 0o400 == 0 {
-                        tracing::warn!(
-                            "config: SSH key '{}' is not readable by the owner (mode 0{:o}). \
-                             SSH will reject it. Run: chmod 400 {}",
+                    let meta = std::fs::metadata(key_path).map_err(|_| {
+                        anyhow::anyhow!(
+                            "config: SSH key path '{}' does not exist (transport={}); \
+                             remove ssh_key_path from config or switch to transport = http",
                             key_path,
-                            mode,
-                            key_path
+                            self.git.transport
+                        )
+                    })?;
+                    if !meta.is_file() {
+                        anyhow::bail!(
+                            "config: SSH key path '{}' is not a file (transport={}); \
+                             remove ssh_key_path from config or switch to transport = http",
+                            key_path,
+                            self.git.transport
                         );
+                    }
+                    #[cfg(unix)]
+                    {
+                        let mode = meta.permissions().mode() & 0o777;
+                        if mode & 0o077 != 0 {
+                            tracing::warn!(
+                                "config: SSH key '{}' has overly permissive mode 0{:o} — should be 0600. \
+                                 SSH may refuse to use it. Run: chmod 600 {}",
+                                key_path,
+                                mode,
+                                key_path
+                            );
+                        }
+                        // Also check that the key is readable by the current user
+                        if mode & 0o400 == 0 {
+                            tracing::warn!(
+                                "config: SSH key '{}' is not readable by the owner (mode 0{:o}). \
+                                 SSH will reject it. Run: chmod 400 {}",
+                                key_path,
+                                mode,
+                                key_path
+                            );
+                        }
                     }
                 }
             }
@@ -447,8 +466,8 @@ USAGE:
 
 FLAGS:
     -a, --all-rules    Load all rules (skip those with existing regression data)
-    -c, --contrib      Enable push to remote fork (requires git.contrib=true)
-    -o, --offline      Skip pull at startup (existing repo required)
+    -c, --contrib      Enable push to remote fork (neutralized by --offline)
+    -o, --offline      Skip all git operations (use on-disk files as-is, no commit/push)
     -r, --max-runs <N> Exit after N collection cycles (0 = unlimited)
     -v, --verbose      Enable verbose logging (info level on stderr)
     --help             Print this help and exit
@@ -1009,7 +1028,9 @@ mod tests {
         assert!(cfg.needs_network());
     }
 
-    /// `offline: true` + `contrib: true` still needs the network for the push.
+    /// The predicate stays defensive: if a raw `GitConfig` somehow carries both
+    /// flags (normalization already forces `contrib = false` at `Config` level),
+    /// the push would still need the network.
     #[test]
     fn test_needs_network_true_offline_with_contrib() {
         let cfg = GitConfig {
@@ -1020,7 +1041,8 @@ mod tests {
         assert!(cfg.needs_network());
     }
 
-    /// `--offline` / `--contrib` flags must override the parsed config.
+    /// `--offline` / `--contrib` flags must override the parsed config, and
+    /// offline wins over contrib (normalized to `false`).
     #[test]
     fn test_load_with_cli_applies_offline_and_contrib() {
         let dir = tempfile::tempdir().unwrap();
@@ -1039,6 +1061,57 @@ mod tests {
         };
         let config = Config::load_with_cli(&path, &cli).unwrap();
         assert!(config.git.is_offline(), "CLI --offline must enable offline");
+        assert!(
+            !config.git.is_contrib(),
+            "offline must normalize contrib to false"
+        );
+    }
+
+    /// `--contrib` alone (no `--offline`) must enable contrib.
+    #[test]
+    fn test_load_with_cli_contrib_only_enables_contrib() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "git:").unwrap();
+            writeln!(file, "  author: my-user").unwrap();
+            writeln!(file, "  email: me@example.com").unwrap();
+            writeln!(file, "  github_token: ghp_token").unwrap();
+        }
+        let cli = CliArgs {
+            offline: false,
+            contrib: true,
+            ..CliArgs::default()
+        };
+        let config = Config::load_with_cli(&path, &cli).unwrap();
+        assert!(!config.git.is_offline());
         assert!(config.git.is_contrib(), "CLI --contrib must enable contrib");
+    }
+
+    /// `offline: true` + `contrib: true` in config.yaml is accepted but contrib
+    /// is normalized to `false` (offline wins).
+    #[test]
+    fn test_load_offline_and_contrib_from_yaml_normalizes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "git:").unwrap();
+            writeln!(file, "  author: my-user").unwrap();
+            writeln!(file, "  email: me@example.com").unwrap();
+            writeln!(file, "  offline: true").unwrap();
+            writeln!(file, "  contrib: true").unwrap();
+        }
+        let config = Config::load(&path).unwrap();
+        assert!(config.git.is_offline());
+        assert!(
+            !config.git.is_contrib(),
+            "offline must normalize contrib to false"
+        );
+        assert!(
+            !config.git.needs_network(),
+            "normalized offline config must not need the network"
+        );
     }
 }

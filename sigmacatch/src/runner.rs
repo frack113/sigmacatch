@@ -98,7 +98,9 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
         }
     };
 
-    if matches!(config.git.transport, sigmacatch_config::GitTransport::Ssh) {
+    if matches!(config.git.transport, sigmacatch_config::GitTransport::Ssh)
+        && config.git.needs_network()
+    {
         if let Err(e) = sigmacatch_repo::ensure_ssh_host_config(config.git.ssh_key_path.as_deref())
         {
             warn!("Failed to write SSH host-config: {e}");
@@ -112,7 +114,9 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     sigma_repo.set_git_operations(config.git.is_offline(), config.git.is_contrib());
 
     if config.git.is_offline() {
-        info!("Offline mode: pull disabled — using existing repository");
+        info!(
+            "Offline mode: all git operations skipped — on-disk files used as-is (no commit/push)"
+        );
     }
     if config.git.is_contrib() {
         info!("Contrib mode: push enabled — will push to remote fork");
@@ -143,22 +147,24 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
                 existing.len()
             );
         }
-        match sigma_repo.pending_regression_rule_ids() {
-            Ok(pending) => {
-                if !pending.is_empty() {
-                    let before = existing.len();
-                    existing.extend(pending);
-                    info!(
-                        "{} rules with regression data on pending sigmacatch/* branches (skipped)",
-                        existing.len() - before
+        if !config.git.is_offline() {
+            match sigma_repo.pending_regression_rule_ids() {
+                Ok(pending) => {
+                    if !pending.is_empty() {
+                        let before = existing.len();
+                        existing.extend(pending);
+                        info!(
+                            "{} rules with regression data on pending sigmacatch/* branches (skipped)",
+                            existing.len() - before
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to scan pending sigmacatch/* branches for existing regression data: {}",
+                        e
                     );
                 }
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to scan pending sigmacatch/* branches for existing regression data: {}",
-                    e
-                );
             }
         }
         existing

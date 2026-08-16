@@ -107,9 +107,11 @@ impl SigmaRepo {
 
     /// Set git operation modes.
     ///
-    /// When `offline` is true, `init()` skips the network pull (and refuses to
-    /// clone a missing/incomplete repository). When `contrib` is true, commits
-    /// are pushed to the remote fork; when false, commits stay local only.
+    /// When `offline` is true, all git operations are skipped entirely
+    /// (`init`, working-branch setup, remote checks, commits and pushes are
+    /// no-ops): the on-disk files are used as-is, so the repo path needs no
+    /// `.git` at all. When `contrib` is true, commits are pushed to the remote
+    /// fork; when false, commits stay local only.
     pub fn set_git_operations(&mut self, offline: bool, contrib: bool) {
         self.offline = offline;
         self.contrib = contrib;
@@ -127,16 +129,14 @@ impl SigmaRepo {
     }
 
     pub async fn init(&mut self) -> Result<()> {
+        if self.offline {
+            info!("Offline mode — skipping all repository operations (on-disk files used as-is)");
+            return Ok(());
+        }
+
         let git_dir = self.repo_path.join(".git");
 
         if git_dir.exists() && !is_repo_complete(&git_dir) {
-            if self.offline {
-                anyhow::bail!(
-                    "Repository at {:?} is incomplete and offline mode is enabled. \
-                     Delete the sigma/ directory and re-run with offline: false to clone a fresh copy.",
-                    self.repo_path
-                );
-            }
             warn!(
                 "Incomplete repository at {:?}, removing and re-cloning",
                 self.repo_path
@@ -154,11 +154,6 @@ impl SigmaRepo {
                     "Already on working branch '{}' — skipping master switch",
                     self.working_branch.as_deref().unwrap_or_default()
                 );
-            }
-
-            if self.offline {
-                info!("Offline mode — using existing repository as-is (no pull)");
-                return Ok(());
             }
 
             info!("Sigma repository exists, pulling latest...");
@@ -197,12 +192,6 @@ impl SigmaRepo {
                 std::fs::remove_dir_all(&git_dir)?;
                 self.clone_repo().await?;
             }
-        } else if self.offline {
-            anyhow::bail!(
-                "Repository does not exist at {:?} and offline mode is enabled. \
-                 Run with offline: false first to clone the repository.",
-                self.repo_path
-            );
         } else {
             self.clone_repo().await?;
         }
@@ -219,9 +208,10 @@ impl SigmaRepo {
     /// Creates it from the remote tracking ref (or HEAD for a fresh branch),
     /// then materializes and reconciles the working tree so the on-disk state
     /// is an exact mirror of the branch (files already pushed to the fork are
-    /// present; stale local files are removed). In offline mode the tree
-    /// checkout is skipped: the on-disk files are left untouched, so local
-    /// edits/deletions made for testing survive the restart.
+    /// present; stale local files are removed). In offline mode the switch is
+    /// skipped entirely: no fetch, no branch creation, no checkout — the
+    /// on-disk files are left untouched, so an extracted sigma/ tree without
+    /// `.git` (or local edits made for testing) works as-is.
     ///
     /// The whole `sigmacatch/*` namespace is fetched first (glob refspec, one
     /// fetch): the pull in `init()` only fetches the default branch now, so
@@ -235,21 +225,19 @@ impl SigmaRepo {
     /// best-effort: a network failure is logged (`warn!`) and swallowed so the
     /// run degrades to a worktree-only skip set instead of aborting at startup.
     pub fn switch_to_working_branch(&mut self) -> Result<()> {
+        if self.offline {
+            info!("Offline mode — skipping working-branch setup (on-disk files kept as-is)");
+            return Ok(());
+        }
         let branch_name = self.working_branch.clone().ok_or_else(|| {
             anyhow::anyhow!(
                 "No working branch configured — call with_working_branch() before switching"
             )
         })?;
         let git_dir = self.repo_path.join(".git");
-        if !self.offline {
-            self.fetch_sigmacatch_branches(&git_dir)?;
-        }
+        self.fetch_sigmacatch_branches(&git_dir)?;
         create_branch(&git_dir, &branch_name)?;
-        if self.offline {
-            info!("Offline mode — skipping working-tree checkout (on-disk files kept as-is)");
-        } else {
-            crate::plumbing::checkout_main_branch(&git_dir, &self.repo_path)?;
-        }
+        crate::plumbing::checkout_main_branch(&git_dir, &self.repo_path)?;
         Ok(())
     }
 
@@ -306,8 +294,13 @@ impl SigmaRepo {
     /// `<rule_id>.evtx` and `info.yml` in one atomic commit). Rules whose EVTX
     /// is broken (empty export) are excluded so they get re-captured.
     ///
-    /// Best-effort offline: only the locally fetched refs are scanned.
+    /// Offline mode: the scan is skipped entirely (no local `.git` refs are
+    /// read) — the skip set is built from the on-disk worktree only.
     pub fn pending_regression_rule_ids(&self) -> Result<Vec<Uuid>> {
+        if self.offline {
+            info!("Offline mode — skipping pending-regression scan");
+            return Ok(Vec::new());
+        }
         let git_dir = self.repo_path.join(".git");
         let branches = crate::plumbing::list_sigmacatch_remote_refs(&git_dir)?;
         if branches.is_empty() {
@@ -353,6 +346,10 @@ impl SigmaRepo {
     /// rejected with an actionable message so the loop never commits onto it.
     /// Returns `Ok` when the branch does not exist on the fork yet (fresh day).
     pub fn check_remote_working_branch(&self) -> Result<()> {
+        if self.offline {
+            info!("Offline mode — skipping remote working-branch check");
+            return Ok(());
+        }
         let branch = self
             .working_branch
             .as_deref()
@@ -569,6 +566,10 @@ impl SigmaRepo {
     /// Invalid paths (traversal, NUL) are filtered out via `valid_commit_paths`;
     /// when nothing valid remains the commit is skipped with an `info!` log.
     pub fn git_commit_files(&self, files: Vec<String>, message: String) -> Result<()> {
+        if self.offline {
+            info!("Offline mode — skipping commit of {} file(s)", files.len());
+            return Ok(());
+        }
         let git_dir = self.repo_path.join(".git");
         let name = self.author.trim();
         let addr = self.email.trim();
@@ -608,6 +609,13 @@ impl SigmaRepo {
     /// generated files stay on disk and are reconciled by the next startup.
     /// When contrib is disabled, commits stay local and no push is attempted.
     pub fn upload_rule_batches(&self, batches: Vec<(Uuid, Vec<String>)>) -> Result<()> {
+        if self.offline {
+            info!(
+                "Offline mode — skipping {} rule commit(s) (data left on disk)",
+                batches.len()
+            );
+            return Ok(());
+        }
         let pre_oid = self.working_branch_oid()?;
         let mut committed = 0;
 
@@ -662,6 +670,10 @@ impl SigmaRepo {
     /// Push the working branch to origin. No-op (logged) when contrib is
     /// disabled.
     pub fn push(&self) -> Result<()> {
+        if self.offline {
+            info!("Offline mode — skipping push");
+            return Ok(());
+        }
         if !self.contrib {
             info!("Contrib disabled — skipping push to remote (local commit only)");
             return Ok(());
@@ -1082,6 +1094,64 @@ mod tests {
         assert!(
             !tmp.path().join("a.txt").exists(),
             "offline startup must not restore locally deleted tracked files"
+        );
+    }
+
+    /// Offline `init()` must be a no-op even when the repo path has no `.git`
+    /// at all (e.g. an extracted sigma zip): no bail, no clone, no directory
+    /// created — the on-disk files are used as-is.
+    #[test]
+    fn test_init_offline_noop_without_git() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("rules")).unwrap();
+
+        let mut repo = SigmaRepo::new();
+        repo.repo_path = tmp.path().to_path_buf();
+        repo.offline = true;
+
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(repo.init())
+            .unwrap();
+
+        assert!(
+            !tmp.path().join(".git").exists(),
+            "offline init must not create a .git directory"
+        );
+    }
+
+    /// Offline `check_remote_working_branch()` must no-op without a working
+    /// branch or `.git`.
+    #[test]
+    fn test_check_remote_working_branch_offline_noop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut repo = SigmaRepo::new();
+        repo.repo_path = tmp.path().to_path_buf();
+        repo.offline = true;
+        assert!(
+            repo.check_remote_working_branch().is_ok(),
+            "offline remote check must no-op even without .git or working branch"
+        );
+    }
+
+    /// Offline `upload_rule_batches()` must no-op (data stays on disk, no
+    /// commit) even when no `.git` exists.
+    #[test]
+    fn test_upload_rule_batches_offline_noop_without_git() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut repo = SigmaRepo::new();
+        repo.repo_path = tmp.path().to_path_buf();
+        repo.offline = true;
+
+        let rule_id = Uuid::new_v4();
+        repo.upload_rule_batches(vec![(rule_id, vec!["regression_data/a.json".to_string()])])
+            .unwrap();
+
+        assert!(
+            !tmp.path().join(".git").exists(),
+            "offline upload must not create a .git directory"
         );
     }
 
