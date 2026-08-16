@@ -109,9 +109,9 @@ impl EventCollector {
         tx: mpsc::Sender<Event>,
         mut stop: watch::Receiver<bool>,
     ) -> anyhow::Result<()> {
-        use ferrisetw::provider::Provider;
-        use ferrisetw::trace::{stop_trace_by_name, TraceTrait, UserTrace};
         use ferrisetw::GUID;
+        use ferrisetw::provider::Provider;
+        use ferrisetw::trace::{TraceTrait, UserTrace, stop_trace_by_name};
 
         // Purge any orphaned session from a previous run (otherwise the
         // session name is already taken and start() fails).
@@ -326,14 +326,18 @@ fn synthesize_winevt_xml(
                         // Parser cursor is undefined after the caught panic:
                         // keep the fields parsed so far and drop the rest.
                         Err(()) => {
-                            warn!("ETW property parse panicked for '{etw_name}' ({provider_name}); fields parsed so far are kept");
+                            warn!(
+                                "ETW property parse panicked for '{etw_name}' ({provider_name}); fields parsed so far are kept"
+                            );
                             break;
                         }
                     }
                 }
             }
             Err(_) if !SCHEMA_WARNED.swap(true, Ordering::Relaxed) => {
-                warn!("ETW schema lookup failed for provider '{provider_name}', EventData will be empty");
+                warn!(
+                    "ETW schema lookup failed for provider '{provider_name}', EventData will be empty"
+                );
             }
             Err(_) => {}
         }
@@ -675,7 +679,7 @@ mod tests {
 
     #[test]
     fn test_field_maps_process() {
-        use field_maps::{rename_fields, ProviderKind};
+        use field_maps::{ProviderKind, rename_fields};
         use std::collections::HashMap;
 
         let mut fields = HashMap::new();

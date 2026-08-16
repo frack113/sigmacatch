@@ -31,7 +31,7 @@ use uuid::Uuid;
 use crate::branch::{create_branch, switch_head};
 use crate::porcelain::{git_add, git_clone, git_clone_ssh, git_commit, git_pull, git_pull_ssh};
 pub use crate::transport::GitTransport;
-use crate::transport::{https_to_ssh_url, sanitize_url, AuthHttpClient};
+use crate::transport::{AuthHttpClient, https_to_ssh_url, sanitize_url};
 
 /// Default SigmaHQ repository URL.
 pub const DEFAULT_SIGMA_REPO_URL: &str = "https://github.com/SigmaHQ/sigma.git";
@@ -807,7 +807,9 @@ fn collect_tree_rule_ids_depth(
                         Ok(_blob) => {
                             warn!(
                                 "rule {} excluded from pending skip-set: EVTX '{}' exceeds {} MiB (will be re-captured)",
-                                id, name, MAX_EVTX_BLOB_SIZE / 1024 / 1024
+                                id,
+                                name,
+                                MAX_EVTX_BLOB_SIZE / 1024 / 1024
                             );
                             broken.insert(id);
                         }

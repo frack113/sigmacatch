@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 
 use crate::plumbing::{add_file_to_index, init_repo, open_odb};
-use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
-use grit_lib::transfer::{build_pack, PackBuildOptions};
+use grit_lib::objects::{CommitData, ObjectId, ObjectKind, serialize_commit};
+use grit_lib::transfer::{PackBuildOptions, build_pack};
 use grit_lib::write_tree::write_tree_from_index;
 
 /// Minimal in-memory repo helper: init + commit with explicit parents.

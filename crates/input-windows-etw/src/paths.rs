@@ -59,10 +59,11 @@ pub fn normalize(path: &str, mounts: &[(String, String)]) -> String {
             if best.is_none_or(|(best_len, _)| prefix.len() > best_len) {
                 best = Some((prefix.len(), replacement.as_str()));
             }
-        } else if let Some(noslash) = prefix.strip_suffix('\\') {
-            if p == noslash && best.is_none_or(|(best_len, _)| prefix.len() > best_len) {
-                best = Some((prefix.len(), replacement.as_str()));
-            }
+        } else if let Some(noslash) = prefix.strip_suffix('\\')
+            && p == noslash
+            && best.is_none_or(|(best_len, _)| prefix.len() > best_len)
+        {
+            best = Some((prefix.len(), replacement.as_str()));
         }
     }
 
@@ -97,11 +98,11 @@ fn is_win32_rooted(p: &str) -> bool {
 /// The two passes overlap harmlessly (longest-prefix match in [`normalize`]).
 #[cfg(windows)]
 pub fn build_mounts() -> Vec<(String, String)> {
-    use windows::core::PCWSTR;
     use windows::Win32::Storage::FileSystem::{
         FindFirstVolumeW, FindNextVolumeW, FindVolumeClose, GetLogicalDriveStringsW,
         GetVolumeNameForVolumeMountPointW, GetVolumePathNamesForVolumeNameW, QueryDosDeviceW,
     };
+    use windows::core::PCWSTR;
 
     let mut mounts: Vec<(String, String)> = Vec::new();
 

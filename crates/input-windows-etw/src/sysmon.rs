@@ -31,8 +31,22 @@ pub fn process_guid(machine_guid: &str, create_time: i64, pid: u32) -> String {
     let b = digest.0;
     format!(
         "{:02X}{:02X}{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
-        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13],
-        b[14], b[15]
+        b[0],
+        b[1],
+        b[2],
+        b[3],
+        b[4],
+        b[5],
+        b[6],
+        b[7],
+        b[8],
+        b[9],
+        b[10],
+        b[11],
+        b[12],
+        b[13],
+        b[14],
+        b[15]
     )
 }
 
@@ -54,11 +68,11 @@ pub fn hash_bytes(data: &[u8]) -> (String, String, String) {
 /// (REG_SZ), the seed of the Sysmon ProcessGuid algorithm. `None` on failure.
 #[cfg(windows)]
 pub fn read_machine_guid() -> Option<String> {
-    use windows::core::PCWSTR;
     use windows::Win32::System::Registry::{
-        RegGetValueW, HKEY_LOCAL_MACHINE, REG_ROUTINE_FLAGS, REG_SZ, REG_VALUE_TYPE, RRF_RT_REG_SZ,
-        RRF_SUBKEY_WOW6464KEY,
+        HKEY_LOCAL_MACHINE, REG_ROUTINE_FLAGS, REG_SZ, REG_VALUE_TYPE, RRF_RT_REG_SZ,
+        RRF_SUBKEY_WOW6464KEY, RegGetValueW,
     };
+    use windows::core::PCWSTR;
 
     let subkey: Vec<u16> = "SOFTWARE\\Microsoft\\Cryptography"
         .encode_utf16()

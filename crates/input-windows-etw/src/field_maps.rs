@@ -560,8 +560,8 @@ mod tests {
         assert_eq!(renamed.get("ParentProcessId"), Some(&"1".to_string()));
         assert_eq!(renamed.get("TerminalSessionId"), Some(&"2".to_string()));
         assert_eq!(renamed.get("ImageName"), None); // renamed away
-                                                    // Enrichment fields are synthesized at assembly time, not renamed from
-                                                    // phantom ETW properties.
+        // Enrichment fields are synthesized at assembly time, not renamed from
+        // phantom ETW properties.
         assert!(!renamed.contains_key("CommandLine"));
         assert!(!renamed.contains_key("ParentImage"));
         assert!(!renamed.contains_key("User"));
@@ -748,24 +748,36 @@ mod tests {
     fn test_generic_maps_are_non_empty() {
         // Each generic provider must actually forward fields (otherwise the
         // channel routing from the previous step would emit empty EventData).
-        assert!(!field_map_for_provider(ProviderKind::Security)
-            .etw_names()
-            .is_empty());
-        assert!(!field_map_for_provider(ProviderKind::Defender)
-            .etw_names()
-            .is_empty());
-        assert!(!field_map_for_provider(ProviderKind::Firewall)
-            .etw_names()
-            .is_empty());
-        assert!(!field_map_for_provider(ProviderKind::Ntlm)
-            .etw_names()
-            .is_empty());
-        assert!(!field_map_for_provider(ProviderKind::Smb)
-            .etw_names()
-            .is_empty());
-        assert!(!field_map_for_provider(ProviderKind::Lsa)
-            .etw_names()
-            .is_empty());
+        assert!(
+            !field_map_for_provider(ProviderKind::Security)
+                .etw_names()
+                .is_empty()
+        );
+        assert!(
+            !field_map_for_provider(ProviderKind::Defender)
+                .etw_names()
+                .is_empty()
+        );
+        assert!(
+            !field_map_for_provider(ProviderKind::Firewall)
+                .etw_names()
+                .is_empty()
+        );
+        assert!(
+            !field_map_for_provider(ProviderKind::Ntlm)
+                .etw_names()
+                .is_empty()
+        );
+        assert!(
+            !field_map_for_provider(ProviderKind::Smb)
+                .etw_names()
+                .is_empty()
+        );
+        assert!(
+            !field_map_for_provider(ProviderKind::Lsa)
+                .etw_names()
+                .is_empty()
+        );
     }
 
     #[test]

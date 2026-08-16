@@ -13,7 +13,7 @@
 //! Usage:
 //!   cargo run --release --bin check_channels [--json]
 
-use sigmacatch_config::{self, load_custom_channel_mapping, Config};
+use sigmacatch_config::{self, Config, load_custom_channel_mapping};
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_rule::SigmahqRules;
 use std::path::PathBuf;

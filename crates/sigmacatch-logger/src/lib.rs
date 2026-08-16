@@ -11,8 +11,8 @@ use std::fs;
 use std::path::PathBuf;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{
-    filter::Directive, fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
-    Registry,
+    EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt,
+    util::SubscriberInitExt,
 };
 
 /// The `evtx` crate logs `info!("Initializing string cache")` once per parsed

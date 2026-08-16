@@ -13,7 +13,7 @@ use crate::plumbing::{
     init_repo, open_odb, read_remote_url_from_config, resolve_head, set_head_after_fetch,
     symbolic_ref_target, write_index,
 };
-use crate::transport::{build_ssh_shell_command, https_to_ssh_url, AuthHttpClient};
+use crate::transport::{AuthHttpClient, build_ssh_shell_command, https_to_ssh_url};
 
 /// Default branches fetched on clone. Sigmacatch only ever uses the default
 /// branch; `main` is the alternative in case `master` is not the default.

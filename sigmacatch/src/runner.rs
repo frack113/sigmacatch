@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use sigmacatch_config::{self, parse_args, Config};
+use sigmacatch_config::{self, Config, parse_args};
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_logger::init as init_logger;
 use sigmacatch_regression::SigmahqRegression;
@@ -100,11 +100,9 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
 
     if matches!(config.git.transport, sigmacatch_config::GitTransport::Ssh)
         && config.git.needs_network()
+        && let Err(e) = sigmacatch_repo::ensure_ssh_host_config(config.git.ssh_key_path.as_deref())
     {
-        if let Err(e) = sigmacatch_repo::ensure_ssh_host_config(config.git.ssh_key_path.as_deref())
-        {
-            warn!("Failed to write SSH host-config: {e}");
-        }
+        warn!("Failed to write SSH host-config: {e}");
     }
 
     if let Some(ref key_path) = config.git.ssh_key_path {

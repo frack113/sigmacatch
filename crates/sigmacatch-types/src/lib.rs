@@ -568,13 +568,14 @@ fn node_to_value(node: Node, _is_root: bool) -> Value {
 
     let attrs: Vec<_> = node.attributes().filter(|a| a.name() != "xmlns").collect();
 
-    if child_elements.is_empty() && attrs.is_empty() {
-        if let Some(t) = text {
-            if let Ok(n) = t.parse::<u64>() {
-                return Value::Number(n.into());
-            }
-            return Value::String(t);
+    if child_elements.is_empty()
+        && attrs.is_empty()
+        && let Some(t) = text
+    {
+        if let Ok(n) = t.parse::<u64>() {
+            return Value::Number(n.into());
         }
+        return Value::String(t);
     }
 
     if child_elements.is_empty() && !attrs.is_empty() && text.is_none() {
@@ -609,10 +610,10 @@ fn node_to_value(node: Node, _is_root: bool) -> Value {
         map.insert(child_name, child_value);
     }
 
-    if let Some(t) = text {
-        if !map.contains_key("#text") {
-            map.insert("#text".into(), Value::String(t));
-        }
+    if let Some(t) = text
+        && !map.contains_key("#text")
+    {
+        map.insert("#text".into(), Value::String(t));
     }
 
     Value::Object(map)
@@ -653,13 +654,14 @@ fn node_to_value_raw(node: Node, _is_root: bool) -> Value {
 
     let attrs: Vec<(String, String)> = collect_element_attrs(node);
 
-    if child_elements.is_empty() && attrs.is_empty() {
-        if let Some(t) = text {
-            if let Some(n) = maybe_number(&t) {
-                return n;
-            }
-            return Value::String(t);
+    if child_elements.is_empty()
+        && attrs.is_empty()
+        && let Some(t) = text
+    {
+        if let Some(n) = maybe_number(&t) {
+            return n;
         }
+        return Value::String(t);
     }
 
     if child_elements.is_empty() && !attrs.is_empty() && text.is_none() {
@@ -694,10 +696,10 @@ fn node_to_value_raw(node: Node, _is_root: bool) -> Value {
         map.insert(child_name, child_value);
     }
 
-    if let Some(t) = text {
-        if !map.contains_key("#text") {
-            map.insert("#text".into(), Value::String(t));
-        }
+    if let Some(t) = text
+        && !map.contains_key("#text")
+    {
+        map.insert("#text".into(), Value::String(t));
     }
 
     Value::Object(map)
@@ -1030,10 +1032,12 @@ mod tests {
             <System><EventID>1</EventID></System>
         </Event>"#;
         let result = parse_winevt_xml(xml).unwrap();
-        assert!(!result["Event"]
-            .as_object()
-            .unwrap()
-            .contains_key("EventData"));
+        assert!(
+            !result["Event"]
+                .as_object()
+                .unwrap()
+                .contains_key("EventData")
+        );
     }
 
     #[test]
@@ -1555,10 +1559,12 @@ mod tests {
         </Event>"#;
 
         let result = parse_winevt_xml_raw(xml).unwrap();
-        assert!(!result["Event"]
-            .as_object()
-            .unwrap()
-            .contains_key("EventData"));
+        assert!(
+            !result["Event"]
+                .as_object()
+                .unwrap()
+                .contains_key("EventData")
+        );
     }
 
     #[test]
@@ -1599,12 +1605,16 @@ mod tests {
             is_etw: false,
         };
 
-        assert!(alert.event_json_raw["Event"]["EventData"]["Command Line"]
-            .as_str()
-            .is_some());
-        assert!(alert.event_json["Event"]["EventData"]["CommandLine"]
-            .as_str()
-            .is_some());
+        assert!(
+            alert.event_json_raw["Event"]["EventData"]["Command Line"]
+                .as_str()
+                .is_some()
+        );
+        assert!(
+            alert.event_json["Event"]["EventData"]["CommandLine"]
+                .as_str()
+                .is_some()
+        );
     }
 
     #[test]

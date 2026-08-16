@@ -198,10 +198,10 @@ fn collect_imports(data: &[u8], out: &mut Vec<String>) {
             if raw & ordinal_flag != 0 {
                 let ordinal = (raw & 0xFFFF) as u16;
                 out.push(format!("{lib}#{ordinal}"));
-            } else if let Some(off) = rva_to_off(data, sections, num_sections, raw as u32) {
-                if let Some(func) = cstr_at(data, off + 2, MAX_IMPORT_NAME_BYTES) {
-                    out.push(format!("{lib}.{}", func.to_ascii_lowercase()));
-                }
+            } else if let Some(off) = rva_to_off(data, sections, num_sections, raw as u32)
+                && let Some(func) = cstr_at(data, off + 2, MAX_IMPORT_NAME_BYTES)
+            {
+                out.push(format!("{lib}.{}", func.to_ascii_lowercase()));
             }
             thunk_off += thunk_size;
         }
@@ -255,10 +255,10 @@ const MAX_VERSION_VALUE_WCHARS: usize = 1024;
 /// when absent, `040904b0` (en-US, Unicode) is assumed. All fields fail-open.
 #[cfg(windows)]
 fn version_info(path: &str) -> VersionInfo {
-    use windows::core::PCWSTR;
     use windows::Win32::Storage::FileSystem::{
         GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
     };
+    use windows::core::PCWSTR;
 
     let path_w: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
     let size = unsafe { GetFileVersionInfoSizeW(PCWSTR(path_w.as_ptr()), None) };

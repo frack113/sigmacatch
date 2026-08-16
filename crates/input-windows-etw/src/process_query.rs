@@ -9,15 +9,15 @@
 //! the [`crate::process_table::ProcessTable`] entry and re-validate against
 //! `CreateTime` before reuse.
 
-use windows::core::PWSTR;
 use windows::Wdk::System::Threading::{NtQueryInformationProcess, PROCESSINFOCLASS};
 use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
 use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 use windows::Win32::System::Threading::{
-    GetProcessTimes, OpenProcess, OpenProcessToken, QueryFullProcessImageNameW,
-    PROCESS_ACCESS_RIGHTS, PROCESS_NAME_WIN32, PROCESS_QUERY_INFORMATION,
-    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+    GetProcessTimes, OpenProcess, OpenProcessToken, PROCESS_ACCESS_RIGHTS, PROCESS_NAME_WIN32,
+    PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+    QueryFullProcessImageNameW,
 };
+use windows::core::PWSTR;
 
 /// Maximum bytes of PEB CommandLine to read (fail-open bound).
 const MAX_COMMAND_LINE_BYTES: usize = 8192;
@@ -287,7 +287,7 @@ pub fn query_user_name(pid: u32) -> Option<String> {
 
 fn query_user_name_with(handle: HANDLE) -> Option<String> {
     use windows::Win32::Security::{
-        GetTokenInformation, LookupAccountSidW, TokenUser, PSID, SID, SID_NAME_USE, TOKEN_QUERY,
+        GetTokenInformation, LookupAccountSidW, PSID, SID, SID_NAME_USE, TOKEN_QUERY, TokenUser,
     };
 
     let mut token = HANDLE::default();
@@ -390,7 +390,7 @@ pub fn query_integrity_level(pid: u32) -> Option<String> {
 
 fn query_integrity_level_with(handle: HANDLE) -> Option<String> {
     use windows::Win32::Security::{
-        GetTokenInformation, TokenIntegrityLevel, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+        GetTokenInformation, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenIntegrityLevel,
     };
 
     let mut token = HANDLE::default();
@@ -457,7 +457,7 @@ pub fn query_logon_id(pid: u32) -> Option<String> {
 
 fn query_logon_id_with(handle: HANDLE) -> Option<String> {
     use windows::Win32::Security::{
-        GetTokenInformation, TokenStatistics, TOKEN_QUERY, TOKEN_STATISTICS,
+        GetTokenInformation, TOKEN_QUERY, TOKEN_STATISTICS, TokenStatistics,
     };
 
     let mut token = HANDLE::default();

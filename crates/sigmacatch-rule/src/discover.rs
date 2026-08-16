@@ -28,11 +28,11 @@ pub(crate) fn find_rules_dirs(root: &Path) -> Result<Vec<PathBuf>> {
                     #[cfg(unix)]
                     {
                         let inode = path.metadata().ok().map(|m| m.ino());
-                        if let Some(id) = inode {
-                            if !visited_inodes.insert(id) {
-                                warn!("Skipping symlink cycle detected at: {:?}", path);
-                                continue;
-                            }
+                        if let Some(id) = inode
+                            && !visited_inodes.insert(id)
+                        {
+                            warn!("Skipping symlink cycle detected at: {:?}", path);
+                            continue;
                         }
                     }
                     #[cfg(not(unix))]
@@ -102,10 +102,9 @@ fn has_yml_files(dir: &Path, depth: u32) -> bool {
             .extension()
             .and_then(|e| e.to_str())
             .map(|e| e.to_ascii_lowercase())
+            && (ext == "yml" || ext == "yaml")
         {
-            if ext == "yml" || ext == "yaml" {
-                return true;
-            }
+            return true;
         }
     }
     false

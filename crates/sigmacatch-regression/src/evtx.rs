@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-use anyhow::anyhow;
 #[cfg(windows)]
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::anyhow;
 use std::path::Path;
 #[cfg(windows)]
 use std::thread::sleep;
@@ -60,10 +60,10 @@ pub fn write_evtx(
 /// retry + re-parse validation.
 #[cfg(windows)]
 fn write_evtx_winevt(_xml: &str, channel: &str, rid: u64, path: &Path) -> Result<()> {
-    use windows::core::HSTRING;
     use windows::Win32::System::EventLog::{
         EvtExportLog, EvtExportLogChannelPath, EvtExportLogOverwrite,
     };
+    use windows::core::HSTRING;
 
     if channel.is_empty() {
         return Err(anyhow!("Cannot export EVTX: empty channel"));

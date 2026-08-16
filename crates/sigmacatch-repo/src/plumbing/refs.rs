@@ -58,10 +58,8 @@ pub(crate) fn read_remote_url_from_config(git_dir: &Path, remote: &str) -> Resul
         let trimmed = line.trim();
         if trimmed.starts_with('[') {
             in_remote = trimmed == target;
-        } else if in_remote {
-            if let Some(url) = trimmed.strip_prefix("url = ") {
-                return Ok(url.to_string());
-            }
+        } else if in_remote && let Some(url) = trimmed.strip_prefix("url = ") {
+            return Ok(url.to_string());
         }
     }
     anyhow::bail!(

@@ -282,57 +282,56 @@ impl Config {
         }
         // Validate SSH key path if configured. Skipped offline: no network op
         // can use the key, so a stale path must not block an offline startup.
-        if self.git.needs_network() {
-            if let Some(ref key_path) = self.git.ssh_key_path {
-                if !key_path.is_empty() {
-                    let path = std::path::Path::new(key_path);
-                    if !path.is_absolute() {
-                        anyhow::bail!(
-                            "config: SSH key path '{}' is not absolute (transport={}); \
+        if self.git.needs_network()
+            && let Some(ref key_path) = self.git.ssh_key_path
+            && !key_path.is_empty()
+        {
+            let path = std::path::Path::new(key_path);
+            if !path.is_absolute() {
+                anyhow::bail!(
+                    "config: SSH key path '{}' is not absolute (transport={}); \
                              use a full path like /home/user/.ssh/id or C:\\Users\\user\\.ssh\\id",
-                            key_path,
-                            self.git.transport
-                        );
-                    }
-                    let meta = std::fs::metadata(key_path).map_err(|_| {
-                        anyhow::anyhow!(
-                            "config: SSH key path '{}' does not exist (transport={}); \
+                    key_path,
+                    self.git.transport
+                );
+            }
+            let meta = std::fs::metadata(key_path).map_err(|_| {
+                anyhow::anyhow!(
+                    "config: SSH key path '{}' does not exist (transport={}); \
                              remove ssh_key_path from config or switch to transport = http",
-                            key_path,
-                            self.git.transport
-                        )
-                    })?;
-                    if !meta.is_file() {
-                        anyhow::bail!(
-                            "config: SSH key path '{}' is not a file (transport={}); \
+                    key_path,
+                    self.git.transport
+                )
+            })?;
+            if !meta.is_file() {
+                anyhow::bail!(
+                    "config: SSH key path '{}' is not a file (transport={}); \
                              remove ssh_key_path from config or switch to transport = http",
-                            key_path,
-                            self.git.transport
-                        );
-                    }
-                    #[cfg(unix)]
-                    {
-                        let mode = meta.permissions().mode() & 0o777;
-                        if mode & 0o077 != 0 {
-                            tracing::warn!(
-                                "config: SSH key '{}' has overly permissive mode 0{:o} — should be 0600. \
+                    key_path,
+                    self.git.transport
+                );
+            }
+            #[cfg(unix)]
+            {
+                let mode = meta.permissions().mode() & 0o777;
+                if mode & 0o077 != 0 {
+                    tracing::warn!(
+                        "config: SSH key '{}' has overly permissive mode 0{:o} — should be 0600. \
                                  SSH may refuse to use it. Run: chmod 600 {}",
-                                key_path,
-                                mode,
-                                key_path
-                            );
-                        }
-                        // Also check that the key is readable by the current user
-                        if mode & 0o400 == 0 {
-                            tracing::warn!(
-                                "config: SSH key '{}' is not readable by the owner (mode 0{:o}). \
+                        key_path,
+                        mode,
+                        key_path
+                    );
+                }
+                // Also check that the key is readable by the current user
+                if mode & 0o400 == 0 {
+                    tracing::warn!(
+                        "config: SSH key '{}' is not readable by the owner (mode 0{:o}). \
                                  SSH will reject it. Run: chmod 400 {}",
-                                key_path,
-                                mode,
-                                key_path
-                            );
-                        }
-                    }
+                        key_path,
+                        mode,
+                        key_path
+                    );
                 }
             }
         }
@@ -641,8 +640,12 @@ impl DryRunConfig {
                 );
             }
             None => {
-                println!("   effective token:          NONE — all git operations will be unauthenticated");
-                println!("\n   ⚠  No token configured. Set github_token in config.yaml or GITHUB_TOKEN env var.");
+                println!(
+                    "   effective token:          NONE — all git operations will be unauthenticated"
+                );
+                println!(
+                    "\n   ⚠  No token configured. Set github_token in config.yaml or GITHUB_TOKEN env var."
+                );
                 println!("      Create a token at https://github.com/settings/tokens");
             }
         }
@@ -723,7 +726,9 @@ impl DryRunConfig {
                         self.api_auth_valid = true;
                     }
                 } else if status == reqwest::StatusCode::UNAUTHORIZED {
-                    println!("   → Token INVALID or expired. Generate a new one at https://github.com/settings/tokens");
+                    println!(
+                        "   → Token INVALID or expired. Generate a new one at https://github.com/settings/tokens"
+                    );
                 } else if status == reqwest::StatusCode::FORBIDDEN {
                     println!("   → Token lacks required scopes (need 'repo' scope)");
                 } else {

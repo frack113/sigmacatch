@@ -9,7 +9,7 @@
 
 use anyhow::Result;
 use grit_lib::refs;
-use grit_lib::refs::{read_raw_ref, RawRefLookup};
+use grit_lib::refs::{RawRefLookup, read_raw_ref};
 use std::path::Path;
 use tracing::info;
 
@@ -77,7 +77,7 @@ pub(crate) fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
                 "Failed to read remote tracking ref '{}': {}",
                 remote_ref,
                 e
-            ))
+            ));
         }
     };
 
@@ -294,19 +294,21 @@ mod tests {
     #[test]
     fn test_validate_branch_name_leading_slash() {
         let err = validate_branch_name("/foo/bar").unwrap_err();
-        assert!(err
-            .to_string()
-            .to_lowercase()
-            .contains("invalid '/' placement"));
+        assert!(
+            err.to_string()
+                .to_lowercase()
+                .contains("invalid '/' placement")
+        );
     }
 
     #[test]
     fn test_validate_branch_name_trailing_slash() {
         let err = validate_branch_name("foo/bar/").unwrap_err();
-        assert!(err
-            .to_string()
-            .to_lowercase()
-            .contains("invalid '/' placement"));
+        assert!(
+            err.to_string()
+                .to_lowercase()
+                .contains("invalid '/' placement")
+        );
     }
 
     // `symbolic_ref_target` is exercised indirectly via commit_tree/branch tests

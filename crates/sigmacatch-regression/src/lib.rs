@@ -11,7 +11,7 @@ mod long_path;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use sigmacatch_types::{Alert, RegressionHeader};
 use tracing::{error, info, info_span, warn};
 use uuid::Uuid;
@@ -570,10 +570,10 @@ fn walk(dir: &Path, paths: &mut Vec<PathBuf>, depth: u32) {
     };
     for entry in entries.filter_map(|e| e.ok()) {
         let path = entry.path();
-        if let Ok(metadata) = path.symlink_metadata() {
-            if metadata.file_type().is_symlink() {
-                continue;
-            }
+        if let Ok(metadata) = path.symlink_metadata()
+            && metadata.file_type().is_symlink()
+        {
+            continue;
         }
         if path.is_dir() {
             walk(&path, paths, depth + 1);
@@ -611,11 +611,11 @@ fn clean_recursive(dir: &Path, depth: u32) {
     };
     for entry in entries.filter_map(|e| e.ok()) {
         let path = entry.path();
-        if let Ok(metadata) = path.symlink_metadata() {
-            if metadata.file_type().is_symlink() {
-                warn!("Skipping symlink at {:?}", path);
-                continue;
-            }
+        if let Ok(metadata) = path.symlink_metadata()
+            && metadata.file_type().is_symlink()
+        {
+            warn!("Skipping symlink at {:?}", path);
+            continue;
         }
         if path.is_dir() {
             let has_info = path.join("info.yml").exists();
@@ -750,18 +750,18 @@ mod tests {
             cwd.parent()
                 .map(|p| p.join("sigma").join("regression_data"))
         });
-        if let Some(ref dir) = regression_dir {
-            if let Ok(reg) = SigmahqRegression::new_from_path(dir) {
-                let ids = reg.get_sigma_id();
-                if !ids.is_empty() {
-                    let first = &ids[0];
-                    let first_str = first.to_string();
-                    assert!(
-                        first_str.contains('-'),
-                        "UUID should contain hyphens: {}",
-                        first_str
-                    );
-                }
+        if let Some(ref dir) = regression_dir
+            && let Ok(reg) = SigmahqRegression::new_from_path(dir)
+        {
+            let ids = reg.get_sigma_id();
+            if !ids.is_empty() {
+                let first = &ids[0];
+                let first_str = first.to_string();
+                assert!(
+                    first_str.contains('-'),
+                    "UUID should contain hyphens: {}",
+                    first_str
+                );
             }
         }
     }
@@ -781,21 +781,21 @@ mod tests {
             cwd.parent()
                 .map(|p| p.join("sigma").join("regression_data"))
         });
-        if let Some(ref dir) = regression_dir {
-            if let Ok(reg) = SigmahqRegression::new_from_path(dir) {
-                let entries: Vec<(&PathBuf, &InfoYml)> = reg.iter().collect();
-                assert_eq!(entries.len(), reg.len());
-                for (path, info) in &entries {
-                    assert!(
-                        path.to_string_lossy().ends_with("info.yml"),
-                        "path should end with info.yml: {:?}",
-                        path
-                    );
-                    assert!(
-                        !info.rule_metadata.is_empty(),
-                        "info should have rule_metadata"
-                    );
-                }
+        if let Some(ref dir) = regression_dir
+            && let Ok(reg) = SigmahqRegression::new_from_path(dir)
+        {
+            let entries: Vec<(&PathBuf, &InfoYml)> = reg.iter().collect();
+            assert_eq!(entries.len(), reg.len());
+            for (path, info) in &entries {
+                assert!(
+                    path.to_string_lossy().ends_with("info.yml"),
+                    "path should end with info.yml: {:?}",
+                    path
+                );
+                assert!(
+                    !info.rule_metadata.is_empty(),
+                    "info should have rule_metadata"
+                );
             }
         }
     }

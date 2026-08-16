@@ -120,7 +120,7 @@ impl EventCollector {
     /// or an unrecoverable error occurs.
     #[cfg(windows)]
     fn collect_continuous(channel: &str, tx: &mpsc::Sender<Event>, stop: &watch::Receiver<bool>) {
-        use windows::Win32::System::EventLog::{EvtClose, EVT_HANDLE};
+        use windows::Win32::System::EventLog::{EVT_HANDLE, EvtClose};
 
         let _com_guard = match Self::init_com() {
             Ok(g) => g,
@@ -362,7 +362,7 @@ impl EventCollector {
     #[cfg(windows)]
     fn probe_max_record_id(channel: &str) -> u64 {
         use windows::Win32::System::EventLog::{
-            EvtClose, EvtNext, EvtQueryReverseDirection, EVT_HANDLE,
+            EVT_HANDLE, EvtClose, EvtNext, EvtQueryReverseDirection,
         };
 
         let channel_wide = str_to_wide(channel);
@@ -421,8 +421,8 @@ impl EventCollector {
         query_wide: &[u16],
         flags: u32,
     ) -> Result<windows::Win32::System::EventLog::EVT_HANDLE, windows::core::Error> {
-        use windows::core::PCWSTR;
         use windows::Win32::System::EventLog::EvtQuery;
+        use windows::core::PCWSTR;
 
         let path = PCWSTR::from_raw(channel_wide.as_ptr());
         let query = PCWSTR::from_raw(query_wide.as_ptr());
@@ -433,7 +433,7 @@ impl EventCollector {
     /// Initialize COM apartment for the current thread.
     #[cfg(windows)]
     fn init_com() -> Result<ComGuard, String> {
-        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+        use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 
         let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
 

@@ -6,12 +6,12 @@
 use anyhow::Result;
 use grit_lib::fetch::Progress;
 use grit_lib::transfer::{FetchOptions, TagMode};
-use grit_lib::transport::http::{http_fetch, HttpClient};
+use grit_lib::transport::http::{HttpClient, http_fetch};
 use grit_lib::transport::{ConnectOptions, SshCommand, SshTransport, Transport};
 use std::path::Path;
 use tracing::info;
 
-use crate::transport::{sanitize_url, SshMode};
+use crate::transport::{SshMode, sanitize_url};
 
 /// Forward the remote's side-band progress lines (channel 2) to the log so a
 /// first clone's long download isn't silent. The server's messages are

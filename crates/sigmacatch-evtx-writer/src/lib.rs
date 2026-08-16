@@ -11,7 +11,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use roxmltree::{Document, Node, NodeType};
 
 const FILE_HEADER_SIZE: usize = 4096;
@@ -60,10 +60,10 @@ pub fn write_evtx_from_xml_with_time(
 pub fn filetime_from_event_xml(xml: &str) -> Result<u64> {
     let doc = Document::parse(xml).context("Failed to parse Winevt XML")?;
     for node in doc.descendants() {
-        if node.tag_name().name() == "TimeCreated" {
-            if let Some(system_time) = node.attribute("SystemTime") {
-                return system_time_to_filetime(system_time);
-            }
+        if node.tag_name().name() == "TimeCreated"
+            && let Some(system_time) = node.attribute("SystemTime")
+        {
+            return system_time_to_filetime(system_time);
         }
     }
     bail!("no TimeCreated element in Winevt XML")
