@@ -6,9 +6,9 @@
 //! read-only mode. No filtering, no skip sets — just the bare essentials for
 //! testing and validation.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use rsigma_eval::event::JsonEvent;
-use rsigma_eval::pipeline::{parse_pipeline, Pipeline};
+use rsigma_eval::pipeline::{Pipeline, parse_pipeline};
 use rsigma_eval::{Engine, LogSourceExtractor};
 use sigmacatch_rule::SigmahqRules;
 use sigmacatch_types::{Alert, Event};
@@ -217,6 +217,7 @@ impl DetectionEngine {
                     event_json_raw: event.event_json_raw.clone(),
                     event_json: event.event_json.clone(),
                     event_raw: event.event_raw.clone(),
+                    is_etw: event.is_etw,
                 };
                 self.alerts.push(alert);
             }

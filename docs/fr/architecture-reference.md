@@ -6,7 +6,7 @@
 
 ## 1. Vue d'ensemble
 
-Outil headless qui capture des événements Windows réels via **Windows Event Log API** (winevt), les matche contre les règles SigmaHQ, et sort des données de régression structurées.
+Outil headless qui capture des événements Windows réels via **Windows Event Log API** (winevt) ou **ETW** (ferrisetw), les matche contre les règles SigmaHQ, et sort des données de régression structurées.
 
 **Exécution continue (un seul processus jusqu'à Ctrl+C) :**
 
@@ -15,12 +15,14 @@ Outil headless qui capture des événements Windows réels via **Windows Event L
 3. Construire le skip set depuis les données de régression existantes
 4. Charger le moteur Sigma (rsigma-eval) avec bloom pre-filter + LogSourceExtractor
 5. Résoudre les channels depuis les règles chargées
-6. Lancer un collecteur continu (winevt, une task par channel)
+6. Lancer un collecteur continu (injecté par le binaire via le trait `CollectorKind`) :
+   - **bin `sigmacatch-channel` (winevt)** : une task par channel (EvtQueryW/EvtNext/EvtRender)
+   - **bin `sigmacatch-etw` (etw)** : abonnement ferrisetw sur 18 providers, routing générique provider→channel, EventID réel conservé
 7. Évaluer chaque event contre toutes les règles chargées (API FIFO)
 8. Toutes les 30s : générer la sortie regression pour les règles matchées, commit (par règle) + push (si contrib) sur le fork
 9. Sur Ctrl+C : flush final → commit → push de la branche vers le fork (seulement si `git.contrib: true`)
 
-**Plateforme :** Windows (winevt + Sysmon requis pour des events riches). Linux/macOS : le collecteur est un stub no-op — le pipeline tourne quand même de bout en bout pour les tests.
+**Plateforme :** Windows (winevt ou etw requis pour des events riches). Linux/macOS : le collecteur est un stub no-op — le pipeline tourne quand même de bout en bout pour les tests.
 
 ---
 
@@ -28,10 +30,13 @@ Outil headless qui capture des événements Windows réels via **Windows Event L
 
 ```text
 sigmacatch/
-├── Cargo.toml                     # Racine workspace (11 packages)
-├── sigmacatch/                    # Crate binaire
+├── Cargo.toml                     # Racine workspace (13 packages)
+├── sigmacatch/                    # Lib + 2 binaires
 │   └── src/
-│       └── main.rs                # Orchestration : boucle continue + process_and_generate + commit/push
+│       ├── lib.rs                 # runner partagé (pipeline commun aux 2 binaires)
+│       ├── runner.rs              # run<C: CollectorKind> : config + repo init + event loop + commit/push
+│       ├── main_winevt.rs         # bin `sigmacatch-channel` : collecteur Winevt multi-channel
+│       └── main_etw.rs            # bin `sigmacatch-etw` : collecteur ETW direct (ferrisetw)
 ├── tools/                    # Outils de dev (check_dry_run, check_channels, list_rules, check_filter, check_evtx, get_atomic, coverage)
 └── crates/
     ├── sigmacatch-config/         # Config YAML, parsing CLI, custom_channels.yaml, diagnostics git dry-run (check_dry_run)
@@ -39,6 +44,7 @@ sigmacatch/
     ├── sigmacatch-rule/           # SigmahqRules : chargement (parse_sigma_yaml), filtre, dédupe, remove_id
     ├── sigmacatch-detection/      # Wrapper DetectionEngine + pipelines embarquées (windows.yml, flatten_winevt.yml) + channel_resolver
     ├── input-windows-channels/    # Collecteur Winevt multi-channel (EventProducer)
+    ├── input-windows-etw/         # Collecteur ETW direct via ferrisetw (18 providers, routing provider→channel)
     ├── sigmacatch-regression/     # SigmahqRegression, InfoYml, RegressionData, validation triplet
     ├── sigmacatch-types/          # Types partagés : Event, Alert, RegressionHeader, Product + parsing XML + tables de mapping logsource
     ├── sigmacatch-repo/           # wrapper grit-lib : SigmaRepo, opérations git
@@ -60,8 +66,8 @@ git:
   ssh_key_path: ""            # path to SSH private key (optionnel, seulement pour SSH)
   sigma_repo_url: "https://github.com/SigmaHQ/sigma.git"
   sigma_repo_path: "sigma"    # chemin local du repo sigma (relatif, pas de '..', pas absolu)
-  offline: false              # true = skip le pull au startup (repo existant requis). false (défaut) = pull
-  contrib: false              # true = push au remote fork. false (défaut) = commits locaux uniquement
+  offline: false              # true = zéro opération git (pas de pull/clone/commit/push, fichiers locaux utilisés tels quels). false (défaut) = pull
+  contrib: false              # true = push au remote fork. false (défaut) = commits locaux uniquement. Neutralisé (forcé à false) si offline: true
 log:
   level_file: "debug"
 filter:
@@ -70,6 +76,8 @@ filter:
   min_level: "critical"       # niveau minimum des règles (inclusif) : informational < low < medium < high < critical
   author: ""                  # filtre par author (optionnel, vide = pas de filtre)
   max_rule_size: 1048576      # octets (1MB par défaut, min 1024, max 10MB)
+regression:
+  max_failed_cycles: 3        # règle bloquée (plus de re-capture) après N cycles consécutifs d'échec EVTX (min 1)
 ```
 
 **Filtrage des règles :** `product`, `min_status`, `min_level` et `author` sont appliqués par `SigmahqRules::filter()`.
@@ -80,14 +88,20 @@ les règles sans `status`/`level` sont toujours acceptées. Si 0 règle reste, l
 est requis, et `sigma_repo_path` est validé contre le traversal/les chemins absolus. Le transport HTTP
 exige un token (config ou env `GITHUB_TOKEN`) quand `needs_network()` est vrai — c.-à-d. `offline: false`
 ou `contrib: true` ; un run entièrement offline (`offline: true` + `contrib: false`) n'a pas besoin de token.
+`offline: true` **neutralise** `contrib` (forcé à `false`, avec un `warn!`) : les deux combinés ne sont pas
+une erreur, mais aucun push ne sera tenté.
 
-**Offline / contrib :** `offline: true` utilise le repo existant tel quel (pas de pull, repo complet requis).
-`contrib: true` active le push sur le fork à la fin ; par défaut (`false`) les commits restent locaux.
-Les flags CLI `--offline` / `--contrib` forcent ces valeurs à `true`.
+**Offline / contrib :** `offline: true` saute **toutes** les opérations git — pas de pull, pas de fetch,
+pas de checkout, pas de commit, pas de push ; le dossier `sigma/` est utilisé tel quel et n'a même pas
+besoin d'un `.git` (un zip extrait suffit). Le triplet de régression est toujours écrit sur disque ;
+seuls commit/push sont sautés. `contrib: true` active le push sur le fork à la fin ; par défaut (`false`)
+les commits restent locaux. Les flags CLI `--offline` / `--contrib` forcent ces valeurs à `true`
+(`--offline` gagne toujours sur `--contrib`).
 
 **Transport SSH :** `git.transport: ssh` clone/fetch/push via la clé privée `ssh_key_path`. Au startup,
 `ensure_ssh_host_config()` (`transport.rs`) écrit les directives `IdentityFile`/`UserKnownHostsFile`
-dans `~/.ssh/config` (idempotent, **écriture atomique** tmp + rename) ; sur Windows l'exécutable `ssh`
+dans `~/.ssh/config` (idempotent, **écriture atomique** tmp + rename, sautée en mode offline) ;
+sur Windows l'exécutable `ssh`
 est résolu via les chemins standards (OpenSSH de Windows, Git for Windows) et utilisé en exec direct
 (`SshCommand::Program`, pas de shell). Un échec du **pull SSH est définitif** (pas de fallback HTTPS) :
 le message d'erreur catégorise la cause (binaire `ssh` manquant ou clé invalide) et renvoie vers
@@ -96,7 +110,7 @@ Quand `ssh_key_path` est renseigné, chaque commit de régression est **signé**
 (`ssh-key`) : l'en-tête `gpgsig` est inséré entre la ligne committer et le message, comme
 `git commit -S` avec `gpg.format = ssh`, pour que GitHub affiche le commit "Verified".
 
-**CLI flags :** `--author <name>`, `-a`/`--all-rules`, `-o`/`--offline`, `-c`/`--contrib`, `-v`/`--verbose`, `--help` / `-h`. Les diagnostics (dry-run git, channels, liste des règles) sont des tools `tools` : `check_dry_run`, `check_channels`, `list_rules`.
+**CLI flags :** `--author <name>`, `-a`/`--all-rules`, `-o`/`--offline`, `-c`/`--contrib`, `-v`/`--verbose`, `--help` / `-h`. Le collecteur est choisi par le binaire (features cargo `winevt`/`etw`, pas de flag). Les diagnostics (dry-run git, channels, liste des règles) sont des tools `tools` : `check_dry_run`, `check_channels`, `list_rules`.
 
 ---
 
@@ -130,13 +144,13 @@ SigmaRepo::new()
     ├── [ssh_key_path défini] set_signing_key(key_path)   # signe chaque commit (ed25519, gpgsig)
     ├── set_git_operations(offline, contrib)   # contrôle le pull au startup + le push final
     ├── set_remote_url(fork_url) → init() [async]
-    │       ├── repo incomplet/absent + offline → bail actionnable
-    │       ├── repo existant → pull étroit de la branche courante (skip si offline)
+    │       ├── [offline] → no-op immédiat (fichiers locaux utilisés tels quels, .git optionnel)
+    │       ├── repo existant → pull étroit de la branche courante
     │       │       └── HEAD déjà sur la branche de travail (re-run même jour) → skip du master-switch
     │       └── sinon → clone complet (full-history, protocole v2) + pack
-    ├── set_working_branch(branch_name)         # fetch namespace sigmacatch/* (skip si offline) + create_branch
+    ├── set_working_branch(branch_name)         # fetch namespace sigmacatch/* + create_branch (no-op offline)
     │   └── switch_to_working_branch()          # matérialise l'arbre de la branche (miroir exact du commit)
-    └── check_remote_working_branch()   # garde : rejette une branche du même jour orpheline/amputée
+    └── check_remote_working_branch()   # garde : rejette une branche du même jour orpheline/amputée (no-op offline)
 ```
 
 ### Post-traitement : pack des objets loose
@@ -214,7 +228,8 @@ rules = rules.filter(SigmaFilterConfig { product, min_status, min_level, author,
 > `+refs/heads/sigmacatch/*:refs/remotes/origin/sigmacatch/*`). Le scan est purement en RAM
 > (`list_refs` + marche des objets arbre), jamais de checkout : le worktree reste un miroir
 > exact de la branche du jour, donc le diff du nouveau PR reste basé sur main et ne contient
-> jamais les données des PR précédents. Offline = best-effort (refs déjà fetchées).
+> jamais les données des PR précédents. En mode offline, le scan est sauté
+> entièrement (aucune lecture de refs locale) : le skip set ne couvre que le worktree.
 
 ### Étape 4 — Résolution des channels
 
@@ -238,7 +253,10 @@ clean_partial_artifacts(&output_base)     # supprime les dossiers avec json/evtx
     ↓
 let (tx, rx) = mpsc::channel::<Event>(100_000)
     ↓
-EventCollector::new(cycle_channels).run(tx, stop)   # task tokio, une task par channel
+[bin sigmacatch-channel] kind.build(&cycle_channels).run(tx, stop)
+    └── EventCollector::new(cycle_channels)   # task tokio, une task par channel
+[bin sigmacatch-etw] kind.build(&[]).run(tx, stop)
+    └── EventCollector::new()                 # task tokio, abonnement ferrisetw multi-providers
 ```
 
 **Boucle par channel (`collect_continuous`, lancée via `spawn_blocking`) :**
@@ -427,7 +445,7 @@ regression_tests_info:
 - `remove_id(&Uuid)`, `get(&Uuid)`, `rules()` / `iter()`, `to_collection()`, `rule_paths()`
 - La résolution de channels n'est plus ici — elle vit dans `DetectionEngine::resolve_channels` (§10)
 
-### EventCollector (`crates/input-windows-channels/src/lib.rs`)
+### EventCollector (`crates/input-windows-channels/src/lib.rs`) — Winevt
 
 - Collecteur Windows Event Log multi-channel, implémente `EventProducer` (module unique, plus de `collector.rs`)
 - `new(channels)` → `run(self, tx, stop)` async ; une task blocking par channel
@@ -436,6 +454,16 @@ regression_tests_info:
 - Observabilité : exclusion permanente sur `ERROR_EVT_CHANNEL_NOT_FOUND` (un seul `error!`),
   logs de liveness ("initial query OK", "still alive" toutes les 60s, progression toutes les 10s),
   `warn!` quand des events sont fetchés mais perdus au render/parse, détection de rollover record-id
+
+### EventCollector (`crates/input-windows-etw/src/lib.rs`) — ETW
+
+- Collecteur ETW direct via ferrisetw, implémente `EventProducer` (module unique)
+- `new()` → `run(self, tx, stop)` async ; un seul abonnement, pas de channels explicites
+- 18 providers (9 Sysmon-masquerade + 9 génériques) avec GUID vérifiés
+- Routing générique : provider name → channel via `PROVIDER_NAME_TO_CHANNEL` (phf), EventID réel conservé
+- Fidelity champs : field maps par provider (Sysmon → EventID 1/3/7/11 avec rename ; Security/Defender/Firewall/NTLM/SMB/LSA → identity maps)
+- Providers inconnus → channel `sigmacatch/etw-unmapped`, EventID réel, `warn!`
+- Non-Windows : stub no-op avec `warn!`
 
 ### EVTX Writer (`sigmacatch-regression/src/evtx.rs`)
 
@@ -478,12 +506,13 @@ regression_tests_info:
 | `chrono` | dates |
 | `uuid` | UUID v4 pour info.yml + ids de règles |
 | `phf` | hash maps statiques pour les tables de taxonomie (dans `sigmacatch-types`) + résolution de channels (dans `sigmacatch-detection/src/channel_resolver.rs`) |
+| `ferrisetw` | collecteur ETW direct (cfg(windows), dans `input-windows-etw`) |
 | `evtx` | parsing de fichiers EVTX (crate input-evtx, utilisé par tools/check_evtx) |
 | `roxmltree` | parsing XML pour les events Winevt (dans `sigmacatch-types`) |
 | `windows` | API Winevt (cfg-gated : windows uniquement, features : Foundation, System, Security, Com, Console, Threading) |
 | `tempfile` (dev) | tests d'intégration |
 
-**Supprimés :** `ratatui`, `crossterm`, `quick-xml`, `winevt-writer`, `tdh`, `ntapi`, `ferrisetw`
+**Supprimés :** `ratatui`, `crossterm`, `quick-xml`, `winevt-writer`, `tdh`, `ntapi`
 
 ---
 
@@ -502,10 +531,10 @@ cargo xwin build --release --target x86_64-pc-windows-msvc   # cross-compile Win
 ## 9. CLI
 
 ```text
-sigmacatch
+sigmacatch-channel
     [-a], [--all-rules]    # désactive le skip set (charge toutes les règles)
     [-c], [--contrib]      # active le push au remote fork
-    [-o], [--offline]      # skip le pull au startup (force offline)
+    [-o], [--offline]      # skip toutes les opérations git (force offline, pas de commit/push)
     [-v], [--verbose]      # affiche les logs info sur stderr
     [--author <name>]      # écrase git.author de la config
     [--help], [-h]         # affiche cette aide et exit
@@ -544,7 +573,7 @@ Pipeline de transformation embarquée (chargée via `include_str!` dans `sigmaca
 
 ### Résolution de channels (`crates/sigmacatch-detection/src/channel_resolver.rs`)
 
-- **Post-pipeline logsource** : `resolve_channels` lit `CompiledRule.logsource` (post-pipeline, exposé publiquement par rsigma-eval 0.21) via `DetectionEngine::resolve_channels(&custom_map)` dans `main.rs` — résolution au moment de la création du moteur, aucun coût supplémentaire (pas de re-transform).
+- **Post-pipeline logsource** : `resolve_channels` lit `CompiledRule.logsource` (post-pipeline, exposé publiquement par rsigma-eval 0.21) via `DetectionEngine::resolve_channels(&custom_map)` dans `runner.rs` — résolution au moment de la création du moteur, aucun coût supplémentaire (pas de re-transform).
 - `SERVICE_CHANNELS` : static `phf::Map<service, &[channel]>` — mapping service → channels Windows Event Log (runtime, pas une table générée).
 - `CATEGORY_CHANNELS` : catégories que la pipeline ne route PAS (`ps_classic_*`, `ps_module`, `ps_script`).
 - Lookup : `service` présent → `SERVICE_CHANNELS[service]` + `custom_map` (depuis `custom_channels.yaml`, `channel → service`) ; sinon `category` → `CATEGORY_CHANNELS[category]`.

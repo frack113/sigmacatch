@@ -30,11 +30,11 @@ impl std::fmt::Display for GitTransport {
 }
 
 pub(crate) fn sanitize_url(url: &str) -> String {
-    if let Some(at_pos) = url.find('@') {
-        if let Some(scheme_end) = url[..at_pos].find("://") {
-            let prefix = &url[..scheme_end + 3];
-            return format!("{}<redacted>@{}", prefix, &url[at_pos + 1..]);
-        }
+    if let Some(at_pos) = url.find('@')
+        && let Some(scheme_end) = url[..at_pos].find("://")
+    {
+        let prefix = &url[..scheme_end + 3];
+        return format!("{}<redacted>@{}", prefix, &url[at_pos + 1..]);
     }
     url.to_string()
 }
@@ -156,19 +156,19 @@ pub(crate) enum SshMode {
 /// `ensure_ssh_host_config`). `GIT_SSH_COMMAND` is unsupported on Windows because
 /// grit-lib runs it via `sh -c` which requires a POSIX shell.
 pub(crate) fn build_ssh_shell_command(_ssh_key_path: Option<&str>) -> SshMode {
-    if let Ok(cmd) = std::env::var("GIT_SSH") {
-        if !cmd.is_empty() {
-            debug!("Using GIT_SSH from environment");
-            return SshMode::Program(vec![cmd.into()]);
-        }
+    if let Ok(cmd) = std::env::var("GIT_SSH")
+        && !cmd.is_empty()
+    {
+        debug!("Using GIT_SSH from environment");
+        return SshMode::Program(vec![cmd.into()]);
     }
-    if let Ok(cmd) = std::env::var("GIT_SSH_COMMAND") {
-        if !cmd.is_empty() {
-            debug!(
-                "Ignoring GIT_SSH_COMMAND (shell command lines are not supported without sh); \
+    if let Ok(cmd) = std::env::var("GIT_SSH_COMMAND")
+        && !cmd.is_empty()
+    {
+        debug!(
+            "Ignoring GIT_SSH_COMMAND (shell command lines are not supported without sh); \
                  use GIT_SSH or ~/.ssh/config instead"
-            );
-        }
+        );
     }
     #[cfg(windows)]
     {
@@ -216,12 +216,11 @@ impl AuthHttpClient {
     }
 
     fn add_auth(&self, url: &str) -> String {
-        if let Some(t) = self.token.as_deref() {
-            if url.starts_with("https://") {
-                if let Some(rest) = url.strip_prefix("https://") {
-                    return format!("https://x-access-token:{t}@{rest}");
-                }
-            }
+        if let Some(t) = self.token.as_deref()
+            && url.starts_with("https://")
+            && let Some(rest) = url.strip_prefix("https://")
+        {
+            return format!("https://x-access-token:{t}@{rest}");
         }
         url.to_string()
     }

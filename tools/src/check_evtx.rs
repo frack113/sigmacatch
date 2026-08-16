@@ -16,8 +16,8 @@
 
 use input_evtx::parse_evtx_bytes;
 use sigmacatch_detection::DetectionEngine;
-use sigmacatch_regression::logtype::LogType;
 use sigmacatch_regression::SigmahqRegression;
+use sigmacatch_regression::logtype::LogType;
 use sigmacatch_rule::{SigmaFilterConfig, SigmahqRules};
 use std::collections::HashSet;
 use std::process;

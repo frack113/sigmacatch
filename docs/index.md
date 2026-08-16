@@ -4,17 +4,19 @@ Headless tool that captures real Windows events via the **Windows Event Log API*
 
 ## Workspace
 
-The project is a cargo workspace of 11 crates (9 libraries + 2 binary crates):
+The project is a cargo workspace of 13 crates (11 libraries + 2 binary crates):
 
 | Crate | Purpose |
 |---|---|
-| `sigmacatch` | Binary + orchestration (continuous loop) |
+| `sigmacatch` | Lib + 2 binaries (`sigmacatch-channel` winevt, `sigmacatch-etw`) + shared runner (continuous loop) |
 | `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml + dry-run git diagnostics |
-| `sigmacatch-logger` | Two-layer tracing subscriber (stderr info + daily rolling file debug) |
+| `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug) |
 | `sigmacatch-rule` | `SigmahqRules`: rule loading, filter, dedupe, remove_id + `SigmaRuleExt` (ATT&CK techniques) |
 | `sigmacatch-detection` | Thin wrapper around rsigma-eval (pipelines, bloom, LogSourceExtractor, resolve_channels) |
-| `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) |
+| `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) — bin `sigmacatch-channel` |
+| `input-windows-etw` | Direct ETW collector via ferrisetw (18 providers, provider→channel routing) — bin `sigmacatch-etw` |
 | `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, regression triplet generation |
+| `sigmacatch-evtx-writer` | Pure Rust EVTX writer + re-parse validation |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
 | `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, git operations |
 | `input-evtx` | Parse EVTX files into `Event` objects (used by `tools`) |
@@ -24,7 +26,7 @@ The project is a cargo workspace of 11 crates (9 libraries + 2 binary crates):
 
 ```bash
 cargo build --release
-./target/release/sigmacatch
+./target/release/sigmacatch-channel
 ```
 
 ## Documentation

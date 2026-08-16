@@ -3,14 +3,25 @@
 
 [package]
 name = "sigmacatch"
-version = "0.3.1"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Capture real Windows events and match them against Sigma rules to produce regression data"
-license = "MIT"
+license.workspace = true
+
+[features]
+default = ["winevt", "etw"]
+winevt = ["dep:input-windows-channels"]
+etw = ["dep:input-windows-etw"]
 
 [[bin]]
-name = "sigmacatch"
-path = "src/main.rs"
+name = "sigmacatch-channel"
+path = "src/main_winevt.rs"
+required-features = ["winevt"]
+
+[[bin]]
+name = "sigmacatch-etw"
+path = "src/main_etw.rs"
+required-features = ["etw"]
 
 [dependencies]
 # Crate workspace — application configuration
@@ -25,8 +36,11 @@ sigmacatch-detection = { path = "../crates/sigmacatch-detection" }
 # Crate workspace — shared types
 sigmacatch-types = { path = "../crates/sigmacatch-types" }
 
-# Crate workspace — Windows channel mappings (replaces sigma-mapping)
-input-windows-channels = { path = "../crates/input-windows-channels" }
+# Crate workspace — Windows channel mappings (winevt feature)
+input-windows-channels = { path = "../crates/input-windows-channels", optional = true }
+
+# Crate workspace — ETW event collector (etw feature)
+input-windows-etw = { path = "../crates/input-windows-etw", optional = true }
 
 # Crate workspace — SigmaHQ regression data format
 sigmacatch-regression = { path = "../crates/sigmacatch-regression" }

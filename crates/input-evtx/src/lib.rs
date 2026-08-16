@@ -13,7 +13,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use sigmacatch_types::{parse_winevt_xml_raw, Event, EventProducer};
+use sigmacatch_types::{Event, EventProducer, parse_winevt_xml_raw};
 use tokio::sync::{mpsc, watch};
 
 /// Re-export of the Winevt XML parser shared by the sigmacatch-types crate.
@@ -57,6 +57,7 @@ impl EventCollector {
                 event_json_raw,
                 event_json,
                 event_raw,
+                is_etw: false,
             };
             event.inject_logsource_fields();
             events.push(event);
@@ -74,7 +75,11 @@ impl Default for EventCollector {
 
 #[async_trait]
 impl EventProducer for EventCollector {
-    async fn run(self, tx: mpsc::Sender<Event>, stop: watch::Receiver<bool>) -> anyhow::Result<()> {
+    async fn run(
+        self: Box<Self>,
+        tx: mpsc::Sender<Event>,
+        stop: watch::Receiver<bool>,
+    ) -> anyhow::Result<()> {
         for path in &self.files {
             if *stop.borrow() {
                 break;
@@ -122,6 +127,7 @@ pub fn parse_evtx_bytes(data: &[u8]) -> Result<Vec<Event>> {
             event_json_raw,
             event_json,
             event_raw,
+            is_etw: false,
         };
         event.inject_logsource_fields();
         events.push(event);

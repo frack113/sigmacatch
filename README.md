@@ -16,7 +16,7 @@ Load rules → skip existing regression → filter Windows → apply pipeline
     ↓
 Resolve channels from rules (logsource → channel mapping)
     ↓
-Continuous collector (live Windows events via EvtQueryW) → mpsc
+Continuous collector → mpsc (bin `sigmacatch-channel`: EvtQueryW; bin `sigmacatch-etw`: ETW via ferrisetw)
     ↓
 Sigma engine evaluates every event against all loaded rules
     ↓
@@ -34,7 +34,7 @@ commit + push to fork (continuous until Ctrl+C)
 
 ```bash
 cargo build --release
-./target/release/sigmacatch
+./target/release/sigmacatch-channel
 ```
 
 On first run, a `config.yaml` is created with defaults:
@@ -48,7 +48,7 @@ git:
   ssh_key_path: ""          # path to SSH private key (optional, only needed for SSH)
   sigma_repo_url: "https://github.com/SigmaHQ/sigma.git"
   sigma_repo_path: "sigma"
-  offline: false            # true = skip pull at startup (use existing repo as-is)
+  offline: false            # true = zero git operations (no pull/clone/commit/push; on-disk files used as-is, .git optional)
   contrib: true             # true = push commits to remote fork. Default: false (local commits only)
 log:
   level_file: "debug"
@@ -58,12 +58,14 @@ filter:
   min_level: "critical"     # load rules with level >= this threshold
   author: ""                # filter rules by author (optional, empty = no filter)
   max_rule_size: 1048576    # bytes (1MB default)
+regression:
+  max_failed_cycles: 3      # block a rule (no more re-capture) after N consecutive EVTX failure cycles
 ```
 
 Rules below the configured `min_status` / `min_level` thresholds are skipped at load time.
 Rules missing a `status` or `level` field are always accepted.
 
-**Contrib is opt-in** (`git.contrib: true` or `--contrib`): pushes regression commits to your fork. By default (`false`) commits stay local. The GitHub token is only required when a network operation is active (`offline: false` or `contrib: true`).
+**Contrib is opt-in** (`git.contrib: true` or `--contrib`): pushes regression commits to your fork. By default (`false`) commits stay local. The GitHub token is only required when a network operation is active (`offline: false` or `contrib: true`). **`offline: true` neutralizes `contrib`** (forced to `false`, `warn!`): no push in offline mode.
 
 ### CLI flags
 
@@ -72,7 +74,7 @@ Rules missing a `status` or `level` field are always accepted.
 | `--author <name>` | Override detected username |
 | `-a`, `--all-rules` | Load all rules — skip set is disabled |
 | `-c`, `--contrib` | Enable push to the remote fork for this run |
-| `-o`, `--offline` | Skip pull at startup (use existing repo as-is) |
+| `-o`, `--offline` | Skip all git operations (use on-disk files as-is; no commit/push) |
 | `-v`, `--verbose` | Show info-level logs on stderr (default: errors only) |
 | `--help`, `-h` | Print help and exit |
 
@@ -129,17 +131,19 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 
 ## Workspace
 
-The project is a cargo workspace of 11 crates (9 libraries + 2 binary crates):
+The project is a cargo workspace of 13 crates (11 libraries + 2 binary crates):
 
 | Crate | Purpose |
 |---|---|
-| `sigmacatch` | Binary + orchestration (continuous loop) |
+| `sigmacatch` | Lib + 2 binaries (`sigmacatch-channel` winevt, `sigmacatch-etw`) + shared runner (continuous loop) |
 | `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml + dry-run git diagnostics |
 | `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug) |
 | `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication, channel resolution |
 | `sigmacatch-detection` | Thin wrapper around rsigma-eval (pipelines, bloom, LogSourceExtractor) |
-| `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) |
+| `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) — bin `sigmacatch-channel` |
+| `input-windows-etw` | Direct ETW collector via ferrisetw (18 providers, provider→channel routing) — bin `sigmacatch-etw` |
 | `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, regression triplet generation |
+| `sigmacatch-evtx-writer` | Pure Rust EVTX writer + re-parse validation |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
 | `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, GitHub fork detection, commit workflow |
 | `input-evtx` | Parse EVTX files into `Event` objects for the detection engine |

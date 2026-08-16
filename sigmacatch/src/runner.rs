@@ -1,21 +1,43 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+
 use anyhow::Result;
-use sigmacatch_config::{self, parse_args, Config};
+use sigmacatch_config::{self, Config, parse_args};
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_logger::init as init_logger;
 use sigmacatch_regression::SigmahqRegression;
 use sigmacatch_repo::SigmaRepo;
 use sigmacatch_rule::SigmahqRules;
-
 use sigmacatch_types::{Event, EventProducer};
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
 use tokio::signal;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 use uuid::Uuid;
+
+type EvtxWriteFn = Box<dyn Fn(&str, &str, Option<u64>, bool, &Path) -> anyhow::Result<()>>;
+
+/// Collector-specific behaviour injected by each binary.
+pub trait CollectorKind {
+    /// Binary name used in log messages.
+    fn name(&self) -> &'static str;
+
+    /// Short description of the collection mode (startup log).
+    fn mode(&self) -> &'static str;
+
+    /// Channels to collect, or `None` when the collector does not need channel
+    /// resolution (ETW). `Some(empty)` means nothing to collect (early exit).
+    fn channels(
+        &self,
+        engine: &DetectionEngine,
+        custom_map: &HashMap<String, String>,
+    ) -> Option<Vec<String>>;
+
+    /// Build the collector for the resolved channels.
+    fn build(&self, channels: &[String]) -> Box<dyn EventProducer>;
+}
 
 #[cfg(windows)]
 fn setup_console() {
@@ -32,8 +54,8 @@ fn setup_console() {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// Run the sigmacatch pipeline with the given collector.
+pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     let cli = parse_args();
 
     let config_path = PathBuf::from("config.yaml");
@@ -55,8 +77,10 @@ async fn main() -> Result<()> {
     );
 
     info!(
-        "Sigmacatch started for {} <{}>",
-        config.git.author, config.git.email
+        "{} started for {} <{}>",
+        kind.name(),
+        config.git.author,
+        config.git.email
     );
     let branch_name = format!("sigmacatch/{}", chrono::Local::now().format("%Y%m%d"));
     info!("Branch name: {branch_name}");
@@ -74,11 +98,11 @@ async fn main() -> Result<()> {
         }
     };
 
-    if matches!(config.git.transport, sigmacatch_config::GitTransport::Ssh) {
-        if let Err(e) = sigmacatch_repo::ensure_ssh_host_config(config.git.ssh_key_path.as_deref())
-        {
-            warn!("Failed to write SSH host-config: {e}");
-        }
+    if matches!(config.git.transport, sigmacatch_config::GitTransport::Ssh)
+        && config.git.needs_network()
+        && let Err(e) = sigmacatch_repo::ensure_ssh_host_config(config.git.ssh_key_path.as_deref())
+    {
+        warn!("Failed to write SSH host-config: {e}");
     }
 
     if let Some(ref key_path) = config.git.ssh_key_path {
@@ -88,7 +112,9 @@ async fn main() -> Result<()> {
     sigma_repo.set_git_operations(config.git.is_offline(), config.git.is_contrib());
 
     if config.git.is_offline() {
-        info!("Offline mode: pull disabled — using existing repository");
+        info!(
+            "Offline mode: all git operations skipped — on-disk files used as-is (no commit/push)"
+        );
     }
     if config.git.is_contrib() {
         info!("Contrib mode: push enabled — will push to remote fork");
@@ -105,6 +131,9 @@ async fn main() -> Result<()> {
         Err(e) => anyhow::bail!("Failed to load regression data: {e}"),
     };
     regression.set_author(config.git.author.clone());
+    regression.set_max_failed_cycles(config.regression.max_failed_cycles);
+
+    let write_fn: EvtxWriteFn = Box::new(sigmacatch_regression::write_evtx);
 
     let existing_rules: HashSet<Uuid> = if cli.all_rules {
         HashSet::new()
@@ -116,25 +145,24 @@ async fn main() -> Result<()> {
                 existing.len()
             );
         }
-        // Union with rules committed on pending `sigmacatch/*` PR branches
-        // (not yet merged into main): a fresh VM only sees main, so without
-        // this scan an open PR's rules would be re-captured and duplicated.
-        match sigma_repo.pending_regression_rule_ids() {
-            Ok(pending) => {
-                if !pending.is_empty() {
-                    let before = existing.len();
-                    existing.extend(pending);
-                    info!(
-                        "{} rules with regression data on pending sigmacatch/* branches (skipped)",
-                        existing.len() - before
+        if !config.git.is_offline() {
+            match sigma_repo.pending_regression_rule_ids() {
+                Ok(pending) => {
+                    if !pending.is_empty() {
+                        let before = existing.len();
+                        existing.extend(pending);
+                        info!(
+                            "{} rules with regression data on pending sigmacatch/* branches (skipped)",
+                            existing.len() - before
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to scan pending sigmacatch/* branches for existing regression data: {}",
+                        e
                     );
                 }
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to scan pending sigmacatch/* branches for existing regression data: {}",
-                    e
-                );
             }
         }
         existing
@@ -175,12 +203,16 @@ async fn main() -> Result<()> {
         PathBuf::from("custom_channels.yaml").as_path(),
     );
     let mut engine = DetectionEngine::new(&rules)?;
-    let cycle_channels = engine.resolve_channels(&custom_map);
-
-    if cycle_channels.is_empty() {
-        warn!("0 channels resolved — nothing to collect");
-        return Ok(());
-    }
+    let cycle_channels = match kind.channels(&engine, &custom_map) {
+        Some(channels) => {
+            if channels.is_empty() {
+                warn!("0 channels resolved — nothing to collect");
+                return Ok(());
+            }
+            channels
+        }
+        None => Vec::new(),
+    };
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
     let stx = shutdown_tx.clone();
@@ -200,20 +232,25 @@ async fn main() -> Result<()> {
     sigmacatch_regression::clean_partial_artifacts(&output_base);
 
     let (tx, mut rx) = mpsc::channel::<Event>(100_000);
-    let producer_channels = cycle_channels.clone();
     let collector_stop = shutdown_rx.clone();
+    let collector = kind.build(&cycle_channels);
+    // Keep a clone of the sender in the main task so we can drop it
+    // after the loop breaks, forcing the channel to close once the
+    // collector finishes.
+    let main_tx = tx.clone();
     let collector_handle = tokio::spawn(async move {
-        let collector = input_windows_channels::EventCollector::new(producer_channels);
         if let Err(e) = collector.run(tx, collector_stop).await {
             warn!("Collector finished with error: {}", e);
         }
     });
-    info!("Continuous collector started");
+    info!("Continuous collector started ({})", kind.mode());
 
     let mut generate_interval = tokio::time::interval(std::time::Duration::from_secs(30));
     generate_interval.tick().await; // skip immediate first tick
 
     let mut branch_pushed = false;
+    let max_runs = cli.max_runs;
+    let mut runs_completed: u32 = 0;
 
     loop {
         tokio::select! {
@@ -225,44 +262,73 @@ async fn main() -> Result<()> {
                 engine.put_events(vec![event]);
             }
             _ = generate_interval.tick() => {
-                let batches = process_and_generate(&mut engine, &mut rules, &mut regression);
+                let batches = process_and_generate(&mut engine, &mut rules, &mut regression, &write_fn);
+                runs_completed += 1;
+                info!("Cycle {} completed", runs_completed);
 
                 if !batches.is_empty() {
                     upload_regression(&sigma_repo, batches, &mut branch_pushed, &push_branch);
                 }
+
+                if let Some(limit) = max_runs
+                    && runs_completed >= limit {
+                        info!("Reached max-runs limit ({}), shutting down", limit);
+                        let _ = shutdown_tx.send(true);
+                        break;
+                    }
             }
         }
     }
 
-    // Signal the collector to stop and wait for it to exit (dropping its Sender
-    // clones), then drain the remaining events. Draining before the collector
-    // exits would never terminate: it only stops when the receiver is dropped,
-    // and the receiver is needed for the drain.
     info!("Final flush — draining remaining events");
-    let collector_stop = std::time::Duration::from_secs(30);
-    match tokio::time::timeout(collector_stop, collector_handle).await {
+    let collector_stop = std::time::Duration::from_secs(10);
+    let collector_abort = collector_handle.abort_handle();
+    match tokio::time::timeout(collector_stop, async {
+        // Drop the sender reference held by the main task so the channel
+        // closes as soon as the collector stops — this lets the drain
+        // complete immediately instead of waiting for the 5s timeout.
+        drop(main_tx);
+        collector_handle.await
+    })
+    .await
+    {
         Ok(join_result) => {
             if let Err(e) = join_result {
                 warn!("Collector task join error: {}", e);
             }
         }
-        Err(_) => warn!(
-            "Collector did not stop within {:?} — forcing shutdown",
-            collector_stop
-        ),
+        Err(_) => {
+            warn!(
+                "Collector did not stop within {:?} — aborting",
+                collector_stop
+            );
+            collector_abort.abort();
+        }
     }
-    while let Some(event) = rx.recv().await {
-        engine.put_events(vec![event]);
+    let drain_stop = std::time::Duration::from_secs(5);
+    match tokio::time::timeout(drain_stop, async {
+        while let Some(event) = rx.recv().await {
+            engine.put_events(vec![event]);
+        }
+    })
+    .await
+    {
+        Ok(()) => {}
+        Err(_) => {
+            warn!(
+                "Event drain timed out — dropping {} buffered events",
+                rx.len()
+            );
+        }
     }
     drop(rx);
 
-    let batches = process_and_generate(&mut engine, &mut rules, &mut regression);
-
+    let batches = process_and_generate(&mut engine, &mut rules, &mut regression, &write_fn);
     if !batches.is_empty() {
         upload_regression(&sigma_repo, batches, &mut branch_pushed, &push_branch);
     }
 
-    info!("Sigmacatch finished");
+    info!("{} finished", kind.name());
     Ok(())
 }
 
@@ -292,17 +358,23 @@ fn upload_regression(
     }
 }
 
-fn process_and_generate(
+fn process_and_generate<F>(
     engine: &mut DetectionEngine,
     rules: &mut SigmahqRules,
     regression: &mut SigmahqRegression,
-) -> Vec<(Uuid, Vec<String>)> {
+    write_fn: F,
+) -> Vec<(Uuid, Vec<String>)>
+where
+    F: Fn(&str, &str, Option<u64>, bool, &Path) -> anyhow::Result<()>,
+{
     engine.process_events();
     let alerts = engine.get_alerts();
 
     if alerts.is_empty() {
         return Vec::new();
     }
+
+    regression.begin_cycle();
 
     let unique_match_count = {
         let ids: std::collections::HashSet<&Uuid> = alerts.iter().map(|a| &a.rule_id).collect();
@@ -319,17 +391,14 @@ fn process_and_generate(
     let mut batches: Vec<(Uuid, Vec<String>)> = Vec::new();
     let mut retired_ids: Vec<Uuid> = Vec::new();
     for alert in alerts {
-        if let Some(files) = regression.add(&alert) {
-            // AD-4: retire the rule once its data is generated. `add()` returns
-            // None for an already-retired/existing rule, so each rule_id appears
-            // at most once per batch.
+        if let Some(files) = regression.add(&alert, &write_fn) {
             retired_ids.push(alert.rule_id);
             batches.push((alert.rule_id, files));
         }
     }
 
-    // AD-4: exclude retired rules and reload the engine once per batch to
-    // avoid a full recompile per alert.
+    retired_ids.extend(regression.take_blocked());
+
     if !retired_ids.is_empty() {
         for id in &retired_ids {
             rules.remove_id(id);

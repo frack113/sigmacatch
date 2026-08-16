@@ -3,7 +3,7 @@
 
 //! Sigma rule management: loading, filtering, discovering, AST indexing.
 
-pub use rsigma_parser::{parse_sigma_yaml, Level, LogSource, SigmaCollection, SigmaRule, Status};
+pub use rsigma_parser::{Level, LogSource, SigmaCollection, SigmaRule, Status, parse_sigma_yaml};
 
 pub use crate::attack::SigmaRuleExt;
 pub(crate) use crate::discover::find_rules_dirs;
@@ -94,37 +94,38 @@ impl SigmahqRules {
                 for entry in std::fs::read_dir(&current)?.flatten() {
                     let path = entry.path();
                     if path.is_file() {
-                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                            if ext == "yml" || ext == "yaml" {
-                                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                                    if name == "index.yml" {
-                                        continue;
-                                    }
-                                }
-                                if let Ok(content) = std::fs::read_to_string(&path) {
-                                    if let Ok(parsed) = parse_sigma_yaml(&content) {
-                                        for rule in parsed.rules {
-                                            let id = rule.id.clone().unwrap_or_else(|| {
-                                                format!("no-id-{}", path.display())
-                                            });
-                                            if seen_ids.insert(id.clone()) {
-                                                if let Ok(uuid) = Uuid::parse_str(&id) {
-                                                    set.rule_paths.insert(uuid, path.clone());
-                                                }
-                                                set.rules.push(rule);
-                                            } else {
-                                                skipped_dupes += 1;
-                                                tracing::debug!(
-                                                    "Skipping duplicate rule id={id} from {path:?}"
-                                                );
+                        if let Some(ext) = path.extension().and_then(|e| e.to_str())
+                            && (ext == "yml" || ext == "yaml")
+                        {
+                            if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                                && name == "index.yml"
+                            {
+                                continue;
+                            }
+                            if let Ok(content) = std::fs::read_to_string(&path) {
+                                if let Ok(parsed) = parse_sigma_yaml(&content) {
+                                    for rule in parsed.rules {
+                                        let id = rule
+                                            .id
+                                            .clone()
+                                            .unwrap_or_else(|| format!("no-id-{}", path.display()));
+                                        if seen_ids.insert(id.clone()) {
+                                            if let Ok(uuid) = Uuid::parse_str(&id) {
+                                                set.rule_paths.insert(uuid, path.clone());
                                             }
+                                            set.rules.push(rule);
+                                        } else {
+                                            skipped_dupes += 1;
+                                            tracing::debug!(
+                                                "Skipping duplicate rule id={id} from {path:?}"
+                                            );
                                         }
-                                    } else {
-                                        skipped_parse_errors += 1;
-                                        tracing::warn!(
-                                            "Failed to parse Sigma rule at {path:?} — skipping"
-                                        );
                                     }
+                                } else {
+                                    skipped_parse_errors += 1;
+                                    tracing::warn!(
+                                        "Failed to parse Sigma rule at {path:?} — skipping"
+                                    );
                                 }
                             }
                         }

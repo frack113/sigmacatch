@@ -40,7 +40,7 @@ impl SigmaRuleExt for SigmaRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rsigma_parser::{parse_sigma_yaml, SigmaCollection};
+    use rsigma_parser::{SigmaCollection, parse_sigma_yaml};
 
     const RULE: &str = r#"title: Test Rule
 id: 11111111-1111-1111-1111-111111111111

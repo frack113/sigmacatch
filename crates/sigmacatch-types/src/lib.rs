@@ -64,6 +64,9 @@ pub struct Event {
     /// Used by the detection engine — makes field paths easier in Sigma rules.
     pub event_json: Value,
     pub event_raw: Vec<u8>,
+    /// True when this event was synthesized from ETW raw data rather than
+    /// re-exported from the live Event Log. Affects EVTX generation.
+    pub is_etw: bool,
 }
 
 impl Event {
@@ -72,6 +75,7 @@ impl Event {
             event_json_raw,
             event_json,
             event_raw,
+            is_etw: false,
         }
     }
 
@@ -85,6 +89,7 @@ impl Event {
             event_json_raw: json_raw,
             event_json: json,
             event_raw: raw,
+            is_etw: false,
         })
     }
 
@@ -182,7 +187,7 @@ impl Event {
 // ─── LogSource mapping tables ───────────────────────────────────────────────
 
 /// Channel → Sigma service name.
-static CHANNEL_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_map! {
+pub static CHANNEL_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_map! {
     "Application" => "application",
     "System" => "system",
     "Security" => "security",
@@ -237,6 +242,19 @@ static CHANNEL_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_map! 
     "PowerShellCore/Operational" => "powershell",
     "Microsoft-Windows-TaskScheduler/Operational" => "taskscheduler",
     "Microsoft-Windows-WMI-Activity/Operational" => "wmi",
+    // Dedicated channels for unmapped ETW events of Sysmon-masquerade providers
+    // (mapper::unmapped_channel_for_masquerade). Service `etw` gives them a real
+    // logsource so they are never evaluated fail-open against every rule.
+    "sigmacatch/etw-kernel-process" => "etw",
+    "sigmacatch/etw-kernel-file" => "etw",
+    "sigmacatch/etw-kernel-network" => "etw",
+    "sigmacatch/etw-kernel-registry" => "etw",
+    "sigmacatch/etw-dns-client" => "etw",
+    "sigmacatch/etw-powershell" => "etw",
+    "sigmacatch/etw-wmi-activity" => "etw",
+    "sigmacatch/etw-service-control-manager" => "etw",
+    "sigmacatch/etw-task-scheduler" => "etw",
+    "sigmacatch/etw-unmapped" => "etw",
 };
 
 /// Channel:EventID → Sigma category.
@@ -301,6 +319,8 @@ static PROVIDER_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_map!
     "Microsoft-Windows-Kernel-Registry" => "registry",
     "Microsoft-Windows-DNS-Client" => "dns",
     "Microsoft-Windows-SmbClient" => "smbclient",
+    "Microsoft-Windows-WMI-Activity" => "wmi",
+    "Microsoft-Windows-TaskScheduler" => "taskscheduler",
 };
 
 /// Resolve category from channel + event_id (subcategory overrides take precedence).
@@ -548,13 +568,14 @@ fn node_to_value(node: Node, _is_root: bool) -> Value {
 
     let attrs: Vec<_> = node.attributes().filter(|a| a.name() != "xmlns").collect();
 
-    if child_elements.is_empty() && attrs.is_empty() {
-        if let Some(t) = text {
-            if let Ok(n) = t.parse::<u64>() {
-                return Value::Number(n.into());
-            }
-            return Value::String(t);
+    if child_elements.is_empty()
+        && attrs.is_empty()
+        && let Some(t) = text
+    {
+        if let Ok(n) = t.parse::<u64>() {
+            return Value::Number(n.into());
         }
+        return Value::String(t);
     }
 
     if child_elements.is_empty() && !attrs.is_empty() && text.is_none() {
@@ -589,10 +610,10 @@ fn node_to_value(node: Node, _is_root: bool) -> Value {
         map.insert(child_name, child_value);
     }
 
-    if let Some(t) = text {
-        if !map.contains_key("#text") {
-            map.insert("#text".into(), Value::String(t));
-        }
+    if let Some(t) = text
+        && !map.contains_key("#text")
+    {
+        map.insert("#text".into(), Value::String(t));
     }
 
     Value::Object(map)
@@ -633,13 +654,14 @@ fn node_to_value_raw(node: Node, _is_root: bool) -> Value {
 
     let attrs: Vec<(String, String)> = collect_element_attrs(node);
 
-    if child_elements.is_empty() && attrs.is_empty() {
-        if let Some(t) = text {
-            if let Some(n) = maybe_number(&t) {
-                return n;
-            }
-            return Value::String(t);
+    if child_elements.is_empty()
+        && attrs.is_empty()
+        && let Some(t) = text
+    {
+        if let Some(n) = maybe_number(&t) {
+            return n;
         }
+        return Value::String(t);
     }
 
     if child_elements.is_empty() && !attrs.is_empty() && text.is_none() {
@@ -674,10 +696,10 @@ fn node_to_value_raw(node: Node, _is_root: bool) -> Value {
         map.insert(child_name, child_value);
     }
 
-    if let Some(t) = text {
-        if !map.contains_key("#text") {
-            map.insert("#text".into(), Value::String(t));
-        }
+    if let Some(t) = text
+        && !map.contains_key("#text")
+    {
+        map.insert("#text".into(), Value::String(t));
     }
 
     Value::Object(map)
@@ -761,6 +783,8 @@ pub struct Alert {
     /// Used by the detection engine.
     pub event_json: Value,
     pub event_raw: Vec<u8>,
+    /// True when this alert came from an ETW-synthesized event.
+    pub is_etw: bool,
 }
 
 impl Alert {
@@ -840,7 +864,7 @@ pub trait EventProducer: Send {
     /// Run the producer, sending collected events into `tx`.
     /// Stops when `stop` is set to `true` or when the receiver is dropped.
     async fn run(
-        self,
+        self: Box<Self>,
         tx: mpsc::Sender<Event>,
         stop: tokio::sync::watch::Receiver<bool>,
     ) -> anyhow::Result<()>;
@@ -1008,10 +1032,12 @@ mod tests {
             <System><EventID>1</EventID></System>
         </Event>"#;
         let result = parse_winevt_xml(xml).unwrap();
-        assert!(!result["Event"]
-            .as_object()
-            .unwrap()
-            .contains_key("EventData"));
+        assert!(
+            !result["Event"]
+                .as_object()
+                .unwrap()
+                .contains_key("EventData")
+        );
     }
 
     #[test]
@@ -1533,10 +1559,12 @@ mod tests {
         </Event>"#;
 
         let result = parse_winevt_xml_raw(xml).unwrap();
-        assert!(!result["Event"]
-            .as_object()
-            .unwrap()
-            .contains_key("EventData"));
+        assert!(
+            !result["Event"]
+                .as_object()
+                .unwrap()
+                .contains_key("EventData")
+        );
     }
 
     #[test]
@@ -1574,14 +1602,19 @@ mod tests {
             event_json_raw: event.event_json_raw.clone(),
             event_json: event.event_json.clone(),
             event_raw: event.event_raw.clone(),
+            is_etw: false,
         };
 
-        assert!(alert.event_json_raw["Event"]["EventData"]["Command Line"]
-            .as_str()
-            .is_some());
-        assert!(alert.event_json["Event"]["EventData"]["CommandLine"]
-            .as_str()
-            .is_some());
+        assert!(
+            alert.event_json_raw["Event"]["EventData"]["Command Line"]
+                .as_str()
+                .is_some()
+        );
+        assert!(
+            alert.event_json["Event"]["EventData"]["CommandLine"]
+                .as_str()
+                .is_some()
+        );
     }
 
     #[test]

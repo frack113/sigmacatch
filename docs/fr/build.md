@@ -24,8 +24,20 @@ Le pipeline s'exécute toujours de bout en bout (chargement des règles, matchin
 cargo build --release
 ```
 
-Collecte Winevt complète via `EvtQueryW` → `EvtNext` → `EvtRender` sur les channels configurés.
-Nécessite les droits admin pour les channels `Security` et `System`.
+Deux binaires sont produits, chacun avec un seul collecteur (features cargo, défaut les deux) :
+
+- **`sigmacatch-channel`** (winevt) : API Winevt native (`EvtQueryW` → `EvtNext` → `EvtRender`) sur les channels résolus. Nécessite les droits admin pour les channels `Security` et `System`.
+- **`sigmacatch-etw`** (etw) : collecte ETW directe via ferrisetw (18 providers, routing générique provider→channel, EventID réel conservé). Pas de droits admin requis pour la plupart des providers.
+
+Builds isolés (un binaire sans l'autre collecteur linké) :
+
+```bash
+# Winevt uniquement
+cargo build --release --bin sigmacatch-channel
+
+# ETW uniquement
+cargo build --release --bin sigmacatch-etw --no-default-features --features etw
+```
 
 ## Compilation croisée Windows (depuis Linux)
 
@@ -33,11 +45,11 @@ Nécessite les droits admin pour les channels `Security` et `System`.
 cargo xwin build --release --target x86_64-pc-windows-msvc
 ```
 
-Le binaire résultant est à `target/x86_64-pc-windows-msvc/release/sigmacatch.exe`.
+Les binaires résultants sont à `target/x86_64-pc-windows-msvc/release/sigmacatch-channel.exe` et `sigmacatch-etw.exe`.
 
 ## Taille du binaire
 
-Build release optimisé : ~10MB (binaire headless unique).
+Build release optimisé : ~11MB par binaire.
 
 Profil appliqué :
 
@@ -48,7 +60,7 @@ Profil appliqué :
 
 ## Workspace
 
-Le projet est un cargo workspace de 11 packages (2 crates binaires — `sigmacatch` avec 1 binaire, `tools` avec 7 binaires — et 9 bibliothèques) :
+Le projet est un cargo workspace de 13 packages (2 crates binaires — `sigmacatch` avec 2 binaires (`sigmacatch-channel`, `sigmacatch-etw`) + 1 lib, `tools` avec 7 binaires — et 11 bibliothèques) :
 
 ```bash
 # Tout builder
@@ -61,7 +73,9 @@ cargo build -p sigmacatch-logger
 cargo build -p sigmacatch-rule
 cargo build -p sigmacatch-detection
 cargo build -p input-windows-channels
+cargo build -p input-windows-etw
 cargo build -p sigmacatch-regression
+cargo build -p sigmacatch-evtx-writer
 cargo build -p sigmacatch-types
 cargo build -p sigmacatch-repo
 cargo build -p input-evtx
@@ -72,7 +86,8 @@ cargo build -p tools
 
 | Binaire | Chemin | Description |
 |---|---|---|
-| `sigmacatch` | `sigmacatch/src/main.rs` | Capture + évaluation + génération de régression |
+| `sigmacatch-channel` | `sigmacatch/src/main_winevt.rs` | Capture Winevt (multi-channel) + évaluation + génération de régression |
+| `sigmacatch-etw` | `sigmacatch/src/main_etw.rs` | Capture ETW (ferrisetw) + évaluation + génération de régression |
 | `check_dry_run` | `tools/src/check_dry_run.rs` | Diagnostics git (token, fork, API, info/refs, état repo) |
 | `check_channels` | `tools/src/check_channels.rs` | Résout et liste les channels Windows collectés |
 | `list_rules` | `tools/src/list_rules.rs` | Liste les règles chargées (techniques, lien ART) |
@@ -81,5 +96,5 @@ cargo build -p tools
 | `get_atomic` | `tools/src/get_atomic.rs` | Génère `run_atomic.ps` (chaîne `Invoke-AtomicTest`) pour les règles sans regression data |
 | `coverage` | `tools/src/coverage.rs` | Statistiques de couverture des règles (locales + branches remote en attente) |
 
-Tailles constatées (cross x86_64-pc-windows-msvc, release) : `sigmacatch.exe` ~10.4 MB,
-`check_evtx.exe` ~4.0 MB, `check_filter.exe` ~0.9 MB.
+Tailles constatées (cross x86_64-pc-windows-msvc, release) : `sigmacatch-channel.exe` ~10.4 MB,
+`sigmacatch-etw.exe` ~11 MB, `check_evtx.exe` ~4.0 MB, `check_filter.exe` ~0.9 MB.

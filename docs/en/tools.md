@@ -1,7 +1,7 @@
 # Tools
 
 Dev tools in the `tools` crate, each with its own purpose. They stay out of the
-main `sigmacatch` binary so its dependency tree stays lean.
+main `sigmacatch-channel` binary so its dependency tree stays lean.
 
 ## check_evtx
 
@@ -176,7 +176,7 @@ cargo run --release --bin check_filter
 
 **Usage:** `cargo run --release --bin check_dry_run [--json]`
 
-**Purpose:** git diagnostics of the former `--dry-run` sigmacatch flag (moved here to keep the
+**Purpose:** git diagnostics of the former `--dry-run` sigmacatch-channel flag (moved here to keep the
 main binary lean). Reuses `Config::load_with_cli` + `dry_run_git` from `sigmacatch-config`.
 Accepts the same flags as the main binary (`--author`, `-o`/`--offline`,
 `-c`/`--contrib`, `--help`).
@@ -197,7 +197,7 @@ Accepts the same flags as the main binary (`--author`, `-o`/`--offline`,
 **Usage:** `cargo run --release --bin check_channels [--json]`
 
 **Purpose:** resolves and lists the Windows channels the engine would collect (former
-`--channels-only` sigmacatch flag, moved here).
+`--channels-only` sigmacatch-channel flag, moved here).
 
 ### Pipeline
 
@@ -214,7 +214,7 @@ Accepts the same flags as the main binary (`--author`, `-o`/`--offline`,
 
 **Usage:** `cargo run --release --bin list_rules [--json]`
 
-**Purpose:** lists the loaded rules with their path (former `--list-rules` sigmacatch flag,
+**Purpose:** lists the loaded rules with their path (former `--list-rules` sigmacatch-channel flag,
 moved here).
 
 ### Pipeline
@@ -235,7 +235,7 @@ moved here).
 **Purpose:** generates a `run_atomic.ps1` script chaining `Invoke-AtomicTest
 T1xxx.xxx` commands for the ATT&CK techniques of rules **without regression
 data** according to the config filter. The script is copied to the Windows VM
-and run manually; sigmacatch (continuous loop) captures the generated events
+and run manually; sigmacatch-channel (continuous loop) captures the generated events
 and produces the regression data.
 
 ### Pipeline
@@ -262,7 +262,7 @@ Invoke-AtomicTest T1547.001 -TimeoutSeconds 120
 ...
 ```
 
-- `Start-Sleep 30` between tests → lets sigmacatch collect the events
+- `Start-Sleep 30` between tests → lets sigmacatch-channel collect the events
 - `-TimeoutSeconds 120` → prevents a blocking test from freezing the chain
 - Rules without an `attack.*` tag are counted and listed in the report (no
   `Invoke-AtomicTest` generated for them)

@@ -22,7 +22,7 @@ Based on the remote ref if present (else HEAD) to keep fast-forward. The narrow 
 
 ### Multi-branch skip set (pending PRs)
 
-`pending_regression_rule_ids()` (`SigmaRepo`) scans the trees of ALL remote `sigmacatch/*` branches (never a checkout — `list_refs` + in-RAM walk of `regression_data/`, ids extracted from `<uuid>.<ext>` filenames). Union with the worktree → a fresh VM does not re-capture data from a still-open PR of another day; the new PR diff stays based on main (previous PR data never included). `<uuid>.evtx` blobs are validated (parse ≥ 1 record): an empty/corrupt EVTX — **or one > 64 MiB** (`MAX_EVTX_BLOB_SIZE`) — excludes the rule from the skip set (self-healing of empty commits, bounded RAM). Offline = best-effort (already-fetched refs only).
+`pending_regression_rule_ids()` (`SigmaRepo`) scans the trees of ALL remote `sigmacatch/*` branches (never a checkout — `list_refs` + in-RAM walk of `regression_data/`, ids extracted from `<uuid>.<ext>` filenames). Union with the worktree → a fresh VM does not re-capture data from a still-open PR of another day; the new PR diff stays based on main (previous PR data never included). `<uuid>.evtx` blobs are validated (parse ≥ 1 record): an empty/corrupt EVTX — **or one > 64 MiB** (`MAX_EVTX_BLOB_SIZE`) — excludes the rule from the skip set (self-healing of empty commits, bounded RAM). Offline mode: the scan is skipped entirely (no local refs read) — the skip set is built from the on-disk worktree only.
 
 ### Remote working-branch guard
 
@@ -30,11 +30,15 @@ Based on the remote ref if present (else HEAD) to keep fast-forward. The narrow 
 
 ### Worktree = exact mirror of the commit
 
-`checkout_main_branch` (`plumbing/checkout.rs`) deletes any file absent from the tree (`.git` never touched) → deterministic skip set at startup (leftovers from a failed push do not pollute).
+`checkout_main_branch` (`plumbing/checkout.rs`) deletes any file absent from the tree (`.git` never touched) → deterministic skip set at startup (leftovers from a failed push do not pollute). **Offline mode**: all git operations are no-ops (`init`, working branch, checkout, commit, push) — on-disk files are left untouched, a `.git` is not even required (extracted sigma zip), and local edits/deletions made for testing survive the restart.
 
 ### Complete grit clone = loose objects
 
-`is_repo_complete` accepts a repo as soon as HEAD resolves to a readable commit in the ODB (no `objects/pack`/`packed-refs` required); unreadable repo → deleted + re-cloned.
+`is_repo_complete` accepts a repo as soon as HEAD resolves to a readable commit in the ODB (no `objects/pack`/`packed-refs` required); unreadable repo → deleted + re-cloned (online only — offline uses the repo as-is without any check).
+
+### Non-destructive pull failure
+
+`pull()` (`plumbing/fetch.rs`) now returns a clear `Err` with context (`with_context`) if `.git/config` reading or the SSH/HTTP fetch fails — the repo is left **as-is** (no `remove_dir_all`, no re-clone). The error includes the repo path, the exact cause (e.g. missing config, invalid SSH key), and suggests offline mode as an alternative. At startup, `is_repo_complete` keeps its existing behavior (unreadable repo → deleted + re-cloned).
 
 ### Pack after each clone/fetch
 
@@ -42,8 +46,8 @@ Based on the remote ref if present (else HEAD) to keep fast-forward. The narrow 
 
 ## Git configuration
 
-`git.contrib` is opt-in: `true` (or `--contrib`) enables pushing to the fork; `false` (default) = local commits only, no push. `needs_network()` = `!offline || contrib` — a GitHub token is required only when a network operation (pull or push) is active.
+`git.contrib` is opt-in: `true` (or `--contrib`) enables pushing to the fork; `false` (default) = local commits only, no push. `needs_network()` = `!offline || contrib` — a GitHub token is required only when a network operation (pull or push) is active. **`offline: true` neutralizes `contrib`** (forced to `false`, `warn!`): no push will ever be attempted in offline mode.
 
-**SSH transport**: `git.transport: ssh` + `ssh_key_path` (ed25519 key). `ensure_ssh_host_config()` writes the `IdentityFile`/`UserKnownHostsFile` directives into `~/.ssh/config` before transport ops (idempotent, **atomic write** tmp + rename to avoid a partial file); on Windows, `ssh` is resolved via Windows OpenSSH / Git for Windows and executed directly (`SshCommand::Program`). When `ssh_key_path` is set, every regression commit is signed with pure-Rust ed25519 (`ssh-key`, `gpgsig` header like `git commit -S` + `gpg.format = ssh`) → GitHub shows "Verified". **SSH pull failure = abort** (no HTTPS fallback): if the `ssh` binary is missing (Windows without Git for Windows) or the key is invalid, the error message says so explicitly and points to `transport: http` — retry is HTTP-only when the config uses HTTP.
+**SSH transport**: `git.transport: ssh` + `ssh_key_path` (ed25519 key). `ensure_ssh_host_config()` writes the `IdentityFile`/`UserKnownHostsFile` directives into `~/.ssh/config` before transport ops (idempotent, **atomic write** tmp + rename to avoid a partial file; skipped in offline mode); on Windows, `ssh` is resolved via Windows OpenSSH / Git for Windows and executed directly (`SshCommand::Program`). When `ssh_key_path` is set, every regression commit is signed with pure-Rust ed25519 (`ssh-key`, `gpgsig` header like `git commit -S` + `gpg.format = ssh`) → GitHub shows "Verified". **SSH pull failure = abort** (no HTTPS fallback): if the `ssh` binary is missing (Windows without Git for Windows) or the key is invalid, the error message says so explicitly and points to `transport: http` — retry is HTTP-only when the config uses HTTP.
 
 See `config.yaml` and the general invariants in [`architecture-reference.md`](architecture-reference.md) for the full configuration.

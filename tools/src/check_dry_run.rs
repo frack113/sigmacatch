@@ -13,7 +13,7 @@
 //!   cargo run --release --bin check_dry_run -- --author someuser --json
 
 use anyhow::Result;
-use sigmacatch_config::{dry_run_git, parse_args, Config};
+use sigmacatch_config::{Config, dry_run_git, parse_args};
 use std::path::PathBuf;
 
 #[tokio::main]

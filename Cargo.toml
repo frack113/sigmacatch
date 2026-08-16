@@ -12,10 +12,17 @@ members = [
     "crates/sigmacatch-logger",
     "crates/input-evtx",
     "crates/input-windows-channels",
+    "crates/input-windows-etw",
+    "crates/sigmacatch-evtx-writer",
     "crates/sigmacatch-rule",
     "crates/sigmacatch-repo",
     "tools",
 ]
+
+[workspace.package]
+version = "0.4.0"
+edition = "2024"
+license = "MIT"
 
 [profile.release]
 strip = true
