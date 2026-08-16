@@ -36,6 +36,10 @@ Basée sur la remote ref si présente (sinon HEAD) pour garder le fast-forward. 
 
 `is_repo_complete` accepte un repo dès que HEAD résout vers un commit lisible dans l'ODB (pas de `objects/pack`/`packed-refs` requis) ; repo illisible → supprimé + re-cloné (online uniquement — en offline le repo est utilisé tel quel sans vérification).
 
+### Échec de pull non destructif
+
+`pull()` (`plumbing/fetch.rs`) retourne désormais une `Err` claire avec le contexte (`with_context`) si la lecture de `.git/config` ou le fetch SSH/HTTP échoue — le repo est laissé **tel quel** (pas de `remove_dir_all`, pas de re-clone). L'erreur mentionne le chemin du repo, la cause exacte (ex: config manquant, clé SSH invalide) et suggère le mode offline comme alternative. En startup, `is_repo_complete` conserve son comportement existant (repo illisible → supprimé + re-cloné).
+
 ### Pack après chaque clone/fetch
 
 `pack_loose_objects()` (`plumbing/pack.rs`) consolide les ~131K fichiers loose (~650 MB) en un pack V2 (zlib, pas de delta, rayon) → `.git/` ~218 MB (3x), `fsck` propre, ODB lisible loose ou pack.
