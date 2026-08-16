@@ -253,7 +253,6 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     let mut branch_pushed = false;
     let max_runs = cli.max_runs;
     let mut runs_completed: u32 = 0;
-    let mut max_runs_reached = false;
 
     loop {
         tokio::select! {
@@ -269,18 +268,16 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
                 runs_completed += 1;
                 info!("Cycle {} completed", runs_completed);
 
-                if let Some(limit) = max_runs {
-                    if runs_completed >= limit {
-                        info!("Reached max-runs limit ({}), shutting down", limit);
-                        max_runs_reached = true;
-                        let _ = shutdown_tx.send(true);
-                        break;
-                    }
-                }
-
                 if !batches.is_empty() {
                     upload_regression(&sigma_repo, batches, &mut branch_pushed, &push_branch);
                 }
+
+                if let Some(limit) = max_runs
+                    && runs_completed >= limit {
+                        info!("Reached max-runs limit ({}), shutting down", limit);
+                        let _ = shutdown_tx.send(true);
+                        break;
+                    }
             }
         }
     }
@@ -328,11 +325,9 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     }
     drop(rx);
 
-    if !max_runs_reached {
-        let batches = process_and_generate(&mut engine, &mut rules, &mut regression, &write_fn);
-        if !batches.is_empty() {
-            upload_regression(&sigma_repo, batches, &mut branch_pushed, &push_branch);
-        }
+    let batches = process_and_generate(&mut engine, &mut rules, &mut regression, &write_fn);
+    if !batches.is_empty() {
+        upload_regression(&sigma_repo, batches, &mut branch_pushed, &push_branch);
     }
 
     info!("{} finished", kind.name());
