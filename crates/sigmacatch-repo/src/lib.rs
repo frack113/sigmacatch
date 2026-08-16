@@ -175,22 +175,21 @@ impl SigmaRepo {
                     .map_err(|e| anyhow::anyhow!("Pull task panicked: {}", e));
                     if let Err(ref e) = result {
                         warn!(
-                            "SSH pull failed ({}): aborting — ssh binary unavailable \
-                              (e.g. Windows without Git for Windows) or invalid key. \
-                              Switch to transport = http in config.yaml to use HTTPS.",
-                            e
+                            "SSH pull failed ({e}) — run will abort. If the ssh \
+                              binary or key is missing, switch to transport = http \
+                              in config.yaml to use HTTPS."
                         );
                     }
                     result
                 }
             };
             if let Err(e) = result? {
-                warn!(
-                    "Failed to pull Sigma repository: {}. Removing incomplete repo.",
-                    e
-                );
-                std::fs::remove_dir_all(&git_dir)?;
-                self.clone_repo().await?;
+                return Err(anyhow::anyhow!(
+                    "Failed to pull Sigma repository at {:?}: {e}. \
+                     The repository was left untouched — fix the issue \
+                     (or use offline mode to work with the on-disk files as-is).",
+                    self.repo_path
+                ));
             }
         } else {
             self.clone_repo().await?;

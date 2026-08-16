@@ -5,7 +5,7 @@
 //! and fast-forward updates — all delegated to `grit_lib::refs` (loose/packed/
 //! reftable, atomic lock writes, reflogs).
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
 use std::path::Path;
@@ -45,7 +45,13 @@ pub(crate) fn symbolic_ref_target(git_dir: &Path, refname: &str) -> Result<Optio
 /// Parse remote URL from `.git/config` for a given remote name.
 pub(crate) fn read_remote_url_from_config(git_dir: &Path, remote: &str) -> Result<String> {
     let config_path = git_dir.join("config");
-    let content = std::fs::read_to_string(&config_path)?;
+    let content = std::fs::read_to_string(&config_path).with_context(|| {
+        format!(
+            "cannot read git config at {} (expected remote '{}')",
+            config_path.display(),
+            remote
+        )
+    })?;
     let target = format!("[remote \"{}\"]", remote);
     let mut in_remote = false;
     for line in content.lines() {
@@ -134,4 +140,23 @@ pub(crate) fn fast_forward_branch(git_dir: &Path) -> Result<()> {
         &remote_oid[..12.min(remote_oid.len())]
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_remote_url_from_config;
+
+    #[test]
+    fn missing_config_yields_actionable_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = tmp.path().join(".git");
+        std::fs::create_dir_all(&git_dir).unwrap();
+
+        let err = read_remote_url_from_config(&git_dir, "origin")
+            .unwrap_err()
+            .to_string()
+            .to_lowercase();
+        assert!(err.contains("git config"), "unexpected error: {err}");
+        assert!(err.contains("origin"), "unexpected error: {err}");
+    }
 }
