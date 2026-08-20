@@ -465,6 +465,18 @@ regression_tests_info:
 - Providers inconnus → channel `sigmacatch/etw-unmapped`, EventID réel, `warn!`
 - Non-Windows : stub no-op avec `warn!`
 
+### EventCollector (`crates/input-linux-auditd/src/lib.rs`) — Auditd
+
+- Collecteur Linux auditd, implémente `EventProducer` (tail de `/var/log/audit/audit.log`)
+- `new()` ou `with_path(path)` → `run(self, tx, stop)` async ; une seule task blocking (pas de channels)
+- **Tail** : poll toutes les 100ms, lit les bytes ajoutés, parse avec `linux_audit_parser` (via `parser`)
+- **Groupement par event id** : records sharing le même `msg=audit(timestamp:sequence)` sont groupés ; chaque event porte `event_raw` = toutes les lignes originales de l'événement (requis pour le fichier `.log` de régression)
+- **Logsource** : `product: linux`, `service: auditd`, `provider: auditd` injectés via `inject_logsource_fields_for`
+- **Rotation** : détection par changement d'inode (`check_rotation`) → `reopen()` (clear group state, seek au début du nouveau fichier)
+- **EOF** : flush du groupe courant quand `pending` est vide (pas de delay inter-cycle)
+- **Fermeture gracieuse** : `flush_group` log un `warn!` et break sur channel fermé (pas de propagation d'erreur)
+- Non-Linux : stub no-op silencieux
+
 ### EVTX Writer (`sigmacatch-regression/src/evtx.rs`)
 
 - **Windows** : API `EvtExportLog` (winevt) — re-queries l'event par RecordID et exporte un `.evtx` binaire valide

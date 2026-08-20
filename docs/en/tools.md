@@ -275,6 +275,31 @@ next run (the skip set only excludes what is already generated).
 
 ---
 
+## check_auditd
+
+**File:** `tools/src/check_auditd.rs`
+
+**Usage:** `cargo run --release --bin check_auditd <audit.log> [--all-rules]`
+
+**Purpose:** Batch validation of the Sigma detection engine against auditd regression data.
+
+### Pipeline
+
+1. Loads all Sigma rules from `./sigma`, filters to `product: linux` (or `--all-rules`)
+2. Reads the audit.log file (or stdin with `-`), parses each record
+3. Evaluates the events against the detection engine
+4. Reports per-rule (id + title + alert count) + rules without match
+5. Exit 1 if no match
+
+### Example
+
+```bash
+cargo run --release --bin check_auditd /var/log/audit/audit.log
+cat /var/log/audit/audit.log | cargo run --release --bin check_auditd -
+```
+
+---
+
 ## coverage
 
 **File:** `tools/src/coverage.rs`

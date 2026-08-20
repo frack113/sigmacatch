@@ -124,9 +124,27 @@ regression_tests_path: regression_data/rules/<rule_rel_path>/info.yml
 The `type` field of `regression_tests_info` (and the reading of existing info.yml files) supports
 4 logtypes (`crates/sigmacatch-regression/src/logtype.rs`): `evtx`, `json`, `raw`, `log`
 — an unknown/missing value falls back to `json` with a `warn!`. The pipeline always writes
-`.json` + `.evtx`; a `.raw` is possible for non-Winevt data
+`.json` + `.evtx` (Windows) or `.json` + `.log` (auditd); a `.raw` is possible for non-Winevt data
 (e.g. `regression_data/rules/cisco/aaa/cisco_cli_dot1x_disabled/ef0ff092-....raw`, `type: raw`,
 generated outside the pipeline — its `regression_tests_info` section is commented out).
+
+**Auditd example (`type: log`):**
+
+```yaml
+id: 60ff02c2-a649-436c-972d-7c6fe6af8711
+description: N/A
+date: 2026-08-20
+author: frack113
+rule_metadata:
+  - id: 1543ae20-cbdf-4ec1-8d12-7664d667a825
+    title: Suspicious Commands Linux
+regression_tests_info:
+  - name: Positive Detection Test
+    type: log
+    provider: auditd
+    match_count: 1
+    path: regression_data/rules/linux/auditd/execve/lnx_auditd_susp_cmds/1543ae20-cbdf-4ec1-8d12-7664d667a825.log
+```
 
 ## Constraints
 
