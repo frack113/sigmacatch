@@ -144,18 +144,31 @@ impl Event {
     /// incompatible rules at evaluation time. Call this before sending the event
     /// to the detection engine.
     pub fn inject_logsource_fields(&mut self) {
+        self.inject_logsource_fields_for("windows", None);
+    }
+
+    /// Inject `product` (mandatory) and optional `service` into `event_json`,
+    /// resolving `category` from the event's channel like
+    /// [`inject_logsource_fields`](Self::inject_logsource_fields).
+    ///
+    /// Used by non-Windows collectors (auditd) that know their logsource
+    /// statically: `service` is passed explicitly and the channel/provider
+    /// tables are only consulted when no service is given.
+    pub fn inject_logsource_fields_for(&mut self, product: &str, service: Option<&str>) {
         let channel = self.channel().to_string();
         let provider = self.provider().to_string();
         let event_id = self.event_id();
 
-        let service = CHANNEL_TO_SERVICE
-            .get(channel.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| {
-                PROVIDER_TO_SERVICE
-                    .get(provider.as_str())
-                    .map(|s| s.to_string())
-            });
+        let service = service.map(str::to_string).or_else(|| {
+            CHANNEL_TO_SERVICE
+                .get(channel.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    PROVIDER_TO_SERVICE
+                        .get(provider.as_str())
+                        .map(|s| s.to_string())
+                })
+        });
 
         let category = get_category(&channel, event_id)
             .map(|c| {
@@ -173,7 +186,7 @@ impl Event {
             .map(str::to_string);
 
         if let Value::Object(ref mut map) = self.event_json {
-            map.insert("product".into(), Value::String("windows".into()));
+            map.insert("product".into(), Value::String(product.into()));
             if let Some(s) = service {
                 map.insert("service".into(), Value::String(s));
             }

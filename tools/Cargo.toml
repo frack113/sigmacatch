@@ -16,6 +16,10 @@ name = "check_evtx"
 path = "src/check_evtx.rs"
 
 [[bin]]
+name = "check_auditd"
+path = "src/check_auditd.rs"
+
+[[bin]]
 name = "check_dry_run"
 path = "src/check_dry_run.rs"
 
@@ -41,7 +45,9 @@ sigmacatch-rule = { path = "../crates/sigmacatch-rule" }
 sigmacatch-detection = { path = "../crates/sigmacatch-detection" }
 sigmacatch-regression = { path = "../crates/sigmacatch-regression" }
 sigmacatch-repo = { path = "../crates/sigmacatch-repo" }
+sigmacatch-types = { path = "../crates/sigmacatch-types" }
 input-evtx = { path = "../crates/input-evtx" }
+input-linux-auditd = { path = "../crates/input-linux-auditd" }
 
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 

@@ -9,9 +9,10 @@ description = "Capture real Windows events and match them against Sigma rules to
 license.workspace = true
 
 [features]
-default = ["winevt", "etw"]
+default = ["winevt", "etw", "auditd"]
 winevt = ["dep:input-windows-channels"]
 etw = ["dep:input-windows-etw"]
+auditd = ["dep:input-linux-auditd"]
 
 [[bin]]
 name = "sigmacatch-channel"
@@ -22,6 +23,11 @@ required-features = ["winevt"]
 name = "sigmacatch-etw"
 path = "src/main_etw.rs"
 required-features = ["etw"]
+
+[[bin]]
+name = "sigmacatch-auditd"
+path = "src/main_auditd.rs"
+required-features = ["auditd"]
 
 [dependencies]
 # Crate workspace — application configuration
@@ -41,6 +47,9 @@ input-windows-channels = { path = "../crates/input-windows-channels", optional =
 
 # Crate workspace — ETW event collector (etw feature)
 input-windows-etw = { path = "../crates/input-windows-etw", optional = true }
+
+# Crate workspace — Linux auditd event collector (auditd feature)
+input-linux-auditd = { path = "../crates/input-linux-auditd", optional = true }
 
 # Crate workspace — SigmaHQ regression data format
 sigmacatch-regression = { path = "../crates/sigmacatch-regression" }

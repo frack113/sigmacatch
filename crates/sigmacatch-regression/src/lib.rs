@@ -28,7 +28,7 @@ const MAX_EVTX_BLOB_SIZE: usize = 64 * 1024 * 1024;
 pub const DEFAULT_MAX_FAILED_CYCLES: u32 = 3;
 
 pub use crate::evtx::write_evtx;
-use crate::info::InfoYml;
+use crate::info::{InfoYml, TestConfig};
 use crate::logtype::LogType;
 
 /// True when the rule's committed data file is valid: `.evtx` parses with
@@ -120,6 +120,10 @@ pub struct SigmahqRegression {
     failed_this_cycle: HashSet<Uuid>,
     blocked: Vec<Uuid>,
     max_failed_cycles: u32,
+    /// Extension of the per-rule regression data file: `evtx` (Windows
+    /// Winevt/ETW, re-exported from the live log) or `log` (non-EVTX sources
+    /// like auditd, written from the event's original lines).
+    data_ext: String,
 }
 
 impl SigmahqRegression {
@@ -147,7 +151,15 @@ impl SigmahqRegression {
             failed_this_cycle: HashSet::new(),
             blocked: Vec::new(),
             max_failed_cycles: DEFAULT_MAX_FAILED_CYCLES,
+            data_ext: "evtx".to_string(),
         })
+    }
+
+    /// Set the regression data file extension for the active collector
+    /// (`evtx` for Windows Winevt/ETW, `log` for non-EVTX sources like
+    /// auditd). Default: `evtx`.
+    pub fn set_data_ext(&mut self, ext: &str) {
+        self.data_ext = ext.to_string();
     }
 
     /// Configure the consecutive-failure bound after which a rule is blocked.
@@ -297,6 +309,7 @@ impl SigmahqRegression {
                 Some(self.author.as_str())
             },
             alert.description.as_deref(),
+            &self.data_ext,
         );
 
         if reg.exists() {
@@ -358,6 +371,7 @@ struct RegressionData {
     rule_rel_path: Option<PathBuf>,
     author: Option<String>,
     description: Option<String>,
+    data_ext: String,
 }
 
 impl RegressionData {
@@ -367,6 +381,7 @@ impl RegressionData {
         rule_rel_path: Option<&Path>,
         author: Option<&str>,
         description: Option<&str>,
+        data_ext: &str,
     ) -> Self {
         Self {
             header: header.clone(),
@@ -375,6 +390,7 @@ impl RegressionData {
             rule_rel_path: rule_rel_path.map(|p| p.to_path_buf()),
             author: author.map(|s| s.to_string()),
             description: description.map(|s| s.to_string()),
+            data_ext: data_ext.to_string(),
         }
     }
 
@@ -418,7 +434,7 @@ impl RegressionData {
         let first = self.alerts.first();
         let match_count = if first.is_some() { 1 } else { 0 };
 
-        let evtx_ext = "evtx";
+        let data_ext = &self.data_ext;
         if let Some(alert) = first {
             let raw_json_path =
                 crate::long_path::long_path(&rule_dir.join(format!("{}.json", rule_id)));
@@ -426,29 +442,37 @@ impl RegressionData {
             std::fs::write(&raw_json_path, raw_json)?;
             tracing::info!("Wrote JSON for rule {:?}", rule_id);
 
-            let evtx_path =
-                crate::long_path::long_path(&rule_dir.join(format!("{}.evtx", rule_id)));
-            if let Err(e) = write_fn(
-                alert.raw_xml(),
-                alert.channel(),
-                alert.record_id(),
-                alert.is_etw,
-                &evtx_path,
-            ) {
-                // EVTX failed (empty export or non-Windows): drop the partial `.json`
-                // and keep the rule loaded so it is re-captured later.
+            let data_path =
+                crate::long_path::long_path(&rule_dir.join(format!("{}.{}", rule_id, data_ext)));
+            let result = if data_ext == "evtx" {
+                write_fn(
+                    alert.raw_xml(),
+                    alert.channel(),
+                    alert.record_id(),
+                    alert.is_etw,
+                    &data_path,
+                )
+            } else {
+                std::fs::write(&data_path, &alert.event_raw)
+                    .map_err(|e| anyhow::anyhow!("Failed to write {data_ext} data: {e}"))
+            };
+            if let Err(e) = result {
+                // Data generation failed (EVTX export empty or non-Windows):
+                // drop the partial `.json` and data file so the rule is
+                // re-captured later without orphaned files.
                 let _ = std::fs::remove_file(&raw_json_path);
+                let _ = std::fs::remove_file(&data_path);
                 return Err(e);
             }
-            tracing::info!("Wrote EVTX for rule {:?}", rule_id);
+            tracing::info!("Wrote {data_ext} data for rule {:?}", rule_id);
         }
 
-        let sigma_evtx_path = if first.is_some() {
-            let evtx_name = format!("{}.{}", rule_id, evtx_ext);
+        let sigma_data_path = if first.is_some() {
+            let data_name = format!("{}.{}", rule_id, data_ext);
             let rel_dir = self
                 .sigma_rel_dir()
                 .unwrap_or_else(|| format!("regression_data/rules/{rule_id}"));
-            format!("{}/{}", rel_dir, evtx_name)
+            format!("{}/{}", rel_dir, data_name)
         } else {
             String::new()
         };
@@ -468,10 +492,13 @@ impl RegressionData {
             rule_id,
             &self.header.rule_title,
             match_count,
-            &sigma_evtx_path,
+            &sigma_data_path,
             author,
             description,
-            provider,
+            &TestConfig {
+                test_type: data_ext.to_string(),
+                provider: provider.to_string(),
+            },
         );
         let info_path = crate::long_path::long_path(&rule_dir.join("info.yml"));
         info.save(&info_path)?;
@@ -482,7 +509,7 @@ impl RegressionData {
             self.alerts.len(),
             self.header.rule_id
         );
-        Ok(evtx_ext.to_string())
+        Ok(data_ext.to_string())
     }
 }
 
@@ -500,7 +527,7 @@ fn clean_path(p: &Path) -> PathBuf {
 }
 
 fn resolve_data_file(dir: &Path, rule_id: &Uuid) -> Option<PathBuf> {
-    for ext in ["evtx", "json"] {
+    for ext in ["evtx", "json", "log", "raw"] {
         let candidate = dir.join(format!("{}.{}", rule_id, ext));
         if candidate.exists() {
             return Some(candidate);
@@ -724,7 +751,10 @@ mod tests {
                 "regression_data/rules/win/x/1.evtx",
                 "tester",
                 "N/A",
-                "Microsoft-Windows-Sysmon",
+                &TestConfig {
+                    test_type: "evtx".to_string(),
+                    provider: "Microsoft-Windows-Sysmon".to_string(),
+                },
             )
             .save(&dir.join("info.yml"))
             .unwrap();
@@ -862,6 +892,81 @@ mod tests {
         let events = input_evtx::parse_evtx_file(&evtx_path).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].record_id(), Some(7));
+    }
+
+    /// Raw-mode generation (auditd): with `data_ext = "log"` the triplet is
+    /// json + `.log` (the complete original audit event lines) + info.yml with
+    /// `test_type: log`, and no EVTX writer is invoked.
+    #[test]
+    fn test_log_alert_generates_valid_triplet() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("regression_data");
+        let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
+        reg.set_data_ext("log");
+        let rule_id = Uuid::parse_str("ca94a6db-8106-4737-9ed2-3e3bb826af0a").unwrap();
+
+        let raw_line =
+            b"type=EXECVE msg=audit(1717056137.482:90412): argc=2 a0=\"passwd\" a1=\"-S\"\n";
+        let event_json_raw = serde_json::json!({
+            "stamp": { "timestamp": 1717056137482u64, "sequence": 90412 },
+            "type": "EXECVE",
+            "fields": { "argc": "2", "a0": "passwd", "a1": "-S" }
+        });
+        let event_json = serde_json::json!({
+            "type": "EXECVE",
+            "argc": "2",
+            "a0": "passwd",
+            "a1": "-S",
+            "product": "linux",
+            "service": "auditd"
+        });
+        let alert = Alert {
+            rule_id,
+            rule_title: "Password Policy Discovery - Linux".to_string(),
+            description: Some("log-mode test".to_string()),
+            rule_path: None,
+            severity: "low".to_string(),
+            event_json_raw: event_json_raw.clone(),
+            event_json,
+            event_raw: raw_line.to_vec(),
+            is_etw: false,
+        };
+
+        // write_fn must never be called in log mode.
+        let write_fn =
+            |_: &str, _: &str, _: Option<u64>, _: bool, _: &Path| -> anyhow::Result<()> {
+                panic!("EVTX writer must not be called in log mode")
+            };
+
+        let files = reg.add(&alert, write_fn).expect("triplet generated");
+        assert_eq!(files.len(), 3, "triplet = json + log + info.yml");
+
+        let rule_dir = base.join("rules").join(rule_id.to_string());
+        let json_path = rule_dir.join(format!("{rule_id}.json"));
+        let log_path = rule_dir.join(format!("{rule_id}.log"));
+        let info_path = rule_dir.join("info.yml");
+
+        assert!(info_path.exists());
+        let info = InfoYml::load(&info_path).unwrap();
+        assert_eq!(info.regression_tests_info[0].test_type, "log");
+        assert_eq!(
+            info.regression_tests_info[0].path,
+            format!("regression_data/rules/{rule_id}/{rule_id}.log")
+        );
+
+        assert!(json_path.exists());
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+        assert_eq!(json["type"], "EXECVE");
+        assert_eq!(json["fields"]["a1"], "-S");
+
+        assert!(log_path.exists());
+        assert_eq!(std::fs::read(&log_path).unwrap(), raw_line);
+
+        // The generated rule is now skippable: a fresh regression instance sees
+        // it as existing valid data.
+        let fresh = SigmahqRegression::new_from_path(&base).unwrap();
+        assert!(fresh.get_sigma_id().contains(&rule_id));
     }
 
     /// A rule whose EVTX generation keeps failing is blocked after the

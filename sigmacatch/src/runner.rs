@@ -37,6 +37,12 @@ pub trait CollectorKind {
 
     /// Build the collector for the resolved channels.
     fn build(&self, channels: &[String]) -> Box<dyn EventProducer>;
+
+    /// Extension of the regression data file written for this collector's
+    /// events: `evtx` (Windows Winevt/ETW) or `log` (non-EVTX, e.g. auditd).
+    fn regression_data_ext(&self) -> &'static str {
+        "evtx"
+    }
 }
 
 #[cfg(windows)]
@@ -132,6 +138,7 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     };
     regression.set_author(config.git.author.clone());
     regression.set_max_failed_cycles(config.regression.max_failed_cycles);
+    regression.set_data_ext(kind.regression_data_ext());
 
     let write_fn: EvtxWriteFn = Box::new(sigmacatch_regression::write_evtx);
 
