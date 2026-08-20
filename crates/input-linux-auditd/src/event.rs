@@ -51,6 +51,7 @@ pub fn record_to_event(lines: &[u8], record: &Record) -> Event {
         flat.insert(key.clone(), value.clone());
     }
 
+    flat.insert("provider".into(), Value::String("auditd".into()));
     let mut event = Event::new(json_raw, Value::Object(flat), lines.to_vec());
     event.inject_logsource_fields_for("linux", Some("auditd"));
     event
@@ -78,6 +79,7 @@ mod tests {
         assert_eq!(event.event_json["key"], "identity");
         assert_eq!(event.event_json["product"], "linux");
         assert_eq!(event.event_json["service"], "auditd");
+        assert_eq!(event.event_json["provider"], "auditd");
     }
 
     #[test]
