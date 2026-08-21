@@ -76,6 +76,7 @@ Rules missing a `status` or `level` field are always accepted.
 | `-a`, `--all-rules` | Load all rules — skip set is disabled |
 | `-c`, `--contrib` | Enable push to the remote fork for this run |
 | `-o`, `--offline` | Skip all git operations (use on-disk files as-is; no commit/push) |
+| `-r`, `--max-runs <N>` | Exit after N collection cycles (0 = unlimited) |
 | `-v`, `--verbose` | Show info-level logs on stderr (default: errors only) |
 | `--help`, `-h` | Print help and exit |
 
