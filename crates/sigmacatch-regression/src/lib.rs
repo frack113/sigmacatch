@@ -28,16 +28,13 @@ use crate::logtype::LogType;
 /// (config.yaml `regression.max_failed_cycles`); this is the default.
 pub const DEFAULT_MAX_FAILED_CYCLES: u32 = 3;
 
-/// True when the rule's committed data file is valid: cheap structural check
-/// of the primary data file (EVTX magic / text prefix, size bound). Broken
-/// data is excluded from the skip set so the rule is re-captured.
-fn data_file_is_valid(dir: &Path, rule_id: &Uuid, format: DataFormat) -> bool {
+/// True when the rule's committed data file exists and is non-empty. We do
+/// not open the file — deep structural validation is deferred to
+/// `sigmacatch check`.
+fn data_file_exists(dir: &Path, rule_id: &Uuid, format: DataFormat) -> bool {
     let ext = format.ext();
     let candidate = crate::long_path::long_path(&dir.join(format!("{rule_id}.{ext}")));
-    if !candidate.exists() {
-        return false;
-    }
-    format.cheap_validate(&candidate)
+    std::fs::metadata(&candidate).is_ok_and(|m| m.len() > 0)
 }
 
 #[derive(Debug, Clone)]
@@ -184,15 +181,16 @@ impl SigmahqRegression {
         self.entries.get(index).map(|(_, _, entry)| entry)
     }
 
-    /// Rule ids with valid regression data (skippable). Broken data is excluded
-    /// so the rule is re-captured and regenerated.
+    /// Rule ids with committed regression data (skippable). We only check
+    /// existence and non-empty — deep structural validation is left to
+    /// `sigmacatch check`.
     pub fn get_sigma_id(&self) -> Vec<Uuid> {
         self.entries
             .iter()
             .filter_map(|(info_path, info, _)| {
                 let rule_id = info.rule_metadata.first().map(|m| m.id)?;
                 let dir = info_path.parent()?;
-                data_file_is_valid(dir, &rule_id, self.format).then_some(rule_id)
+                data_file_exists(dir, &rule_id, self.format).then_some(rule_id)
             })
             .collect()
     }
@@ -398,7 +396,7 @@ impl RegressionData {
 
     fn exists(&self) -> bool {
         self.rule_dir().is_ok_and(|d| {
-            d.join("info.yml").exists() && data_file_is_valid(&d, &self.header.rule_id, self.format)
+            d.join("info.yml").exists() && data_file_exists(&d, &self.header.rule_id, self.format)
         })
     }
 
@@ -709,71 +707,67 @@ mod tests {
     }
 
     #[test]
-    fn test_data_file_is_valid_detects_broken_evtx() {
+    fn test_data_file_exists_no_file() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         let id = Uuid::new_v4();
+        assert!(!data_file_exists(dir, &id, DataFormat::Evtx));
+    }
 
-        assert!(
-            !data_file_is_valid(dir, &id, DataFormat::Evtx),
-            "no data file → invalid"
-        );
-
+    #[test]
+    fn test_data_file_exists_evtx_non_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let id = Uuid::new_v4();
         let evtx = dir.join(format!("{id}.evtx"));
         std::fs::write(&evtx, b"not-an-evtx").unwrap();
         assert!(
-            !data_file_is_valid(dir, &id, DataFormat::Evtx),
-            "no EVTX magic → invalid"
-        );
-
-        std::fs::write(&evtx, b"ElfFile\x00rest-of-header").unwrap();
-        assert!(
-            data_file_is_valid(dir, &id, DataFormat::Evtx),
-            "valid EVTX magic → valid"
+            data_file_exists(dir, &id, DataFormat::Evtx),
+            "non-empty file → exists (magic not checked)"
         );
     }
 
     #[test]
-    fn test_data_file_is_valid_log_rejects_other_formats() {
+    fn test_data_file_exists_log_non_empty() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         let id = Uuid::new_v4();
+        let log = dir.join(format!("{id}.log"));
+        std::fs::write(&log, b"type=EXECVE msg=audit(1.2:3)\n").unwrap();
+        assert!(data_file_exists(dir, &id, DataFormat::Log));
+    }
 
-        // .evtx file exists but format is Log → not valid
+    #[test]
+    fn test_data_file_exists_empty_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let id = Uuid::new_v4();
+        let log = dir.join(format!("{id}.log"));
+        std::fs::write(&log, b"").unwrap();
+        assert!(
+            !data_file_exists(dir, &id, DataFormat::Log),
+            "empty log → not exists"
+        );
+    }
+
+    #[test]
+    fn test_data_file_exists_format_mismatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let id = Uuid::new_v4();
         let evtx = dir.join(format!("{id}.evtx"));
         std::fs::write(&evtx, b"ElfFile\x00rest-of-header").unwrap();
         assert!(
-            !data_file_is_valid(dir, &id, DataFormat::Log),
+            !data_file_exists(dir, &id, DataFormat::Log),
             "stale .evtx ignored when format=Log"
         );
-
-        // .log file exists and format is Log → valid
-        let log = dir.join(format!("{id}.log"));
-        std::fs::write(&log, b"type=EXECVE msg=audit(1.2:3)\n").unwrap();
-        assert!(data_file_is_valid(dir, &id, DataFormat::Log));
     }
 
-    /// A `.log` data file is valid on its own — validity is anchored on the
-    /// data file, never on the auxiliary json (`add_json_output: false`).
+    /// `get_sigma_id` trusts existence — it does not validate the blob
+    /// content. Broken data stays in the skip set until `sigmacatch check`
+    /// catches it.
     #[test]
-    fn test_data_file_is_valid_log_without_json() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path();
-        let id = Uuid::new_v4();
-
-        let log = dir.join(format!("{id}.log"));
-        std::fs::write(&log, b"type=EXECVE msg=audit(1.2:3): argc=2\n").unwrap();
-        assert!(data_file_is_valid(dir, &id, DataFormat::Log));
-
-        std::fs::write(&log, b"").unwrap();
-        assert!(
-            !data_file_is_valid(dir, &id, DataFormat::Log),
-            "empty log → invalid"
-        );
-    }
-
-    #[test]
-    fn test_get_sigma_id_excludes_broken_evtx() {
+    fn test_get_sigma_id_trusts_existence() {
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path().join("regression_data");
         let good_dir = base.join("rules/win/good");
@@ -818,7 +812,10 @@ mod tests {
 
         let reg = SigmahqRegression::new_from_path(&base).unwrap();
         let ids = reg.get_sigma_id();
-        assert_eq!(ids, vec![good_id]);
+        // broken data is trusted because we only check existence now
+        // order follows the directory scan order
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&good_id) && ids.contains(&broken_id));
     }
 
     #[test]
@@ -1090,7 +1087,10 @@ mod tests {
         file.set_len((MAX_DATA_BLOB_SIZE as u64) + 1).unwrap();
         drop(file);
 
-        assert!(!data_file_is_valid(dir, &id, DataFormat::Evtx));
+        assert!(
+            data_file_exists(dir, &id, DataFormat::Evtx),
+            "oversized file exists (existence-only — deep check in check command)"
+        );
     }
 
     /// `clean_partial_artifacts` removes directories holding generated data

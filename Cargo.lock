@@ -3054,9 +3054,13 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "clap",
+ "input-evtx",
  "input-linux-auditd",
  "input-windows-channels",
  "input-windows-etw",
+ "serde",
+ "serde_json",
  "sigmacatch-config",
  "sigmacatch-detection",
  "sigmacatch-logger",
@@ -3670,26 +3674,6 @@ checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
  "rustls",
  "tokio",
-]
-
-[[package]]
-name = "tools"
-version = "0.4.0"
-dependencies = [
- "anyhow",
- "input-evtx",
- "input-linux-auditd",
- "serde",
- "serde_json",
- "sigmacatch-config",
- "sigmacatch-detection",
- "sigmacatch-regression",
- "sigmacatch-repo",
- "sigmacatch-rule",
- "sigmacatch-types",
- "tokio",
- "uuid",
- "windows 0.62.2",
 ]
 
 [[package]]
