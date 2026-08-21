@@ -34,7 +34,17 @@ impl CollectorKind for WinevtCollector {
     }
 }
 
+#[cfg(feature = "tools")]
+mod cli;
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    #[cfg(feature = "tools")]
+    {
+        let code = cli::dispatch();
+        if code != 0 {
+            std::process::exit(code);
+        }
+    }
     runner::run(&WinevtCollector).await
 }

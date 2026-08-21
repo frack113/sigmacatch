@@ -13,6 +13,7 @@ default = ["winevt", "etw", "auditd"]
 winevt = ["dep:input-windows-channels"]
 etw = ["dep:input-windows-etw"]
 auditd = ["dep:input-linux-auditd"]
+tools = ["dep:clap", "dep:serde", "dep:input-evtx", "dep:input-linux-auditd"]
 
 [[bin]]
 name = "sigmacatch-channel"
@@ -51,6 +52,9 @@ input-windows-etw = { path = "../crates/input-windows-etw", optional = true }
 # Crate workspace — Linux auditd event collector (auditd feature)
 input-linux-auditd = { path = "../crates/input-linux-auditd", optional = true }
 
+# Crate workspace — EVTX parser (tools feature)
+input-evtx = { path = "../crates/input-evtx", optional = true }
+
 # Crate workspace — SigmaHQ regression data format
 sigmacatch-regression = { path = "../crates/sigmacatch-regression" }
 
@@ -68,6 +72,11 @@ tracing = "0.1"
 
 # Utilitaires
 anyhow = "1.0"
+
+# CLI (tools feature only)
+clap = { version = "4", features = ["derive"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = "1.0"
 
 chrono = "0.4"
 

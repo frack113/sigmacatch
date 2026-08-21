@@ -5,39 +5,50 @@
 
 > ⚠️ **WIP** — this project is under active development. APIs, config, and output formats may change without notice. Not production-ready.
 
-Capture real Windows events via the **Windows Event Log API** (`winevt`), match them against [SigmaHQ](https://github.com/SigmaHQ/sigma) rules, and output structured regression data ready for SigmaHQ PRs.
+Sigmacatch captures real OS events, matches them against [SigmaHQ](https://github.com/SigmaHQ/sigma) rules in real time, and generates regression data ready for SigmaHQ pull requests.
 
-## What it does
+| Platform | Collector | Binary |
+|---|---|---|
+| Windows | Windows Event Log API (`winevt`) | `sigmacatch-channel` |
+| Windows | Direct ETW (`ferrisetw`) | `sigmacatch-etw` |
+| Linux | auditd log tail | `sigmacatch-auditd` |
+
+## How it works
 
 ```text
 SigmaHQ rules (auto-cloned via grit-lib)
     ↓
-Load rules → skip existing regression → filter Windows → apply pipeline
+Load rules → skip existing regression → filter (product / min_status / min_level)
     ↓
 Resolve channels from rules (logsource → channel mapping)
     ↓
-Continuous collector → mpsc (bin `sigmacatch-channel`: EvtQueryW; bin `sigmacatch-etw`: ETW via ferrisetw)
+Continuous collector → mpsc
     ↓
-Sigma engine evaluates every event against all loaded rules
+Sigma engine evaluates every event against every loaded rule
     ↓
-Every 30s: generate regression data (data file + info.yml) for each matched rule
+Every 30 s: write regression data for each matched rule
     ↓
 sigma/regression_data/<rule_rel_path>/
-    ├── <rule_id>.json    ← flat event (Sigma keys)
-    ├── <rule_id>.evtx    ← valid EVTX (via EvtExportLog, validated ≥1 record; no data on non-Windows)
+    ├── <rule_id>.evtx    ← valid EVTX (EvtExportLog, validated ≥ 1 record)
+    ├── <rule_id>.log     ← original auditd lines (auditd collector)
+    ├── <rule_id>.json    ← optional raw event (regression.add_json_output)
     └── info.yml          ← SigmaHQ-compatible metadata
     ↓
-commit + push to fork (continuous until Ctrl+C)
+One commit per rule — single push to fork when contrib is enabled
 ```
+
+The pipeline runs continuously until Ctrl+C; remaining events are flushed before exit.
 
 ## Quick start
 
 ```bash
 cargo build --release
-./target/release/sigmacatch-channel
+./target/release/sigmacatch-channel   # Winevt collector (Windows)
+./target/release/sigmacatch-etw       # ETW collector (Windows)
+./target/release/sigmacatch-auditd    # auditd collector (Linux)
 ```
 
-On first run, a `config.yaml` is created with defaults:
+On first run a `config.yaml` is created with defaults:
 
 ```yaml
 git:
@@ -49,7 +60,7 @@ git:
   sigma_repo_url: "https://github.com/SigmaHQ/sigma.git"
   sigma_repo_path: "sigma"
   offline: false            # true = zero git operations (no pull/clone/commit/push; on-disk files used as-is, .git optional)
-  contrib: true             # true = push commits to remote fork. Default: false (local commits only)
+  contrib: false            # true = push commits to remote fork. Default: false (local commits only)
 log:
   level_file: "debug"
 filter:
@@ -63,12 +74,11 @@ regression:
   add_json_output: false    # true = also write auxiliary <rule_id>.json alongside the data file
 ```
 
-Rules below the configured `min_status` / `min_level` thresholds are skipped at load time.
-Rules missing a `status` or `level` field are always accepted.
+Rules below the configured `min_status` / `min_level` thresholds are skipped at load time; rules missing these fields are always accepted.
 
 **Contrib is opt-in** (`git.contrib: true` or `--contrib`): pushes regression commits to your fork. By default (`false`) commits stay local. The GitHub token is only required when a network operation is active (`offline: false` or `contrib: true`). **`offline: true` neutralizes `contrib`** (forced to `false`, `warn!`): no push in offline mode.
 
-### CLI flags
+## CLI
 
 | Flag | Description |
 |------|-------------|
@@ -79,86 +89,101 @@ Rules missing a `status` or `level` field are always accepted.
 | `-v`, `--verbose` | Show info-level logs on stderr (default: errors only) |
 | `--help`, `-h` | Print help and exit |
 
-Dev tools in `tools/` (run with `cargo run --release --bin <tool>`): `check_dry_run` (git diagnostics), `check_channels` (resolved channels), `list_rules` (loaded rules with techniques + ART link), `check_filter`, `check_evtx`, `get_atomic` (generates `run_atomic.ps` for rules without regression data), `coverage` (rule coverage stats).
+### Collector selection
 
-## Git clone performance (grit-lib vs native git)
+Collectors are selected via cargo features, not CLI flags:
 
-The Sigma repo (~131K objects) is cloned and pulled through grit-lib (pure Rust, no git CLI). A **fresh clone** is slower and larger than a native `git clone`:
-
-| | `git clone` (native, single-branch) | sigmacatch (grit-lib + pack) |
+| Binary | Feature | Backend |
 |---|---|---|
-| Time | ~3s | ~70s |
-| `.git/` size | 52 MB | 218 MB |
-| Pack file | 47 MB (delta-compressed) | 215 MB (no delta) |
-| `git fsck --strict` | clean | clean |
+| `sigmacatch-channel` | `winevt` | Windows Event Log API |
+| `sigmacatch-etw` | `etw` | Direct ETW via ferrisetw |
+| `sigmacatch-auditd` | `auditd` | Linux auditd tail |
 
-Why the difference:
+Build a single collector in isolation:
 
-- Native git writes the server's already delta-compressed pack directly to disk — no post-processing.
-- grit-lib's `http_fetch` unpacks every object to a loose file (131K files, ~650 MB), then sigmacatch re-packs them (no delta compression) to keep `.git/` small (218 MB vs 650 MB, 3x).
+```bash
+cargo xwin build --release --target x86_64-pc-windows-msvc --no-default-features --features etw
+```
 
-The download itself is identical (~47 MB); the gap is local post-processing, inherent to grit-lib. This cost is paid **once at first clone** — subsequent pulls only transfer deltas (sub-second when nothing changed). On a slow VM the first clone can take a few minutes.
+### Diagnostics (feature `tools`)
+
+| Command | Description |
+|---|---|
+| `sigmacatch-channel check` | Deep validation of `./sigma/regression_data` — every rule must match its data (exit 1 otherwise) |
+| `sigmacatch-channel check-channels` | Resolve and list the channels the engine would collect |
+| `sigmacatch-channel check-filter` | Validate the filter config against the real rule set (ground-truth counts) |
+| `sigmacatch-channel list-rules` | List loaded rules with techniques and ART link (`--coverage` for stats) |
+| `sigmacatch-channel get-atomic` | Generate a `run_atomic.ps1` (Invoke-AtomicRedTeam chain) for rules without regression data |
 
 ## Requirements
 
-- **Windows** with [Sysmon](https://docs.microsoft.com/en-us/sysinternals/downloads/sysmon) installed — required for rich events (ParentImage, CommandLine, hashes, etc.)
-- Rust 2021 edition (1.70+)
-- Admin rights for `Security` and `System` Event Log channels
+- **Windows** with [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) installed — required for rich events (ParentImage, CommandLine, hashes, etc.)
+- **Linux** with `auditd` running — for `sigmacatch-auditd`
+- Rust 2024 edition (1.85+)
+- Admin rights for the `Security` and `System` Event Log channels (Windows)
 
-## Cross-compilation (Linux → Windows)
+## Build & cross-compilation
+
+Cross-compilation from Linux to Windows:
 
 ```bash
 cargo xwin build --release --target x86_64-pc-windows-msvc
 ```
 
-> Nécessite `cargo install cargo-xwin`. Télécharge automatiquement le Windows SDK.
+> Requires `cargo install cargo-xwin`. Downloads the Windows SDK automatically.
 
-On Linux/macOS the collector is a stub (returns empty vec) — the pipeline still runs end-to-end for testing.
+`.cargo/config.toml` forces `target-feature=+crt-static`: without it the binary depends on **VCRUNTIME140.dll** (Visual C++ Redistributable) and crashes if the runtime is missing on the target machine. With `+crt-static` the `.exe` is standalone.
+
+On Linux/macOS the Windows collectors are stubs that return no events — the pipeline still runs end-to-end for testing.
 
 ## Documentation
 
 A built version of this documentation is published to GitHub Pages: **https://frack113.github.io/sigmacatch/**
 
-| | English | Francais |
+| | English | Français |
 |---|---|---|
 | Architecture | [EN](docs/en/architecture.md) | [FR](docs/fr/architecture.md) |
-| Architecture reference | [EN](docs/en/architecture-reference.md) | [FR](docs/fr/architecture-reference.md) |
 | Build | [EN](docs/en/build.md) | [FR](docs/fr/build.md) |
 | Git | [EN](docs/en/git.md) | [FR](docs/fr/git.md) |
 | Output format | [EN](docs/en/output-format.md) | [FR](docs/fr/output-format.md) |
 | Regression data format | [EN](docs/en/regression-data-format.md) | [FR](docs/fr/regression-data-format.md) |
-| Nice-to-have | [EN](docs/en/nice-to-have.md) | [FR](docs/fr/nice-to-have.md) |
-| Tools | [EN](docs/en/tools.md) | [FR](docs/fr/tools.md) |
+| CLI diagnostics | [EN](docs/en/cli.md) | [FR](docs/fr/cli.md) |
 
 ## Workspace
 
-The project is a cargo workspace of 13 crates (11 libraries + 2 binary crates):
+The project is a cargo workspace of 13 crates (1 lib crate + 12 libraries):
 
 | Crate | Purpose |
 |---|---|
-| `sigmacatch` | Lib + 2 binaries (`sigmacatch-channel` winevt, `sigmacatch-etw`) + shared runner (continuous loop) |
-| `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml + dry-run git diagnostics |
-| `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug) |
-| `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication, channel resolution |
-| `sigmacatch-detection` | Thin wrapper around rsigma-eval (pipelines, bloom, LogSourceExtractor) |
-| `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) — bin `sigmacatch-channel` |
-| `input-windows-etw` | Direct ETW collector via ferrisetw (18 providers, provider→channel routing) — bin `sigmacatch-etw` |
-| `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, `DataFormat`, regression data generation |
+| `sigmacatch` | Lib + 3 binaries (`sigmacatch-channel` winevt, `sigmacatch-etw` ETW, `sigmacatch-auditd` auditd) + shared runner (continuous loop) |
+| `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml |
+| `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug, max 3 kept) |
+| `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication, remove_id |
+| `sigmacatch-detection` | `DetectionEngine` + pipelines (windows.yml, flatten_winevt.yml) + channel_resolver + bloom pre-filter |
+| `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) |
+| `input-windows-etw` | Direct ETW collector via ferrisetw (18 providers, provider→channel routing) |
+| `input-linux-auditd` | Auditd tail collector (`/var/log/audit/audit.log`, grouping by event id) |
+| `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, `RegressionData`, `DataFormat` (Evtx/Log) + validation |
 | `sigmacatch-evtx-writer` | Pure Rust EVTX writer + re-parse validation |
-| `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
-| `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, GitHub fork detection, commit workflow |
-| `input-evtx` | Parse EVTX files into `Event` objects for the detection engine |
-| `tools` | Dev tools: `check_dry_run` (git diag), `check_channels` (channels), `list_rules` (rules), `check_filter` (filter validation), `check_evtx` (regression validation), `get_atomic` (generates `run_atomic.ps`), `coverage` (rule coverage stats) |
+| `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource mapping tables (phf) |
+| `sigmacatch-repo` | grit-lib wrapper: `SigmaRepo`, GitHub fork detection, plumbing/porcelain git ops |
+| `input-evtx` | Parse EVTX files into `Event` objects (used by `sigmacatch-channel check`) |
 
 ## Built with
 
 - [rsigma-eval](https://crates.io/crates/rsigma-eval) + [rsigma-parser](https://crates.io/crates/rsigma-parser) — Sigma rule loading and evaluation
-- [grit-lib](https://github.com/anoma/grit-lib) — pure Rust git, no CLI needed
+- [grit-lib](https://github.com/gitbutlerapp/grit) — pure Rust git, no CLI needed
 - [tokio](https://crates.io/crates/tokio) — async runtime
 - [windows](https://crates.io/crates/windows) — Windows Event Log API, cfg-gated
-- [serde](https://crates.io/crates/serde) / [serde_json](https://crates.io/crates/serde_json) / [yaml_serde](https://crates.io/crates/yaml_serde) — serialization
+- [ferrisetw](https://crates.io/crates/ferrisetw) — direct ETW collection, cfg-gated
+- [linux-audit-parser](https://crates.io/crates/linux-audit-parser) — auditd log parsing
+- [serde](https://crates.io/crates/serde) / [serde_json](https://crates.io/crates/serde_json) / [serde_yaml](https://crates.io/crates/serde_yaml) — serialization
 - [roxmltree](https://crates.io/crates/roxmltree) — XML parsing for Winevt events
 - [evtx](https://crates.io/crates/evtx) — EVTX file parsing
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

@@ -50,4 +50,4 @@ Based on the remote ref if present (else HEAD) to keep fast-forward. The narrow 
 
 **SSH transport**: `git.transport: ssh` + `ssh_key_path` (ed25519 key). `ensure_ssh_host_config()` writes the `IdentityFile`/`UserKnownHostsFile` directives into `~/.ssh/config` before transport ops (idempotent, **atomic write** tmp + rename to avoid a partial file; skipped in offline mode); on Windows, `ssh` is resolved via Windows OpenSSH / Git for Windows and executed directly (`SshCommand::Program`). When `ssh_key_path` is set, every regression commit is signed with pure-Rust ed25519 (`ssh-key`, `gpgsig` header like `git commit -S` + `gpg.format = ssh`) → GitHub shows "Verified". **SSH pull failure = abort** (no HTTPS fallback): if the `ssh` binary is missing (Windows without Git for Windows) or the key is invalid, the error message says so explicitly and points to `transport: http` — retry is HTTP-only when the config uses HTTP.
 
-See `config.yaml` and the general invariants in [`architecture-reference.md`](architecture-reference.md) for the full configuration.
+See `config.yaml` for the full configuration.

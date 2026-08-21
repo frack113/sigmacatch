@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Rust 2021 edition (1.70+)
+- Rust 2024 edition (1.85+)
 - For Windows cross-compilation: `cargo install cargo-xwin` (auto-downloads Windows SDK)
 
 ## Linux / macOS (stub collector)
@@ -27,7 +27,7 @@ cargo build --release
 Two binaries are produced, each with a single collector (cargo features, default both):
 
 - **`sigmacatch-channel`** (winevt): native Winevt API (`EvtQueryW` → `EvtNext` → `EvtRender`) on resolved channels. Requires admin rights for `Security` and `System` channels.
-- **`sigmacatch-etw`** (etw): direct ETW collection via ferrisetw (18 providers, generic provider→channel routing, real EventID preserved). Requires no admin rights for most providers.
+- **`sigmacatch-etw`** (etw) [beta]: direct ETW collection via ferrisetw (18 providers, generic provider→channel routing, real EventID preserved). Requires no admin rights for most providers.
 
 Isolated builds (a binary without the other collector linked):
 
@@ -60,7 +60,7 @@ Applied profile:
 
 ## Workspace
 
-The project is a cargo workspace of 13 packages (2 binary crates — `sigmacatch` with 2 bins (`sigmacatch-channel`, `sigmacatch-etw`) + 1 lib, `tools` with 7 bins — and 11 libraries):
+The project is a cargo workspace of 13 packages (1 lib crate + 12 libraries):
 
 ```bash
 # Build everything
@@ -79,22 +79,27 @@ cargo build -p sigmacatch-evtx-writer
 cargo build -p sigmacatch-types
 cargo build -p sigmacatch-repo
 cargo build -p input-evtx
-cargo build -p tools
 ```
 
-## Binaries
+## Main binaries
 
 | Binary | Path | Description |
 |---|---|---|
 | `sigmacatch-channel` | `sigmacatch/src/main_winevt.rs` | Winevt capture (multi-channel) + evaluation + regression generation |
-| `sigmacatch-etw` | `sigmacatch/src/main_etw.rs` | ETW capture (ferrisetw) + evaluation + regression generation |
-| `check_dry_run` | `tools/src/check_dry_run.rs` | Git diagnostics (token, fork, API, info/refs, repo state) |
-| `check_channels` | `tools/src/check_channels.rs` | Resolves and lists the collected Windows channels |
-| `list_rules` | `tools/src/list_rules.rs` | Lists the loaded rules (techniques, ART link) |
-| `check_filter` | `tools/src/check_filter.rs` | Validates `SigmaFilterConfig` against real Sigma rules (ground-truth counts, no CLI args) |
-| `check_evtx` | `tools/src/check_evtx.rs` | Batch validation of Sigma engine against .evtx regression data |
-| `get_atomic` | `tools/src/get_atomic.rs` | Generates `run_atomic.ps` (chained `Invoke-AtomicTest`) for rules without regression data |
-| `coverage` | `tools/src/coverage.rs` | Rule coverage stats (local + pending remote branches) |
+| `sigmacatch-etw` | `sigmacatch/src/main_etw.rs` | ETW capture (ferrisetw) + evaluation + regression generation [beta] |
+| `sigmacatch-auditd` | `sigmacatch/src/main_auditd.rs` | Auditd capture (tail) + evaluation + regression generation |
+
+## Diagnostic subcommands
+
+All diagnostic commands are subcommands of `sigmacatch-channel` (feature `tools`, off by default):
+
+| Command | Description |
+|---|---|
+| `check` | Deep validation of regression data (`./sigma/regression_data`) |
+| `check-filter` | Validates `SigmaFilterConfig` against real Sigma rules (ground-truth counts) |
+| `check-channels` | Resolves and lists the collected Windows channels |
+| `list-rules` | Lists the loaded rules (techniques, ART link) |
+| `get-atomic` | Generates `run_atomic.ps` (chained `Invoke-AtomicTest`) for rules without regression data |
 
 Observed sizes (x86_64-pc-windows-msvc cross, release): `sigmacatch-channel.exe` ~10.4 MB,
-`sigmacatch-etw.exe` ~11 MB, `check_evtx.exe` ~4.0 MB, `check_filter.exe` ~0.9 MB.
+`sigmacatch-etw.exe` ~11 MB.

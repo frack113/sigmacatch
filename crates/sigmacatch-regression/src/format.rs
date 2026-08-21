@@ -92,10 +92,10 @@ impl DataFormat {
         }
     }
 
-    /// Cheap structural validation for the skip-set scan: stat + magic or
+    /// Cheap structural validation used by `sigmacatch check`: stat + magic or
     /// prefix check, no full parse. Deep validation happens once, at write
     /// time (re-parse for EVTX). Broken data returns `false` so the rule is
-    /// re-captured (auto-healing).
+    /// reported as failed in the check output.
     pub fn cheap_validate(self, path: &Path) -> bool {
         let meta = match std::fs::metadata(path) {
             Ok(m) => m,
