@@ -27,6 +27,7 @@ allow = [
     # Statically linked into an MIT open-source binary — relinkability obligations
     # are satisfied by the availability of the project source.
     "LGPL-3.0",
+    "LGPL-3.0-or-later",
 ]
 private = { ignore = true }
 
