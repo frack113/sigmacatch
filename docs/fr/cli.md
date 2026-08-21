@@ -11,7 +11,7 @@ Les commandes de diagnostic sont disponibles sur `sigmacatch-channel` derrière 
 
 ### Pipeline
 
-1. Charge toutes les règles Sigma depuis `./sigma`, filtre sur le produit configuré
+1. Charge toutes les règles Sigma depuis `./sigma`, filtre sur Windows
 2. Construit le `DetectionEngine` une seule fois
 3. Charge les entrées de régression depuis `./sigma/regression_data`
 4. Pour chaque entrée `info.yml` :

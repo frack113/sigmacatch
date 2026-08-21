@@ -1063,7 +1063,7 @@ fn cmd_get_atomic(args: &[String]) -> i32 {
                     "get-atomic: generate run_atomic.ps for rules without regression data\n\n\
                      Usage: get-atomic [--output <path>] [--getprereqs] [--json]\n\n\
                      Options:\n\
-                     \x20 --output <path>    write the script to <path> (default: run_atomic.ps)\n\
+                      \x20 --output <path>    write the script to <path> (default: run_atomic.ps1)\n\
                      \x20 --getprereqs       generate Invoke-AtomicTest with -GetPrereqs flag\n\
                                             (downloads/installs prerequisites without running tests)\n\
                      \x20 --json             output results as JSON instead of text"

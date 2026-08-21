@@ -11,7 +11,7 @@ default). Run `sigmacatch-channel --help` to see the full list.
 
 ### Pipeline
 
-1. Loads all Sigma rules from `./sigma`, filters to the configured product
+1. Loads all Sigma rules from `./sigma`, filters to Windows
 2. Builds the `DetectionEngine` once
 3. Loads regression entries from `./sigma/regression_data`
 4. For each `info.yml` entry:
