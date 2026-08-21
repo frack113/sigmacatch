@@ -9,7 +9,7 @@ The project is a cargo workspace of 13 crates (11 libraries + 2 binary crates):
 | Crate | Purpose |
 |---|---|
 | `sigmacatch` | Lib + 2 binaries (`sigmacatch-channel` winevt, `sigmacatch-etw`) + shared runner (continuous loop) |
-| `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml + dry-run git diagnostics |
+| `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml |
 | `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug) |
 | `sigmacatch-rule` | `SigmahqRules`: rule loading, filter, dedupe, remove_id + `SigmaRuleExt` (ATT&CK techniques) |
 | `sigmacatch-detection` | Thin wrapper around rsigma-eval (pipelines, bloom, LogSourceExtractor, resolve_channels) |
@@ -20,7 +20,7 @@ The project is a cargo workspace of 13 crates (11 libraries + 2 binary crates):
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
 | `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, git operations |
 | `input-evtx` | Parse EVTX files into `Event` objects (used by `tools`) |
-| `tools` | Dev tools: `check_dry_run`, `check_channels`, `list_rules`, `check_filter`, `check_evtx`, `get_atomic`, `coverage` |
+| `tools` | Dev tools: `check_channels`, `list_rules`, `check_filter`, `check_evtx`, `get_atomic`, `coverage` |
 
 ## Quick start
 

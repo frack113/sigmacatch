@@ -36,9 +36,6 @@ pub fn dispatch() -> i32 {
     match args[1].as_str() {
         "check" => cmd_check(&args[1..]),
         "check-filter" => cmd_check_filter(&args[1..]),
-        "check-dry-run" => {
-            tokio::runtime::Handle::current().block_on(cmd_check_dry_run(&args[1..]))
-        }
         "check-channels" => cmd_check_channels(&args[1..]),
         "list-rules" => cmd_list_rules(&args[1..]),
         "get-atomic" => cmd_get_atomic(&args[1..]),
@@ -718,49 +715,6 @@ fn cmd_check_filter(args: &[String]) -> i32 {
 
     let ok = run_filter_tests(&tests, json_output);
     if !ok { 1 } else { 0 }
-}
-
-// ─── check-dry-run ────────────────────────────────────────────────────────────
-
-async fn cmd_check_dry_run(args: &[String]) -> i32 {
-    let mut json_output = false;
-    for arg in args {
-        if arg == "--json" {
-            json_output = true;
-        }
-    }
-
-    let cli = parse_args();
-    // Re-scan args for --author etc. (parse_args already handles them for the
-    // main binary; here we just need them for Config::load_with_cli).
-    let config_path = PathBuf::from("config.yaml");
-    let config = match Config::load_with_cli(&config_path, &cli) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Failed to load config: {e}");
-            return 1;
-        }
-    };
-
-    if let Err(e) = sigmacatch_config::dry_run_git(&config).await {
-        eprintln!("dry_run_git failed: {e}");
-        return 1;
-    }
-
-    if json_output {
-        println!(
-            "{}",
-            serde_json::json!({
-                "dry_run": "ok",
-                "author": config.git.author,
-                "email": config.git.email,
-                "sigma_repo_path": config.git.sigma_repo_path,
-                "offline": config.git.offline,
-                "contrib": config.git.contrib,
-            })
-        );
-    }
-    0
 }
 
 // ─── check-channels ───────────────────────────────────────────────────────────

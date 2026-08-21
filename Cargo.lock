@@ -3080,9 +3080,7 @@ name = "sigmacatch-config"
 version = "0.4.0"
 dependencies = [
  "anyhow",
- "reqwest",
  "serde",
- "serde_json",
  "sigmacatch-repo",
  "sigmacatch-rule",
  "sigmacatch-types",

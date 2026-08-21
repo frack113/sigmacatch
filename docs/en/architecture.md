@@ -8,7 +8,7 @@ The project is a cargo workspace of 14 packages (3 binary crates + 11 libraries)
 sigmacatch/
 ├── Cargo.toml                    # Workspace root
 ├── crates/
-│   ├── sigmacatch-config/        # Config YAML + CLI parsing + custom_channels.yaml + dry-run git diagnostics
+│   ├── sigmacatch-config/        # Config YAML + CLI parsing + custom_channels.yaml 
 │   ├── sigmacatch-logger/        # Two-layer tracing subscriber (stderr info + daily rolling file debug)
 │   ├── sigmacatch-rule/          # SigmahqRules: rule loading (parse_sigma_yaml), filter, dedupe, remove_id + SigmaRuleExt (ATT&CK techniques)
 │   ├── sigmacatch-detection/     # DetectionEngine wrapper + embedded pipelines (windows.yml, flatten_winevt.yml) + channel_resolver
@@ -29,7 +29,6 @@ sigmacatch/
 │       └── main_auditd.rs        # bin `sigmacatch-auditd`: auditd tail collector
 └── tools/                   # Dev tools (kept out of the main crate)
     └── src/
-        ├── check_dry_run.rs      # Git diagnostics (token/fork/API/info-refs/repo state)
         ├── check_channels.rs     # Resolves and lists the collected Windows channels
         ├── list_rules.rs         # Lists loaded rules (techniques, ART link)
         ├── check_filter.rs       # Validates SigmaFilterConfig against real Sigma rules (ground-truth counts)
@@ -50,7 +49,6 @@ sigmacatch/src/
 └── main_auditd.rs        # bin `sigmacatch-auditd`: auditd tail collector
 
 tools/src/
-├── check_dry_run.rs      # Git diagnostics tool (config.yaml + dry_run_git)
 ├── check_channels.rs     # Channel resolution tool (config.yaml filter)
 ├── list_rules.rs         # Rule listing tool (config.yaml filter)
 ├── check_filter.rs       # Filter validation tool (no CLI args, loads ./sigma itself)
@@ -78,7 +76,7 @@ There is no `config.rs` / `logger.rs` / `repo.rs` in the binary — those moved 
 ## Crate dependency graph
 
 ```text
-sigmacatch ──┬── sigmacatch-config       (Config, CliArgs, dry-run diagnostics)
+sigmacatch ──┬── sigmacatch-config       (Config, CliArgs, )
               ├── sigmacatch-logger       (tracing init)
               ├── sigmacatch-rule         (SigmahqRules: load/filter/remove_id)
               ├── sigmacatch-detection    (DetectionEngine: pipelines + bloom + LogSourceExtractor + resolve_channels)

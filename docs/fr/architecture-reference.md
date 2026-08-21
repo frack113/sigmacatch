@@ -37,9 +37,9 @@ sigmacatch/
 │       ├── runner.rs              # run<C: CollectorKind> : config + repo init + event loop + commit/push
 │       ├── main_winevt.rs         # bin `sigmacatch-channel` : collecteur Winevt multi-channel
 │       └── main_etw.rs            # bin `sigmacatch-etw` : collecteur ETW direct (ferrisetw)
-├── tools/                    # Outils de dev (check_dry_run, check_channels, list_rules, check_filter, check_evtx, get_atomic, coverage)
+├── tools/                    # Outils de dev (check_channels, list_rules, check_filter, check_evtx, get_atomic, coverage)
 └── crates/
-    ├── sigmacatch-config/         # Config YAML, parsing CLI, custom_channels.yaml, diagnostics git dry-run (check_dry_run)
+    ├── sigmacatch-config/         # Config YAML, parsing CLI, custom_channels.yaml
     ├── sigmacatch-logger/         # Abonnement tracing à deux couches (stderr info + fichier journal rolling debug)
     ├── sigmacatch-rule/           # SigmahqRules : chargement (parse_sigma_yaml), filtre, dédupe, remove_id
     ├── sigmacatch-detection/      # Wrapper DetectionEngine + pipelines embarquées (windows.yml, flatten_winevt.yml) + channel_resolver
@@ -111,7 +111,7 @@ Quand `ssh_key_path` est renseigné, chaque commit de régression est **signé**
 (`ssh-key`) : l'en-tête `gpgsig` est inséré entre la ligne committer et le message, comme
 `git commit -S` avec `gpg.format = ssh`, pour que GitHub affiche le commit "Verified".
 
-**CLI flags :** `--author <name>`, `-a`/`--all-rules`, `-o`/`--offline`, `-c`/`--contrib`, `-v`/`--verbose`, `--help` / `-h`. Le collecteur est choisi par le binaire (features cargo `winevt`/`etw`, pas de flag). Les diagnostics (dry-run git, channels, liste des règles) sont des tools `tools` : `check_dry_run`, `check_channels`, `list_rules`.
+**CLI flags :** `--author <name>`, `-a`/`--all-rules`, `-o`/`--offline`, `-c`/`--contrib`, `-v`/`--verbose`, `--help` / `-h`. Le collecteur est choisi par le binaire (features cargo `winevt`/`etw`, pas de flag). Les diagnostics (channels, liste des règles) sont des tools `tools` : `check_channels`, `list_rules`.
 
 ---
 
@@ -560,7 +560,6 @@ sigmacatch-channel
 Diagnostics déplacés vers `tools` :
 
 ```text
-check_dry_run              # diagnostics git (token, fork, API, info/refs, état repo)
 check_channels             # affiche les channels résolus
 list_rules                 # affiche les règles chargées (id, titre, status, niveau, techniques, chemin, lien ART)
 check_filter               # valide SigmaFilterConfig contre les règles (ground-truth)

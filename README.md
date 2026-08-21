@@ -79,7 +79,7 @@ Rules missing a `status` or `level` field are always accepted.
 | `-v`, `--verbose` | Show info-level logs on stderr (default: errors only) |
 | `--help`, `-h` | Print help and exit |
 
-Dev tools in `tools/` (run with `cargo run --release --bin <tool>`): `check_dry_run` (git diagnostics), `check_channels` (resolved channels), `list_rules` (loaded rules with techniques + ART link), `check_filter`, `check_evtx`, `get_atomic` (generates `run_atomic.ps` for rules without regression data), `coverage` (rule coverage stats).
+Dev tools in `tools/` (run with `cargo run --release --bin <tool>`): `check_channels` (resolved channels), `list_rules` (loaded rules with techniques + ART link), `check_filter`, `check_evtx`, `get_atomic` (generates `run_atomic.ps` for rules without regression data), `coverage` (rule coverage stats).
 
 ## Git clone performance (grit-lib vs native git)
 
@@ -137,7 +137,7 @@ The project is a cargo workspace of 13 crates (11 libraries + 2 binary crates):
 | Crate | Purpose |
 |---|---|
 | `sigmacatch` | Lib + 2 binaries (`sigmacatch-channel` winevt, `sigmacatch-etw`) + shared runner (continuous loop) |
-| `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml + dry-run git diagnostics |
+| `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml  |
 | `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug) |
 | `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication, channel resolution |
 | `sigmacatch-detection` | Thin wrapper around rsigma-eval (pipelines, bloom, LogSourceExtractor) |
@@ -148,7 +148,7 @@ The project is a cargo workspace of 13 crates (11 libraries + 2 binary crates):
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
 | `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, GitHub fork detection, commit workflow |
 | `input-evtx` | Parse EVTX files into `Event` objects for the detection engine |
-| `tools` | Dev tools: `check_dry_run` (git diag), `check_channels` (channels), `list_rules` (rules), `check_filter` (filter validation), `check_evtx` (regression validation), `get_atomic` (generates `run_atomic.ps`), `coverage` (rule coverage stats) |
+| `tools` | Dev tools: `check_channels` (channels), `list_rules` (rules), `check_filter` (filter validation), `check_evtx` (regression validation), `get_atomic` (generates `run_atomic.ps`), `coverage` (rule coverage stats) |
 
 ## Built with
 

@@ -88,7 +88,6 @@ cargo build -p tools
 |---|---|---|
 | `sigmacatch-channel` | `sigmacatch/src/main_winevt.rs` | Capture Winevt (multi-channel) + évaluation + génération de régression |
 | `sigmacatch-etw` | `sigmacatch/src/main_etw.rs` | Capture ETW (ferrisetw) + évaluation + génération de régression |
-| `check_dry_run` | `tools/src/check_dry_run.rs` | Diagnostics git (token, fork, API, info/refs, état repo) |
 | `check_channels` | `tools/src/check_channels.rs` | Résout et liste les channels Windows collectés |
 | `list_rules` | `tools/src/list_rules.rs` | Liste les règles chargées (techniques, lien ART) |
 | `check_filter` | `tools/src/check_filter.rs` | Valide `SigmaFilterConfig` contre les vraies règles Sigma (comptage ground-truth, pas d'args CLI) |

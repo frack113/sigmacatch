@@ -100,30 +100,6 @@ sigmacatch-channel check-filter
 
 ---
 
-## check-dry-run
-
-**Usage :** `sigmacatch-channel check-dry-run [--json] [--author <name>] [-o] [-c]`
-
-**Fonction :** diagnostics git. Réutilise `Config::load_with_cli` + `dry_run_git` de
-`sigmacatch-config`. Accepte les mêmes flags que le binaire principal.
-
-### Pipeline
-
-1. `parse_args()` + `Config::load_with_cli("config.yaml", cli)`
-2. `dry_run_git(&config)` → résolution du token (config + env), détection du fork (HTTP HEAD),
-   vérification API `/user`, endpoint git smart HTTP info/refs, état du repo local `sigma/`
-3. Rapport détaillé de chaque étape → identifier le point de défaillance
-
-### Exemple
-
-```bash
-sigmacatch-channel check-dry-run
-sigmacatch-channel check-dry-run --json
-sigmacatch-channel check-dry-run --offline
-```
-
----
-
 ## check-channels
 
 **Usage :** `sigmacatch-channel check-channels [--json]`
