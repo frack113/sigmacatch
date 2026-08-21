@@ -8,7 +8,7 @@ use anyhow::Result;
 use sigmacatch_config::{self, Config, parse_args};
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_logger::init as init_logger;
-use sigmacatch_regression::SigmahqRegression;
+use sigmacatch_regression::{DataFormat, SigmahqRegression};
 use sigmacatch_repo::SigmaRepo;
 use sigmacatch_rule::SigmahqRules;
 use sigmacatch_types::{Event, EventProducer};
@@ -16,8 +16,6 @@ use tokio::signal;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 use uuid::Uuid;
-
-type EvtxWriteFn = Box<dyn Fn(&str, &str, Option<u64>, bool, &Path) -> anyhow::Result<()>>;
 
 /// Collector-specific behaviour injected by each binary.
 pub trait CollectorKind {
@@ -38,10 +36,11 @@ pub trait CollectorKind {
     /// Build the collector for the resolved channels.
     fn build(&self, channels: &[String]) -> Box<dyn EventProducer>;
 
-    /// Extension of the regression data file written for this collector's
-    /// events: `evtx` (Windows Winevt/ETW) or `log` (non-EVTX, e.g. auditd).
-    fn regression_data_ext(&self) -> &'static str {
-        "evtx"
+    /// Regression data format written for this collector's events:
+    /// [`DataFormat::Evtx`] (Windows Winevt/ETW) or [`DataFormat::Log`]
+    /// (non-EVTX, e.g. auditd).
+    fn regression_format(&self) -> DataFormat {
+        DataFormat::Evtx
     }
 }
 
@@ -58,6 +57,16 @@ fn setup_console() {
             }
         }
     }
+}
+
+/// Detection + generation state owned by the main loop. Moved as a whole into
+/// `spawn_blocking` for each generation cycle so a slow data write
+/// (`EvtExportLog` retries block for up to ~17s per failing rule) never
+/// freezes the async runtime: collection keeps buffering into the channel.
+struct Pipeline {
+    engine: DetectionEngine,
+    rules: SigmahqRules,
+    regression: SigmahqRegression,
 }
 
 /// Run the sigmacatch pipeline with the given collector.
@@ -138,9 +147,8 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     };
     regression.set_author(config.git.author.clone());
     regression.set_max_failed_cycles(config.regression.max_failed_cycles);
-    regression.set_data_ext(kind.regression_data_ext());
-
-    let write_fn: EvtxWriteFn = Box::new(sigmacatch_regression::write_evtx);
+    regression.set_format(kind.regression_format());
+    regression.set_add_json_output(config.regression.add_json_output);
 
     let existing_rules: HashSet<Uuid> = if cli.all_rules {
         HashSet::new()
@@ -182,7 +190,7 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     }
 
     config.filter.normalize();
-    let mut rules = rules.filter(config.filter.clone());
+    let rules = rules.filter(config.filter.clone());
     let stats = rules.stats();
 
     info!(
@@ -209,7 +217,7 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     let custom_map = sigmacatch_config::load_custom_channel_mapping(
         PathBuf::from("custom_channels.yaml").as_path(),
     );
-    let mut engine = DetectionEngine::new(&rules)?;
+    let engine = DetectionEngine::new(&rules)?;
     let cycle_channels = match kind.channels(&engine, &custom_map) {
         Some(channels) => {
             if channels.is_empty() {
@@ -259,22 +267,45 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     let max_runs = cli.max_runs;
     let mut runs_completed: u32 = 0;
 
+    // Taken by the generation task each cycle and put back when it returns;
+    // `None` while generating (events buffer in the channel meanwhile) or
+    // after a fatal generation failure.
+    let mut pipeline_slot: Option<Pipeline> = Some(Pipeline {
+        engine,
+        rules,
+        regression,
+    });
+
     loop {
         tokio::select! {
             _ = shutdown_rx.changed() => {
                 info!("Shutting down…");
                 break;
             }
-            Some(event) = rx.recv() => {
-                engine.put_events(vec![event]);
+            Some(event) = rx.recv(), if pipeline_slot.is_some() => {
+                if let Some(pipeline) = pipeline_slot.as_mut() {
+                    pipeline.engine.put_events(vec![event]);
+                }
             }
             _ = generate_interval.tick() => {
-                let batches = process_and_generate(&mut engine, &mut rules, &mut regression, &write_fn);
-                runs_completed += 1;
-                info!("Cycle {} completed", runs_completed);
+                let Some(taken) = pipeline_slot.take() else {
+                    continue;
+                };
+                match tokio::task::spawn_blocking(move || process_and_generate(taken)).await {
+                    Ok((returned, batches)) => {
+                        pipeline_slot = Some(returned);
+                        runs_completed += 1;
+                        info!("Cycle {} completed", runs_completed);
 
-                if !batches.is_empty() {
-                    upload_regression(&sigma_repo, batches, &mut branch_pushed, &push_branch);
+                        if !batches.is_empty() {
+                            upload_regression(&sigma_repo, batches, &mut branch_pushed, &push_branch);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Generation task failed (panicked): {}", e);
+                        let _ = shutdown_tx.send(true);
+                        break;
+                    }
                 }
 
                 if let Some(limit) = max_runs
@@ -312,10 +343,17 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
             collector_abort.abort();
         }
     }
+
+    let Some(mut pipeline) = pipeline_slot.take() else {
+        warn!("Generation state lost — skipping final flush");
+        info!("{} finished", kind.name());
+        return Ok(());
+    };
+
     let drain_stop = std::time::Duration::from_secs(5);
     match tokio::time::timeout(drain_stop, async {
         while let Some(event) = rx.recv().await {
-            engine.put_events(vec![event]);
+            pipeline.engine.put_events(vec![event]);
         }
     })
     .await
@@ -330,7 +368,13 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     }
     drop(rx);
 
-    let batches = process_and_generate(&mut engine, &mut rules, &mut regression, &write_fn);
+    let batches = match tokio::task::spawn_blocking(move || process_and_generate(pipeline)).await {
+        Ok((_, batches)) => batches,
+        Err(e) => {
+            error!("Final generation task failed (panicked): {}", e);
+            Vec::new()
+        }
+    };
     if !batches.is_empty() {
         upload_regression(&sigma_repo, batches, &mut branch_pushed, &push_branch);
     }
@@ -365,23 +409,15 @@ fn upload_regression(
     }
 }
 
-fn process_and_generate<F>(
-    engine: &mut DetectionEngine,
-    rules: &mut SigmahqRules,
-    regression: &mut SigmahqRegression,
-    write_fn: F,
-) -> Vec<(Uuid, Vec<String>)>
-where
-    F: Fn(&str, &str, Option<u64>, bool, &Path) -> anyhow::Result<()>,
-{
-    engine.process_events();
-    let alerts = engine.get_alerts();
+fn process_and_generate(mut pipeline: Pipeline) -> (Pipeline, Vec<(Uuid, Vec<String>)>) {
+    pipeline.engine.process_events();
+    let alerts = pipeline.engine.get_alerts();
 
     if alerts.is_empty() {
-        return Vec::new();
+        return (pipeline, Vec::new());
     }
 
-    regression.begin_cycle();
+    pipeline.regression.begin_cycle();
 
     let unique_match_count = {
         let ids: std::collections::HashSet<&Uuid> = alerts.iter().map(|a| &a.rule_id).collect();
@@ -389,7 +425,7 @@ where
     };
 
     info!(
-        events_processed = engine.stats().events_processed,
+        events_processed = pipeline.engine.stats().events_processed,
         matches_found = unique_match_count,
         alerts_count = alerts.len(),
         "evaluation complete"
@@ -398,19 +434,19 @@ where
     let mut batches: Vec<(Uuid, Vec<String>)> = Vec::new();
     let mut retired_ids: Vec<Uuid> = Vec::new();
     for alert in alerts {
-        if let Some(files) = regression.add(&alert, &write_fn) {
+        if let Some(files) = pipeline.regression.add(&alert) {
             retired_ids.push(alert.rule_id);
             batches.push((alert.rule_id, files));
         }
     }
 
-    retired_ids.extend(regression.take_blocked());
+    retired_ids.extend(pipeline.regression.take_blocked());
 
     if !retired_ids.is_empty() {
         for id in &retired_ids {
-            rules.remove_id(id);
+            pipeline.rules.remove_id(id);
         }
-        if let Err(e) = engine.reload_rules(rules) {
+        if let Err(e) = pipeline.engine.reload_rules(&pipeline.rules) {
             warn!(
                 "Failed to reload engine after retiring {} rules: {}",
                 retired_ids.len(),
@@ -425,5 +461,5 @@ where
         rules_retired = retired_ids.len(),
         "batch complete"
     );
-    batches
+    (pipeline, batches)
 }

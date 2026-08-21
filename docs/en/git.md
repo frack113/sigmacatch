@@ -22,7 +22,7 @@ Based on the remote ref if present (else HEAD) to keep fast-forward. The narrow 
 
 ### Multi-branch skip set (pending PRs)
 
-`pending_regression_rule_ids()` (`SigmaRepo`) scans the trees of ALL remote `sigmacatch/*` branches (never a checkout — `list_refs` + in-RAM walk of `regression_data/`, ids extracted from `<uuid>.<ext>` filenames). Union with the worktree → a fresh VM does not re-capture data from a still-open PR of another day; the new PR diff stays based on main (previous PR data never included). `<uuid>.evtx` blobs are validated (parse ≥ 1 record): an empty/corrupt EVTX — **or one > 64 MiB** (`MAX_EVTX_BLOB_SIZE`) — excludes the rule from the skip set (self-healing of empty commits, bounded RAM). Offline mode: the scan is skipped entirely (no local refs read) — the skip set is built from the on-disk worktree only.
+`pending_regression_rule_ids()` (`SigmaRepo`) scans the trees of ALL remote `sigmacatch/*` branches (never a checkout — `list_refs` + in-RAM walk of `regression_data/`, ids extracted from `<uuid>.<ext>` filenames). Union with the worktree → a fresh VM does not re-capture data from a still-open PR of another day; the new PR diff stays based on main (previous PR data never included). Blobs are validated structurally at scan time (EVTX magic `ElfFile\0` / non-empty UTF-8 text, size ≤ 64 MiB via `DataFormat::cheap_validate`) — deep validation (re-parse) only happens at write time. Invalid data excludes the rule from the skip set (self-healing, bounded RAM). Offline mode: the scan is skipped entirely (no local refs read) — the skip set is built from the on-disk worktree only.
 
 ### Remote working-branch guard
 

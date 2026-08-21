@@ -15,7 +15,7 @@ sigmacatch/
 │   ├── input-windows-channels/   # Collecteur Winevt multi-channel (cfg(windows))
 │   ├── input-windows-etw/        # Collecteur ETW direct via ferrisetw (18 providers, routing générique provider→channel)
 │   ├── input-linux-auditd/       # Collecteur auditd (tail /var/log/audit/audit.log, grouping par event id)
-│   ├── sigmacatch-regression/    # SigmahqRegression (get_sigma_id, add, retire), InfoYml, triplet
+│   ├── sigmacatch-regression/    # SigmahqRegression (get_sigma_id, add, retire), InfoYml, DataFormat
 │   ├── sigmacatch-types/         # Types partagés : Event, Alert, RegressionHeader + parsing XML + tables de mapping logsource
 │   ├── sigmacatch-repo/          # wrapper grit-lib + SigmaRepo + opérations git
 │   ├── sigmacatch-evtx-writer/   # Writer EVTX pur Rust (sans API winevt) + validation re-parse
@@ -85,7 +85,7 @@ sigmacatch ──┬── sigmacatch-config       (Config, CliArgs, diagnostics
               ├── input-windows-channels  (feature winevt, bin `sigmacatch-channel`)
               ├── input-windows-etw       (feature etw, bin `sigmacatch-etw`)
               ├── input-linux-auditd      (feature auditd, bin `sigmacatch-auditd`)
-              ├── sigmacatch-regression   (SigmahqRegression : skip set + génération triplet)
+              ├── sigmacatch-regression   (SigmahqRegression : skip set + génération données)
               ├── sigmacatch-evtx-writer  (writer EVTX pur Rust + validation)
               ├── sigmacatch-types        (Event, Alert, RegressionHeader, Product, EventProducer, parsing XML)
               └── sigmacatch-repo         (SigmaRepo, wrapper grit-lib)
@@ -137,7 +137,7 @@ engine.process_events() → get_alerts()
     ├── log stats (events_processed, matches_found, alerts_count)
     └── pour chaque alert : regression.add(&alert) → Option<Vec<String>>
          ├── None si règle déjà retirée / pas d'id valide / info.yml existant
-         └── Some(files) → écrit le triplet + regression_tests_path + retire la règle
+         └── Some(files) → écrit les fichiers + regression_tests_path + retire la règle
     └── règles retirées → rules.remove_id() → engine.reload_rules() (un seul reload batch)
     ↓
 retourne batches: Vec<(Uuid, Vec<String>)>  (règles générées + fichiers écrits)
@@ -155,9 +155,9 @@ upload_regression() → upload_rule_batches() (dans sigmacatch-repo)
   PR en attente non mergés — une VM fraîche ne recapture pas leurs données),
   construit une seule fois au démarrage. `--all-rules` le désactive. Après génération, une règle
   est retirée et le moteur est rechargé en un seul batch (`engine.reload_rules`).
-  Les règles dont les données commitées sont invalides (EVTX vide) sont exclues du skip set → régénérées.
+  Les règles dont les données commitées sont invalides (EVTX cassé / texte vide) sont exclues du skip set → régénérées.
 - **Output toujours dans le repo sigma** : `<sigma_repo_path>/regression_data/<rule_rel_path>/`
-  (triplet `info.yml` + `<rule_id>.json` + `<rule_id>.evtx`), commité sur le fork si `contrib` (commits locaux sinon).
+  (`info.yml` + fichier de données `.evtx`/`.log`, `.json` optionnel), commité sur le fork si `contrib` (commits locaux sinon).
 - **Collecteur observable** : les channels inexistants sont exclus une fois pour toutes sur
   `ERROR_EVT_CHANNEL_NOT_FOUND` (un seul `error!`) ; chaque channel vivant log « initial query OK »
   puis un heartbeat « still alive » (60s) ; `warn!` quand des events sont fetchés mais perdus au

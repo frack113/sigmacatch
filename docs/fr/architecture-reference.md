@@ -45,7 +45,7 @@ sigmacatch/
     ├── sigmacatch-detection/      # Wrapper DetectionEngine + pipelines embarquées (windows.yml, flatten_winevt.yml) + channel_resolver
     ├── input-windows-channels/    # Collecteur Winevt multi-channel (EventProducer)
     ├── input-windows-etw/         # Collecteur ETW direct via ferrisetw (18 providers, routing provider→channel)
-    ├── sigmacatch-regression/     # SigmahqRegression, InfoYml, RegressionData, validation triplet
+    ├── sigmacatch-regression/     # SigmahqRegression, InfoYml, RegressionData, DataFormat + validation
     ├── sigmacatch-types/          # Types partagés : Event, Alert, RegressionHeader, Product + parsing XML + tables de mapping logsource
     ├── sigmacatch-repo/           # wrapper grit-lib : SigmaRepo, opérations git
     └── input-evtx/                # Parser fichiers EVTX → Event (utilisé par tools)
@@ -77,7 +77,8 @@ filter:
   author: ""                  # filtre par author (optionnel, vide = pas de filtre)
   max_rule_size: 1048576      # octets (1MB par défaut, min 1024, max 10MB)
 regression:
-  max_failed_cycles: 3        # règle bloquée (plus de re-capture) après N cycles consécutifs d'échec EVTX (min 1)
+  max_failed_cycles: 3        # règle bloquée (plus de re-capture) après N cycles consécutifs d'échec (min 1)
+  add_json_output: false     # true = écrit aussi le <rule_id>.json auxiliaire à côté du .evtx/.log
 ```
 
 **Filtrage des règles :** `product`, `min_status`, `min_level` et `author` sont appliqués par `SigmahqRules::filter()`.
@@ -93,7 +94,7 @@ une erreur, mais aucun push ne sera tenté.
 
 **Offline / contrib :** `offline: true` saute **toutes** les opérations git — pas de pull, pas de fetch,
 pas de checkout, pas de commit, pas de push ; le dossier `sigma/` est utilisé tel quel et n'a même pas
-besoin d'un `.git` (un zip extrait suffit). Le triplet de régression est toujours écrit sur disque ;
+besoin d'un `.git` (un zip extrait suffit). Les données de régression sont toujours écrites sur disque ;
 seuls commit/push sont sautés. `contrib: true` active le push sur le fork à la fin ; par défaut (`false`)
 les commits restent locaux. Les flags CLI `--offline` / `--contrib` forcent ces valeurs à `true`
 (`--offline` gagne toujours sur `--contrib`).
@@ -198,10 +199,9 @@ existing_rules: HashSet<Uuid> = regression.get_sigma_id().collect()
 Σ sigma_repo.pending_regression_rule_ids()     # union des branches remote sigmacatch/*
     ├── list_refs("refs/remotes/origin/sigmacatch/") → chaque branche (PR en attente)
     ├── marche en RAM de l'arbre (commit → tree → sous-arbre regression_data/)
-    │   └── ids extraits des noms de fichiers <uuid>.json|evtx (jamais de checkout)
-    │   └── validation des blobs <uuid>.evtx : parse ≥ 1 record, sinon id exclu
-    │       (auto-guérison : données vides commitées → règle régénérée)
-    │       └── blob > 64 MiB (MAX_EVTX_BLOB_SIZE) → traité comme cassé, id exclu (RAM bornée)
+    │   └── ids extraits des noms de fichiers <uuid>.json|evtx|log|raw (jamais de checkout)
+    │   └── validation structurelle (magic EVTX / texte UTF-8 non-vide, taille ≤ 64 MiB) — pas de re-parse
+    │       (auto-guérison : données cassées → règle régénérée ; re-parse profond à l'écriture uniquement)
     ├── valid ∪ broken : seuls valid \ broken entrent dans le skip set
     └── HashSet union → dédupe des ids partagés entre branches / avec le worktree
     ↓
@@ -485,14 +485,19 @@ regression_tests_info:
     `EvtExportLog` retourne un succès même quand la requête matche 0 event (fichier header-only) — un fichier
     vide ou corrompu est donc un échec, pas un succès.
   - **Retry** : 4 tentatives au total (1 initiale + 3 retries) avec backoff court (2s/5s/10s) — la course avec la rétention est souvent transitoire.
-  - **En cas d'échec** : le `.json` partiel est supprimé, une erreur est retournée, la règle est sautée ce
-    cycle (pas de commit) et re-capturée sur un cycle ultérieur.
+  - **En cas d'échec** : les artefacts partiels (`.json` auxiliaire, fichier de données) sont supprimés,
+    une erreur est retournée, la règle est sautée ce cycle (pas de commit) et re-capturée sur un cycle ultérieur.
   - **Limitation connue** : race condition avec la rétention du log — si l'event a été purgé entre la collecte
     et l'export, l'appel échoue silencieusement (`ERROR_EVT_QUERY_RESULT_STALE`)
-- **Auto-guérison** : les règles dont les données commitées sont invalides (EVTX vide) sont exclues du skip set
-  (`get_sigma_id` via `data_file_is_valid`, et `pending_regression_rule_ids` via validation des blobs `.evtx`)
-  → régénérées au run suivant.
-- **Non-Windows** : aucune donnée n'est générée (le collecteur Winevt est un stub) et `write_evtx` échoue.
+- **Chemin writer pur-Rust** (`sigmacatch_evtx_writer`) : les events ETW-synthétisés et les events sans record-id
+  sont écrits directement depuis l'XML de l'event sur toutes les plateformes (déterministe — pas de retry), avec la même validation re-parse.
+- **Auto-guérison** : les règles dont les données commitées sont invalides sont exclues du skip set
+  (`get_sigma_id` via `data_file_is_valid` → `DataFormat::cheap_validate` : magic EVTX `ElfFile\0`,
+  texte UTF-8 non-vide pour `.log`, taille ≤ 64 MiB — checks structurels bon marché, pas de re-parse)
+  → régénérées au run suivant. Seule l'extension du format courant est vérifiée
+  (un `.evtx` stale n'empêche pas la génération `.log` lors d'un changement de `product`).
+- **Non-Windows** : le chemin export live-log échoue ; les events ETW-synthétisés génèrent quand même un `.evtx`
+  valide via le writer pur-Rust.
 
 ### Logger (`crates/sigmacatch-logger/src/lib.rs`)
 

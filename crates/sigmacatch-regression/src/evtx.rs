@@ -22,18 +22,18 @@ const EVTX_EXPORT_BACKOFF_SECS: [u64; (EVTX_EXPORT_MAX_ATTEMPTS - 1) as usize] =
 /// Write a valid EVTX file from a matched event.
 ///
 /// Path selection: events that exist in the live Event Log (Winevt collection,
-/// `is_etw == false` with a record id) are re-exported via `EvtExportLog`.
-/// Everything else — ETW-synthesized events (`is_etw == true`, which carry a
-/// synthetic record id but never existed in a live log, so `EvtExportLog`
-/// would always return an empty export) and record-id-less events — is written
-/// directly with the pure-Rust EVTX writer.
+/// `is_etw == false` with a record id) are re-exported via `EvtExportLog`
+/// (Windows only). Everything else — ETW-synthesized events (`is_etw == true`,
+/// which carry a synthetic record id but never existed in a live log, so
+/// `EvtExportLog` would always return an empty export) and record-id-less
+/// events — is written directly with the pure-Rust EVTX writer (all
+/// platforms).
 ///
 /// `EvtExportLog` returns success even for a zero-record match (header-only
 /// file), so every successful call is re-parsed; an empty file is retried
 /// (the live-log race may be transient) then treated as failure and the
 /// `.evtx` is removed. The ETW writer path applies the same re-parse
 /// validation but no retry (deterministic writer — see `write_evtx_etw`).
-#[cfg(windows)]
 pub fn write_evtx(
     xml: &str,
     channel: &str,
@@ -148,11 +148,19 @@ fn write_evtx_winevt(_xml: &str, channel: &str, rid: u64, path: &Path) -> Result
     ))
 }
 
+/// Non-Windows has no `EvtExportLog`: error so the rule is skipped this cycle
+/// rather than producing a file that does not match the live log.
+#[cfg(not(windows))]
+fn write_evtx_winevt(_xml: &str, channel: &str, _rid: u64, _path: &Path) -> Result<()> {
+    Err(anyhow!(
+        "EvtExportLog is not available on non-Windows (channel={channel})"
+    ))
+}
+
 /// Write a synthesized single-record EVTX from the event XML (pure-Rust
 /// writer) with the same re-parse validation as `EvtExportLog`. Unlike the
 /// live-log export, no retry: the writer is deterministic (same XML → same
 /// output), so an identical retry would fail identically.
-#[cfg(windows)]
 fn write_evtx_etw(xml: &str, channel: &str, rid: u64, path: &Path) -> Result<()> {
     let path = crate::long_path::long_path(path);
 
@@ -206,20 +214,15 @@ fn exported_has_records(path: &Path) -> Result<bool> {
     Ok(!events.is_empty())
 }
 
-/// Non-Windows has no `EvtExportLog` and no EVTX writer: error so the rule
-/// is skipped this cycle rather than producing an unreadable file.
+/// Non-Windows variant used by the pure-Rust writer path (no `Context`
+/// needed there).
 #[cfg(not(windows))]
-pub fn write_evtx(
-    _xml: &str,
-    _channel: &str,
-    _record_id: Option<u64>,
-    _is_etw: bool,
-    _path: &Path,
-) -> Result<()> {
-    Err(anyhow!("EVTX export is not available on non-Windows"))
+fn exported_has_records(path: &Path) -> Result<bool> {
+    let events = input_evtx::parse_evtx_file(path)?;
+    Ok(!events.is_empty())
 }
 
-#[cfg(all(windows, test))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -276,11 +279,22 @@ mod tests {
         assert!(exported_has_records(&path).unwrap());
     }
 
+    #[cfg(windows)]
     #[test]
     fn test_write_evtx_winevt_missing_channel_errors() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("nochannel.evtx");
         let err = write_evtx(SAMPLE_XML, "", Some(1), false, &path).unwrap_err();
         assert!(err.to_string().contains("empty channel"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_write_evtx_winevt_unavailable_on_non_windows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("winevt.evtx");
+        let err = write_evtx(SAMPLE_XML, "Some/Channel", Some(1), false, &path).unwrap_err();
+        assert!(err.to_string().contains("not available on non-Windows"));
+        assert!(!path.exists());
     }
 }

@@ -15,7 +15,7 @@ sigmacatch/
 │   ├── input-windows-channels/   # Multi-channel Winevt collector (cfg(windows))
 │   ├── input-windows-etw/        # Direct ETW collector via ferrisetw (18 providers, generic provider→channel routing)
 │   ├── input-linux-auditd/       # Auditd collector (tail /var/log/audit/audit.log, event id grouping)
-│   ├── sigmacatch-regression/    # SigmahqRegression (get_sigma_id, add, retire), InfoYml, triplet
+│   ├── sigmacatch-regression/    # SigmahqRegression (get_sigma_id, add, retire), InfoYml, DataFormat
 │   ├── sigmacatch-types/         # Shared types: Event, Alert, RegressionHeader + XML parsing + logsource mapping tables
 │   ├── sigmacatch-repo/          # grit-lib wrapper + SigmaRepo + git operations
 │   ├── sigmacatch-evtx-writer/   # Pure Rust EVTX writer (no winevt API) + re-parse validation
@@ -85,7 +85,7 @@ sigmacatch ──┬── sigmacatch-config       (Config, CliArgs, dry-run dia
               ├── input-windows-channels  (feature winevt, bin `sigmacatch-channel`)
               ├── input-windows-etw       (feature etw, bin `sigmacatch-etw`)
               ├── input-linux-auditd      (feature auditd, bin `sigmacatch-auditd`)
-              ├── sigmacatch-regression   (SigmahqRegression: skip set + triplet generation)
+              ├── sigmacatch-regression   (SigmahqRegression: skip set + data generation)
               ├── sigmacatch-evtx-writer  (pure Rust EVTX writer + validation)
               ├── sigmacatch-types        (Event, Alert, RegressionHeader, Product, EventProducer, XML parsing)
               └── sigmacatch-repo         (SigmaRepo, grit-lib wrapper)
@@ -137,7 +137,7 @@ engine.process_events() → get_alerts()
     ├── log stats (events_processed, matches_found, alerts_count)
     └── per alert: regression.add(&alert) → Option<Vec<String>>
          ├── None if rule already retired / no valid id / info.yml exists
-         └── Some(files) → write triplet + regression_tests_path + retire rule
+         └── Some(files) → write files + regression_tests_path + retire rule
     └── retired rules → rules.remove_id() → engine.reload_rules() (single batch reload)
     ↓
 returns batches: Vec<(Uuid, Vec<String>)>   # (rule_id, written files) — empty if no alerts
@@ -153,9 +153,9 @@ upload_regression() → upload_rule_batches()   # in sigmacatch-repo
 - **Skip set** = `HashSet<Uuid>` from `SigmahqRegression::get_sigma_id()` (existing info.yml + valid data),
   built once at startup. `--all-rules` disables it. After generation a rule is retired and
   the engine is reloaded in one batch (`engine.reload_rules`). Rules whose committed data is
-  invalid (empty EVTX) are excluded from the skip set → regenerated.
+  invalid (broken EVTX / empty text) are excluded from the skip set → regenerated.
 - **Output always in the sigma repo**: `<sigma_repo_path>/regression_data/<rule_rel_path>/`
-  (triplet `info.yml` + `<rule_id>.json` + `<rule_id>.evtx`), committed to the fork if
+  (`info.yml` + data file `.evtx`/`.log`, optional `.json`), committed to the fork if
   `contrib` (local commits otherwise).
 - **Collector observability**: non-existent channels are excluded once on
   `ERROR_EVT_CHANNEL_NOT_FOUND` (single `error!`); live channels log "initial query OK" and

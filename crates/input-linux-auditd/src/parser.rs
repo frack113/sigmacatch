@@ -22,7 +22,7 @@ pub struct Record {
 ///
 /// `split_msg` is disabled so single-quoted `msg='…'` strings stay plain text
 /// (they are not key/value maps), and enriched values are kept as-is.
-/// Unparseable lines yield `None` (the caller logs/skips them).
+/// Unparsable lines yield `None` (the caller logs/skips them).
 pub fn parse_line(line: &[u8]) -> Option<Record> {
     let parser = Parser {
         enriched: true,

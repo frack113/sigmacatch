@@ -20,7 +20,7 @@ Continuous collector → mpsc (bin `sigmacatch-channel`: EvtQueryW; bin `sigmaca
     ↓
 Sigma engine evaluates every event against all loaded rules
     ↓
-Every 30s: generate regression triplet for each matched rule
+Every 30s: generate regression data (data file + info.yml) for each matched rule
     ↓
 sigma/regression_data/<rule_rel_path>/
     ├── <rule_id>.json    ← flat event (Sigma keys)
@@ -59,7 +59,8 @@ filter:
   author: ""                # filter rules by author (optional, empty = no filter)
   max_rule_size: 1048576    # bytes (1MB default)
 regression:
-  max_failed_cycles: 3      # block a rule (no more re-capture) after N consecutive EVTX failure cycles
+  max_failed_cycles: 3      # block a rule (no more re-capture) after N consecutive failure cycles
+  add_json_output: false    # true = also write auxiliary <rule_id>.json alongside the data file
 ```
 
 Rules below the configured `min_status` / `min_level` thresholds are skipped at load time.
@@ -142,7 +143,7 @@ The project is a cargo workspace of 13 crates (11 libraries + 2 binary crates):
 | `sigmacatch-detection` | Thin wrapper around rsigma-eval (pipelines, bloom, LogSourceExtractor) |
 | `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) — bin `sigmacatch-channel` |
 | `input-windows-etw` | Direct ETW collector via ferrisetw (18 providers, provider→channel routing) — bin `sigmacatch-etw` |
-| `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, regression triplet generation |
+| `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, `DataFormat`, regression data generation |
 | `sigmacatch-evtx-writer` | Pure Rust EVTX writer + re-parse validation |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
 | `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, GitHub fork detection, commit workflow |

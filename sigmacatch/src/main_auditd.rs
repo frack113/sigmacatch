@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use sigmacatch::runner::{self, CollectorKind};
 use sigmacatch_detection::DetectionEngine;
+use sigmacatch_regression::DataFormat;
 use sigmacatch_types::EventProducer;
 
 struct AuditdCollector;
@@ -31,8 +32,8 @@ impl CollectorKind for AuditdCollector {
         Box::new(input_linux_auditd::EventCollector::new())
     }
 
-    fn regression_data_ext(&self) -> &'static str {
-        "log"
+    fn regression_format(&self) -> DataFormat {
+        DataFormat::Log
     }
 }
 

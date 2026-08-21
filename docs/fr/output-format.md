@@ -123,8 +123,10 @@ regression_tests_path: regression_data/rules/<rule_rel_path>/info.yml
 
 Le champ `type` de `regression_tests_info` (et la lecture des info.yml existants) reconnaît
 4 types (`crates/sigmacatch-regression/src/logtype.rs`) : `evtx`, `json`, `raw`, `log`
-— une valeur inconnue/absente retombe sur `json` avec un `warn!`. Le pipeline écrit toujours
-`.json` + `.evtx` (Windows) ou `.json` + `.log` (auditd) ; un `.raw` est possible pour des données non-Winevt
+— une valeur inconnue/absente retombe sur `json` avec un `warn!`. Le pipeline écrit
+`.evtx` + `info.yml` (Windows) ou `.log` + `info.yml` (auditd) ; le `.json` auxiliaire
+est ajouté seulement si `regression.add_json_output: true` (défaut : `false`). Un `.raw`
+est possible pour des données non-Winevt
 (ex. `regression_data/rules/cisco/aaa/cisco_cli_dot1x_disabled/ef0ff092-....raw`, `type: raw`,
 généré hors pipeline — sa section `regression_tests_info` est commentée).
 
