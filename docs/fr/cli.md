@@ -1,7 +1,7 @@
 # CLI — Sous-commandes de diagnostic
 
 Les commandes de diagnostic sont disponibles sur `sigmacatch-channel` derrière la feature `tools`
-(activée par défaut). Lisez `sigmacatch-channel --help` pour la liste complète.
+(désactivée par défaut). Lisez `sigmacatch-channel --help` pour la liste complète.
 
 ## check
 

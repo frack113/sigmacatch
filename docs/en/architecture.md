@@ -2,14 +2,14 @@
 
 ## Cargo workspace
 
-The project is a cargo workspace of 14 packages (3 binary crates + 11 libraries):
+The project is a cargo workspace of 13 packages (1 lib crate + 12 libraries):
 
 ```text
 sigmacatch/
 ├── Cargo.toml                    # Workspace root
 ├── crates/
-│   ├── sigmacatch-config/        # Config YAML + CLI parsing + custom_channels.yaml 
-│   ├── sigmacatch-logger/        # Two-layer tracing subscriber (stderr info + daily rolling file debug)
+│   ├── sigmacatch-config/        # Config YAML + CLI parsing + custom_channels.yaml
+│   ├── sigmacatch-logger/        # Two-layer tracing subscriber (stderr `error` by default / `info` with `-v`, daily rolling file debug)
 │   ├── sigmacatch-rule/          # SigmahqRules: rule loading (parse_sigma_yaml), filter, dedupe, remove_id + SigmaRuleExt (ATT&CK techniques)
 │   ├── sigmacatch-detection/     # DetectionEngine wrapper + embedded pipelines (windows.yml, flatten_winevt.yml) + channel_resolver
 │   ├── input-windows-channels/   # Multi-channel Winevt collector (cfg(windows))
@@ -20,42 +20,14 @@ sigmacatch/
 │   ├── sigmacatch-repo/          # grit-lib wrapper + SigmaRepo + git operations
 │   ├── sigmacatch-evtx-writer/   # Pure Rust EVTX writer (no winevt API) + re-parse validation
 │   └── input-evtx/               # EVTX file parser → Event
-├── sigmacatch/                   # Lib + 3 binaries (continuous loop)
-│   └── src/
-│       ├── lib.rs                # shared runner (pipeline common to all binaries)
-│       ├── runner.rs             # Config + repo init + continuous event loop + process_and_generate + commit/push
-│       ├── main_winevt.rs        # bin `sigmacatch-channel`: multi-channel Winevt collector
-│       ├── main_etw.rs           # bin `sigmacatch-etw`: direct ETW collector (ferrisetw)
-│       └── main_auditd.rs        # bin `sigmacatch-auditd`: auditd tail collector
-└── tools/                   # Dev tools (kept out of the main crate)
+└── sigmacatch/                   # Lib + 3 binaries (continuous loop)
     └── src/
-        ├── check_channels.rs     # Resolves and lists the collected Windows channels
-        ├── list_rules.rs         # Lists loaded rules (techniques, ART link)
-        ├── check_filter.rs       # Validates SigmaFilterConfig against real Sigma rules (ground-truth counts)
-        ├── check_evtx.rs         # Batch validation of Sigma engine against .evtx regression data
-        ├── check_auditd.rs       # Batch validation of Sigma engine against auditd regression data
-        ├── get_atomic.rs         # Generates run_atomic.ps (Invoke-AtomicTest) for rules without regression data
-        └── coverage.rs           # Rule coverage stats (local + pending branches)
-```
-
-## Source tree
-
-```text
-sigmacatch/src/
-├── lib.rs                # shared runner (pipeline common to all binaries)
-├── runner.rs             # run<C: CollectorKind>: config, repo init, event loop, commit/push
-├── main_winevt.rs        # bin `sigmacatch-channel`: multi-channel Winevt collector
-├── main_etw.rs           # bin `sigmacatch-etw`: direct ETW collector (ferrisetw)
-└── main_auditd.rs        # bin `sigmacatch-auditd`: auditd tail collector
-
-tools/src/
-├── check_channels.rs     # Channel resolution tool (config.yaml filter)
-├── list_rules.rs         # Rule listing tool (config.yaml filter)
-├── check_filter.rs       # Filter validation tool (no CLI args, loads ./sigma itself)
-├── check_evtx.rs         # Batch regression validation tool (exit 1 on empty input / no matches)
-├── check_auditd.rs       # Batch auditd regression validation tool (exit 1 on empty input / no matches)
-├── get_atomic.rs         # run_atomic.ps generation tool (rules without regression data)
-└── coverage.rs           # Rule coverage stats tool (local + pending remote branches)
+        ├── lib.rs                # shared runner (pipeline common to all binaries)
+        ├── runner.rs             # Config + repo init + continuous event loop + process_and_generate + commit/push
+        ├── main_winevt.rs        # bin `sigmacatch-channel`: multi-channel Winevt collector
+        ├── main_etw.rs           # bin `sigmacatch-etw`: direct ETW collector (ferrisetw)
+        ├── main_auditd.rs        # bin `sigmacatch-auditd`: auditd tail collector
+        └── cli.rs                # Diagnostic subcommands (check, check-filter, check-channels, list-rules, get-atomic)
 ```
 
 ## Collectors
@@ -65,7 +37,7 @@ Three binaries are produced, each embedding a single collector (cargo features `
 | Binary | Crate | Description |
 |---|---|---|
 | `sigmacatch-channel` | `input-windows-channels` | Native Winevt API (`EvtQueryW`/`EvtNext`/`EvtRender`), multi-channel, replayable |
-| `sigmacatch-etw` | `input-windows-etw` | Direct ETW collection via ferrisetw, 18 providers (9 Sysmon-masquerade + 9 generic), generic provider→channel routing, real EventID preserved |
+| `sigmacatch-etw` | `input-windows-etw` | Direct ETW collection via ferrisetw, 18 providers (9 Sysmon-masquerade + 9 generic), generic provider→channel routing, real EventID preserved [beta] |
 | `sigmacatch-auditd` | `input-linux-auditd` | Tail of `/var/log/audit/audit.log`, linux-audit-parser parsing, event id grouping (`timestamp:sequence`), logsource `product:linux, service:auditd, provider:auditd` |
 
 The ETW collector covers the same channels as the Winevt collector (Security, Defender, Firewall, Sysmon, …) by resolving provider→channel from a mapping table and keeping the real EventID. For generic providers, `EventData` fields are provided by per-provider field maps (variable fidelity). On non-Windows the ETW collector is a no-op stub with a `warn!`.
@@ -77,28 +49,25 @@ There is no `config.rs` / `logger.rs` / `repo.rs` in the binary — those moved 
 
 ```text
 sigmacatch ──┬── sigmacatch-config       (Config, CliArgs, )
-              ├── sigmacatch-logger       (tracing init)
-              ├── sigmacatch-rule         (SigmahqRules: load/filter/remove_id)
-              ├── sigmacatch-detection    (DetectionEngine: pipelines + bloom + LogSourceExtractor + resolve_channels)
-              ├── input-windows-channels  (feature winevt, bin `sigmacatch-channel`)
-              ├── input-windows-etw       (feature etw, bin `sigmacatch-etw`)
-              ├── input-linux-auditd      (feature auditd, bin `sigmacatch-auditd`)
-              ├── sigmacatch-regression   (SigmahqRegression: skip set + data generation)
-              ├── sigmacatch-evtx-writer  (pure Rust EVTX writer + validation)
-              ├── sigmacatch-types        (Event, Alert, RegressionHeader, Product, EventProducer, XML parsing)
-              └── sigmacatch-repo         (SigmaRepo, grit-lib wrapper)
-
-tools ──┬── sigmacatch-rule         (SigmahqRules + SigmaFilterConfig)
-              ├── sigmacatch-detection    (DetectionEngine)
-              ├── sigmacatch-regression   (SigmahqRegression)
-              ├── input-linux-auditd      (record_to_event, parse_line)
-              └── input-evtx              (parse_evtx_bytes)
+               ├── sigmacatch-logger       (tracing init)
+               ├── sigmacatch-rule         (SigmahqRules: load/filter/remove_id)
+               ├── sigmacatch-detection    (DetectionEngine: pipelines + bloom + LogSourceExtractor + resolve_channels)
+               ├── input-windows-channels  (feature winevt, bin `sigmacatch-channel`)
+               ├── input-windows-etw       (feature etw, bin `sigmacatch-etw`)
+               ├── input-linux-auditd      (feature auditd, bin `sigmacatch-auditd`)
+               ├── sigmacatch-regression   (SigmahqRegression: skip set + data generation)
+               ├── sigmacatch-evtx-writer  (pure Rust EVTX writer + validation)
+               ├── sigmacatch-types        (Event, Alert, RegressionHeader, Product, EventProducer, XML parsing)
+               └── sigmacatch-repo         (SigmaRepo, grit-lib wrapper)
+               [tools] clap, serde, input-evtx, input-linux-auditd
 ```
 
 `sigmacatch-detection` depends on `sigmacatch-rule` + `sigmacatch-types` + `rsigma-eval`.
 `input-windows-channels` depends on `sigmacatch-types` for shared types and the logsource
 mapping tables. `sigmacatch-regression` depends on `sigmacatch-types`. `sigmacatch-rule`
 depends on `rsigma-parser`. `sigmacatch-config` depends on `sigmacatch-repo` + `sigmacatch-rule`.
+The diagnostic subcommands (`cli.rs`) use `clap`, `serde`, `input-evtx` and `input-linux-auditd`
+(feature `tools`, off by default).
 
 ## Pipeline (continuous loop)
 
@@ -159,4 +128,4 @@ upload_regression() → upload_rule_batches()   # in sigmacatch-repo
   `ERROR_EVT_CHANNEL_NOT_FOUND` (single `error!`); live channels log "initial query OK" and
   a "still alive" heartbeat (60s); `warn!` when events are fetched but dropped at render/parse.
 
-> Skip set details and key design decisions are in [`architecture-reference.md`](architecture-reference.md).
+> Skip set details and key design decisions are documented in this file (section *Design notes*).

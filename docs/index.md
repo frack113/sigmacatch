@@ -14,13 +14,12 @@ The project is a cargo workspace of 13 crates (11 libraries + 2 binary crates):
 | `sigmacatch-rule` | `SigmahqRules`: rule loading, filter, dedupe, remove_id + `SigmaRuleExt` (ATT&CK techniques) |
 | `sigmacatch-detection` | Thin wrapper around rsigma-eval (pipelines, bloom, LogSourceExtractor, resolve_channels) |
 | `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) — bin `sigmacatch-channel` |
-| `input-windows-etw` | Direct ETW collector via ferrisetw (18 providers, provider→channel routing) — bin `sigmacatch-etw` |
+| `input-windows-etw` | Direct ETW collector via ferrisetw (18 providers, provider→channel routing) [beta] — bin `sigmacatch-etw` |
 | `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, regression data generation |
 | `sigmacatch-evtx-writer` | Pure Rust EVTX writer + re-parse validation |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
 | `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, git operations |
-| `input-evtx` | Parse EVTX files into `Event` objects (used by `tools`) |
-| `tools` | Dev tools: `check_channels`, `list_rules`, `check_filter`, `check_evtx`, `get_atomic`, `coverage` |
+| `input-evtx` | Parse EVTX files into `Event` objects (used by diagnostic subcommands) |
 
 ## Quick start
 
@@ -36,13 +35,10 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 | | English | Francais |
 |---|---|---|
 | Architecture | [EN](architecture/) | [FR](fr/architecture/) |
-| Architecture reference | [EN](architecture-reference/) | [FR](fr/architecture-reference/) |
 | Build | [EN](build/) | [FR](fr/build/) |
 | Git | [EN](git/) | [FR](fr/git/) |
 | Output format | [EN](output-format/) | [FR](fr/output-format/) |
 | Regression data format | [EN](regression-data-format/) | [FR](fr/regression-data-format/) |
-| Nice-to-have | [EN](nice-to-have/) | [FR](fr/nice-to-have/) |
-| Tools | [EN](tools/) | [FR](fr/tools/) |
 
 ## License
 

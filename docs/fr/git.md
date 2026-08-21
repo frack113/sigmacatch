@@ -50,4 +50,4 @@ Basée sur la remote ref si présente (sinon HEAD) pour garder le fast-forward. 
 
 **Transport SSH** : `git.transport: ssh` + `ssh_key_path` (clé ed25519). `ensure_ssh_host_config()` écrit les directives `IdentityFile`/`UserKnownHostsFile` dans `~/.ssh/config` avant les ops de transport (idempotent, **écriture atomique** tmp + rename pour éviter un fichier partiel ; sautée en mode offline) ; sur Windows, `ssh` est résolu via OpenSSH de Windows / Git for Windows et exécuté en direct (`SshCommand::Program`). Quand `ssh_key_path` est renseigné, chaque commit de régression est signé en ed25519 pure Rust (`ssh-key`, en-tête `gpgsig` comme `git commit -S` + `gpg.format = ssh`) → GitHub affiche "Verified". **Échec du pull SSH = abort** (pas de fallback HTTPS) : si le binaire `ssh` manque (Windows sans Git for Windows) ou la clé est invalide, le pull est retenté en HTTP uniquement si `transport: http` — le message d'erreur le dit explicitement.
 
-Voir `config.yaml` et les invariants généraux dans [`architecture-reference.md`](architecture-reference.md) pour la configuration complète.
+Voir `config.yaml` pour la configuration complète.

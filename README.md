@@ -16,7 +16,7 @@ Load rules → skip existing regression → filter Windows → apply pipeline
     ↓
 Resolve channels from rules (logsource → channel mapping)
     ↓
-Continuous collector → mpsc (bin `sigmacatch-channel`: EvtQueryW; bin `sigmacatch-etw`: ETW via ferrisetw)
+Continuous collector → mpsc (bin `sigmacatch-channel`: EvtQueryW; bin `sigmacatch-etw` [beta]: ETW via ferrisetw)
     ↓
 Sigma engine evaluates every event against all loaded rules
     ↓
@@ -142,7 +142,7 @@ The project is a cargo workspace of 13 crates (11 libraries + 2 binary crates):
 | `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication, channel resolution |
 | `sigmacatch-detection` | Thin wrapper around rsigma-eval (pipelines, bloom, LogSourceExtractor) |
 | `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) — bin `sigmacatch-channel` |
-| `input-windows-etw` | Direct ETW collector via ferrisetw (18 providers, provider→channel routing) — bin `sigmacatch-etw` |
+| `input-windows-etw` | Direct ETW collector via ferrisetw (18 providers, provider→channel routing) [beta] — bin `sigmacatch-etw` |
 | `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, `DataFormat`, regression data generation |
 | `sigmacatch-evtx-writer` | Pure Rust EVTX writer + re-parse validation |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
