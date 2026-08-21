@@ -119,12 +119,11 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 | | English | Francais |
 |---|---|---|
 | Architecture | [EN](docs/en/architecture.md) | [FR](docs/fr/architecture.md) |
-| Architecture reference | [EN](docs/en/architecture-reference.md) | [FR](docs/fr/architecture-reference.md) |
 | Build | [EN](docs/en/build.md) | [FR](docs/fr/build.md) |
 | Git | [EN](docs/en/git.md) | [FR](docs/fr/git.md) |
 | Output format | [EN](docs/en/output-format.md) | [FR](docs/fr/output-format.md) |
 | Regression data format | [EN](docs/en/regression-data-format.md) | [FR](docs/fr/regression-data-format.md) |
-| Tools | [EN](docs/en/tools.md) | [FR](docs/fr/tools.md) |
+| CLI diagnostics | [EN](docs/en/cli.md) | [FR](docs/fr/cli.md) |
 
 ## Workspace
 
