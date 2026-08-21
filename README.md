@@ -148,7 +148,7 @@ The project is a cargo workspace of 13 crates (1 lib crate + 12 libraries):
 ## Built with
 
 - [rsigma-eval](https://crates.io/crates/rsigma-eval) + [rsigma-parser](https://crates.io/crates/rsigma-parser) — Sigma rule loading and evaluation
-- [grit-lib](https://github.com/anoma/grit-lib) — pure Rust git, no CLI needed
+- [grit-lib](https://github.com/gitbutlerapp/grit) — pure Rust git, no CLI needed
 - [tokio](https://crates.io/crates/tokio) — async runtime
 - [windows](https://crates.io/crates/windows) — Windows Event Log API, cfg-gated
 - [ferrisetw](https://crates.io/crates/ferrisetw) — direct ETW collection, cfg-gated
