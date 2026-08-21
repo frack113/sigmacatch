@@ -59,7 +59,7 @@ jobs:
           persist-credentials: false
       - name: Validate tag matches sigmacatch version
         run: |
-          version="$(sed -n 's/^version = "\([^"]*\)".*/\1/p' sigmacatch/Cargo.toml | head -1)"
+          version="$(sed -n 's/^version = "\([^"]*\)".*/\1/p' Cargo.toml | head -1)"
           tag="${GITHUB_REF_NAME#v}"
           if [ "$tag" != "$version" ]; then
             echo "::error::Tag v${tag} does not match sigmacatch version ${version}"
