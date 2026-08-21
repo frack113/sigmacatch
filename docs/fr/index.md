@@ -15,7 +15,7 @@ Le projet est un cargo workspace de 13 crates (11 bibliothèques + 2 crates bina
 | `sigmacatch-detection` | Wrapper fin autour de rsigma-eval (pipelines, bloom, LogSourceExtractor, resolve_channels) |
 | `input-windows-channels` | Collecteur Windows Event Log multi-channel (EvtQueryW/EvtNext/EvtRender) |
 | `input-windows-etw` | Collecteur ETW direct via ferrisetw (18 providers, routing provider→channel, field maps) |
-| `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, génération de triplets de régression |
+| `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, génération des données de régression |
 | `sigmacatch-evtx-writer` | Writer EVTX pur Rust + validation re-parse |
 | `sigmacatch-types` | Types partagés : `Event`, `Alert`, `RegressionHeader`, parsing XML, tables logsource |
 | `sigmacatch-repo` | wrapper grit-lib : SigmaRepo, opérations git |

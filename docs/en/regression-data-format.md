@@ -4,7 +4,7 @@ Regression data format for Sigma rules, compatible with SigmaHQ.
 
 ## Purpose
 
-A regression test set consists of a **triplet** per rule: an `info.yml` file (metadata), a `.json` file (raw event), and an `.evtx` file (Windows Event Log template). This triplet allows validating that a Sigma engine always produces the same results for a given rule against a known event.
+A regression test set consists per rule of an `info.yml` file (metadata) and a **data file** (`<rule_id>.evtx` for Windows, `<rule_id>.log` for auditd). An auxiliary `.json` (raw event) can be added via the `regression.add_json_output` option (default: `false`). This allows validating that a Sigma engine always produces the same results for a given rule against a known event.
 
 ## Directory tree
 
@@ -14,6 +14,12 @@ regression_data/
 │   ├── cisco/
 │   │   └── aaa/
 │   │       └── cisco_cli_dot1x_disabled/
+│   ├── linux/
+│   │   ├── auditd/
+│   │   │   ├── execve/               → <slug>/
+│   │   │   ├── path/                 → <slug>/
+│   │   │   └── syscall/              → <slug>/
+│   │   └── builtin/                  → <slug>/
 │   └── windows/
 │       ├── builtin/
 │       │   ├── security/             → <slug>/
@@ -48,20 +54,20 @@ regression_data/
 
 Intermediate directories (`cisco/`, `windows/`, `builtin/`, etc.) reflect the SigmaHQ category hierarchy. The last directory before the files is always a **slug** derived from the rule YAML name.
 
-## Regression triplet
+## Regression directory contents
 
-Each rule with regression contains a directory (slug) with exactly three files:
+Each rule with regression contains a directory (slug) with:
 
 ```text
 <slug>/
 ├── info.yml                    # Metadata + test results
-├── <rule_id>.json              # Raw event (nested Winevt JSON, original EventData key names)
-└── <rule_id>.evtx              # Valid EVTX via EvtExportLog (non-Windows: no data generated)
+├── <rule_id>.evtx              # Valid EVTX (EvtExportLog or pure-Rust writer)
+└── <rule_id>.json              # Optional (regression.add_json_output) — raw event
 ```
 
 The `<rule_id>` is always the **UUID** contained in `rule_metadata[0].id` of the `info.yml` file. It is never the directory name.
 
-Variant: some rules (e.g., cisco) use `.raw` instead of `.json` + `.evtx` when the EVTX format is not applicable.
+Variants: some rules (e.g., cisco) use `.raw` when the EVTX format is not applicable. Auditd rules use `.log` (complete original audit event lines). The data file + `info.yml` are the mandatory output; the `.json` is an optional extra.
 
 ## `info.yml` schema
 
@@ -91,7 +97,7 @@ rule_metadata:
 
 `rule_metadata[0].id` is the **canonical ID**. This UUID uniquely identifies the rule across the entire system. It is used for:
 
-- Naming `.json` and `.evtx` files
+- Naming data files (`.evtx`, `.log`, `.json`)
 - Lookup key in Sigma engines
 - Indexing in data structures
 
@@ -100,8 +106,8 @@ rule_metadata:
 ```yaml
 regression_tests_info:
   - name: Positive Detection Test
-    type: evtx                  # or "raw" for some formats
-    provider: <ProviderName>    # dynamically extracted from event's XML ProviderName (e.g., Microsoft-Windows-Sysmon)
+    type: evtx                  # or "raw" for cisco, "log" for auditd
+    provider: <ProviderName>    # dynamically extracted from event's XML ProviderName (e.g., Microsoft-Windows-Sysmon, or "auditd")
     match_count: <int>          # Number of matches found
     path: regression_data/.../<rule_id>.evtx  # Relative path to the template
 ```
@@ -138,8 +144,9 @@ regression_tests_info:
 | File | Format | Name | Content |
 |------|--------|------|---------|
 | `info.yml` | YAML | Always `info.yml` | Metadata + results |
-| `<rule_id>.json` | JSON | UUID v4 | Raw event (nested JSON, original EventData key names) |
-| `<rule_id>.evtx` | Binary | UUID v4 | Valid EVTX via EvtExportLog (validated ≥ 1 record; failure = skip rule, no data on non-Windows) |
+| `<rule_id>.evtx` | Binary | UUID v4 | Valid EVTX (EvtExportLog or pure-Rust writer; validated ≥ 1 record at write time) |
+| `<rule_id>.log` | Text | UUID v4 | Complete audit event (original auditd lines, multi-record, for the auditd collector) |
+| `<rule_id>.json` | JSON | UUID v4 | Optional (`regression.add_json_output`) — raw event (nested Winevt JSON or flat auditd JSON) |
 
 The `<rule_id>` in file names is always the UUID from `rule_metadata[0].id`.
 
@@ -147,23 +154,16 @@ The `<rule_id>` in file names is always the UUID from `rule_metadata[0].id`.
 
 ### rule_id consistency
 
-The same UUID must appear in three places:
+The same UUID must appear in `rule_metadata[0].id` of `info.yml` and in the name of every present data file. If these values diverge, the set is inconsistent.
 
-1. `rule_metadata[0].id` in `info.yml`
-2. `.json` file name
-3. `.evtx` file name
+### Completeness
 
-If these three values are not identical, the triplet is inconsistent.
+A set is **complete** if:
 
-### Triplet completeness
+- `info.yml` exists
+- the data file referenced by `regression_tests_info[0].path` exists and is valid (EVTX magic / non-empty text, size ≤ 64 MiB)
 
-A triplet is **complete** if all three files exist in the same directory:
-
-- `info.yml`
-- `<rule_id>.json` (or `<rule_id>.raw`)
-- `<rule_id>.evtx`
-
-A triplet is **incomplete** if any file is missing.
+The auxiliary `.json` is not part of the validity check.
 
 ### info.yml format validation
 
@@ -177,7 +177,7 @@ For an `info.yml` to be valid:
 ### Naming validation
 
 - The parent directory name is **never** validated against the rule_id
-- `.json`/`.evtx` files must be named exactly `<rule_id>.<ext>`
+- Data files must be named exactly `<rule_id>.<ext>`
 - Hidden files (starting with `.`) are ignored
 
 ## Platforms
@@ -189,6 +189,10 @@ The majority of rules (process_creation, file_event, registry, etc.) target Wind
 ### Cisco
 
 Some network rules use native formats (`.raw` instead of `.json` + `.evtx`). The `provider` field in `regression_tests_info` may be absent.
+
+### Linux (auditd)
+
+The `sigmacatch-auditd` collector tails `/var/log/audit/audit.log`, parses records with `linux-audit-parser`, and emits one event per record. Records sharing the same audit event id (`msg=audit(timestamp:sequence)`) are grouped: each event carries `event_raw` = all original lines of the audit event. Regression data uses `.log` (complete lines). The provider is `auditd`.
 
 ### Emerging Threats
 

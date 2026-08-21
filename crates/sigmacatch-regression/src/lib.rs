@@ -4,6 +4,7 @@
 //! SigmaHQ-compatible regression data format and helpers.
 
 mod evtx;
+mod format;
 mod info;
 pub mod logtype;
 mod long_path;
@@ -16,10 +17,10 @@ use sigmacatch_types::{Alert, RegressionHeader};
 use tracing::{error, info, info_span, warn};
 use uuid::Uuid;
 
-/// Maximum EVTX blob size the skip-set scan is willing to parse in memory
-/// (64 MiB). Larger blobs are treated as broken so the rule gets re-captured
-/// instead of consuming unbounded RAM on a corrupted or synthetic blob.
-const MAX_EVTX_BLOB_SIZE: usize = 64 * 1024 * 1024;
+use crate::format::DATA_EXTENSIONS;
+pub use crate::format::DataFormat;
+use crate::info::{InfoYml, TestConfig};
+use crate::logtype::LogType;
 
 /// A rule whose EVTX generation keeps failing is blocked (logged, dropped
 /// from the active skip-set, no more re-capture) after this many consecutive
@@ -27,46 +28,16 @@ const MAX_EVTX_BLOB_SIZE: usize = 64 * 1024 * 1024;
 /// (config.yaml `regression.max_failed_cycles`); this is the default.
 pub const DEFAULT_MAX_FAILED_CYCLES: u32 = 3;
 
-pub use crate::evtx::write_evtx;
-use crate::info::InfoYml;
-use crate::logtype::LogType;
-
-/// True when the rule's committed data file is valid: `.evtx` parses with
-/// ≥ 1 record, else a non-empty `.json`. Broken data is excluded from the
-/// skip set so the rule is re-captured.
-fn data_file_is_valid(dir: &Path, rule_id: &Uuid) -> bool {
-    let evtx = crate::long_path::long_path(&dir.join(format!("{}.evtx", rule_id)));
-    if evtx.exists() {
-        match std::fs::metadata(&evtx) {
-            Ok(m) if m.len() as usize > MAX_EVTX_BLOB_SIZE => {
-                warn!(
-                    "rule {} excluded from skip-set: EVTX exceeds {} MiB (will be re-captured)",
-                    rule_id,
-                    MAX_EVTX_BLOB_SIZE / 1024 / 1024
-                );
-                return false;
-            }
-            Ok(_) => {}
-            Err(e) => {
-                warn!(
-                    "rule {} excluded from skip-set: cannot stat {} ({}); will be re-captured",
-                    rule_id,
-                    evtx.display(),
-                    e
-                );
-                return false;
-            }
-        }
-        return match input_evtx::parse_evtx_file(&evtx) {
-            Ok(events) => !events.is_empty(),
-            Err(_) => false,
-        };
+/// True when the rule's committed data file is valid: cheap structural check
+/// of the primary data file (EVTX magic / text prefix, size bound). Broken
+/// data is excluded from the skip set so the rule is re-captured.
+fn data_file_is_valid(dir: &Path, rule_id: &Uuid, format: DataFormat) -> bool {
+    let ext = format.ext();
+    let candidate = crate::long_path::long_path(&dir.join(format!("{rule_id}.{ext}")));
+    if !candidate.exists() {
+        return false;
     }
-    let json = crate::long_path::long_path(&dir.join(format!("{}.json", rule_id)));
-    if json.exists() {
-        return std::fs::metadata(&json).is_ok_and(|m| m.len() > 0);
-    }
-    false
+    format.cheap_validate(&candidate)
 }
 
 #[derive(Debug, Clone)]
@@ -120,6 +91,12 @@ pub struct SigmahqRegression {
     failed_this_cycle: HashSet<Uuid>,
     blocked: Vec<Uuid>,
     max_failed_cycles: u32,
+    /// Output format of the per-rule data file, set by the active collector.
+    format: DataFormat,
+    /// Write the auxiliary `<rule_id>.json` next to the data file
+    /// (config.yaml `regression.add_json_output`). The data file + info.yml
+    /// are always written; the json is optional extra.
+    add_json_output: bool,
 }
 
 impl SigmahqRegression {
@@ -147,7 +124,22 @@ impl SigmahqRegression {
             failed_this_cycle: HashSet::new(),
             blocked: Vec::new(),
             max_failed_cycles: DEFAULT_MAX_FAILED_CYCLES,
+            format: DataFormat::Evtx,
+            add_json_output: false,
         })
+    }
+
+    /// Set the regression data format for the active collector
+    /// ([`DataFormat::Evtx`] for Windows Winevt/ETW, [`DataFormat::Log`] for
+    /// auditd). Default: [`DataFormat::Evtx`].
+    pub fn set_format(&mut self, format: DataFormat) {
+        self.format = format;
+    }
+
+    /// Set whether the auxiliary `<rule_id>.json` is written next to the data
+    /// file. Default: `false`.
+    pub fn set_add_json_output(&mut self, enabled: bool) {
+        self.add_json_output = enabled;
     }
 
     /// Configure the consecutive-failure bound after which a rule is blocked.
@@ -200,7 +192,7 @@ impl SigmahqRegression {
             .filter_map(|(info_path, info, _)| {
                 let rule_id = info.rule_metadata.first().map(|m| m.id)?;
                 let dir = info_path.parent()?;
-                data_file_is_valid(dir, &rule_id).then_some(rule_id)
+                data_file_is_valid(dir, &rule_id, self.format).then_some(rule_id)
             })
             .collect()
     }
@@ -227,11 +219,11 @@ impl SigmahqRegression {
         self.failed_this_cycle.clear();
     }
 
-    /// Track a failed EVTX generation. After `self.max_failed_cycles`
-    /// consecutive failures the rule is blocked: logged as `error!` and
-    /// retired so it is no longer re-captured. At most one failure per rule
-    /// per cycle is counted (`begin_cycle` opens a new cycle), so a rule with
-    /// several matching events in a single batch is not blocked early.
+    /// Track a failed generation. After `self.max_failed_cycles` consecutive
+    /// failures the rule is blocked: logged as `error!` and retired so it is
+    /// no longer re-captured. At most one failure per rule per cycle is
+    /// counted (`begin_cycle` opens a new cycle), so a rule with several
+    /// matching events in a single batch is not blocked early.
     fn note_generation_failure(&mut self, rule_id: &Uuid) {
         if !self.failed_this_cycle.insert(*rule_id) {
             return;
@@ -240,7 +232,7 @@ impl SigmahqRegression {
         *count += 1;
         if *count >= self.max_failed_cycles {
             error!(
-                "Rule {} blocked after {} consecutive EVTX generation failures — no more re-capture",
+                "Rule {} blocked after {} consecutive generation failures — no more re-capture",
                 rule_id, *count
             );
             self.failed_cycles.remove(rule_id);
@@ -262,10 +254,7 @@ impl SigmahqRegression {
         serde_json::from_str(&content).ok()
     }
 
-    pub fn add<F>(&mut self, alert: &Alert, write_fn: F) -> Option<Vec<String>>
-    where
-        F: Fn(&str, &str, Option<u64>, bool, &Path) -> Result<()>,
-    {
+    pub fn add(&mut self, alert: &Alert) -> Option<Vec<String>> {
         let output_path = self.output_path.as_ref()?;
         let rule_id = &alert.rule_id;
         if self.retired.contains(rule_id) {
@@ -297,6 +286,8 @@ impl SigmahqRegression {
                 Some(self.author.as_str())
             },
             alert.description.as_deref(),
+            self.format,
+            self.add_json_output,
         );
 
         if reg.exists() {
@@ -306,14 +297,12 @@ impl SigmahqRegression {
         reg.add_alert(alert.clone());
 
         let _gen_span = info_span!("generate", rule_id = %rule_id).entered();
-        let evtx_ext = match reg.generate(write_fn) {
-            Ok(ext) => ext,
-            Err(e) => {
-                error!("Failed to generate regression for {}: {}", rule_id, e);
-                self.note_generation_failure(rule_id);
-                return None;
-            }
-        };
+        if let Err(e) = reg.generate() {
+            error!("Failed to generate regression for {}: {}", rule_id, e);
+            self.note_generation_failure(rule_id);
+            return None;
+        }
+
         let rel_dir = reg
             .sigma_rel_dir()
             .unwrap_or_else(|| format!("regression_data/rules/{rule_id}"));
@@ -338,11 +327,13 @@ impl SigmahqRegression {
         self.retired.insert(*rule_id);
         info!("Rule {rule_id} retired from detection engine");
 
-        let mut files = vec![
-            format!("{}/{}.json", rel_dir, rule_id),
-            format!("{}/{}.{}", rel_dir, rule_id, evtx_ext),
-            format!("{}/info.yml", rel_dir),
-        ];
+        let ext = self.format.ext();
+        let mut files = Vec::new();
+        if self.add_json_output {
+            files.push(format!("{}/{}.json", rel_dir, rule_id));
+        }
+        files.push(format!("{}/{}.{}", rel_dir, rule_id, ext));
+        files.push(format!("{}/info.yml", rel_dir));
         if let Some(ref yaml_rel) = rule_yaml_rel {
             files.push(yaml_rel.clone());
         }
@@ -358,6 +349,8 @@ struct RegressionData {
     rule_rel_path: Option<PathBuf>,
     author: Option<String>,
     description: Option<String>,
+    format: DataFormat,
+    add_json_output: bool,
 }
 
 impl RegressionData {
@@ -367,6 +360,8 @@ impl RegressionData {
         rule_rel_path: Option<&Path>,
         author: Option<&str>,
         description: Option<&str>,
+        format: DataFormat,
+        add_json_output: bool,
     ) -> Self {
         Self {
             header: header.clone(),
@@ -375,6 +370,8 @@ impl RegressionData {
             rule_rel_path: rule_rel_path.map(|p| p.to_path_buf()),
             author: author.map(|s| s.to_string()),
             description: description.map(|s| s.to_string()),
+            format,
+            add_json_output,
         }
     }
 
@@ -401,88 +398,80 @@ impl RegressionData {
 
     fn exists(&self) -> bool {
         self.rule_dir().is_ok_and(|d| {
-            d.join("info.yml").exists() && data_file_is_valid(&d, &self.header.rule_id)
+            d.join("info.yml").exists() && data_file_is_valid(&d, &self.header.rule_id, self.format)
         })
     }
 
-    fn generate<F>(&self, write_fn: F) -> Result<String>
-    where
-        F: Fn(&str, &str, Option<u64>, bool, &Path) -> Result<()>,
-    {
+    /// Write the data file (+ optional auxiliary json) then info.yml. On data
+    /// failure the partial artifacts are removed so the rule is re-captured
+    /// later without orphaned files. The provider is resolved before any file
+    /// is written so a malformed event fails fast.
+    fn generate(&self) -> Result<()> {
+        let alert = self
+            .alerts
+            .first()
+            .ok_or_else(|| anyhow!("no matched event for rule {}", self.header.rule_id))?;
+        let provider = self.format.resolve_provider(alert)?;
+
         let rule_dir = self.rule_dir()?;
         let rule_dir = crate::long_path::long_path(&rule_dir);
-        let rule_id = &self.header.rule_id;
         std::fs::create_dir_all(&rule_dir)
             .with_context(|| format!("Failed to create rule directory {:?}", rule_dir))?;
 
-        let first = self.alerts.first();
-        let match_count = if first.is_some() { 1 } else { 0 };
-
-        let evtx_ext = "evtx";
-        if let Some(alert) = first {
-            let raw_json_path =
-                crate::long_path::long_path(&rule_dir.join(format!("{}.json", rule_id)));
-            let raw_json = serde_json::to_string_pretty(&alert.event_json_raw)?;
-            std::fs::write(&raw_json_path, raw_json)?;
-            tracing::info!("Wrote JSON for rule {:?}", rule_id);
-
-            let evtx_path =
-                crate::long_path::long_path(&rule_dir.join(format!("{}.evtx", rule_id)));
-            if let Err(e) = write_fn(
-                alert.raw_xml(),
-                alert.channel(),
-                alert.record_id(),
-                alert.is_etw,
-                &evtx_path,
-            ) {
-                // EVTX failed (empty export or non-Windows): drop the partial `.json`
-                // and keep the rule loaded so it is re-captured later.
-                let _ = std::fs::remove_file(&raw_json_path);
-                return Err(e);
+        let rule_id = &self.header.rule_id;
+        let ext = self.format.ext();
+        let mut written: Vec<PathBuf> = Vec::new();
+        let result = (|| -> Result<()> {
+            if self.add_json_output {
+                let raw_json_path =
+                    crate::long_path::long_path(&rule_dir.join(format!("{rule_id}.json")));
+                let raw_json = serde_json::to_string_pretty(&alert.event_json_raw)?;
+                std::fs::write(&raw_json_path, raw_json)?;
+                written.push(raw_json_path);
             }
-            tracing::info!("Wrote EVTX for rule {:?}", rule_id);
+            let data_path = crate::long_path::long_path(&rule_dir.join(format!("{rule_id}.{ext}")));
+            self.format.write(alert, &data_path)?;
+            written.push(data_path);
+            Ok(())
+        })();
+        if let Err(e) = result {
+            for path in &written {
+                let _ = std::fs::remove_file(path);
+            }
+            return Err(e);
         }
 
-        let sigma_evtx_path = if first.is_some() {
-            let evtx_name = format!("{}.{}", rule_id, evtx_ext);
-            let rel_dir = self
-                .sigma_rel_dir()
-                .unwrap_or_else(|| format!("regression_data/rules/{rule_id}"));
-            format!("{}/{}", rel_dir, evtx_name)
-        } else {
-            String::new()
-        };
+        let rel_dir = self
+            .sigma_rel_dir()
+            .unwrap_or_else(|| format!("regression_data/rules/{rule_id}"));
+        let sigma_data_path = format!("{rel_dir}/{rule_id}.{ext}");
 
         let author = self
             .author
             .as_deref()
             .unwrap_or("Sigma Regression Generator");
-
         let description = self.description.as_deref().unwrap_or("N/A");
-
-        let provider = first
-            .map(|a| a.provider())
-            .unwrap_or("Microsoft-Windows-Sysmon");
 
         let info = InfoYml::new(
             rule_id,
             &self.header.rule_title,
-            match_count,
-            &sigma_evtx_path,
+            1,
+            &sigma_data_path,
             author,
             description,
-            provider,
+            &TestConfig {
+                test_type: ext.to_string(),
+                provider,
+            },
         );
         let info_path = crate::long_path::long_path(&rule_dir.join("info.yml"));
         info.save(&info_path)?;
-        tracing::info!("Created info.yml at {:?}", info_path);
 
         tracing::info!(
-            "Generated {} regression events for rule {:?}",
-            self.alerts.len(),
+            "Generated regression data ({ext}) for rule {:?}",
             self.header.rule_id
         );
-        Ok(evtx_ext.to_string())
+        Ok(())
     }
 }
 
@@ -500,13 +489,10 @@ fn clean_path(p: &Path) -> PathBuf {
 }
 
 fn resolve_data_file(dir: &Path, rule_id: &Uuid) -> Option<PathBuf> {
-    for ext in ["evtx", "json"] {
-        let candidate = dir.join(format!("{}.{}", rule_id, ext));
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-    None
+    DATA_EXTENSIONS
+        .iter()
+        .map(|ext| dir.join(format!("{rule_id}.{ext}")))
+        .find(|candidate| candidate.exists())
 }
 
 pub(crate) fn update_regression_tests_path(rule_yaml_path: &Path, tests_path: &str) {
@@ -596,6 +582,21 @@ pub fn clean_partial_artifacts(base: &Path) {
 
 const MAX_CLEAN_DEPTH: u32 = 64;
 
+/// True when the directory holds any regression data file (`*.evtx`, `*.log`,
+/// `*.raw`, `*.json`) regardless of its stem.
+fn contains_data_file(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.filter_map(|e| e.ok()).any(|e| {
+        let name = e.file_name();
+        let name = name.to_string_lossy();
+        DATA_EXTENSIONS
+            .iter()
+            .any(|ext| name.ends_with(&format!(".{ext}")))
+    })
+}
+
 fn clean_recursive(dir: &Path, depth: u32) {
     if depth > MAX_CLEAN_DEPTH {
         warn!("clean_recursive: depth limit reached at {:?}", dir);
@@ -620,10 +621,7 @@ fn clean_recursive(dir: &Path, depth: u32) {
         if path.is_dir() {
             let has_info = path.join("info.yml").exists();
             if !has_info {
-                let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                let has_generated = path.join(format!("{dir_name}.json")).exists()
-                    || path.join(format!("{dir_name}.evtx")).exists();
-                if !has_generated {
+                if !contains_data_file(&path) {
                     clean_recursive(&path, depth + 1);
                     continue;
                 }
@@ -641,11 +639,12 @@ fn clean_recursive(dir: &Path, depth: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::format::MAX_DATA_BLOB_SIZE;
     use sigmacatch_types::Event;
 
     /// Build an alert that mirrors what the ETW path produces: an event
-    /// synthesized from raw ETW data (Story 1.2/1.3) with a synthetic record
-    /// id and `is_etw = true`, matched by the detection engine.
+    /// synthesized from raw ETW data with a synthetic record id and
+    /// `is_etw = true`, matched by the detection engine.
     fn synthetic_etw_alert(rule_id: Uuid) -> Alert {
         let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
   <System>
@@ -680,25 +679,97 @@ mod tests {
         }
     }
 
+    /// Build an auditd-style alert whose complete original lines are carried
+    /// in `event_raw` (required for the `.log` data file).
+    fn synthetic_log_alert(rule_id: Uuid) -> Alert {
+        let raw_line =
+            b"type=EXECVE msg=audit(1717056137.482:90412): argc=2 a0=\"passwd\" a1=\"-S\"\n";
+        Alert {
+            rule_id,
+            rule_title: "Password Policy Discovery - Linux".to_string(),
+            description: Some("log-mode test".to_string()),
+            rule_path: None,
+            severity: "low".to_string(),
+            event_json_raw: serde_json::json!({
+                "stamp": { "timestamp": 1717056137482u64, "sequence": 90412 },
+                "type": "EXECVE",
+                "fields": { "argc": "2", "a0": "passwd", "a1": "-S" }
+            }),
+            event_json: serde_json::json!({
+                "type": "EXECVE",
+                "argc": "2",
+                "a0": "passwd",
+                "a1": "-S",
+                "product": "linux",
+                "service": "auditd"
+            }),
+            event_raw: raw_line.to_vec(),
+            is_etw: false,
+        }
+    }
+
     #[test]
     fn test_data_file_is_valid_detects_broken_evtx() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         let id = Uuid::new_v4();
 
-        assert!(!data_file_is_valid(dir, &id), "no data file → invalid");
+        assert!(
+            !data_file_is_valid(dir, &id, DataFormat::Evtx),
+            "no data file → invalid"
+        );
 
         let evtx = dir.join(format!("{id}.evtx"));
         std::fs::write(&evtx, b"not-an-evtx").unwrap();
-        assert!(!data_file_is_valid(dir, &id), "unparsable EVTX → invalid");
+        assert!(
+            !data_file_is_valid(dir, &id, DataFormat::Evtx),
+            "no EVTX magic → invalid"
+        );
 
-        std::fs::remove_file(&evtx).unwrap();
-        let json = dir.join(format!("{id}.json"));
-        std::fs::write(&json, b"").unwrap();
-        assert!(!data_file_is_valid(dir, &id), "empty json → invalid");
+        std::fs::write(&evtx, b"ElfFile\x00rest-of-header").unwrap();
+        assert!(
+            data_file_is_valid(dir, &id, DataFormat::Evtx),
+            "valid EVTX magic → valid"
+        );
+    }
 
-        std::fs::write(&json, b"{}").unwrap();
-        assert!(data_file_is_valid(dir, &id), "non-empty json → valid");
+    #[test]
+    fn test_data_file_is_valid_log_rejects_other_formats() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let id = Uuid::new_v4();
+
+        // .evtx file exists but format is Log → not valid
+        let evtx = dir.join(format!("{id}.evtx"));
+        std::fs::write(&evtx, b"ElfFile\x00rest-of-header").unwrap();
+        assert!(
+            !data_file_is_valid(dir, &id, DataFormat::Log),
+            "stale .evtx ignored when format=Log"
+        );
+
+        // .log file exists and format is Log → valid
+        let log = dir.join(format!("{id}.log"));
+        std::fs::write(&log, b"type=EXECVE msg=audit(1.2:3)\n").unwrap();
+        assert!(data_file_is_valid(dir, &id, DataFormat::Log));
+    }
+
+    /// A `.log` data file is valid on its own — validity is anchored on the
+    /// data file, never on the auxiliary json (`add_json_output: false`).
+    #[test]
+    fn test_data_file_is_valid_log_without_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let id = Uuid::new_v4();
+
+        let log = dir.join(format!("{id}.log"));
+        std::fs::write(&log, b"type=EXECVE msg=audit(1.2:3): argc=2\n").unwrap();
+        assert!(data_file_is_valid(dir, &id, DataFormat::Log));
+
+        std::fs::write(&log, b"").unwrap();
+        assert!(
+            !data_file_is_valid(dir, &id, DataFormat::Log),
+            "empty log → invalid"
+        );
     }
 
     #[test]
@@ -724,18 +795,24 @@ mod tests {
                 "regression_data/rules/win/x/1.evtx",
                 "tester",
                 "N/A",
-                "Microsoft-Windows-Sysmon",
+                &TestConfig {
+                    test_type: "evtx".to_string(),
+                    provider: "Microsoft-Windows-Sysmon".to_string(),
+                },
             )
             .save(&dir.join("info.yml"))
             .unwrap();
         };
 
         write_info(&good_dir, good_id);
-        std::fs::write(good_dir.join(format!("{good_id}.json")), "{}").unwrap();
+        std::fs::write(
+            good_dir.join(format!("{good_id}.evtx")),
+            b"ElfFile\x00rest-of-header",
+        )
+        .unwrap();
 
         write_info(&broken_dir, broken_id);
         std::fs::write(broken_dir.join(format!("{broken_id}.evtx")), b"x").unwrap();
-        std::fs::write(broken_dir.join(format!("{broken_id}.json")), "{}").unwrap();
 
         write_info(&missing_dir, missing_id);
 
@@ -800,56 +877,63 @@ mod tests {
         }
     }
 
-    /// End-to-end downstream pipeline for an ETW alert (AC 9): the existing
-    /// regression pipeline turns the alert into a valid json+evtx+info.yml
-    /// triplet without any pipeline-aval change. `rule_path` is `None` so no
+    /// End-to-end pipeline for an ETW alert: data (.evtx, pure-Rust writer) +
+    /// info.yml, no auxiliary json by default. `rule_path` is `None` so no
     /// sigma rule file is touched; everything lives in a tempdir.
     #[test]
-    fn test_etw_alert_generates_valid_triplet() {
+    fn test_etw_alert_generates_valid_output() {
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path().join("regression_data");
         let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
         let rule_id = Uuid::parse_str("7595ba94-cf3b-4471-aa03-4f6baa9e5fad").unwrap();
         let alert = synthetic_etw_alert(rule_id);
 
-        // Mirrors the `write_evtx` ETW branch: pure-Rust writer + re-parse
-        // validation (the retry sleep loop is Windows-only).
-        let write_fn = |xml: &str,
-                        _channel: &str,
-                        record_id: Option<u64>,
-                        is_etw: bool,
-                        path: &Path|
-         -> anyhow::Result<()> {
-            assert!(is_etw, "only the ETW writer path is exercised");
-            let rid = record_id.unwrap_or(1);
-            sigmacatch_evtx_writer::write_evtx_from_xml(xml, rid, path)?;
-            let events = input_evtx::parse_evtx_file(path)?;
-            if events.is_empty() {
-                let _ = std::fs::remove_file(path);
-                anyhow::bail!("evtx-writer produced an empty EVTX");
-            }
-            Ok(())
-        };
-
-        let files = reg.add(&alert, write_fn).expect("triplet generated");
-
-        assert_eq!(files.len(), 3, "triplet = json + evtx + info.yml");
+        let files = reg.add(&alert).expect("data + info.yml generated");
+        assert_eq!(files.len(), 2, "default output = evtx + info.yml");
 
         let rule_dir = base.join("rules").join(rule_id.to_string());
-        let json_path = rule_dir.join(format!("{rule_id}.json"));
         let evtx_path = rule_dir.join(format!("{rule_id}.evtx"));
         let info_path = rule_dir.join("info.yml");
 
-        assert!(info_path.exists());
+        assert!(!rule_dir.join(format!("{rule_id}.json")).exists());
+
         let info = InfoYml::load(&info_path).unwrap();
         assert_eq!(info.rule_metadata[0].id, rule_id);
         assert_eq!(info.regression_tests_info[0].test_type, "evtx");
+        assert_eq!(
+            info.regression_tests_info[0].provider,
+            "Microsoft-Windows-Kernel-Process"
+        );
         assert_eq!(
             info.regression_tests_info[0].path,
             format!("regression_data/rules/{rule_id}/{rule_id}.evtx")
         );
 
-        assert!(json_path.exists());
+        let events = input_evtx::parse_evtx_file(&evtx_path).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].record_id(), Some(7));
+
+        // The generated rule is now skippable: a fresh regression instance sees
+        // it as existing valid data.
+        let fresh = SigmahqRegression::new_from_path(&base).unwrap();
+        assert!(fresh.get_sigma_id().contains(&rule_id));
+    }
+
+    /// With `add_json_output(true)` the auxiliary `.json` joins the triplet.
+    #[test]
+    fn test_etw_alert_with_json_output() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("regression_data");
+        let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
+        reg.set_add_json_output(true);
+        let rule_id = Uuid::parse_str("7595ba94-cf3b-4471-aa03-4f6baa9e5fad").unwrap();
+        let alert = synthetic_etw_alert(rule_id);
+
+        let files = reg.add(&alert).expect("triplet generated");
+        assert_eq!(files.len(), 3, "json + evtx + info.yml");
+
+        let rule_dir = base.join("rules").join(rule_id.to_string());
+        let json_path = rule_dir.join(format!("{rule_id}.json"));
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
         assert_eq!(json["Event"]["System"]["EventRecordID"], 7);
@@ -857,49 +941,86 @@ mod tests {
             json["Event"]["EventData"]["CommandLine"],
             "cmd.exe /c whoami"
         );
-
-        assert!(evtx_path.exists());
-        let events = input_evtx::parse_evtx_file(&evtx_path).unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].record_id(), Some(7));
     }
 
-    /// A rule whose EVTX generation keeps failing is blocked after the
-    /// configured number of consecutive failed cycles (AC 7): logged, retired,
-    /// no more re-capture. Multiple failing alerts in one batch count as a
-    /// single failed cycle.
+    /// Raw-mode generation (auditd): with `DataFormat::Log` the output is
+    /// `.log` (the complete original audit event lines) + info.yml with
+    /// `test_type: log` and `provider: auditd`, and no EVTX writer invoked.
+    #[test]
+    fn test_log_alert_generates_valid_output() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("regression_data");
+        let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
+        reg.set_format(DataFormat::Log);
+        let rule_id = Uuid::parse_str("ca94a6db-8106-4737-9ed2-3e3bb826af0a").unwrap();
+        let alert = synthetic_log_alert(rule_id);
+
+        let files = reg.add(&alert).expect("data + info.yml generated");
+        assert_eq!(files.len(), 2, "default output = log + info.yml");
+
+        let rule_dir = base.join("rules").join(rule_id.to_string());
+        let log_path = rule_dir.join(format!("{rule_id}.log"));
+        let info_path = rule_dir.join("info.yml");
+
+        assert!(!rule_dir.join(format!("{rule_id}.json")).exists());
+
+        let info = InfoYml::load(&info_path).unwrap();
+        assert_eq!(info.regression_tests_info[0].test_type, "log");
+        assert_eq!(info.regression_tests_info[0].provider, "auditd");
+        assert_eq!(
+            info.regression_tests_info[0].path,
+            format!("regression_data/rules/{rule_id}/{rule_id}.log")
+        );
+
+        assert_eq!(
+            std::fs::read(&log_path).unwrap(),
+            alert.event_raw,
+            ".log carries the complete original audit lines"
+        );
+
+        // The generated rule is now skippable without any json file.
+        let mut fresh = SigmahqRegression::new_from_path(&base).unwrap();
+        fresh.set_format(DataFormat::Log);
+        assert!(fresh.get_sigma_id().contains(&rule_id));
+    }
+
+    /// A rule whose generation keeps failing is blocked after the configured
+    /// number of consecutive failed cycles (logged, retired, no more
+    /// re-capture). Multiple failing alerts in one batch count as a single
+    /// failed cycle. Failure is deterministic on every platform: an oversized
+    /// audit event exceeds the data blob bound.
+    fn oversized_log_alert(rule_id: Uuid) -> Alert {
+        let mut alert = synthetic_log_alert(rule_id);
+        alert.event_raw = vec![0u8; MAX_DATA_BLOB_SIZE + 1];
+        alert
+    }
+
     #[test]
     fn test_failed_cycles_blocks_rule_after_max() {
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path().join("regression_data");
         let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
+        reg.set_format(DataFormat::Log);
         let rule_id = Uuid::new_v4();
-        let alert = synthetic_etw_alert(rule_id);
-
-        let failing = |_xml: &str,
-                       _channel: &str,
-                       _record_id: Option<u64>,
-                       _is_etw: bool,
-                       _path: &Path|
-         -> anyhow::Result<()> { anyhow::bail!("generation failure") };
+        let alert = oversized_log_alert(rule_id);
 
         // Cycle 1: two failing alerts for the same rule count as one failure.
-        assert!(reg.add(&alert, failing).is_none());
-        assert!(reg.add(&alert, failing).is_none());
+        assert!(reg.add(&alert).is_none());
+        assert!(reg.add(&alert).is_none());
         assert!(reg.take_blocked().is_empty(), "not blocked yet");
         reg.begin_cycle();
 
         // Cycle 2.
-        assert!(reg.add(&alert, failing).is_none());
+        assert!(reg.add(&alert).is_none());
         assert!(reg.take_blocked().is_empty(), "not blocked yet");
         reg.begin_cycle();
 
         // Cycle 3: default bound (3) reached → blocked.
-        assert!(reg.add(&alert, failing).is_none());
+        assert!(reg.add(&alert).is_none());
         assert_eq!(reg.take_blocked(), vec![rule_id]);
 
         // Retired: any further attempt is short-circuited without generating.
-        assert!(reg.add(&alert, failing).is_none());
+        assert!(reg.add(&alert).is_none());
         assert!(reg.take_blocked().is_empty());
     }
 
@@ -910,39 +1031,54 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path().join("regression_data");
         let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
+        reg.set_format(DataFormat::Log);
         let rule_id = Uuid::new_v4();
-        let alert = synthetic_etw_alert(rule_id);
-
-        let failing = |_xml: &str,
-                       _channel: &str,
-                       _record_id: Option<u64>,
-                       _is_etw: bool,
-                       _path: &Path|
-         -> anyhow::Result<()> { anyhow::bail!("generation failure") };
+        let alert = oversized_log_alert(rule_id);
 
         reg.set_max_failed_cycles(2);
         assert_eq!(reg.max_failed_cycles(), 2);
 
-        assert!(reg.add(&alert, failing).is_none());
+        assert!(reg.add(&alert).is_none());
         assert!(
             reg.take_blocked().is_empty(),
             "bound 2: not blocked after 1"
         );
         reg.begin_cycle();
-        assert!(reg.add(&alert, failing).is_none());
+        assert!(reg.add(&alert).is_none());
         assert_eq!(reg.take_blocked(), vec![rule_id]);
 
         // Clamp: 0 is not allowed, so it becomes 1.
         let second_id = Uuid::new_v4();
-        let second_alert = synthetic_etw_alert(second_id);
+        let second_alert = oversized_log_alert(second_id);
         reg.set_max_failed_cycles(0);
         assert_eq!(reg.max_failed_cycles(), 1);
-        assert!(reg.add(&second_alert, failing).is_none());
+        assert!(reg.add(&second_alert).is_none());
         assert_eq!(reg.take_blocked(), vec![second_id]);
     }
 
-    /// The `MAX_EVTX_BLOB_SIZE` guard (AC 8/10) also applies to the local
-    /// skip-set scan: an oversized blob is treated as broken so the rule is
+    /// A failed generation leaves no orphaned files behind: the next attempt
+    /// starts from a clean rule directory.
+    #[test]
+    fn test_failed_generation_cleans_partial_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("regression_data");
+        let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
+        reg.set_format(DataFormat::Log);
+        reg.set_add_json_output(true);
+        let rule_id = Uuid::new_v4();
+        let alert = oversized_log_alert(rule_id);
+
+        assert!(reg.add(&alert).is_none());
+
+        let rule_dir = base.join("rules").join(rule_id.to_string());
+        assert!(
+            !rule_dir.exists() || rule_dir.read_dir().unwrap().next().is_none(),
+            "no partial artifact left behind"
+        );
+    }
+
+    /// The `MAX_DATA_BLOB_SIZE` guard also applies to the local skip-set
+    /// scan: an oversized blob is treated as broken so the rule is
     /// re-captured instead of parsing unbounded memory.
     #[test]
     fn test_oversized_evtx_is_treated_as_broken() {
@@ -951,9 +1087,24 @@ mod tests {
         let id = Uuid::new_v4();
         let evtx = dir.join(format!("{id}.evtx"));
         let file = std::fs::File::create(&evtx).unwrap();
-        file.set_len((MAX_EVTX_BLOB_SIZE as u64) + 1).unwrap();
+        file.set_len((MAX_DATA_BLOB_SIZE as u64) + 1).unwrap();
         drop(file);
 
-        assert!(!data_file_is_valid(dir, &id));
+        assert!(!data_file_is_valid(dir, &id, DataFormat::Evtx));
+    }
+
+    /// `clean_partial_artifacts` removes directories holding generated data
+    /// files without info.yml — including `.log`, not just `.json`/`.evtx`.
+    #[test]
+    fn test_clean_partial_artifacts_recognizes_log_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("regression_data");
+        let partial = base.join("rules/linux/x");
+        std::fs::create_dir_all(&partial).unwrap();
+        let id = Uuid::new_v4();
+        std::fs::write(partial.join(format!("{id}.log")), b"data").unwrap();
+
+        clean_partial_artifacts(&base);
+        assert!(!partial.exists(), "partial dir with .log removed");
     }
 }

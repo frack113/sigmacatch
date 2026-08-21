@@ -141,6 +141,11 @@ pub struct RegressionConfig {
     /// (logged, removed from the skip-set, no more re-capture). Default: 3.
     #[serde(default = "default_max_failed_cycles")]
     pub max_failed_cycles: u32,
+    /// Write the auxiliary `<rule_id>.json` next to the data file
+    /// (`.evtx`/`.log`). The data file + info.yml are always written.
+    /// Default: false.
+    #[serde(default)]
+    pub add_json_output: bool,
 }
 
 fn default_max_failed_cycles() -> u32 {
@@ -151,6 +156,7 @@ impl Default for RegressionConfig {
     fn default() -> Self {
         Self {
             max_failed_cycles: default_max_failed_cycles(),
+            add_json_output: false,
         }
     }
 }

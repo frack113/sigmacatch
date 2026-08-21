@@ -23,6 +23,13 @@ pub struct RegressionTestInfo {
     pub path: String,
 }
 
+/// Configuration of the positive-detection test entry written to `info.yml`.
+#[derive(Debug, Clone)]
+pub struct TestConfig {
+    pub test_type: String,
+    pub provider: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InfoYml {
     pub id: Uuid,
@@ -38,10 +45,10 @@ impl InfoYml {
         rule_id: &Uuid,
         rule_title: &str,
         event_count: usize,
-        sigma_evtx_path: &str,
+        sigma_data_path: &str,
         author: &str,
         description: &str,
-        provider: &str,
+        test_config: &TestConfig,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -54,10 +61,10 @@ impl InfoYml {
             }],
             regression_tests_info: vec![RegressionTestInfo {
                 name: "Positive Detection Test".to_string(),
-                test_type: "evtx".to_string(),
-                provider: provider.to_string(),
+                test_type: test_config.test_type.clone(),
+                provider: test_config.provider.clone(),
                 match_count: event_count,
-                path: sigma_evtx_path.to_string(),
+                path: sigma_data_path.to_string(),
             }],
         }
     }
@@ -96,7 +103,10 @@ mod tests {
             "regression_data/rules/windows/builtin/security/win_security_susp_scheduled_task_delete_or_disable/7595ba94-cf3b-4471-aa03-4f6baa9e5fad.evtx",
             "Swachchhanda Shrawan Poudel (Nextron Systems)",
             "N/A",
-            "Microsoft-Windows-Sysmon",
+            &TestConfig {
+                test_type: "evtx".to_string(),
+                provider: "Microsoft-Windows-Sysmon".to_string(),
+            },
         );
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("info.yml");

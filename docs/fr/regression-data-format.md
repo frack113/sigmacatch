@@ -4,7 +4,7 @@ Format de données de régression pour les règles Sigma, compatible avec SigmaH
 
 ## Objectif
 
-Un jeu de régression se compose d'un **triplet** par règle : un fichier `info.yml` (métadonnées), un fichier `.json` (événement brut) et un fichier `.evtx` (template Windows Event Log). Ce triplet permet de valider qu'un moteur Sigma produit toujours les mêmes résultats pour une règle donnée face à un événement connu.
+Un jeu de régression se compose par règle d'un fichier `info.yml` (métadonnées) et d'un **fichier de données** (`<rule_id>.evtx` pour Windows, `<rule_id>.log` pour auditd). Un `.json` auxiliaire (événement brut) peut s'y ajouter via l'option `regression.add_json_output` (défaut : `false`). Cet ensemble permet de valider qu'un moteur Sigma produit toujours les mêmes résultats pour une règle donnée face à un événement connu.
 
 ## Arborescence
 
@@ -14,6 +14,12 @@ regression_data/
 │   ├── cisco/
 │   │   └── aaa/
 │   │       └── cisco_cli_dot1x_disabled/
+│   ├── linux/
+│   │   ├── auditd/
+│   │   │   ├── execve/               → <slug>/
+│   │   │   ├── path/                 → <slug>/
+│   │   │   └── syscall/              → <slug>/
+│   │   └── builtin/                  → <slug>/
 │   └── windows/
 │       ├── builtin/
 │       │   ├── security/             → <slug>/
@@ -48,20 +54,20 @@ regression_data/
 
 Les dossiers intermédiaires (`cisco/`, `windows/`, `builtin/`, etc.) reflètent la hiérarchie des catégories SigmaHQ. Le dernier dossier avant les fichiers est toujours un **slug** dérivé du nom de la règle YAML.
 
-## Triplet de régression
+## Contenu d'un dossier de régression
 
-Chaque règle avec régression contient un dossier (slug) avec exactement trois fichiers :
+Chaque règle avec régression contient un dossier (slug) avec :
 
 ```text
 <slug>/
 ├── info.yml                    # Métadonnées + résultats du test
-├── <rule_id>.json              # Événement brut (JSON Winevt imbriqué, noms de clés EventData d'origine)
-└── <rule_id>.evtx              # EVTX valide via EvtExportLog (hors Windows : aucune donnée générée)
+├── <rule_id>.evtx              # EVTX valide (EvtExportLog ou writer pur-Rust)
+└── <rule_id>.json              # Optionnel (regression.add_json_output) — événement brut
 ```
 
 Le `<rule_id>` est toujours l'**UUID** contenu dans `rule_metadata[0].id` du fichier `info.yml`. Il n'est jamais le nom du dossier.
 
-Variant : certaines règles (ex: cisco) utilisent `.raw` au lieu de `.json` + `.evtx` quand le format EVTX n'est pas applicable.
+Variantes : certaines règles (ex: cisco) utilisent `.raw` quand le format EVTX n'est pas applicable. Les règles auditd utilisent `.log` (lignes auditd originales complètes). Le fichier de données + `info.yml` constituent la sortie obligatoire ; le `.json` est un supplément optionnel.
 
 ## Schéma `info.yml`
 
@@ -91,7 +97,7 @@ rule_metadata:
 
 `rule_metadata[0].id` est l'**identifiant canonique**. C'est cet UUID qui identifie de manière unique la règle dans tout le système. Il est utilisé pour :
 
-- Nommage des fichiers `.json` et `.evtx`
+- Nommage des fichiers de données (`.evtx`, `.log`, `.json`)
 - Clé de lookup dans les moteurs Sigma
 - Indexation dans les structures de données
 
@@ -100,8 +106,8 @@ rule_metadata:
 ```yaml
 regression_tests_info:
   - name: Positive Detection Test
-    type: evtx                  # ou "raw" pour certains formats
-    provider: <ProviderName>    # extrait dynamiquement du ProviderName XML (ex: Microsoft-Windows-Sysmon)
+    type: evtx                  # ou "raw" pour cisco, "log" pour auditd
+    provider: <ProviderName>    # extrait dynamiquement du ProviderName XML (ex: Microsoft-Windows-Sysmon, ou "auditd")
     match_count: <int>          # Nombre de correspondances trouvées
     path: regression_data/.../<rule_id>.evtx  # Chemin relatif vers le template
 ```
@@ -138,8 +144,9 @@ regression_tests_info:
 | Fichier | Format | Nom | Contenu |
 |---------|--------|-----|---------|
 | `info.yml` | YAML | Toujours `info.yml` | Métadonnées + résultats |
-| `<rule_id>.json` | JSON | UUID v4 | Événement brut (JSON imbriqué, noms de clés EventData d'origine) |
-| `<rule_id>.evtx` | Binaire | UUID v4 | EVTX valide via EvtExportLog (validé ≥ 1 record ; échec = saut de règle, aucune donnée hors Windows) |
+| `<rule_id>.evtx` | Binaire | UUID v4 | EVTX valide (EvtExportLog ou writer pur-Rust ; validé ≥ 1 record à l'écriture) |
+| `<rule_id>.log` | Texte | UUID v4 | Événement audit complet (lignes auditd originales, multi-records, pour le collecteur auditd) |
+| `<rule_id>.json` | JSON | UUID v4 | Optionnel (`regression.add_json_output`) — événement brut (JSON imbriqué Winevt ou JSON plat auditd) |
 
 Le `<rule_id>` dans les noms de fichiers est toujours le UUID de `rule_metadata[0].id`.
 
@@ -147,23 +154,16 @@ Le `<rule_id>` dans les noms de fichiers est toujours le UUID de `rule_metadata[
 
 ### Cohérence du rule_id
 
-Le même UUID doit apparaître dans trois endroits :
+Le même UUID doit apparaître dans `rule_metadata[0].id` de `info.yml` et dans le nom de chaque fichier de données présent. Si ces valeurs divergent, le jeu est incohérent.
 
-1. `rule_metadata[0].id` dans `info.yml`
-2. Nom du fichier `.json`
-3. Nom du fichier `.evtx`
+### Complétude
 
-Si ces trois valeurs ne sont pas identiques, le triplet est incohérent.
+Un jeu est **complet** si :
 
-### Complétude du triplet
+- `info.yml` existe
+- le fichier de données référencé par `regression_tests_info[0].path` existe et est valide (magic EVTX / texte non-vide, taille ≤ 64 MiB)
 
-Un triplet est **complet** si les trois fichiers existent dans le même dossier :
-
-- `info.yml`
-- `<rule_id>.json` (ou `<rule_id>.raw`)
-- `<rule_id>.evtx`
-
-Un triplet est **incomplet** si l'un des fichiers manque.
+Le `.json` auxiliaire n'entre pas en compte dans la validité.
 
 ### Validation du format info.yml
 
@@ -177,7 +177,7 @@ Pour qu'un `info.yml` soit valide :
 ### Validation du nommage
 
 - Le nom du dossier parent n'est **jamais** validé contre le rule_id
-- Les fichiers `.json`/`.evtx` doivent être nommés exactement `<rule_id>.<ext>`
+- Les fichiers de données doivent être nommés exactement `<rule_id>.<ext>`
 - Les fichiers cachés (commençant par `.`) sont ignorés
 
 ## Plateformes
@@ -189,6 +189,10 @@ La majorité des règles (process_creation, file_event, registry, etc.) ciblent 
 ### Cisco
 
 Certaines règles réseau utilisent des formats natifs (`.raw` au lieu de `.json` + `.evtx`). Le champ `provider` dans `regression_tests_info` peut être absent.
+
+### Linux (auditd)
+
+Le collecteur `sigmacatch-auditd` tail `/var/log/audit/audit.log`, parse les records avec `linux-audit-parser` et émet un event par record. Les records d'un même événement audit (`msg=audit(timestamp:sequence)`) sont groupés : chaque event porte `event_raw` = toutes les lignes originales de l'événement. Les données de régression utilisent `.log` (lignes complètes). Le provider est `auditd`.
 
 ### Emerging Threats
 

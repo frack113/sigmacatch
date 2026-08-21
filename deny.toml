@@ -23,6 +23,11 @@ allow = [
     "0BSD",
     "CC0-1.0",
     "CDLA-Permissive-2.0",
+    # LGPL-3.0: linux-audit-parser (auditd log parsing, based on Laurel's parser).
+    # Statically linked into an MIT open-source binary — relinkability obligations
+    # are satisfied by the availability of the project source.
+    "LGPL-3.0",
+    "LGPL-3.0-or-later",
 ]
 private = { ignore = true }
 

@@ -22,7 +22,7 @@ Basée sur la remote ref si présente (sinon HEAD) pour garder le fast-forward. 
 
 ### Skip-set multi-branches (PR en attente)
 
-`pending_regression_rule_ids()` (`SigmaRepo`) scanne les arbres de **toutes** les branches remote `sigmacatch/*` (jamais checkout — `list_refs` + marche `regression_data/` en RAM, ids extraits des noms `<uuid>.<ext>`). Union avec le worktree → une VM fraîche ne recapture pas les données d'un PR d'un autre jour encore ouvert ; le diff du nouveau PR reste basé sur main (données des PR précédents jamais incluses). Les blobs `<uuid>.evtx` sont validés (parse ≥ 1 record) : un EVTX vide/corrompu **ou > 64 MiB** (`MAX_EVTX_BLOB_SIZE`) exclut la règle du skip set (auto-guérison des commits vides, RAM bornée). Mode offline : scan sauté entièrement (aucune lecture de refs locale) — le skip set ne couvre que le worktree.
+`pending_regression_rule_ids()` (`SigmaRepo`) scanne les arbres de **toutes** les branches remote `sigmacatch/*` (jamais checkout — `list_refs` + marche `regression_data/` en RAM, ids extraits des noms `<uuid>.<ext>`). Union avec le worktree → une VM fraîche ne recapture pas les données d'un PR d'un autre jour encore ouvert ; le diff du nouveau PR reste basé sur main (données des PR précédents jamais incluses). Les blobs sont validés structurellement au scan (magic EVTX `ElfFile\0` / texte UTF-8 non-vide, taille ≤ 64 MiB via `DataFormat::cheap_validate`) — la validation profonde (re-parse) ne se fait qu'à l'écriture. Un blob invalide exclut la règle du skip set (auto-guérison, RAM bornée). Mode offline : scan sauté entièrement (aucune lecture de refs locale) — le skip set ne couvre que le worktree.
 
 ### Remote working-branch guard
 

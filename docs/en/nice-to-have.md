@@ -6,16 +6,7 @@ Features identified as useful but out of current scope. No timeline — document
 
 ## 3. Linux Support
 
-**Status:** collector is a stub (empty `Vec`) — pipeline runs end-to-end for testing but collects nothing.
-
-**What's missing:**
-
-- Linux event collector: `journald` (systemd), `syslog`, or `auditd`
-- Sigma logsource → Linux channel mapping (SigmaHQ rules have `logsource.product: linux`)
-- Engine already evaluates Linux rules, but without events they never match
-- Possible correlation with tools like `osquery`, `auditd`, or `falco`
-
-**Use case:** Linux servers, containers, cloud environments.
+**Status:** ✅ done — `sigmacatch-auditd` collector operational (tail `/var/log/audit/audit.log`, `linux-audit-parser` parsing, event id grouping, logsource `product:linux, service:auditd, provider:auditd`). Regression data `.log` + `.json` validated on AlmaLinux VM with Atomic RedTeam.
 
 ---
 
