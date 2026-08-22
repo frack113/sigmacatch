@@ -4,7 +4,7 @@ Regression data format for Sigma rules, compatible with SigmaHQ.
 
 ## Purpose
 
-A regression test set consists per rule of an `info.yml` file (metadata) and a **data file** (`<rule_id>.evtx` for Windows, `<rule_id>.log` for auditd). An auxiliary `.json` (raw event) can be added via the `regression.add_json_output` option (default: `false`). This allows validating that a Sigma engine always produces the same results for a given rule against a known event.
+A regression test set consists per rule of an `info.yml` file (metadata) and a **data file** (`<rule_id>.evtx` for Windows, `<rule_id>.log` for Linux). An auxiliary `.json` (raw event) can be added via the `regression.add_json_output` option (default: `false`). This allows validating that a Sigma engine always produces the same results for a given rule against a known event.
 
 ## Directory tree
 
@@ -145,8 +145,8 @@ regression_tests_info:
 |------|--------|------|---------|
 | `info.yml` | YAML | Always `info.yml` | Metadata + results |
 | `<rule_id>.evtx` | Binary | UUID v4 | Valid EVTX (EvtExportLog or pure-Rust writer; validated ≥ 1 record at write time) |
-| `<rule_id>.log` | Text | UUID v4 | Complete audit event (original auditd lines, multi-record, for the auditd collector) |
-| `<rule_id>.json` | JSON | UUID v4 | Optional (`regression.add_json_output`) — raw event (nested Winevt JSON or flat auditd JSON) |
+| `<rule_id>.log` | Text | UUID v4 | Complete event (original auditd/syslog lines; multi-record for auditd) |
+| `<rule_id>.json` | JSON | UUID v4 | Optional (`regression.add_json_output`) — raw event (nested Winevt JSON or flat Linux JSON) |
 
 The `<rule_id>` in file names is always the UUID from `rule_metadata[0].id`.
 
@@ -190,9 +190,14 @@ The majority of rules (process_creation, file_event, registry, etc.) target Wind
 
 Some network rules use native formats (`.raw` instead of `.json` + `.evtx`). The `provider` field in `regression_tests_info` may be absent.
 
-### Linux (auditd)
+### Linux (auditd / syslog)
 
-The `sigmacatch-auditd` collector tails `/var/log/audit/audit.log`, parses records with `linux-audit-parser`, and emits one event per record. Records sharing the same audit event id (`msg=audit(timestamp:sequence)`) are grouped: each event carries `event_raw` = all original lines of the audit event. Regression data uses `.log` (complete lines). The provider is `auditd`.
+The `sigmacatch-linux` binary picks its collector at startup:
+
+- **auditd** if `/var/log/audit/audit.log` exists: tails the file, parses records with `linux-audit-parser`, emits one event per record. Records sharing the same audit event id (`msg=audit(timestamp:sequence)`) are grouped: each event carries `event_raw` = all original lines of the audit event.
+- **syslog** otherwise (`/var/log/messages` then `/var/log/syslog`): one RFC3164 line per event, flat `event_json` `{message, program, host, service}` with `service` derived from the program tag (`sshd` → `sshd`, `CRON` → `cron`, …).
+
+In both cases regression data uses `.log` (complete original lines) and the provider written to `info.yml` is `auditd`.
 
 ### Emerging Threats
 

@@ -11,7 +11,7 @@ Sigmacatch captures real OS events, matches them against [SigmaHQ](https://githu
 |---|---|---|
 | Windows | Windows Event Log API (`winevt`) | `sigmacatch-channel` |
 | Windows | Direct ETW (`ferrisetw`) | `sigmacatch-etw` |
-| Linux | auditd log tail | `sigmacatch-auditd` |
+| Linux | auditd tail or central syslog | `sigmacatch-linux` |
 
 ## How it works
 
@@ -45,7 +45,7 @@ The pipeline runs continuously until Ctrl+C; remaining events are flushed before
 cargo build --release
 ./target/release/sigmacatch-channel   # Winevt collector (Windows)
 ./target/release/sigmacatch-etw       # ETW collector (Windows)
-./target/release/sigmacatch-auditd    # auditd collector (Linux)
+./target/release/sigmacatch-linux     # auditd or syslog collector (Linux)
 ```
 
 On first run a `config.yaml` is created with defaults:
@@ -86,6 +86,7 @@ Rules below the configured `min_status` / `min_level` thresholds are skipped at 
 | `-a`, `--all-rules` | Load all rules — skip set is disabled |
 | `-c`, `--contrib` | Enable push to the remote fork for this run |
 | `-o`, `--offline` | Skip all git operations (use on-disk files as-is; no commit/push) |
+| `-r`, `--max-runs <N>` | Exit after N collection cycles (final flush included) |
 | `-v`, `--verbose` | Show info-level logs on stderr (default: errors only) |
 | `--help`, `-h` | Print help and exit |
 
@@ -97,12 +98,12 @@ Collectors are selected via cargo features, not CLI flags:
 |---|---|---|
 | `sigmacatch-channel` | `winevt` | Windows Event Log API |
 | `sigmacatch-etw` | `etw` | Direct ETW via ferrisetw |
-| `sigmacatch-auditd` | `auditd` | Linux auditd tail |
+| `sigmacatch-linux` | `auditd` + `builtin` | auditd tail if `/var/log/audit/audit.log` exists, otherwise central syslog (`/var/log/messages`, `/var/log/syslog`) |
 
 Build a single collector in isolation:
 
 ```bash
-cargo xwin build --release --target x86_64-pc-windows-msvc --no-default-features --features etw
+cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win --no-default-features --features etw
 ```
 
 ### Diagnostics (feature `tools`)
@@ -114,11 +115,12 @@ cargo xwin build --release --target x86_64-pc-windows-msvc --no-default-features
 | `sigmacatch-channel check-filter` | Validate the filter config against the real rule set (ground-truth counts) |
 | `sigmacatch-channel list-rules` | List loaded rules with techniques and ART link (`--coverage` for stats) |
 | `sigmacatch-channel get-atomic` | Generate a `run_atomic.ps1` (Invoke-AtomicRedTeam chain) for rules without regression data |
+| `sigmacatch-linux check` / `check-filter` / `list-rules` | Same diagnostics for the Linux binary |
 
 ## Requirements
 
 - **Windows** with [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) installed — required for rich events (ParentImage, CommandLine, hashes, etc.)
-- **Linux** with `auditd` running — for `sigmacatch-auditd`
+- **Linux** with `auditd` running or a central syslog file (`/var/log/messages`, `/var/log/syslog`) — for `sigmacatch-linux`
 - Rust 2024 edition (1.85+)
 - Admin rights for the `Security` and `System` Event Log channels (Windows)
 
@@ -127,12 +129,18 @@ cargo xwin build --release --target x86_64-pc-windows-msvc --no-default-features
 Cross-compilation from Linux to Windows:
 
 ```bash
-cargo xwin build --release --target x86_64-pc-windows-msvc
+cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win
 ```
 
 > Requires `cargo install cargo-xwin`. Downloads the Windows SDK automatically.
 
 `.cargo/config.toml` forces `target-feature=+crt-static`: without it the binary depends on **VCRUNTIME140.dll** (Visual C++ Redistributable) and crashes if the runtime is missing on the target machine. With `+crt-static` the `.exe` is standalone.
+
+Linux native build:
+
+```bash
+cargo build --release -p sigmacatch-lnx
+```
 
 On Linux/macOS the Windows collectors are stubs that return no events — the pipeline still runs end-to-end for testing.
 
@@ -151,23 +159,22 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 
 ## Workspace
 
-The project is a cargo workspace of 13 crates (1 lib crate + 12 libraries):
+The project is a cargo workspace of 12 packages (2 binary crates + 10 libraries):
 
 | Crate | Purpose |
 |---|---|
-| `sigmacatch` | Lib + 3 binaries (`sigmacatch-channel` winevt, `sigmacatch-etw` ETW, `sigmacatch-auditd` auditd) + shared runner (continuous loop) |
+| `sigmacatch-win` | Windows binaries: `sigmacatch-channel` (winevt), `sigmacatch-etw` (ETW) + `channels.rs` / `etw/` collectors + `cli.rs` diagnostics |
+| `sigmacatch-lnx` | Linux binary: `sigmacatch-linux` (auditd or syslog, auto-detected) + `cli.rs` diagnostics |
+| `sigmacatch-runner` | Shared pipeline (`run<C: CollectorKind>`): config, repo init, event loop, generation, commit/push |
 | `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml |
 | `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug, max 3 kept) |
 | `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication, remove_id |
 | `sigmacatch-detection` | `DetectionEngine` + pipelines (windows.yml, flatten_winevt.yml) + channel_resolver + bloom pre-filter |
-| `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) |
-| `input-windows-etw` | Direct ETW collector via ferrisetw (18 providers, provider→channel routing) |
-| `input-linux-auditd` | Auditd tail collector (`/var/log/audit/audit.log`, grouping by event id) |
-| `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, `RegressionData`, `DataFormat` (Evtx/Log) + validation |
-| `sigmacatch-evtx-writer` | Pure Rust EVTX writer + re-parse validation |
+| `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, `DataFormat` (Evtx/Log) + validation (evtx/format/info/logtype/long_path) |
+| `sigmacatch-evtx-writer` | Pure Rust EVTX writer for ETW / record-id-less events |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource mapping tables (phf) |
-| `sigmacatch-repo` | grit-lib wrapper: `SigmaRepo`, GitHub fork detection, plumbing/porcelain git ops |
-| `input-evtx` | Parse EVTX files into `Event` objects (used by `sigmacatch-channel check`) |
+| `sigmacatch-repo` | grit-lib wrapper: `SigmaRepo`, GitHub fork detection, plumbing/porcelain git ops, SSH signing |
+| `input-windows-evtx` | Parse EVTX files into `Event` objects (used by `sigmacatch-channel check`) |
 
 ## Built with
 

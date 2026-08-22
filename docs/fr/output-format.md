@@ -124,7 +124,7 @@ regression_tests_path: regression_data/rules/<rule_rel_path>/info.yml
 Le champ `type` de `regression_tests_info` (et la lecture des info.yml existants) reconnaît
 4 types (`crates/sigmacatch-regression/src/logtype.rs`) : `evtx`, `json`, `raw`, `log`
 — une valeur inconnue/absente retombe sur `json` avec un `warn!`. Le pipeline écrit
-`.evtx` + `info.yml` (Windows) ou `.log` + `info.yml` (auditd) ; le `.json` auxiliaire
+`.evtx` + `info.yml` (Windows) ou `.log` + `info.yml` (Linux) ; le `.json` auxiliaire
 est ajouté seulement si `regression.add_json_output: true` (défaut : `false`). Un `.raw`
 est possible pour des données non-Winevt
 (ex. `regression_data/rules/cisco/aaa/cisco_cli_dot1x_disabled/ef0ff092-....raw`, `type: raw`,
@@ -152,8 +152,10 @@ regression_tests_info:
 
 - **Un event par règle** : chaque répertoire de régression contient exactement un event JSON.
   Seul le premier event correspondant est capturé.
-- **EVTX binaire valide** : `<rule_id>.evtx` est écrit via `EvtExportLog` API (Windows) qui re-queries l'event par RecordID depuis le live log.
-  Le fichier exporté est **validé** (re-parse ≥ 1 record) avec retry à backoff court ; un export vide/corrompu
+- **EVTX binaire valide** : `<rule_id>.evtx` est produit par `EvtExportLog` (Windows — re-query
+  de l'event par RecordID depuis le live log, retry à backoff court) ou, pour les events ETW /
+  sans record id, par le writer EVTX pur Rust (`sigmacatch-evtx-writer`, déterministe, pas de
+  retry). Le fichier exporté est **validé** (re-parse ≥ 1 record) ; un export vide/corrompu
   (événement purgé entre collecte et export) est une erreur : la règle est sautée ce cycle (pas de commit)
-  et re-capturée plus tard. Hors Windows, aucune donnée n'est générée (le collecteur Winevt est un stub).
+  et re-capturée plus tard.
   Le `.json` compagnon porte les données réelles pour le matching Sigma.

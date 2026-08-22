@@ -124,7 +124,7 @@ regression_tests_path: regression_data/rules/<rule_rel_path>/info.yml
 The `type` field of `regression_tests_info` (and the reading of existing info.yml files) supports
 4 logtypes (`crates/sigmacatch-regression/src/logtype.rs`): `evtx`, `json`, `raw`, `log`
 — an unknown/missing value falls back to `json` with a `warn!`. The pipeline writes
-`.evtx` + `info.yml` (Windows) or `.log` + `info.yml` (auditd); the auxiliary `.json`
+`.evtx` + `info.yml` (Windows) or `.log` + `info.yml` (Linux); the auxiliary `.json`
 is added only when `regression.add_json_output: true` (default: `false`). A `.raw` is possible for non-Winevt data
 (e.g. `regression_data/rules/cisco/aaa/cisco_cli_dot1x_disabled/ef0ff092-....raw`, `type: raw`,
 generated outside the pipeline — its `regression_tests_info` section is commented out).
@@ -151,8 +151,8 @@ regression_tests_info:
 
 - **One event per rule**: each regression directory contains exactly one JSON event.
   Only the first matching event is captured.
-- **Valid binary EVTX**: `<rule_id>.evtx` is written via `EvtExportLog` API (Windows), which re-queries the event by RecordID from the live log.
-  The exported file is **validated** (re-parse ≥ 1 record) with short-backoff retry; an empty/corrupt export
+- **Valid binary EVTX**: `<rule_id>.evtx` is produced by `EvtExportLog` (Windows — re-queries the event by RecordID from the live log, short-backoff retry) or, for ETW / record-id-less events, by the pure-Rust EVTX writer (`sigmacatch-evtx-writer`, deterministic, no retry).
+  The exported file is **validated** (re-parse ≥ 1 record); an empty/corrupt export
   (event rotated out between collection and export) is an error: the rule is skipped this cycle (no commit)
-  and re-captured later. On non-Windows, the live-log export path is unavailable (the Winevt collector is a stub).
+  and re-captured later.
   The optional `.json` file (when `regression.add_json_output: true`) carries the actual data for Sigma matching.

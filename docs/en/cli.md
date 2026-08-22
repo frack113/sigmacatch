@@ -1,11 +1,20 @@
 # CLI — Diagnostic Subcommands
 
-Diagnostic commands are available on `sigmacatch-channel` behind the `tools` feature (off by
-default). Run `sigmacatch-channel --help` to see the full list.
+Diagnostic commands are subcommands of the binaries, behind the `tools` feature (off by default):
+
+| Binary | Subcommands |
+|---|---|
+| `sigmacatch-channel` (Windows) | `check`, `check-filter`, `check-channels`, `list-rules`, `get-atomic` |
+| `sigmacatch-linux` (Linux) | `check`, `check-filter`, `list-rules` |
+
+An unknown or absent subcommand → the binary starts its normal collection loop.
+The sections below document the Windows subcommands; the Linux equivalents
+(`check`, `check-filter`, `list-rules`) share the same logic with the `linux`
+product filter and `.log` data validation.
 
 ## check
 
-**Usage:** `sigmacatch-channel check [--json]`
+**Usage:** `sigmacatch-channel check [--json]` / `sigmacatch-linux check [--json]`
 
 **Purpose:** deep validation of all regression data in `./sigma/regression_data`.
 

@@ -4,7 +4,7 @@ Format de données de régression pour les règles Sigma, compatible avec SigmaH
 
 ## Objectif
 
-Un jeu de régression se compose par règle d'un fichier `info.yml` (métadonnées) et d'un **fichier de données** (`<rule_id>.evtx` pour Windows, `<rule_id>.log` pour auditd). Un `.json` auxiliaire (événement brut) peut s'y ajouter via l'option `regression.add_json_output` (défaut : `false`). Cet ensemble permet de valider qu'un moteur Sigma produit toujours les mêmes résultats pour une règle donnée face à un événement connu.
+Un jeu de régression se compose par règle d'un fichier `info.yml` (métadonnées) et d'un **fichier de données** (`<rule_id>.evtx` pour Windows, `<rule_id>.log` pour Linux). Un `.json` auxiliaire (événement brut) peut s'y ajouter via l'option `regression.add_json_output` (défaut : `false`). Cet ensemble permet de valider qu'un moteur Sigma produit toujours les mêmes résultats pour une règle donnée face à un événement connu.
 
 ## Arborescence
 
@@ -190,9 +190,14 @@ La majorité des règles (process_creation, file_event, registry, etc.) ciblent 
 
 Certaines règles réseau utilisent des formats natifs (`.raw` au lieu de `.json` + `.evtx`). Le champ `provider` dans `regression_tests_info` peut être absent.
 
-### Linux (auditd)
+### Linux (auditd / syslog)
 
-Le collecteur `sigmacatch-auditd` tail `/var/log/audit/audit.log`, parse les records avec `linux-audit-parser` et émet un event par record. Les records d'un même événement audit (`msg=audit(timestamp:sequence)`) sont groupés : chaque event porte `event_raw` = toutes les lignes originales de l'événement. Les données de régression utilisent `.log` (lignes complètes). Le provider est `auditd`.
+Le binaire `sigmacatch-linux` choisit son collecteur au démarrage :
+
+- **auditd** si `/var/log/audit/audit.log` existe : tail du fichier, parsing des records avec `linux-audit-parser`, un event par record. Les records d'un même événement audit (`msg=audit(timestamp:sequence)`) sont groupés : chaque event porte `event_raw` = toutes les lignes originales de l'événement.
+- **syslog** sinon (`/var/log/messages` puis `/var/log/syslog`) : une ligne RFC3164 par event, `event_json` plat `{message, program, host, service}` avec `service` dérivé du program tag (`sshd` → `sshd`, `CRON` → `cron`, …).
+
+Dans les deux cas les données de régression utilisent `.log` (lignes originales complètes) et le provider écrit dans `info.yml` est `auditd`.
 
 ### Emerging Threats
 
