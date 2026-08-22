@@ -192,12 +192,12 @@ Certaines règles réseau utilisent des formats natifs (`.raw` au lieu de `.json
 
 ### Linux (auditd / syslog)
 
-Le binaire `sigmacatch-linux` choisit son collecteur au démarrage :
+Le binaire `sigmacatch-linux` lance les deux collecteurs en parallèle, chacun gardé par sa source :
 
 - **auditd** si `/var/log/audit/audit.log` existe : tail du fichier, parsing des records avec `linux-audit-parser`, un event par record. Les records d'un même événement audit (`msg=audit(timestamp:sequence)`) sont groupés : chaque event porte `event_raw` = toutes les lignes originales de l'événement.
-- **syslog** sinon (`/var/log/messages` puis `/var/log/syslog`) : une ligne RFC3164 par event, `event_json` plat `{message, program, host, service}` avec `service` dérivé du program tag (`sshd` → `sshd`, `CRON` → `cron`, …).
+- **syslog** si `/var/log/messages` ou `/var/log/syslog` existe : une ligne RFC3164 par event, `event_json` plat `{message, program, host, service}` avec `service` dérivé du program tag (`sshd` → `sshd`, `CRON` → `cron`, …).
 
-Dans les deux cas les données de régression utilisent `.log` (lignes originales complètes) et le provider écrit dans `info.yml` est `auditd`.
+Sur les hôtes qui forwardent les records audit vers syslog (audisp/rsyslog), une même activité est capturée deux fois via des pipelines distincts — une règle basée auditd et une règle basée syslog peuvent toutes deux produire des données de régression à partir d'elle. Dans les deux cas les données de régression utilisent `.log` (lignes originales complètes) et le provider écrit dans `info.yml` est `auditd`.
 
 ### Emerging Threats
 

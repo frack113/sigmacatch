@@ -11,7 +11,7 @@ Sigmacatch captures real OS events, matches them against [SigmaHQ](https://githu
 |---|---|---|
 | Windows | Windows Event Log API (`winevt`) | `sigmacatch-channel` |
 | Windows | Direct ETW (`ferrisetw`) | `sigmacatch-etw` |
-| Linux | auditd tail or central syslog | `sigmacatch-linux` |
+| Linux | auditd tail and/or central syslog | `sigmacatch-linux` |
 
 ## How it works
 
@@ -45,7 +45,7 @@ The pipeline runs continuously until Ctrl+C; remaining events are flushed before
 cargo build --release
 ./target/release/sigmacatch-channel   # Winevt collector (Windows)
 ./target/release/sigmacatch-etw       # ETW collector (Windows)
-./target/release/sigmacatch-linux     # auditd or syslog collector (Linux)
+./target/release/sigmacatch-linux     # auditd + syslog collectors (Linux)
 ```
 
 On first run a `config.yaml` is created with defaults:
@@ -98,7 +98,7 @@ Collectors are selected via cargo features, not CLI flags:
 |---|---|---|
 | `sigmacatch-channel` | `winevt` | Windows Event Log API |
 | `sigmacatch-etw` | `etw` | Direct ETW via ferrisetw |
-| `sigmacatch-linux` | `auditd` + `builtin` | auditd tail if `/var/log/audit/audit.log` exists, otherwise central syslog (`/var/log/messages`, `/var/log/syslog`) |
+| `sigmacatch-linux` | `auditd` + `builtin` | auditd tail if `/var/log/audit/audit.log` exists **and** central syslog (`/var/log/messages`, `/var/log/syslog`) — both collectors run in parallel when both sources exist |
 
 Build a single collector in isolation:
 
@@ -164,7 +164,7 @@ The project is a cargo workspace of 12 packages (2 binary crates + 10 libraries)
 | Crate | Purpose |
 |---|---|
 | `sigmacatch-win` | Windows binaries: `sigmacatch-channel` (winevt), `sigmacatch-etw` (ETW) + `channels.rs` / `etw/` collectors + `cli.rs` diagnostics |
-| `sigmacatch-lnx` | Linux binary: `sigmacatch-linux` (auditd or syslog, auto-detected) + `cli.rs` diagnostics |
+| `sigmacatch-lnx` | Linux binary: `sigmacatch-linux` (auditd + syslog in parallel) + `cli.rs` diagnostics |
 | `sigmacatch-runner` | Shared pipeline (`run<C: CollectorKind>`): config, repo init, event loop, generation, commit/push |
 | `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml |
 | `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug, max 3 kept) |

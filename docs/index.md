@@ -9,7 +9,7 @@ The project is a cargo workspace of 12 packages (2 binary crates + 10 libraries)
 | Crate | Purpose |
 |---|---|
 | `sigmacatch-win` | Windows binaries: `sigmacatch-channel` (winevt) and `sigmacatch-etw` (direct ETW) + `channels.rs`/`etw/` collectors + `cli.rs` diagnostics |
-| `sigmacatch-lnx` | Linux binary: `sigmacatch-linux` (auditd or syslog, auto-detected at startup) + `cli.rs` diagnostics |
+| `sigmacatch-lnx` | Linux binary: `sigmacatch-linux` (auditd + syslog collectors in parallel, per-source availability guard) + `cli.rs` diagnostics |
 | `sigmacatch-runner` | Shared pipeline (`run<C: CollectorKind>`): config, repo init, event loop, generation, commit/push |
 | `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml |
 | `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug) |
@@ -27,7 +27,7 @@ The project is a cargo workspace of 12 packages (2 binary crates + 10 libraries)
 cargo build --release
 ./target/release/sigmacatch-channel   # Winevt (Windows)
 ./target/release/sigmacatch-etw       # Direct ETW (Windows)
-./target/release/sigmacatch-linux     # auditd/syslog (Linux)
+./target/release/sigmacatch-linux     # auditd + syslog (Linux)
 ```
 
 ## Documentation

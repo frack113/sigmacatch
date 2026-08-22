@@ -15,7 +15,7 @@ cargo build --release -p sigmacatch-lnx
 cargo clippy -- -W warnings
 ```
 
-Produces `sigmacatch-linux`: **auditd** collector if `/var/log/audit/audit.log` exists, otherwise **central syslog** collector (`/var/log/messages` then `/var/log/syslog`), otherwise bail at startup.
+Produces `sigmacatch-linux`: **auditd** collector if `/var/log/audit/audit.log` exists **and** **central syslog** collector (`/var/log/messages` then `/var/log/syslog`) — both run in parallel when both sources exist; bail at startup if neither source is found.
 
 On Linux/macOS the Windows collectors are no-op stubs — the pipeline still runs end-to-end for testing (`cargo build -p sigmacatch-win`).
 

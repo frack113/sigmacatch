@@ -20,7 +20,7 @@ sigmacatch/
 ├── sigmacatch-lnx/               # Binaire Linux (lib + 1 bin)
 │   └── src/
 │       ├── lib.rs
-│       ├── main_linux.rs         # bin `sigmacatch-linux` : choisit auditd ou syslog au démarrage
+│       ├── main_linux.rs         # bin `sigmacatch-linux` : lance les collecteurs auditd et syslog en parallèle (garde par source)
 │       ├── auditd.rs             # Collecteur auditd (tail /var/log/audit/audit.log, groupement par event id)
 │       ├── syslog.rs             # Collecteur syslog central (/var/log/messages → /var/log/syslog, RFC3164)
 │       └── cli.rs                # Sous-commandes de diagnostic (feature `tools`) : check, check-filter, list-rules
@@ -49,7 +49,7 @@ Trois binaires sont produits depuis deux crates, chacun embarquant un seul colle
 |---|---|---|
 | `sigmacatch-channel` | `sigmacatch-win/src/channels.rs` | API Winevt native (`EvtQueryW`/`EvtNext`/`EvtRender`), multi-channel, rejouable |
 | `sigmacatch-etw` | `sigmacatch-win/src/etw/` | Collecte ETW directe via ferrisetw, 18 providers (9 Sysmon-masquerade + 9 génériques), routing générique provider→channel, EventID réel conservé [beta] |
-| `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog}.rs` | Auto-détection au démarrage : **auditd** si `/var/log/audit/audit.log` existe (tail, parsing linux-audit-parser, groupement par event id `timestamp:sequence`, logsource `product:linux, service:auditd`) ; sinon **syslog central** (`/var/log/messages` puis `/var/log/syslog`, lignes RFC3164, service dérivé du program tag). Aucune des deux sources → bail. Format de régression `DataFormat::Log` |
+| `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog}.rs` | Les deux collecteurs tournent en parallèle, chacun gardé par sa source : **auditd** si `/var/log/audit/audit.log` existe (tail, parsing linux-audit-parser, groupement par event id `timestamp:sequence`, logsource `product:linux, service:auditd`) **et** **syslog central** (`/var/log/messages` puis `/var/log/syslog`, lignes RFC3164, service dérivé du program tag). Aucune des deux sources → bail. Format de régression `DataFormat::Log` |
 
 Le collecteur ETW couvre les mêmes channels que le collecteur Winevt (Security, Defender, Firewall, Sysmon, …) en résolvant provider→channel à partir d'une table de mapping, et en gardant le vrai EventID. Pour les providers génériques, les champs `EventData` sont fournis par des field maps par provider (fidelité variable). Sur non-Windows, les collecteurs Winevt/ETW sont des stubs no-op.
 
@@ -101,7 +101,7 @@ utilisent `clap` + `serde` (feature `tools`, désactivée par défaut).
 10. collector = kind.build(&cycle_channels) → tokio::spawn(collector.run(tx, stop))
     ├── sigmacatch-channel (winevt)  → EventCollector::new(cycle_channels).run(tx, stop)
     ├── sigmacatch-etw (etw) → EventCollector::new().run(tx, stop) (routing provider→channel interne)
-    └── sigmacatch-linux (auditd/syslog) → EventCollector::new().run(tx, stop) (tail, rotation détectée)
+    └── sigmacatch-linux (auditd + syslog) → MultiCollector (les deux tails en parallèle, rotation détectée)
 11. Boucle : tokio::select!
     ├── shutdown_rx (Ctrl+C ou --max-runs atteint) → break
     ├── event depuis rx → engine.put_events(vec![event])
