@@ -16,5 +16,5 @@ roxmltree = "0.21"
 
 [dev-dependencies]
 evtx = "0.12"
-input-evtx = { path = "../input-evtx" }
+input-windows-evtx = { path = "../input-windows-evtx" }
 tempfile = "3"

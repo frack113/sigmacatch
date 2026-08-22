@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[package]
+name = "sigmacatch-lnx"
+version.workspace = true
+edition.workspace = true
+description = "Linux sigmacatch binary (auditd + syslog collectors)"
+license.workspace = true
+
+[features]
+default = ["auditd", "builtin"]
+auditd = ["dep:async-trait", "dep:linux-audit-parser"]
+builtin = ["dep:async-trait", "dep:regex"]
+tools = ["dep:clap", "dep:serde"]
+
+[[bin]]
+name = "sigmacatch-linux"
+path = "src/main_linux.rs"
+required-features = ["auditd", "builtin"]
+
+[dependencies]
+sigmacatch-runner = { path = "../crates/sigmacatch-runner" }
+sigmacatch-config = { path = "../crates/sigmacatch-config" }
+sigmacatch-detection = { path = "../crates/sigmacatch-detection" }
+sigmacatch-regression = { path = "../crates/sigmacatch-regression" }
+sigmacatch-rule = { path = "../crates/sigmacatch-rule" }
+sigmacatch-repo = { path = "../crates/sigmacatch-repo" }
+sigmacatch-types = { path = "../crates/sigmacatch-types" }
+
+async-trait = { version = "0.1", optional = true }
+linux-audit-parser = { version = "0.2", optional = true }
+regex = { version = "1", optional = true }
+
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "signal"] }
+tracing = "0.1"
+anyhow = "1.0"
+serde_json = "1.0"
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+
+clap = { version = "4", features = ["derive"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+
+[dev-dependencies]
+tempfile = "3.27"

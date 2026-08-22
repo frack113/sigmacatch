@@ -500,7 +500,7 @@ mod tests {
         let path = dir.path().join("event.evtx");
         write_evtx_from_xml(SAMPLE_XML, 1, &path).unwrap();
 
-        let events = input_evtx::parse_evtx_file(&path).unwrap();
+        let events = input_windows_evtx::parse_evtx_file(&path).unwrap();
         assert_eq!(events.len(), 1);
         let event = &events[0];
         assert_eq!(event.event_json["Event"]["System"]["EventID"], 106);

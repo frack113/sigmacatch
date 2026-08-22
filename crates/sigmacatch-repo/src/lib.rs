@@ -791,7 +791,7 @@ fn collect_tree_rule_ids_depth(
                     // skip the rule so it is re-captured with valid data.
                     match odb.read(&entry.oid) {
                         Ok(blob) if blob.data.len() <= MAX_EVTX_BLOB_SIZE => {
-                            match input_evtx::parse_evtx_bytes(&blob.data) {
+                            match input_windows_evtx::parse_evtx_bytes(&blob.data) {
                                 Ok(events) if !events.is_empty() => {
                                     valid.insert(id);
                                 }

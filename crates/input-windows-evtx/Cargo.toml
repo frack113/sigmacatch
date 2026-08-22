@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[package]
+name = "input-windows-evtx"
+version.workspace = true
+edition.workspace = true
+description = "Parse EVTX files into sigmacatch_types::Event objects"
+license.workspace = true
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+evtx = "0.12"
+sigmacatch-types = { path = "../sigmacatch-types" }
+tokio = { version = "1", features = ["sync"] }
