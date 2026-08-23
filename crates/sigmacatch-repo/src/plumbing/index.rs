@@ -3,7 +3,7 @@
 
 //! Index construction: stage files, directories, and parent-tree entries.
 
-use anyhow::Result;
+use crate::{RepoError, Result};
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
 use std::path::Path;
@@ -61,9 +61,9 @@ pub(crate) fn add_tree_to_index(
 ) -> Result<()> {
     let obj = odb
         .read(&tree_oid)
-        .map_err(|e| anyhow::anyhow!("Failed to read tree {}: {}", tree_oid, e))?;
+        .map_err(|e| RepoError::Grit(format!("Failed to read tree {}: {}", tree_oid, e)))?;
     let entries = grit_lib::objects::parse_tree(&obj.data)
-        .map_err(|e| anyhow::anyhow!("Failed to parse tree: {}", e))?;
+        .map_err(|e| RepoError::Grit(format!("Failed to parse tree: {}", e)))?;
     for entry in entries {
         let Ok(name) = std::str::from_utf8(&entry.name) else {
             warn!("Skipping tree entry with invalid UTF-8 name");
@@ -112,7 +112,7 @@ pub(crate) fn write_index(git_dir: &Path, index: &grit_lib::index::Index) -> Res
     }
     index
         .write(&index_path)
-        .map_err(|e| anyhow::anyhow!("Failed to write index: {}", e))?;
+        .map_err(|e| RepoError::Grit(format!("Failed to write index: {}", e)))?;
     Ok(())
 }
 
@@ -128,7 +128,7 @@ pub(crate) fn add_file_to_index(
     let contents = std::fs::read(&file_path)?;
     let blob_oid = odb
         .write(grit_lib::objects::ObjectKind::Blob, &contents)
-        .map_err(|e| anyhow::anyhow!("Failed to write blob: {}", e))?;
+        .map_err(|e| RepoError::Grit(format!("Failed to write blob: {}", e)))?;
 
     let metadata = file_path.metadata()?;
     let is_exec = is_exec_file(&metadata);
@@ -136,7 +136,7 @@ pub(crate) fn add_file_to_index(
 
     let rel = file_path
         .strip_prefix(&base)
-        .map_err(|_| anyhow::anyhow!("Path not under base"))?;
+        .map_err(|_| RepoError::Grit("Path not under base".to_string()))?;
     let path_str = rel.to_string_lossy().replace('\\', "/");
     let path_bytes = path_str.as_bytes().to_vec();
 
@@ -238,7 +238,9 @@ mod tests {
         let odb = open_odb(git_dir);
         let mut index = grit_lib::index::Index::new();
         add_file_to_index(git_dir, &file, work_tree, &mut index)?;
-        let tree_oid = grit_lib::write_tree::write_tree_from_index(&odb, &index, "")?;
+        let tree_oid = crate::plumbing::refs::map_grit(
+            grit_lib::write_tree::write_tree_from_index(&odb, &index, ""),
+        )?;
 
         let commit = grit_lib::objects::CommitData {
             tree: tree_oid,
@@ -252,7 +254,7 @@ mod tests {
             raw_message: None,
         };
         let raw = grit_lib::objects::serialize_commit(&commit);
-        let commit_oid = odb.write(ObjectKind::Commit, &raw)?;
+        let commit_oid = crate::plumbing::refs::map_grit(odb.write(ObjectKind::Commit, &raw))?;
         std::fs::create_dir_all(git_dir.join("refs/heads"))?;
         std::fs::write(git_dir.join("refs/heads/main"), format!("{}\n", commit_oid))?;
         std::fs::write(git_dir.join("HEAD"), b"ref: refs/heads/main\n")?;
@@ -267,8 +269,8 @@ mod tests {
         prefix: &str,
         out: &mut Vec<String>,
     ) -> Result<()> {
-        let obj = odb.read(&tree_oid)?;
-        let entries = grit_lib::objects::parse_tree(&obj.data)?;
+        let obj = crate::plumbing::refs::map_grit(odb.read(&tree_oid))?;
+        let entries = crate::plumbing::refs::map_grit(grit_lib::objects::parse_tree(&obj.data))?;
         for entry in entries {
             let name = std::str::from_utf8(&entry.name).unwrap().to_string();
             let rel = if prefix.is_empty() {

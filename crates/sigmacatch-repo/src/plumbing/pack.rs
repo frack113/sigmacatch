@@ -8,7 +8,7 @@
 //! this reduces disk usage from ~641 MB to ~52 MB and speeds up subsequent
 //! push pack-building.
 
-use anyhow::Result;
+use crate::{RepoError, Result};
 use grit_lib::objects::{HashAlgo, Object, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use sha1::{Digest, Sha1};
@@ -115,10 +115,10 @@ fn prepare_entry(oid: ObjectId, obj: &Object) -> Result<PreparedEntry> {
 
     let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
     enc.write_all(&obj.data)
-        .map_err(|e| anyhow::anyhow!("zlib encode: {}", e))?;
+        .map_err(|e| RepoError::Grit(format!("zlib encode: {}", e)))?;
     let compressed = enc
         .finish()
-        .map_err(|e| anyhow::anyhow!("zlib finish: {}", e))?;
+        .map_err(|e| RepoError::Grit(format!("zlib finish: {}", e)))?;
 
     // CRC32 over header + compressed data (the full on-disk entry) — computed
     // per object, not cumulatively.
@@ -146,7 +146,7 @@ fn build_pack_data(odb: &Odb, objects: &[LooseEntry]) -> Result<(Vec<u8>, Vec<Pa
     buf.extend_from_slice(PACK_MAGIC);
     buf.extend_from_slice(&2u32.to_be_bytes());
     let count = u32::try_from(objects.len())
-        .map_err(|_| anyhow::anyhow!("pack object count exceeds u32"))?;
+        .map_err(|_| RepoError::Grit("pack object count exceeds u32".to_string()))?;
     buf.extend_from_slice(&count.to_be_bytes());
 
     let mut offsets = Vec::with_capacity(objects.len());
@@ -156,8 +156,8 @@ fn build_pack_data(odb: &Odb, objects: &[LooseEntry]) -> Result<(Vec<u8>, Vec<Pa
         let objects_read: Vec<Object> = chunk
             .iter()
             .map(|entry| odb.read(&entry.oid))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| anyhow::anyhow!("odb read: {}", e))?;
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| RepoError::Grit(format!("odb read: {}", e)))?;
 
         let prepared: Vec<PreparedEntry> = chunk
             .par_iter()

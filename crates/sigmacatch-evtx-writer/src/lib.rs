@@ -11,7 +11,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use anyhow::{Context, Result, anyhow, bail};
 use roxmltree::{Document, Node, NodeType};
 
 const FILE_HEADER_SIZE: usize = 4096;
@@ -28,6 +27,20 @@ const CHUNK_HEADER_FIELD_SIZE: u32 = 128;
 ///
 /// The record header timestamp is derived from the event's `TimeCreated`
 /// element (current time when absent or malformed).
+/// Errors produced while writing EVTX files.
+#[derive(Debug, thiserror::Error)]
+pub enum WriterError {
+    /// Filesystem failure.
+    #[error("filesystem error: {0}")]
+    Io(#[from] std::io::Error),
+    /// Input XML or parameters violate the EVTX writer contract.
+    #[error("{0}")]
+    Invalid(String),
+}
+
+/// Crate-local result alias over [`WriterError`].
+pub type Result<T> = std::result::Result<T, WriterError>;
+
 pub fn write_evtx_from_xml(xml: &str, record_id: u64, path: &Path) -> Result<()> {
     let filetime = filetime_from_event_xml(xml).unwrap_or_else(|_| now_filetime());
     write_evtx_from_xml_with_time(xml, record_id, filetime, path)
@@ -42,7 +55,9 @@ pub fn write_evtx_from_xml_with_time(
     path: &Path,
 ) -> Result<()> {
     if record_id == 0 || record_id == u64::MAX {
-        bail!("record_id must be in 1..=u64::MAX-1, got {record_id}");
+        return Err(WriterError::Invalid(format!(
+            "record_id must be in 1..=u64::MAX-1, got {record_id}"
+        )));
     }
     let chunk = build_chunk(record_id, filetime, xml)?;
     let file = build_file_header(record_id);
@@ -51,14 +66,16 @@ pub fn write_evtx_from_xml_with_time(
     out.extend_from_slice(&file);
     out.extend_from_slice(&chunk);
 
-    std::fs::write(path, out).with_context(|| format!("Failed to write EVTX {}", path.display()))
+    std::fs::write(path, out)
+        .map_err(|e| WriterError::Invalid(format!("Failed to write EVTX {}: {e}", path.display())))
 }
 
 /// Extract a FILETIME (100ns ticks since 1601) from the event's
 /// `TimeCreated SystemTime`; falls back to the current time when absent or
 /// malformed so the record header always carries a parseable timestamp.
 pub fn filetime_from_event_xml(xml: &str) -> Result<u64> {
-    let doc = Document::parse(xml).context("Failed to parse Winevt XML")?;
+    let doc = Document::parse(xml)
+        .map_err(|e| WriterError::Invalid(format!("Failed to parse Winevt XML: {e}")))?;
     for node in doc.descendants() {
         if node.tag_name().name() == "TimeCreated"
             && let Some(system_time) = node.attribute("SystemTime")
@@ -66,14 +83,18 @@ pub fn filetime_from_event_xml(xml: &str) -> Result<u64> {
             return system_time_to_filetime(system_time);
         }
     }
-    bail!("no TimeCreated element in Winevt XML")
+    Err(WriterError::Invalid(
+        "no TimeCreated element in Winevt XML".to_string(),
+    ))
 }
 
 /// Parse `YYYY-MM-DDTHH:MM:SS[.fraction][Z|±HH:MM]` into a FILETIME.
 fn system_time_to_filetime(system_time: &str) -> Result<u64> {
     let bytes = system_time.as_bytes();
     if bytes.len() < 19 {
-        bail!("malformed SystemTime: {system_time}");
+        return Err(WriterError::Invalid(format!(
+            "malformed SystemTime: {system_time}"
+        )));
     }
     let read_u16 = |i: usize| -> Result<u16> {
         let hi = (bytes[i] as char)
@@ -84,7 +105,9 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
             .and_then(|d| u16::try_from(d).ok());
         match (hi, lo) {
             (Some(hi), Some(lo)) => Ok(hi * 10 + lo),
-            _ => bail!("malformed SystemTime: {system_time}"),
+            _ => Err(WriterError::Invalid(format!(
+                "malformed SystemTime: {system_time}"
+            ))),
         }
     };
     let year = (u32::from(read_u16(0)?) * 100 + u32::from(read_u16(2)?)) as i64;
@@ -94,7 +117,9 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
     let minute = u32::from(read_u16(14)?);
     let second = u32::from(read_u16(17)?);
     if !(1..=12).contains(&month) || hour > 23 || minute > 59 || second > 60 {
-        bail!("malformed SystemTime: {system_time}");
+        return Err(WriterError::Invalid(format!(
+            "malformed SystemTime: {system_time}"
+        )));
     }
     let max_day = match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
@@ -109,7 +134,9 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
         _ => unreachable!(),
     };
     if day == 0 || day > max_day {
-        bail!("malformed SystemTime: {system_time}");
+        return Err(WriterError::Invalid(format!(
+            "malformed SystemTime: {system_time}"
+        )));
     }
 
     let mut fraction_ns: u32 = 0;
@@ -136,12 +163,16 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
         }
         if b == b'+' || b == b'-' {
             if bytes.len() < i + 6 || bytes[i + 3] != b':' {
-                bail!("malformed SystemTime timezone: {system_time}");
+                return Err(WriterError::Invalid(format!(
+                    "malformed SystemTime timezone: {system_time}"
+                )));
             }
             let off_h = read_u16(i + 1)? as i64;
             let off_m = read_u16(i + 4)? as i64;
             if off_h > 23 || off_m > 59 {
-                bail!("malformed SystemTime timezone: {system_time}");
+                return Err(WriterError::Invalid(format!(
+                    "malformed SystemTime timezone: {system_time}"
+                )));
             }
             offset_secs = off_h * 3600 + off_m * 60;
             if b == b'-' {
@@ -167,7 +198,9 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
     const UNIX_TO_FILETIME_NS: i128 = 116_444_736_000_000_000;
     let filetime = (unix_ns + UNIX_TO_FILETIME_NS).div_euclid(100);
     if filetime < 0 {
-        bail!("SystemTime before 1601: {system_time}");
+        return Err(WriterError::Invalid(format!(
+            "SystemTime before 1601: {system_time}"
+        )));
     }
     Ok(filetime as u64)
 }
@@ -196,13 +229,14 @@ fn build_file_header(record_id: u64) -> [u8; FILE_HEADER_SIZE] {
 }
 
 fn build_chunk(record_id: u64, filetime: u64, xml: &str) -> Result<[u8; CHUNK_SIZE]> {
-    let doc = Document::parse(xml).context("Failed to parse Winevt XML")?;
+    let doc = Document::parse(xml)
+        .map_err(|e| WriterError::Invalid(format!("Failed to parse Winevt XML: {e}")))?;
     let root = doc.root_element();
     if root.tag_name().name() != "Event" {
-        bail!(
+        return Err(WriterError::Invalid(format!(
             "expected <Event> root element, got <{}>",
             root.tag_name().name()
-        );
+        )));
     }
 
     let mut encoder = Encoder::default();
@@ -213,10 +247,10 @@ fn build_chunk(record_id: u64, filetime: u64, xml: &str) -> Result<[u8; CHUNK_SI
     let record_size = align8(RECORD_HEADER_SIZE + 4 + binxml.len());
     let free_space_offset = RECORD_START + record_size;
     if free_space_offset > CHUNK_SIZE {
-        bail!(
+        return Err(WriterError::Invalid(format!(
             "EVTX record too large ({} bytes) for a {CHUNK_SIZE}-byte chunk",
             record_size
-        );
+        )));
     }
     let string_table_offset = free_space_offset;
 
@@ -242,7 +276,7 @@ fn build_chunk(record_id: u64, filetime: u64, xml: &str) -> Result<[u8; CHUNK_SI
     for (pos, name) in &encoder.refs {
         let offset = names
             .get(name)
-            .ok_or_else(|| anyhow!("missing string table entry {name}"))?;
+            .ok_or_else(|| WriterError::Invalid(format!("missing string table entry {name}")))?;
         let abs = RECORD_START + RECORD_HEADER_SIZE + pos;
         put_u32(&mut chunk[..], abs, (string_table_offset + *offset) as u32);
     }
@@ -276,7 +310,9 @@ fn build_string_table(
     let mut entries = Vec::with_capacity(names.len());
     for name in names {
         if cursor + 10 + name.encode_utf16().count() * 2 > CHUNK_SIZE {
-            bail!("EVTX string table overflow");
+            return Err(WriterError::Invalid(
+                "EVTX string table overflow".to_string(),
+            ));
         }
         entries.push((cursor, name));
         map.insert(name.clone(), cursor - offset);
@@ -369,7 +405,11 @@ impl Encoder {
                             self.emit_value(text);
                         }
                     }
-                    other => bail!("unsupported XML node type {other:?} in event XML"),
+                    other => {
+                        return Err(WriterError::Invalid(format!(
+                            "unsupported XML node type {other:?} in event XML"
+                        )));
+                    }
                 }
             }
             self.out.push(0x04);

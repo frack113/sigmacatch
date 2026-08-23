@@ -3,10 +3,12 @@
 
 //! Fetch from remote via smart HTTP or SSH.
 
-use anyhow::Result;
+use crate::Result;
 use grit_lib::fetch::Progress;
 use grit_lib::transfer::{FetchOptions, TagMode};
 use grit_lib::transport::http::{HttpClient, http_fetch};
+
+use super::refs::map_grit;
 use grit_lib::transport::{ConnectOptions, SshCommand, SshTransport, Transport};
 use std::path::Path;
 use tracing::info;
@@ -80,7 +82,13 @@ pub fn fetch_remote(
     opts: &FetchOptions,
 ) -> Result<(usize, Option<String>)> {
     info!("Fetching from {}", sanitize_url(repo_url));
-    let outcome = http_fetch(http_client, git_dir, repo_url, opts, &mut LogProgress)?;
+    let outcome = map_grit(http_fetch(
+        http_client,
+        git_dir,
+        repo_url,
+        opts,
+        &mut LogProgress,
+    ))?;
     let count = outcome.updates.len();
     info!(
         "Fetched {} ref updates (default branch: {})",
@@ -107,12 +115,17 @@ pub fn fetch_remote_ssh(
             ssh_command: SshCommand::Program(args[0].clone()),
         },
     };
-    let mut conn = transport.connect(
+    let mut conn = map_grit(transport.connect(
         repo_url,
         grit_lib::transport::Service::UploadPack,
         &ConnectOptions::default(),
-    )?;
-    let outcome = grit_lib::fetch::fetch_remote(git_dir, &mut *conn, opts, &mut LogProgress)?;
+    ))?;
+    let outcome = map_grit(grit_lib::fetch::fetch_remote(
+        git_dir,
+        &mut *conn,
+        opts,
+        &mut LogProgress,
+    ))?;
     let count = outcome.updates.len();
     info!(
         "Fetched {} ref updates via SSH (default branch: {})",

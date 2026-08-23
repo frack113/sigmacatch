@@ -1538,6 +1538,7 @@ dependencies = [
  "async-trait",
  "evtx",
  "sigmacatch-types",
+ "thiserror 2.0.20",
  "tokio",
 ]
 
@@ -3008,12 +3009,12 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 name = "sigmacatch-config"
 version = "0.5.0"
 dependencies = [
- "anyhow",
  "serde",
  "sigmacatch-repo",
  "sigmacatch-rule",
  "sigmacatch-types",
  "tempfile",
+ "thiserror 2.0.20",
  "tracing",
  "yaml_serde",
 ]
@@ -3038,13 +3039,13 @@ dependencies = [
 name = "sigmacatch-evtx-writer"
 version = "0.5.0"
 dependencies = [
- "anyhow",
  "chrono",
  "crc32fast",
  "evtx",
  "input-windows-evtx",
  "roxmltree",
  "tempfile",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -3087,7 +3088,6 @@ dependencies = [
 name = "sigmacatch-regression"
 version = "0.5.0"
 dependencies = [
- "anyhow",
  "chrono",
  "input-windows-evtx",
  "serde",
@@ -3095,6 +3095,7 @@ dependencies = [
  "sigmacatch-evtx-writer",
  "sigmacatch-types",
  "tempfile",
+ "thiserror 2.0.20",
  "tracing",
  "uuid",
  "windows 0.62.2",
@@ -3118,6 +3119,7 @@ dependencies = [
  "sha2 0.11.0",
  "ssh-key",
  "tempfile",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "uuid",

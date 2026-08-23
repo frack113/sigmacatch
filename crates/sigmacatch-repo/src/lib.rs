@@ -21,7 +21,6 @@ pub use crate::transport::ensure_ssh_host_config;
 #[cfg(test)]
 mod regression_tests;
 
-use anyhow::Result;
 use grit_lib::objects::ObjectId;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -35,6 +34,32 @@ use crate::transport::{AuthHttpClient, https_to_ssh_url, sanitize_url};
 
 /// Default SigmaHQ repository URL.
 pub const DEFAULT_SIGMA_REPO_URL: &str = "https://github.com/SigmaHQ/sigma.git";
+
+/// Errors produced by git repository operations (plumbing, porcelain, transport).
+#[derive(Debug, thiserror::Error)]
+pub enum RepoError {
+    /// Filesystem failure.
+    #[error("filesystem error: {0}")]
+    Io(#[from] std::io::Error),
+    /// Underlying grit-lib plumbing failure.
+    #[error("git operation failed: {0}")]
+    Grit(String),
+    /// Invalid branch or ref name.
+    #[error("invalid ref: {0}")]
+    InvalidRef(String),
+    /// Repository state does not allow the requested operation.
+    #[error("{0}")]
+    State(String),
+    /// Commit signing failure.
+    #[error("signing failure: {0}")]
+    Signing(String),
+    /// Remote/transport resolution or configuration failure.
+    #[error("transport error: {0}")]
+    Transport(String),
+}
+
+/// Crate-local result alias over [`RepoError`].
+pub type Result<T> = std::result::Result<T, RepoError>;
 
 /// High-level Sigma repository manager — the single entry point.
 #[derive(Debug, Clone)]
@@ -166,13 +191,13 @@ impl SigmaRepo {
                     git_pull(&git_dir_clone, token.as_ref().map(|t| t.as_str()))
                 })
                 .await
-                .map_err(|e| anyhow::anyhow!("Pull task panicked: {}", e)),
+                .map_err(|e| RepoError::State(format!("Pull task panicked: {}", e))),
                 GitTransport::Ssh => {
                     let result = tokio::task::spawn_blocking(move || {
                         git_pull_ssh(&git_dir_clone, ssh_key_path.as_deref())
                     })
                     .await
-                    .map_err(|e| anyhow::anyhow!("Pull task panicked: {}", e));
+                    .map_err(|e| RepoError::State(format!("Pull task panicked: {}", e)));
                     if let Err(ref e) = result {
                         warn!(
                             "SSH pull failed ({e}) — run will abort. If the ssh \
@@ -184,12 +209,12 @@ impl SigmaRepo {
                 }
             };
             if let Err(e) = result? {
-                return Err(anyhow::anyhow!(
+                return Err(RepoError::Grit(format!(
                     "Failed to pull Sigma repository at {:?}: {e}. \
                      The repository was left untouched — fix the issue \
                      (or use offline mode to work with the on-disk files as-is).",
                     self.repo_path
-                ));
+                )));
             }
         } else {
             self.clone_repo().await?;
@@ -229,8 +254,9 @@ impl SigmaRepo {
             return Ok(());
         }
         let branch_name = self.working_branch.clone().ok_or_else(|| {
-            anyhow::anyhow!(
+            RepoError::State(
                 "No working branch configured — call with_working_branch() before switching"
+                    .to_string(),
             )
         })?;
         let git_dir = self.repo_path.join(".git");
@@ -309,16 +335,18 @@ impl SigmaRepo {
         let mut valid: HashSet<Uuid> = HashSet::new();
         let mut broken: HashSet<Uuid> = HashSet::new();
         for (refname, oid) in branches {
-            let obj = odb
-                .read(&oid)
-                .map_err(|e| anyhow::anyhow!("Failed to read remote ref '{}': {}", refname, e))?;
-            let commit = grit_lib::objects::parse_commit(&obj.data)
-                .map_err(|e| anyhow::anyhow!("Failed to parse commit '{}': {}", refname, e))?;
-            let tree_obj = odb
-                .read(&commit.tree)
-                .map_err(|e| anyhow::anyhow!("Failed to read tree of '{}': {}", refname, e))?;
-            let entries = grit_lib::objects::parse_tree(&tree_obj.data)
-                .map_err(|e| anyhow::anyhow!("Failed to parse tree of '{}': {}", refname, e))?;
+            let obj = odb.read(&oid).map_err(|e| {
+                RepoError::Grit(format!("Failed to read remote ref '{}': {}", refname, e))
+            })?;
+            let commit = grit_lib::objects::parse_commit(&obj.data).map_err(|e| {
+                RepoError::InvalidRef(format!("Failed to parse commit '{}': {}", refname, e))
+            })?;
+            let tree_obj = odb.read(&commit.tree).map_err(|e| {
+                RepoError::InvalidRef(format!("Failed to read tree of '{}': {}", refname, e))
+            })?;
+            let entries = grit_lib::objects::parse_tree(&tree_obj.data).map_err(|e| {
+                RepoError::InvalidRef(format!("Failed to parse tree of '{}': {}", refname, e))
+            })?;
             for entry in entries {
                 if entry.mode == 0o040000 && entry.name.as_slice() == b"regression_data" {
                     collect_tree_rule_ids(&odb, entry.oid, &mut valid, &mut broken)?;
@@ -352,7 +380,7 @@ impl SigmaRepo {
         let branch = self
             .working_branch
             .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("No working branch configured"))?;
+            .ok_or_else(|| RepoError::State("No working branch configured".to_string()))?;
         let git_dir = self.repo_path.join(".git");
         let remote_ref = format!("refs/remotes/origin/{}", branch);
 
@@ -364,63 +392,55 @@ impl SigmaRepo {
             return Ok(());
         };
 
-        let oid = ObjectId::from_hex(&oid_str)
-            .map_err(|e| anyhow::anyhow!("Invalid OID for '{}': {}", remote_ref, e))?;
+        let oid = ObjectId::from_hex(&oid_str).map_err(|e| {
+            RepoError::InvalidRef(format!("Invalid OID for '{}': {}", remote_ref, e))
+        })?;
         let odb = crate::plumbing::open_odb(&git_dir);
         let obj = odb.read(&oid).map_err(|e| {
-            anyhow::anyhow!(
+            RepoError::Grit(format!(
                 "Remote working branch '{}' commit {} is unreadable: {}. \
                  Delete the branch on GitHub and re-run.",
-                branch,
-                oid,
-                e
-            )
+                branch, oid, e
+            ))
         })?;
         let commit = grit_lib::objects::parse_commit(&obj.data).map_err(|e| {
-            anyhow::anyhow!(
+            RepoError::Grit(format!(
                 "Remote working branch '{}' commit {} is not a valid commit: {}. \
                  Delete the branch on GitHub and re-run.",
-                branch,
-                oid,
-                e
-            )
+                branch, oid, e
+            ))
         })?;
         if commit.parents.is_empty() {
-            anyhow::bail!(
+            return Err(RepoError::Grit(format!(
                 "Remote working branch '{}' commit {} is an orphan/root commit (no parent). \
                  Expected a child of master. Delete the branch on GitHub and re-run.",
-                branch,
-                oid
-            );
+                branch, oid
+            )));
         }
 
         let tree_obj = odb.read(&commit.tree).map_err(|e| {
-            anyhow::anyhow!(
+            RepoError::Grit(format!(
                 "Remote working branch '{}' tree {} is unreadable: {}. \
                  Delete the branch on GitHub and re-run.",
-                branch,
-                commit.tree,
-                e
-            )
+                branch, commit.tree, e
+            ))
         })?;
         let entries = grit_lib::objects::parse_tree(&tree_obj.data).map_err(|e| {
-            anyhow::anyhow!(
+            RepoError::Grit(format!(
                 "Remote working branch '{}' tree {} is not a valid tree: {}. \
                  Delete the branch on GitHub and re-run.",
-                branch,
-                commit.tree,
-                e
-            )
+                branch, commit.tree, e
+            ))
         })?;
         let has_rules = entries
             .iter()
             .any(|e| e.mode == 0o040000 && e.name.as_slice() == b"rules");
         if !has_rules {
-            anyhow::bail!(
+            return Err(RepoError::Grit(format!(
                 "Remote working branch '{}' tree is missing the 'rules/' directory — \
                  the branch is amputated/corrupt. Delete the branch on GitHub and re-run.",
                 branch
-            );
+            )));
         }
 
         info!(
@@ -437,13 +457,16 @@ impl SigmaRepo {
         let branch = self
             .working_branch
             .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("No working branch configured"))?;
+            .ok_or_else(|| RepoError::State("No working branch configured".to_string()))?;
         let git_dir = self.repo_path.join(".git");
         let local_ref = format!("refs/heads/{}", branch);
-        let oid_str = crate::plumbing::read_loose_or_packed_ref(&git_dir, &local_ref)
-            .ok_or_else(|| anyhow::anyhow!("Working branch '{}' not found locally", branch))?;
-        ObjectId::from_hex(&oid_str)
-            .map_err(|e| anyhow::anyhow!("Invalid OID for branch '{}': {}", branch, e))
+        let oid_str =
+            crate::plumbing::read_loose_or_packed_ref(&git_dir, &local_ref).ok_or_else(|| {
+                RepoError::State(format!("Working branch '{}' not found locally", branch))
+            })?;
+        ObjectId::from_hex(&oid_str).map_err(|e| {
+            RepoError::InvalidRef(format!("Invalid OID for branch '{}': {}", branch, e))
+        })
     }
 
     /// Roll the working branch ref back to `oid` after a push failure that left
@@ -454,24 +477,20 @@ impl SigmaRepo {
         let branch = self
             .working_branch
             .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("No working branch configured"))?;
+            .ok_or_else(|| RepoError::State("No working branch configured".to_string()))?;
         let git_dir = self.repo_path.join(".git");
         let odb = crate::plumbing::open_odb(&git_dir);
         let obj = odb.read(&oid).map_err(|e| {
-            anyhow::anyhow!(
+            RepoError::Grit(format!(
                 "Cannot reset branch '{}' to {} — object not found in ODB: {}",
-                branch,
-                oid,
-                e
-            )
+                branch, oid, e
+            ))
         })?;
         if obj.kind != grit_lib::objects::ObjectKind::Commit {
-            anyhow::bail!(
+            return Err(RepoError::Grit(format!(
                 "Cannot reset branch '{}' to {} — object is a {} (expected commit)",
-                branch,
-                oid,
-                obj.kind
-            );
+                branch, oid, obj.kind
+            )));
         }
         let local_ref = format!("refs/heads/{}", branch);
         crate::plumbing::refs::map_grit(grit_lib::refs::write_ref(&git_dir, &local_ref, &oid))?;
@@ -526,16 +545,17 @@ impl SigmaRepo {
                     git_clone(&url, &path, token.as_ref().map(|t| t.as_str()))
                 })
                 .await
-                .map_err(|e| anyhow::anyhow!("Clone task panicked: {}", e))??;
+                .map_err(|e| RepoError::State(format!("Clone task panicked: {}", e)))??;
             }
             GitTransport::Ssh => {
-                let ssh_url = https_to_ssh_url(&url)
-                    .ok_or_else(|| anyhow::anyhow!("Cannot convert URL to SSH format: {}", url))?;
+                let ssh_url = https_to_ssh_url(&url).ok_or_else(|| {
+                    RepoError::Transport(format!("Cannot convert URL to SSH format: {}", url))
+                })?;
                 tokio::task::spawn_blocking(move || {
                     git_clone_ssh(&ssh_url, &path, ssh_key_path.as_deref())
                 })
                 .await
-                .map_err(|e| anyhow::anyhow!("Clone task panicked: {}", e))??;
+                .map_err(|e| RepoError::State(format!("Clone task panicked: {}", e)))??;
             }
         }
 
@@ -699,23 +719,22 @@ impl SigmaRepo {
         let branch = self
             .working_branch
             .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("No working branch configured"))?;
+            .ok_or_else(|| RepoError::State("No working branch configured".to_string()))?;
         let git_dir = self.repo_path.join(".git");
 
         let head_target =
             crate::plumbing::symbolic_ref_target(&git_dir, "HEAD")?.ok_or_else(|| {
-                anyhow::anyhow!(
+                RepoError::State(format!(
                     "HEAD is detached (not on a branch) — refusing to push branch '{}'",
                     branch
-                )
+                ))
             })?;
         let expected_ref = format!("refs/heads/{branch}");
         if head_target != expected_ref {
-            anyhow::bail!(
+            return Err(RepoError::Grit(format!(
                 "HEAD is not on branch '{}' (HEAD → {}). Refusing to push.",
-                branch,
-                head_target
-            );
+                branch, head_target
+            )));
         }
 
         match self.transport {
@@ -795,8 +814,8 @@ fn collect_tree_rule_ids_depth(
         warn!("regression_data tree exceeds depth limit at {:?}", tree_oid);
         return Ok(());
     }
-    let obj = odb.read(&tree_oid)?;
-    let entries = grit_lib::objects::parse_tree(&obj.data)?;
+    let obj = crate::plumbing::refs::map_grit(odb.read(&tree_oid))?;
+    let entries = crate::plumbing::refs::map_grit(grit_lib::objects::parse_tree(&obj.data))?;
     for entry in entries {
         if entry.mode == 0o040000 {
             collect_tree_rule_ids_depth(odb, entry.oid, valid, broken, depth + 1)?;

@@ -9,7 +9,7 @@ license.workspace = true
 description = "Minimal pure-Rust EVTX writer (single-record, direct BinXML) for ETW regression data"
 
 [dependencies]
-anyhow = "1.0"
+thiserror.workspace = true
 chrono = "0.4"
 crc32fast = "1.4"
 roxmltree = "0.21"

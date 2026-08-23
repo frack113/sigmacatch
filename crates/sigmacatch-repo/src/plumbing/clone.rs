@@ -3,7 +3,7 @@
 
 //! Full clone: init + fetch + set HEAD + checkout worktree.
 
-use anyhow::Result;
+use crate::{RepoError, Result};
 use grit_lib::transport::http::HttpClient;
 use std::path::Path;
 use tracing::info;
@@ -37,7 +37,9 @@ pub fn clone_repo(http_client: &dyn HttpClient, url: &str, dest: &Path) -> Resul
     };
     if count == 0 {
         let _ = std::fs::remove_dir_all(&git_dir);
-        anyhow::bail!("No refs fetched from remote — empty or unreachable repository");
+        return Err(RepoError::State(
+            "No refs fetched from remote — empty or unreachable repository".to_string(),
+        ));
     }
 
     set_head_after_fetch(&git_dir, default_branch.as_deref());

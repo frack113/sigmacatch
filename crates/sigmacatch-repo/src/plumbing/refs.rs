@@ -5,15 +5,15 @@
 //! and fast-forward updates — all delegated to `grit_lib::refs` (loose/packed/
 //! reftable, atomic lock writes, reflogs).
 
-use anyhow::{Context, Result};
+use crate::{RepoError, Result};
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
 use std::path::Path;
 use tracing::{info, warn};
 
-/// Bridge grit-lib's `error::Error` into `anyhow::Error` (no blanket `From` exists).
-pub(crate) fn map_grit<T>(r: std::result::Result<T, grit_lib::error::Error>) -> Result<T> {
-    r.map_err(|e| anyhow::anyhow!("{}", e))
+/// Bridge grit-lib's `error::Error` into [`RepoError`] (no blanket `From` exists).
+pub(crate) fn map_grit<T, E: std::fmt::Display>(r: std::result::Result<T, E>) -> Result<T> {
+    r.map_err(|e| RepoError::Grit(e.to_string()))
 }
 
 /// Resolve a ref name (or `"HEAD"`) to its object id, following symbolic refs.
@@ -45,12 +45,12 @@ pub(crate) fn symbolic_ref_target(git_dir: &Path, refname: &str) -> Result<Optio
 /// Parse remote URL from `.git/config` for a given remote name.
 pub(crate) fn read_remote_url_from_config(git_dir: &Path, remote: &str) -> Result<String> {
     let config_path = git_dir.join("config");
-    let content = std::fs::read_to_string(&config_path).with_context(|| {
-        format!(
-            "cannot read git config at {} (expected remote '{}')",
+    let content = std::fs::read_to_string(&config_path).map_err(|e| {
+        RepoError::State(format!(
+            "cannot read git config at {} (expected remote '{}'): {e}",
             config_path.display(),
             remote
-        )
+        ))
     })?;
     let target = format!("[remote \"{}\"]", remote);
     let mut in_remote = false;
@@ -62,11 +62,10 @@ pub(crate) fn read_remote_url_from_config(git_dir: &Path, remote: &str) -> Resul
             return Ok(url.to_string());
         }
     }
-    anyhow::bail!(
+    Err(RepoError::Grit(format!(
         "Remote '{}' not found in git config at {:?}",
-        remote,
-        config_path
-    )
+        remote, config_path
+    )))
 }
 
 /// Configure HEAD and create the local tracking ref after a fetch (HTTP and SSH).
@@ -130,7 +129,7 @@ pub(crate) fn fast_forward_branch(git_dir: &Path) -> Result<()> {
     };
     let local_ref = format!("refs/heads/{}", remote_branch);
     let oid = ObjectId::from_hex(&remote_oid)
-        .map_err(|e| anyhow::anyhow!("Invalid OID for '{}': {}", remote_ref, e))?;
+        .map_err(|e| RepoError::InvalidRef(format!("Invalid OID for '{}': {}", remote_ref, e)))?;
     map_grit(refs::write_ref(git_dir, &local_ref, &oid))?;
     info!(
         "Fast-forwarded '{}' to {}",

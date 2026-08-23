@@ -3,7 +3,7 @@
 
 //! Working-tree checkout from a commit tree.
 
-use anyhow::Result;
+use crate::{RepoError, Result};
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
 use std::collections::HashSet;
@@ -30,24 +30,24 @@ pub(crate) fn checkout_main_branch(git_dir: &Path, work_tree: &Path) -> Result<(
     let oid_str = if let Some(ref_str) = head_ref.strip_prefix("ref: ") {
         let ref_name = ref_str.trim();
         read_loose_or_packed_ref(git_dir, ref_name).ok_or_else(|| {
-            anyhow::anyhow!(
+            RepoError::State(format!(
                 "Cannot resolve HEAD ref '{}' — branch not found locally",
                 ref_name
-            )
+            ))
         })?
     } else {
         head_ref.clone()
     };
 
     let head_oid = ObjectId::from_hex(&oid_str)
-        .map_err(|e| anyhow::anyhow!("Invalid HEAD OID '{}': {}", oid_str, e))?;
+        .map_err(|e| RepoError::Grit(format!("Invalid HEAD OID '{}': {}", oid_str, e)))?;
 
     let odb = open_odb(git_dir);
     let commit_obj = odb
         .read(&head_oid)
-        .map_err(|e| anyhow::anyhow!("Failed to read HEAD commit {}: {}", head_oid, e))?;
+        .map_err(|e| RepoError::Grit(format!("Failed to read HEAD commit {}: {}", head_oid, e)))?;
     let commit = grit_lib::objects::parse_commit(&commit_obj.data)
-        .map_err(|e| anyhow::anyhow!("Failed to parse HEAD commit: {}", e))?;
+        .map_err(|e| RepoError::Grit(format!("Failed to parse HEAD commit: {}", e)))?;
 
     checkout_tree(&odb, commit.tree, work_tree, "")?;
     reconcile_worktree(&odb, commit.tree, work_tree)?;
@@ -58,9 +58,9 @@ pub(crate) fn checkout_main_branch(git_dir: &Path, work_tree: &Path) -> Result<(
 fn checkout_tree(odb: &Odb, tree_oid: ObjectId, base_path: &Path, prefix: &str) -> Result<()> {
     let obj = odb
         .read(&tree_oid)
-        .map_err(|e| anyhow::anyhow!("Failed to read tree {}: {}", tree_oid, e))?;
+        .map_err(|e| RepoError::Grit(format!("Failed to read tree {}: {}", tree_oid, e)))?;
     let entries = grit_lib::objects::parse_tree(&obj.data)
-        .map_err(|e| anyhow::anyhow!("Failed to parse tree: {}", e))?;
+        .map_err(|e| RepoError::Grit(format!("Failed to parse tree: {}", e)))?;
 
     for entry in entries {
         let entry_name = match std::str::from_utf8(&entry.name) {
@@ -76,7 +76,10 @@ fn checkout_tree(odb: &Odb, tree_oid: ObjectId, base_path: &Path, prefix: &str) 
             format!("{}/{}", prefix, entry_name)
         };
         if rel_path.contains("..") || rel_path.starts_with('/') {
-            anyhow::bail!("Path traversal detected in tree entry: '{}'", rel_path);
+            return Err(RepoError::Grit(format!(
+                "Path traversal detected in tree entry: '{}'",
+                rel_path
+            )));
         }
         let full_path = base_path.join(&rel_path);
 
@@ -87,7 +90,7 @@ fn checkout_tree(odb: &Odb, tree_oid: ObjectId, base_path: &Path, prefix: &str) 
         } else if entry.mode == 0o120000 {
             let blob = odb
                 .read(&entry.oid)
-                .map_err(|e| anyhow::anyhow!("Failed to read symlink blob: {}", e))?;
+                .map_err(|e| RepoError::Grit(format!("Failed to read symlink blob: {}", e)))?;
             let target = String::from_utf8_lossy(&blob.data);
             #[cfg(unix)]
             std::os::unix::fs::symlink(target.as_ref(), &full_path)?;
@@ -97,9 +100,9 @@ fn checkout_tree(odb: &Odb, tree_oid: ObjectId, base_path: &Path, prefix: &str) 
             if let Some(parent) = full_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            let blob = odb
-                .read(&entry.oid)
-                .map_err(|e| anyhow::anyhow!("Failed to read blob {}: {}", entry.oid, e))?;
+            let blob = odb.read(&entry.oid).map_err(|e| {
+                RepoError::Grit(format!("Failed to read blob {}: {}", entry.oid, e))
+            })?;
             std::fs::write(&full_path, &blob.data)?;
             if cfg!(unix) {
                 set_executable(&full_path, entry.mode)?;
@@ -119,9 +122,9 @@ fn collect_tree_paths(
 ) -> Result<()> {
     let obj = odb
         .read(&tree_oid)
-        .map_err(|e| anyhow::anyhow!("Failed to read tree {}: {}", tree_oid, e))?;
+        .map_err(|e| RepoError::Grit(format!("Failed to read tree {}: {}", tree_oid, e)))?;
     let entries = grit_lib::objects::parse_tree(&obj.data)
-        .map_err(|e| anyhow::anyhow!("Failed to parse tree: {}", e))?;
+        .map_err(|e| RepoError::Grit(format!("Failed to parse tree: {}", e)))?;
     for entry in entries {
         let name = match std::str::from_utf8(&entry.name) {
             Ok(s) => s.to_string(),

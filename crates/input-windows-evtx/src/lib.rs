@@ -11,9 +11,25 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result};
 use async_trait::async_trait;
-use sigmacatch_types::{Event, EventProducer, parse_winevt_xml_raw};
+use sigmacatch_types::{Event, EventProducer, ParseError, parse_winevt_xml_raw};
+
+/// Errors produced while reading EVTX files.
+#[derive(Debug, thiserror::Error)]
+pub enum EvtxError {
+    /// Filesystem failure.
+    #[error("filesystem error: {0}")]
+    Io(#[from] std::io::Error),
+    /// The EVTX container or one of its records could not be decoded.
+    #[error("EVTX parse error: {0}")]
+    Parse(String),
+    /// A record's XML violated the Winevt event schema.
+    #[error("{0}")]
+    InvalidEvent(#[from] ParseError),
+}
+
+/// Crate-local result alias over [`EvtxError`].
+pub type Result<T> = std::result::Result<T, EvtxError>;
 use tokio::sync::{mpsc, watch};
 
 /// Re-export of the Winevt XML parser shared by the sigmacatch-types crate.
@@ -39,16 +55,18 @@ impl EventCollector {
 
     /// Load a single EVTX file into a buffer.
     fn load_evtx(path: &Path) -> Result<Vec<Event>> {
-        let mut parser = evtx::EvtxParser::from_path(path)
-            .with_context(|| format!("Failed to open EVTX {}", path.display()))?;
+        let mut parser = evtx::EvtxParser::from_path(path).map_err(|e| {
+            EvtxError::Parse(format!("Failed to open EVTX {}: {e}", path.display()))
+        })?;
 
         let mut events = Vec::new();
 
         for record in parser.records() {
-            let record =
-                record.with_context(|| format!("EVTX record error in {}", path.display()))?;
+            let record = record.map_err(|e| {
+                EvtxError::Parse(format!("EVTX record error in {}: {e}", path.display()))
+            })?;
             let xml = std::str::from_utf8(record.data.as_bytes())
-                .context("Invalid UTF-8 in EVTX record")?;
+                .map_err(|_| EvtxError::Parse("Invalid UTF-8 in EVTX record".to_string()))?;
             let event_json_raw = parse_winevt_xml_raw(xml)?;
             let event_json = parse_winevt_xml(xml)?;
             let event_raw = record.data.as_bytes().to_vec();
@@ -84,15 +102,16 @@ impl EventProducer for EventCollector {
             if *stop.borrow() {
                 break;
             }
-            let events = Self::load_evtx(path)
-                .with_context(|| format!("Failed to load EVTX {}", path.display()))?;
+            let events = Self::load_evtx(path).map_err(|e| {
+                EvtxError::Parse(format!("Failed to load EVTX {}: {e}", path.display()))
+            })?;
             for event in events {
                 if *stop.borrow() {
                     break;
                 }
-                tx.send(event)
-                    .await
-                    .context("Channel send failed — receiver dropped")?;
+                tx.send(event).await.map_err(|_| {
+                    EvtxError::Parse("Channel send failed — receiver dropped".to_string())
+                })?;
             }
         }
         Ok(())
@@ -110,15 +129,17 @@ pub fn parse_evtx_file(path: &Path) -> Result<Vec<Event>> {
 ///
 /// Useful for loading EVTX regression data from memory (e.g., evtx_check binary).
 pub fn parse_evtx_bytes(data: &[u8]) -> Result<Vec<Event>> {
-    let mut parser = evtx::EvtxParser::from_read_seek(std::io::Cursor::new(data))
-        .context("Failed to create EVTX parser from raw bytes")?;
+    let mut parser = evtx::EvtxParser::from_read_seek(std::io::Cursor::new(data)).map_err(|e| {
+        EvtxError::Parse(format!("Failed to create EVTX parser from raw bytes: {e}"))
+    })?;
 
     let mut events = Vec::new();
 
     for record in parser.records() {
-        let record = record.with_context(|| "EVTX record error in raw data")?;
-        let xml =
-            std::str::from_utf8(record.data.as_bytes()).context("Invalid UTF-8 in EVTX record")?;
+        let record =
+            record.map_err(|e| EvtxError::Parse(format!("EVTX record error in raw data: {e}")))?;
+        let xml = std::str::from_utf8(record.data.as_bytes())
+            .map_err(|_| EvtxError::Parse("Invalid UTF-8 in EVTX record".to_string()))?;
         let event_json_raw = parse_winevt_xml_raw(xml)?;
         let event_json = parse_winevt_xml(xml)?;
         let event_raw = record.data.as_bytes().to_vec();

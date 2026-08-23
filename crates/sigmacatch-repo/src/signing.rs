@@ -9,7 +9,7 @@
 //! so a commit signed here carries the same "Verified" badge as one signed by
 //! git itself.
 
-use anyhow::{Context, Result};
+use crate::{RepoError, Result};
 use ssh_key::{HashAlg, LineEnding, PrivateKey, SshSig};
 use std::path::Path;
 
@@ -27,14 +27,15 @@ const GPG_SIG_HEADER: &str = "gpgsig";
 /// newline) — exactly what `ssh-keygen -Y sign` would write to its `.sig`
 /// file.
 pub fn sign_commit(payload: &[u8], key_path: &Path) -> Result<Vec<u8>> {
-    let private_key = PrivateKey::read_openssh_file(key_path)
-        .with_context(|| format!("Failed to load signing key {:?}", key_path))?;
+    let private_key = PrivateKey::read_openssh_file(key_path).map_err(|e| {
+        RepoError::Signing(format!("Failed to load signing key {:?}: {e}", key_path))
+    })?;
     let sig: SshSig = private_key
         .sign(GIT_SIGNING_NAMESPACE, GIT_SIGNING_HASH, payload)
-        .context("Failed to sign commit")?;
+        .map_err(|_| RepoError::Signing("Failed to sign commit".to_string()))?;
     let pem = sig
         .to_pem(LineEnding::LF)
-        .context("Failed to serialize SSH signature")?;
+        .map_err(|_| RepoError::Signing("Failed to serialize SSH signature".to_string()))?;
     Ok(pem.into_bytes())
 }
 
@@ -58,7 +59,8 @@ pub fn insert_signature(raw: Vec<u8>, key_path: &Path) -> Result<Vec<u8>> {
         .map(|p| p + 1)
         .unwrap_or(raw.len());
 
-    let armored_str = String::from_utf8(armored).context("SSH signature is not valid UTF-8")?;
+    let armored_str = String::from_utf8(armored)
+        .map_err(|_| RepoError::Signing("SSH signature is not valid UTF-8".to_string()))?;
     let mut lines: Vec<&str> = armored_str.split('\n').collect();
     if lines.last() == Some(&"") {
         lines.pop();

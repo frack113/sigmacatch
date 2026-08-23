@@ -5,7 +5,7 @@
 //! key-based auth. Also carries the shared URL-sanitization and SSH-command
 //! helpers used by the plumbing and porcelain layers.
 
-use anyhow::Result;
+use crate::{RepoError, Result};
 use tracing::{debug, info};
 use zeroize::Zeroizing;
 
@@ -219,7 +219,8 @@ impl AuthHttpClient {
             .timeout(std::time::Duration::from_secs(120))
             .connect_timeout(std::time::Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::limited(10))
-            .build()?;
+            .build()
+            .map_err(|e| RepoError::Transport(format!("http client build: {e}")))?;
         Ok(Self { client, token })
     }
 
