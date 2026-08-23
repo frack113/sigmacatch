@@ -11,7 +11,7 @@ description = "Application configuration: Config, GitConfig, SigmaFilterConfig, 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = { package = "yaml_serde", version = "0.10" }
-anyhow = "1.0"
+thiserror.workspace = true
 tracing = "0.1"
 
 sigmacatch-repo = { path = "../sigmacatch-repo" }

@@ -13,6 +13,23 @@ use std::path::PathBuf;
 /// Git transport protocol re-exported from sigmacatch-repo.
 pub use sigmacatch_repo::GitTransport;
 
+/// Errors produced by loading, saving or validating `config.yaml`.
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    /// Filesystem failure while reading, writing or chmod'ing config.yaml.
+    #[error("config.yaml filesystem error: {0}")]
+    Io(#[from] std::io::Error),
+    /// YAML could not be parsed or serialized.
+    #[error("config.yaml format error: {0}")]
+    Format(String),
+    /// A validation rule rejected the configuration.
+    #[error("{0}")]
+    Invalid(String),
+}
+
+/// Crate-local result alias over [`ConfigError`].
+pub type Result<T> = std::result::Result<T, ConfigError>;
+
 /// Git transport configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -176,7 +193,7 @@ pub struct Config {
 }
 
 impl Config {
-    fn load_unvalidated(path: &PathBuf) -> anyhow::Result<Self> {
+    fn load_unvalidated(path: &PathBuf) -> Result<Self> {
         if !path.exists() {
             let default = Config::default();
             default.save(path)?;
@@ -201,20 +218,18 @@ impl Config {
             }
         }
 
-        let yaml = std::fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("Failed to read config file: {}", e))?;
-        serde_yaml::from_str(&yaml)
-            .map_err(|e| anyhow::anyhow!("Failed to parse config file: {}", e))
+        let yaml = std::fs::read_to_string(path)?;
+        serde_yaml::from_str(&yaml).map_err(|e| ConfigError::Format(e.to_string()))
     }
 
-    pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
+    pub fn load(path: &PathBuf) -> Result<Self> {
         let mut config = Self::load_unvalidated(path)?;
         config.normalize_git();
         config.validate()?;
         Ok(config)
     }
 
-    pub fn load_with_cli(path: &PathBuf, cli: &CliArgs) -> anyhow::Result<Self> {
+    pub fn load_with_cli(path: &PathBuf, cli: &CliArgs) -> Result<Self> {
         let mut config = Self::load_unvalidated(path)?;
         if let Some(author) = &cli.author {
             config.git.author.clone_from(author);
@@ -242,9 +257,8 @@ impl Config {
         }
     }
 
-    pub fn save(&self, path: &PathBuf) -> anyhow::Result<()> {
-        let yaml = serde_yaml::to_string(self)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize config: {}", e))?;
+    pub fn save(&self, path: &PathBuf) -> Result<()> {
+        let yaml = serde_yaml::to_string(self).map_err(|e| ConfigError::Format(e.to_string()))?;
 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -258,12 +272,13 @@ impl Config {
         Ok(())
     }
 
-    pub fn validate(&self) -> anyhow::Result<()> {
+    pub fn validate(&self) -> Result<()> {
         if self.git.author == "sigmacatch" {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(
                 "config: 'git.author' is the placeholder 'sigmacatch'. \
                  Set 'author' to your GitHub username in config.yaml"
-            );
+                    .to_string(),
+            ));
         }
         if !self.git.author.is_empty()
             && !self
@@ -272,19 +287,21 @@ impl Config {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '-')
         {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(format!(
                 "config: 'git.author' must be a valid GitHub username (alphanumeric + hyphens), got {:?}",
                 self.git.author
-            );
+            )));
         }
         if self.git.email.is_empty() {
-            anyhow::bail!("config: 'git.email' is required");
+            return Err(ConfigError::Invalid(
+                "config: 'git.email' is required".to_string(),
+            ));
         }
         if !self.git.email.contains('@') {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(format!(
                 "config: 'git.email' must contain '@', got {:?}",
                 self.git.email
-            );
+            )));
         }
         // Validate SSH key path if configured. Skipped offline: no network op
         // can use the key, so a stale path must not block an offline startup.
@@ -294,28 +311,25 @@ impl Config {
         {
             let path = std::path::Path::new(key_path);
             if !path.is_absolute() {
-                anyhow::bail!(
+                return Err(ConfigError::Invalid(format!(
                     "config: SSH key path '{}' is not absolute (transport={}); \
                              use a full path like /home/user/.ssh/id or C:\\Users\\user\\.ssh\\id",
-                    key_path,
-                    self.git.transport
-                );
+                    key_path, self.git.transport
+                )));
             }
             let meta = std::fs::metadata(key_path).map_err(|_| {
-                anyhow::anyhow!(
+                ConfigError::Invalid(format!(
                     "config: SSH key path '{}' does not exist (transport={}); \
                              remove ssh_key_path from config or switch to transport = http",
-                    key_path,
-                    self.git.transport
-                )
+                    key_path, self.git.transport
+                ))
             })?;
             if !meta.is_file() {
-                anyhow::bail!(
+                return Err(ConfigError::Invalid(format!(
                     "config: SSH key path '{}' is not a file (transport={}); \
                              remove ssh_key_path from config or switch to transport = http",
-                    key_path,
-                    self.git.transport
-                );
+                    key_path, self.git.transport
+                )));
             }
             #[cfg(unix)]
             {
@@ -348,63 +362,63 @@ impl Config {
                 .map(|t| !t.trim().is_empty())
                 .unwrap_or(false);
             if !has_config_token && !has_env_token {
-                anyhow::bail!(
-                    "config: 'git.github_token' is required for HTTP transport when offline=false or contrib=true. \
+                return Err(ConfigError::Invalid("config: 'git.github_token' is required for HTTP transport when offline=false or contrib=true. \
                      Set git.github_token in config.yaml or GITHUB_TOKEN env var. \
                      Create a token at https://github.com/settings/tokens. \
-                     Alternatively, set offline: true and contrib: false for fully offline mode (no network)."
-                );
+                     Alternatively, set offline: true and contrib: false for fully offline mode (no network).".to_string()));
             }
             if has_config_token {
                 let trimmed = self.git.github_token.trim();
                 if trimmed.contains(char::is_whitespace) {
-                    anyhow::bail!("config: 'git.github_token' contains whitespace — trim it");
+                    return Err(ConfigError::Invalid(
+                        "config: 'git.github_token' contains whitespace — trim it".to_string(),
+                    ));
                 }
             }
         }
 
         if self.filter.max_rule_size < 1024 {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(format!(
                 "config: 'filter.max_rule_size' must be at least 1024 bytes, got {}",
                 self.filter.max_rule_size
-            );
+            )));
         }
 
         if self.filter.max_rule_size > 10 * 1024 * 1024 {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(format!(
                 "config: 'filter.max_rule_size' exceeds maximum allowed value (10MB), got {}",
                 self.filter.max_rule_size
-            );
+            )));
         }
 
         if self.regression.max_failed_cycles < 1 {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(format!(
                 "config: 'regression.max_failed_cycles' must be at least 1, got {}",
                 self.regression.max_failed_cycles
-            );
+            )));
         }
 
         // Validate sigma_repo_path — reject empty, path traversal, and absolute paths
         if self.git.sigma_repo_path.trim().is_empty() {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(format!(
                 "config: 'git.sigma_repo_path' must not be empty, got {:?}",
                 self.git.sigma_repo_path
-            );
+            )));
         }
         if std::path::Path::new(&self.git.sigma_repo_path)
             .components()
             .any(|c| c == std::path::Component::ParentDir)
         {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(format!(
                 "config: 'git.sigma_repo_path' contains '..' path traversal, got {:?}",
                 self.git.sigma_repo_path
-            );
+            )));
         }
         if std::path::Path::new(&self.git.sigma_repo_path).is_absolute() {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(format!(
                 "config: 'git.sigma_repo_path' must be a relative path, got {:?}",
                 self.git.sigma_repo_path
-            );
+            )));
         }
 
         if let Some(status) = self
@@ -432,7 +446,7 @@ impl Config {
     }
 
     /// Ensure required directories exist.
-    pub fn ensure_dirs(&self) -> anyhow::Result<()> {
+    pub fn ensure_dirs(&self) -> Result<()> {
         let repo = std::path::Path::new(&self.git.sigma_repo_path);
         std::fs::create_dir_all(repo)?;
         std::fs::create_dir_all("logs")?;
