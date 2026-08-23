@@ -1,0 +1,316 @@
+# Check with sysmon for windows v15.21, schema 4.91
+name: flatten_winevt
+priority: 2
+
+transformations:
+  # System fields
+  - id: windows_fields
+    type: field_name_mapping
+    mapping:
+      TerminalSessionId: Event.EventData.TerminalSessionId
+      PreviousCreationUtcTime: Event.EventData.PreviousCreationUtcTime
+      Channel: Event.System.Channel
+      Computer: Event.System.Computer
+      EventID: Event.System.EventID
+      Keywords: Event.System.Keywords
+      Level: Event.System.Level
+      ProviderName: Event.System.Provider.#attributes.Name
+      Provider_Name: Event.System.Provider.#attributes.Name
+      AccessList: Event.EventData.AccessList
+      AccessMask: Event.EventData.AccessMask
+      AccountName: Event.EventData.AccountName
+      AdditionalInfo: Event.EventData.AdditionalInfo
+      Address: Event.EventData.Address
+      AllowedToDelegateTo: Event.EventData.AllowedToDelegateTo
+      AppID: Event.EventData.AppID
+      AppName: Event.EventData.AppName
+      Application: Event.EventData.Application
+      AttributeLDAPDisplayName: Event.EventData.AttributeLDAPDisplayName
+      AttributeValue: Event.EventData.AttributeValue
+      AuditPolicyChanges: Event.EventData.AuditPolicyChanges
+      AuditSourceName: Event.EventData.AuditSourceName
+      AuthenticationPackageName: Event.EventData.AuthenticationPackageName
+      Binary: Event.EventData.Binary
+      CallingProcess: Event.EventData.CallingProcess
+      Caption: Event.EventData.Caption
+      CertThumbprint: Event.EventData.CertThumbprint
+      ClassName: Event.EventData.ClassName
+      ClientAddress: Event.EventData.ClientAddress
+      ClientProcessId: Event.EventData.ClientProcessId
+      Configuration: Event.EventData.Configuration
+      Contents: Event.EventData.Contents
+      ContextInfo: Event.EventData.ContextInfo
+      Data: Event.EventData.Data
+      DestAddress: Event.EventData.DestAddress
+      DestPort: Event.EventData.DestPort
+      Destination: Event.EventData.Destination
+      Device: Event.EventData.Device
+      DeviceDescription: Event.EventData.DeviceDescription
+      DeviceName: Event.EventData.DeviceName
+      DistinguishedName: Event.EventData.DistinguishedName
+      EncyptionUsed: Event.EventData.EncyptionUsed
+      ExceptionCode: Event.EventData.ExceptionCode
+      FeatureName: Event.EventData.FeatureName
+      FileName: Event.EventData.FileName
+      FileNameBuffer: Event.EventData.FileNameBuffer
+      FilterName: Event.EventData.FilterName
+      FilterOrigin: Event.EventData.FilterOrigin
+      Flags: Event.EventData.Flags
+      HiveName: Event.EventData.HiveName
+      ImageName: Event.EventData.ImageName
+      ImpersonationLevel: Event.EventData.ImpersonationLevel
+      IsatapRouter: Event.EventData.IsatapRouter
+      KeyLength: Event.EventData.KeyLength
+      LayerRTID: Event.EventData.LayerRTID
+      LocalName: Event.EventData.LocalName
+      LogonId: Event.EventData.LogonId
+      LogonProcessName: Event.EventData.LogonProcessName
+      Message: Event.EventData.Message
+      Name: Event.EventData.Name
+      NewTargetUserName: Event.EventData.NewTargetUserName
+      NewTemplateContent: Event.EventData.NewTemplateContent
+      NewUacValue: Event.EventData.NewUacValue
+      NewValue: Event.EventData.NewValue
+      ObjectClass: Event.EventData.ObjectClass
+      ObjectDN: Event.EventData.ObjectDN
+      ObjectName: Event.EventData.ObjectName
+      ObjectServer: Event.EventData.ObjectServer
+      OldUacValue: Event.EventData.OldUacValue
+      OldValue: Event.EventData.OldValue
+      Origin: Event.EventData.Origin
+      PackageFullName: Event.EventData.PackageFullName
+      PackagePath: Event.EventData.PackagePath
+      PackageSourceUri: Event.EventData.PackageSourceUri
+      ParentProcessGuid: Event.EventData.ParentProcessGuid
+      ParentUser: Event.EventData.ParentUser
+      Payload: Event.EventData.Payload
+      PreAuthType: Event.EventData.PreAuthType
+      PrivilegeList: Event.EventData.PrivilegeList
+      ProcessGuid: Event.EventData.ProcessGuid
+      ProcessId: Event.EventData.ProcessId
+      ProcessNameBuffer: Event.EventData.ProcessNameBuffer
+      ProcessPath: Event.EventData.ProcessPath
+      Properties: Event.EventData.Properties
+      ProviderContextName: Event.EventData.ProviderContextName
+      QueryName: Event.EventData.QueryName
+      QueryResults: Event.EventData.QueryResults
+      QueryStatus: Event.EventData.QueryStatus
+      Reason: Event.EventData.Reason
+      RelativeTargetName: Event.EventData.RelativeTargetName
+      RemoteName: Event.EventData.RemoteName
+      RequestedPolicy: Event.EventData.RequestedPolicy
+      SamAccountName: Event.EventData.SamAccountName
+      ScriptBlockText: Event.EventData.ScriptBlockText
+      SearchFilter: Event.EventData.SearchFilter
+      ServerName: Event.EventData.ServerName
+      Service: Event.EventData.Service
+      ServiceFileName: Event.EventData.ServiceFileName
+      ServiceName: Event.EventData.ServiceName
+      ServicePrincipalNames: Event.EventData.ServicePrincipalNames
+      ServiceStartType: Event.EventData.ServiceStartType
+      ServiceType: Event.EventData.ServiceType
+      ShareName: Event.EventData.ShareName
+      SidHistory: Event.EventData.SidHistory
+      SidList: Event.EventData.SidList
+      SigningUsed: Event.EventData.SigningUsed
+      SourceAddress: Event.EventData.SourceAddress
+      SourceCommandLine: Event.EventData.SourceCommandLine
+      SourceFilename: Event.EventData.SourceFilename
+      SourceIsIpv6: Event.EventData.SourceIsIpv6
+      SourceParentImage: Event.EventData.SourceParentImage
+      SourcePortName: Event.EventData.SourcePortName
+      SourceProcessGuid: Event.EventData.SourceProcessGuid
+      SourceProcessGUID: Event.EventData.SourceProcessGUID
+      SourceThreadId: Event.EventData.SourceThreadId
+      StartAddress: Event.EventData.StartAddress
+      StartFunction: Event.EventData.StartFunction
+      StartModule: Event.EventData.StartModule
+      State: Event.EventData.State
+      Status: Event.EventData.Status
+      SubStatus: Event.EventData.SubStatus
+      SubcategoryGuid: Event.EventData.SubcategoryGuid
+      TargetInfo: Event.EventData.TargetInfo
+      TargetName: Event.EventData.TargetName
+      TargetProcessGuid: Event.EventData.TargetProcessGuid
+      TargetProcessGUID: Event.EventData.TargetProcessGUID
+      TargetOutboundUserName: Event.EventData.TargetOutboundUserName
+      TargetParentProcessId: Event.EventData.TargetParentProcessId
+      TargetServerName: Event.EventData.TargetServerName
+      TargetSid: Event.EventData.TargetSid
+      TargetUserSid: Event.EventData.TargetUserSid
+      TaskContent: Event.EventData.TaskContent
+      TaskContentNew: Event.EventData.TaskContentNew
+      TemplateContent: Event.EventData.TemplateContent
+      TicketEncryptionType: Event.EventData.TicketEncryptionType
+      TicketOptions: Event.EventData.TicketOptions
+      Type: Event.EventData.Type
+      UserName: Event.EventData.UserName
+      Value: Event.EventData.Value
+      Workstation: Event.EventData.Workstation
+      param1: Event.EventData.param1
+      param2: Event.EventData.param2
+      param3: Event.EventData.param3
+      payload: Event.EventData.payload
+      process: Event.EventData.process
+      processPath: Event.EventData.processPath
+      subjectName: Event.EventData.subjectName
+      CallTrace: Event.EventData.CallTrace
+      CallerProcessId: Event.EventData.CallerProcessId
+      CallerProcessName: Event.EventData.CallerProcessName
+      CommandLine: Event.EventData.CommandLine
+      Company: Event.EventData.Company
+      ClientInfo: Event.EventData.ClientInfo
+      ConfigurationFileHash: Event.EventData.ConfigurationFileHash
+      CreationUtcTime: Event.EventData.CreationUtcTime
+      EventNamespace: Event.EventData.EventNamespace
+      CurrentDirectory: Event.EventData.CurrentDirectory
+      Description: Event.EventData.Description
+      DestinationHostname: Event.EventData.DestinationHostname
+      DestinationIp: Event.EventData.DestinationIp
+      DestinationPort: Event.EventData.DestinationPort
+      DestinationPortName: Event.EventData.DestinationPortName
+      DestinationIsIpv6: Event.EventData.DestinationIsIpv6
+      Details: Event.EventData.Details
+      EventType: Event.EventData.EventType
+      FileVersion: Event.EventData.FileVersion
+      GrantedAccess: Event.EventData.GrantedAccess
+      Hash: Event.EventData.Hash
+      Hashes: Event.EventData.Hashes
+      HasFullTrust: Event.EventData.HasFullTrust
+      Image: Event.EventData.Image
+      ImageLoaded: Event.EventData.ImageLoaded
+      ImagePath: Event.EventData.ImagePath
+      Archived: Event.EventData.Archived
+      IsExecutable: Event.EventData.IsExecutable
+      Imphash: Event.EventData.Imphash
+      IntegrityLevel: Event.EventData.IntegrityLevel
+      Initiated: Event.EventData.Initiated
+      IpAddress: Event.EventData.IpAddress
+      IpPort: Event.EventData.IpPort
+      LogonGuid: Event.EventData.LogonGuid
+      LogonType: Event.EventData.LogonType
+      NewName: Event.EventData.NewName
+      NewThreadId: Event.EventData.NewThreadId
+      NewProcessId: Event.EventData.NewProcessId
+      NewProcessName: Event.EventData.NewProcessName
+      ObjectValueName: Event.EventData.ObjectValueName
+      ObjectType: Event.EventData.ObjectType
+      OriginalFileName: Event.EventData.OriginalFileName
+      ParentCommandLine: Event.EventData.ParentCommandLine
+      ParentImage: Event.EventData.ParentImage
+      ParentProcessId: Event.EventData.ParentProcessId
+      PipeName: Event.EventData.PipeName
+      PossibleCause: Event.EventData.PossibleCause
+      Product: Event.EventData.Product
+      Provider: Event.EventData.Provider
+      Protocol: Event.EventData.Protocol
+      Query: Event.EventData.Query
+      RuleName: Event.EventData.RuleName
+      Signature: Event.EventData.Signature
+      SignatureStatus: Event.EventData.SignatureStatus
+      Signed: Event.EventData.Signed
+      SourceHostname: Event.EventData.SourceHostname
+      SourceImage: Event.EventData.SourceImage
+      SourceIp: Event.EventData.SourceIp
+      SourcePort: Event.EventData.SourcePort
+      SourceProcessId: Event.EventData.SourceProcessId
+      SourceUser: Event.EventData.SourceUser
+      SubjectDomainName: Event.EventData.SubjectDomainName
+      SubjectLogonId: Event.EventData.SubjectLogonId
+      SubjectUserSid: Event.EventData.SubjectUserSid
+      SubjectUserName: Event.EventData.SubjectUserName
+      TargetDomainName: Event.EventData.TargetDomainName
+      TargetFilename: Event.EventData.TargetFilename
+      TargetHostname: Event.EventData.TargetHostname
+      TargetImage: Event.EventData.TargetImage
+      TargetLogonId: Event.EventData.TargetLogonId
+      TargetObject: Event.EventData.TargetObject
+      TargetProcessId: Event.EventData.TargetProcessId
+      TargetUserName: Event.EventData.TargetUserName
+      TargetUser: Event.EventData.TargetUser
+      UtcTime: Event.EventData.UtcTime
+      User: Event.EventData.User
+      UserAgent: Event.EventData.UserAgent
+      WorkstationName: Event.EventData.WorkstationName
+      TaskName: Event.EventData.TaskName
+      Consumer: Event.EventData.Consumer
+      Filter: Event.EventData.Filter
+      ID: Event.EventData.ID
+      SchemaVersion: Event.EventData.SchemaVersion
+      Session: Event.EventData.Session
+      Version: Event.EventData.Version
+    rule_conditions:
+      - type: logsource
+        product: windows
+
+  # ─── Firewall-AS-specific field name mapping ───
+  # Microsoft-Windows-Windows Firewall With Advanced Security/Firewall channel
+  # EventData keys: ModifyingApplication, ApplicationPath, Action
+  - id: firewall_as_fields
+    type: field_name_mapping
+    mapping:
+      ModifyingApplication: Event.EventData.ModifyingApplication
+      ApplicationPath: Event.EventData.ApplicationPath
+      Action: Event.EventData.Action
+    rule_conditions:
+      - type: logsource
+        service: firewall-as
+        product: windows
+
+  # ─── WinDefend-specific field name mapping ───
+  # WinDefend EventData keys have spaces (e.g. "Source Name", "Product Name").
+  # handle_event_data strips spaces → "SourceName", "ProductName", etc.
+  # Sigma rules use the same names — map them to Event.EventData.*
+  - id: windefend_eventdata_fields
+    type: field_name_mapping
+    mapping:
+      SourceName: Event.EventData.SourceName
+      ProductName: Event.EventData.ProductName
+      ProductVersion: Event.EventData.ProductVersion
+      DetectionID: Event.EventData.DetectionID
+      DetectionTime: Event.EventData.DetectionTime
+      ThreatID: Event.EventData.ThreatID
+      ThreatName: Event.EventData.ThreatName
+      SeverityID: Event.EventData.SeverityID
+      SeverityName: Event.EventData.SeverityName
+      CategoryID: Event.EventData.CategoryID
+      CategoryName: Event.EventData.CategoryName
+      StatusCode: Event.EventData.StatusCode
+      StatusDescription: Event.EventData.StatusDescription
+      SourceID: Event.EventData.SourceID
+      ProcessName: Event.EventData.ProcessName
+      Path: Event.EventData.Path
+      DetectionUser: Event.EventData.DetectionUser
+      OriginID: Event.EventData.OriginID
+      OriginName: Event.EventData.OriginName
+      ExecutionID: Event.EventData.ExecutionID
+      ExecutionName: Event.EventData.ExecutionName
+      TypeID: Event.EventData.TypeID
+      TypeName: Event.EventData.TypeName
+      PreExecutionStatus: Event.EventData.PreExecutionStatus
+      ActionID: Event.EventData.ActionID
+      ActionName: Event.EventData.ActionName
+      ErrorCode: Event.EventData.ErrorCode
+      ErrorDescription: Event.EventData.ErrorDescription
+      PostCleanStatus: Event.EventData.PostCleanStatus
+      AdditionalActionsID: Event.EventData.AdditionalActionsID
+      AdditionalActionsString: Event.EventData.AdditionalActionsString
+      RemediationUser: Event.EventData.RemediationUser
+      SecurityIntelligenceVersion: Event.EventData.SecurityIntelligenceVersion
+      EngineVersion: Event.EventData.EngineVersion
+    rule_conditions:
+      - type: logsource
+        service: windefend
+        product: windows
+
+  # ─── WMI-Activity-specific field name mapping ───
+  # WMI-Activity/Operational EID 5858 (ClientFailure) uses UserData.Operation_ClientFailure
+  # instead of EventData. Map Operation to the correct nested path.
+  - id: wmi_activity_fields
+    type: field_name_mapping
+    mapping:
+      Operation: Event.UserData.Operation_ClientFailure.Operation
+    rule_conditions:
+      - type: logsource
+        service: wmi
+        product: windows

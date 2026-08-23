@@ -205,6 +205,7 @@ pub static CHANNEL_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_m
     "System" => "system",
     "Security" => "security",
     "Microsoft-Windows-Sysmon/Operational" => "sysmon",
+    "Linux-Sysmon/Operational" => "sysmon",
     "DNS Server" => "dns-server",
     "Microsoft-Windows-DNS-Server/Analytical" => "dns-server-analytic",
     "Microsoft-Windows-DNS-Server/Audit" => "dns-server-audit",
@@ -338,6 +339,13 @@ static PROVIDER_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_map!
 
 /// Resolve category from channel + event_id (subcategory overrides take precedence).
 fn get_category(channel: &str, event_id: u32) -> Option<&'static str> {
+    // Sysmon for Linux emits the same schema and EventIDs under its own
+    // channel; reuse the Windows Sysmon mappings instead of duplicating them.
+    let channel = if channel == "Linux-Sysmon/Operational" {
+        "Microsoft-Windows-Sysmon/Operational"
+    } else {
+        channel
+    };
     let key = format!("{}:{}", channel, event_id);
     CHANNEL_EVENT_TO_SUBCATEGORY
         .get(&key)
@@ -1127,6 +1135,60 @@ mod tests {
             event.event_json["category"].as_str().unwrap(),
             "process_creation"
         );
+    }
+
+    #[test]
+    fn test_inject_logsource_fields_linux_sysmon() {
+        let xml = r#"<Event>
+            <System>
+                <Provider Name="Linux-Sysmon"/>
+                <EventID>1</EventID>
+                <Channel>Linux-Sysmon/Operational</Channel>
+                <Computer>debian</Computer>
+            </System>
+            <EventData>
+                <Data Name="Image">/usr/bin/id</Data>
+            </EventData>
+        </Event>"#;
+        let mut event = Event::from_xml(xml).unwrap();
+        event.inject_logsource_fields_for("linux", None);
+
+        assert_eq!(event.event_json["product"].as_str().unwrap(), "linux");
+        assert_eq!(event.event_json["service"].as_str().unwrap(), "sysmon");
+        assert_eq!(
+            event.event_json["category"].as_str().unwrap(),
+            "process_creation"
+        );
+    }
+
+    #[test]
+    fn test_inject_logsource_fields_linux_sysmon_categories() {
+        for (eid, category) in [
+            (3u32, "network_connection"),
+            (5, "process_termination"),
+            (10, "process_access"),
+            (11, "file_event"),
+            (22, "dns_query"),
+            (23, "file_delete"),
+        ] {
+            let json = serde_json::json!({
+                "Event": {
+                    "System": {
+                        "Provider": { "#attributes": { "Name": "Linux-Sysmon" } },
+                        "EventID": eid,
+                        "Channel": "Linux-Sysmon/Operational"
+                    }
+                }
+            });
+            let mut event = Event::new(json.clone(), json, Vec::new());
+            event.inject_logsource_fields_for("linux", None);
+
+            assert_eq!(
+                event.event_json["category"].as_str().unwrap(),
+                category,
+                "EID {eid}"
+            );
+        }
     }
 
     #[test]

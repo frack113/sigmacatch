@@ -124,13 +124,16 @@ regression_tests_path: regression_data/rules/<rule_rel_path>/info.yml
 Le champ `type` de `regression_tests_info` (et la lecture des info.yml existants) reconnaît
 4 types (`crates/sigmacatch-regression/src/logtype.rs`) : `evtx`, `json`, `raw`, `log`
 — une valeur inconnue/absente retombe sur `json` avec un `warn!`. Le pipeline écrit
-`.evtx` + `info.yml` (Windows) ou `.log` + `info.yml` (auditd) ; le `.json` auxiliaire
+`.evtx` + `info.yml` (Windows) ou `.log` + `info.yml` (Linux) ; le `.json` auxiliaire
 est ajouté seulement si `regression.add_json_output: true` (défaut : `false`). Un `.raw`
 est possible pour des données non-Winevt
 (ex. `regression_data/rules/cisco/aaa/cisco_cli_dot1x_disabled/ef0ff092-....raw`, `type: raw`,
 généré hors pipeline — sa section `regression_tests_info` est commentée).
+Pour les events `evtx` le provider doit être présent dans le XML de l'event (sinon la
+génération échoue) ; pour les events `log` il provient du XML quand il existe
+(Sysmon for Linux), avec repli sur `auditd` pour les events en texte brut.
 
-**Exemple auditd (`type: log`) :**
+**Exemple auditd (`type: log`, provider de repli `auditd` — event en texte brut sans XML) :**
 
 ```yaml
 id: 60ff02c2-a649-436c-972d-7c6fe6af8711
@@ -148,12 +151,32 @@ regression_tests_info:
     path: regression_data/rules/linux/auditd/execve/lnx_auditd_susp_cmds/1543ae20-cbdf-4ec1-8d12-7664d667a825.log
 ```
 
+**Exemple Sysmon-for-Linux (`type: log`, provider extrait du XML de l'event) :**
+
+```yaml
+id: 8f2a5c31-9d64-4b7e-a1c2-3f5d8e90b7aa
+description: N/A
+date: 2026-08-23
+author: frack113
+rule_metadata:
+  - id: f74107df-b6c6-4e80-bf00-4170b658162b
+    title: Sudo Privilege Escalation CVE-2019-14287
+regression_tests_info:
+  - name: Positive Detection Test
+    type: log
+    provider: Linux-Sysmon
+    match_count: 1
+    path: regression_data/rules/linux/builtin/lnx_sudo_privilege_escalation_cve_2019_14287/f74107df-b6c6-4e80-bf00-4170b658162b.log
+```
+
 ## Contraintes
 
 - **Un event par règle** : chaque répertoire de régression contient exactement un event JSON.
   Seul le premier event correspondant est capturé.
-- **EVTX binaire valide** : `<rule_id>.evtx` est écrit via `EvtExportLog` API (Windows) qui re-queries l'event par RecordID depuis le live log.
-  Le fichier exporté est **validé** (re-parse ≥ 1 record) avec retry à backoff court ; un export vide/corrompu
+- **EVTX binaire valide** : `<rule_id>.evtx` est produit par `EvtExportLog` (Windows — re-query
+  de l'event par RecordID depuis le live log, retry à backoff court) ou, pour les events ETW /
+  sans record id, par le writer EVTX pur Rust (`sigmacatch-evtx-writer`, déterministe, pas de
+  retry). Le fichier exporté est **validé** (re-parse ≥ 1 record) ; un export vide/corrompu
   (événement purgé entre collecte et export) est une erreur : la règle est sautée ce cycle (pas de commit)
-  et re-capturée plus tard. Hors Windows, aucune donnée n'est générée (le collecteur Winevt est un stub).
+  et re-capturée plus tard.
   Le `.json` compagnon porte les données réelles pour le matching Sigma.

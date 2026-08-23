@@ -492,9 +492,9 @@ dependencies = [
 
 [[package]]
 name = "crc32fast"
-version = "1.5.0"
+version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
+checksum = "8498c871161e1742aaa9d52551b2d6ebdd4c3d45a3be423e3728f33b955be550"
 dependencies = [
  "cfg-if",
 ]
@@ -1531,58 +1531,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "input-evtx"
-version = "0.4.0"
+name = "input-windows-evtx"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "evtx",
  "sigmacatch-types",
  "tokio",
-]
-
-[[package]]
-name = "input-linux-auditd"
-version = "0.4.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "linux-audit-parser",
- "serde_json",
- "sigmacatch-types",
- "tempfile",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "input-windows-channels"
-version = "0.4.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "sigmacatch-types",
- "tokio",
- "tracing",
- "windows 0.62.2",
-]
-
-[[package]]
-name = "input-windows-etw"
-version = "0.3.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "ferrisetw",
- "hex",
- "md5",
- "phf",
- "sha1",
- "sha2 0.11.0",
- "sigmacatch-types",
- "tokio",
- "tracing",
- "windows 0.62.2",
 ]
 
 [[package]]
@@ -1793,9 +1749,9 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "log"
-version = "0.4.33"
+version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
+checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lru-slab"
@@ -2815,9 +2771,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.14"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0527518605e68109d875e248ea259b6758801cf165e4b2c2733ae3b51f12535a"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -3049,35 +3005,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
-name = "sigmacatch"
-version = "0.4.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "input-evtx",
- "input-linux-auditd",
- "input-windows-channels",
- "input-windows-etw",
- "serde",
- "serde_json",
- "sigmacatch-config",
- "sigmacatch-detection",
- "sigmacatch-logger",
- "sigmacatch-regression",
- "sigmacatch-repo",
- "sigmacatch-rule",
- "sigmacatch-types",
- "tempfile",
- "tokio",
- "tracing",
- "uuid",
- "windows 0.62.2",
-]
-
-[[package]]
 name = "sigmacatch-config"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -3091,7 +3020,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-detection"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "phf",
@@ -3107,20 +3036,46 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-evtx-writer"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "chrono",
  "crc32fast",
  "evtx",
- "input-evtx",
+ "input-windows-evtx",
  "roxmltree",
  "tempfile",
 ]
 
 [[package]]
+name = "sigmacatch-lnx"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "clap",
+ "linux-audit-parser",
+ "regex",
+ "rsigma-eval",
+ "serde",
+ "serde_json",
+ "sigmacatch-config",
+ "sigmacatch-detection",
+ "sigmacatch-regression",
+ "sigmacatch-repo",
+ "sigmacatch-rule",
+ "sigmacatch-runner",
+ "sigmacatch-types",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "sigmacatch-logger"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "sigmacatch-config",
@@ -3131,11 +3086,11 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-regression"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "chrono",
- "input-evtx",
+ "input-windows-evtx",
  "serde",
  "serde_json",
  "sigmacatch-evtx-writer",
@@ -3149,14 +3104,14 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-repo"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "chrono",
  "crc32fast",
  "flate2",
  "grit-lib",
- "input-evtx",
+ "input-windows-evtx",
  "rayon",
  "reqwest",
  "serde",
@@ -3172,7 +3127,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-rule"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "dunce",
@@ -3185,8 +3140,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "sigmacatch-runner"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "sigmacatch-config",
+ "sigmacatch-detection",
+ "sigmacatch-logger",
+ "sigmacatch-regression",
+ "sigmacatch-repo",
+ "sigmacatch-rule",
+ "sigmacatch-types",
+ "tokio",
+ "tracing",
+ "uuid",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "sigmacatch-types"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3196,6 +3170,37 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "sigmacatch-win"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "clap",
+ "ferrisetw",
+ "hex",
+ "input-windows-evtx",
+ "md5",
+ "phf",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2 0.11.0",
+ "sigmacatch-config",
+ "sigmacatch-detection",
+ "sigmacatch-regression",
+ "sigmacatch-repo",
+ "sigmacatch-rule",
+ "sigmacatch-runner",
+ "sigmacatch-types",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -3795,9 +3800,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.26.12"
+version = "0.26.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83c567a8e18ae93f20982c90370b16fd24023aeaf52f6052b96957ab253a0fec"
+checksum = "17ebdd3a5a7e28a1890b876fdbd0c3c0fe0a6336cffaa104f11b9f720c9daa29"
 dependencies = [
  "cc",
  "regex",
@@ -3915,9 +3920,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.24.1"
+version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cefc03fd367c0c6d4305de1b312cf00248c4114f4a0418ce6a6af769e3b0bd9"
+checksum = "f053576934f05a761a402421fbbe3d425d9366f75f978806a037b3ca481abecc"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",

@@ -51,8 +51,10 @@ impl DataFormat {
     /// Provider written to `info.yml`. Evtx events carry their provider in
     /// the event XML — an empty one means a malformed event and fails
     /// generation rather than committing wrong contribution metadata (a
-    /// Sysmon provider on a Linux rule discredits the whole PR). Log events
-    /// have no XML provider; the collector identity is used.
+    /// Sysmon provider on a Windows rule discredits the whole PR). Log
+    /// events use their XML provider when present (Sysmon for Linux writes
+    /// winevt XML into syslog); plain text lines (auditd) have none and
+    /// fall back to the collector identity.
     pub fn resolve_provider(self, alert: &Alert) -> Result<String> {
         match self {
             Self::Evtx => {
@@ -64,7 +66,14 @@ impl DataFormat {
                 }
                 Ok(provider.to_string())
             }
-            Self::Log => Ok("auditd".to_string()),
+            Self::Log => {
+                let provider = alert.provider();
+                if provider.is_empty() {
+                    Ok("auditd".to_string())
+                } else {
+                    Ok(provider.to_string())
+                }
+            }
         }
     }
 
@@ -218,6 +227,18 @@ mod tests {
                 .resolve_provider(&bare_alert(Vec::new()))
                 .unwrap(),
             "auditd"
+        );
+    }
+
+    #[test]
+    fn test_resolve_provider_log_uses_xml_provider_when_present() {
+        let mut alert = bare_alert(Vec::new());
+        alert.event_json = serde_json::json!({
+            "Event": { "System": { "Provider": { "#attributes": { "Name": "Linux-Sysmon" } } } }
+        });
+        assert_eq!(
+            DataFormat::Log.resolve_provider(&alert).unwrap(),
+            "Linux-Sysmon"
         );
     }
 

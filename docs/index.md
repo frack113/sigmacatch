@@ -1,31 +1,33 @@
 # Sigmacatch
 
-Headless tool that captures real Windows events via the **Windows Event Log API** (`winevt`), matches them against [SigmaHQ](https://github.com/SigmaHQ/sigma) rules, and outputs structured regression data ready for SigmaHQ PRs.
+Headless tool that captures real Windows events via the **Windows Event Log API** (`winevt`) or **direct ETW** (`ferrisetw`), or Linux events via **auditd**, **builtin syslog** (central, authpriv and cron files) and **Sysmon-for-Linux**, matches them against [SigmaHQ](https://github.com/SigmaHQ/sigma) rules, and outputs structured regression data ready for SigmaHQ PRs.
 
 ## Workspace
 
-The project is a cargo workspace of 13 crates (11 libraries + 2 binary crates):
+The project is a cargo workspace of 12 packages (2 binary crates + 10 libraries):
 
 | Crate | Purpose |
 |---|---|
-| `sigmacatch` | Lib + 2 binaries (`sigmacatch-channel` winevt, `sigmacatch-etw`) + shared runner (continuous loop) |
+| `sigmacatch-win` | Windows binaries: `sigmacatch-channel` (winevt) and `sigmacatch-etw` (direct ETW) + `channels.rs`/`etw/` collectors + `cli.rs` diagnostics |
+| `sigmacatch-lnx` | Linux binary: `sigmacatch-linux` (auditd + builtin syslog + Sysmon-for-Linux collectors in parallel, per-source availability guard) + `cli.rs` diagnostics |
+| `sigmacatch-runner` | Shared pipeline (`run<C: CollectorKind>`): config, repo init, event loop, generation, commit/push |
 | `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml |
 | `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug) |
 | `sigmacatch-rule` | `SigmahqRules`: rule loading, filter, dedupe, remove_id + `SigmaRuleExt` (ATT&CK techniques) |
 | `sigmacatch-detection` | Thin wrapper around rsigma-eval (pipelines, bloom, LogSourceExtractor, resolve_channels) |
-| `input-windows-channels` | Multi-channel Winevt collector (EvtQueryW/EvtNext/EvtRender) — bin `sigmacatch-channel` |
-| `input-windows-etw` | Direct ETW collector via ferrisetw (18 providers, provider→channel routing) [beta] — bin `sigmacatch-etw` |
-| `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, regression data generation |
-| `sigmacatch-evtx-writer` | Pure Rust EVTX writer + re-parse validation |
+| `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, `DataFormat` (Evtx/Log), data generation + validation |
+| `sigmacatch-evtx-writer` | Pure Rust EVTX writer for ETW / record-id-less events |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource tables |
-| `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, git operations |
-| `input-evtx` | Parse EVTX files into `Event` objects (used by diagnostic subcommands) |
+| `sigmacatch-repo` | grit-lib wrapper: SigmaRepo, git operations, SSH commit signing |
+| `input-windows-evtx` | Parse EVTX files into `Event` objects (used by diagnostic subcommands) |
 
 ## Quick start
 
 ```bash
 cargo build --release
-./target/release/sigmacatch-channel
+./target/release/sigmacatch-channel   # Winevt (Windows)
+./target/release/sigmacatch-etw       # Direct ETW (Windows)
+./target/release/sigmacatch-linux     # auditd + syslog + sysmon (Linux)
 ```
 
 ## Documentation
@@ -36,6 +38,7 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 |---|---|---|
 | Architecture | [EN](architecture/) | [FR](fr/architecture/) |
 | Build | [EN](build/) | [FR](fr/build/) |
+| CLI | [EN](cli/) | [FR](fr/cli/) |
 | Git | [EN](git/) | [FR](fr/git/) |
 | Output format | [EN](output-format/) | [FR](fr/output-format/) |
 | Regression data format | [EN](regression-data-format/) | [FR](fr/regression-data-format/) |

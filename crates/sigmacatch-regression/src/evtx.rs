@@ -209,7 +209,7 @@ fn write_evtx_etw(xml: &str, channel: &str, rid: u64, path: &Path) -> Result<()>
 #[cfg(windows)]
 fn exported_has_records(path: &Path) -> Result<bool> {
     let path = crate::long_path::long_path(path);
-    let events = input_evtx::parse_evtx_file(&path)
+    let events = input_windows_evtx::parse_evtx_file(&path)
         .with_context(|| format!("Failed to parse exported EVTX {}", path.display()))?;
     Ok(!events.is_empty())
 }
@@ -218,7 +218,7 @@ fn exported_has_records(path: &Path) -> Result<bool> {
 /// needed there).
 #[cfg(not(windows))]
 fn exported_has_records(path: &Path) -> Result<bool> {
-    let events = input_evtx::parse_evtx_file(path)?;
+    let events = input_windows_evtx::parse_evtx_file(path)?;
     Ok(!events.is_empty())
 }
 

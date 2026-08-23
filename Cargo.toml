@@ -4,23 +4,22 @@
 [workspace]
 resolver = "2"
 members = [
-    "sigmacatch",
+    "sigmacatch-win",
+    "sigmacatch-lnx",
+    "crates/sigmacatch-runner",
     "crates/sigmacatch-regression",
     "crates/sigmacatch-detection",
     "crates/sigmacatch-types",
     "crates/sigmacatch-config",
     "crates/sigmacatch-logger",
-    "crates/input-evtx",
-    "crates/input-windows-channels",
-    "crates/input-windows-etw",
-    "crates/input-linux-auditd",
+    "crates/input-windows-evtx",
     "crates/sigmacatch-evtx-writer",
     "crates/sigmacatch-rule",
     "crates/sigmacatch-repo",
 ]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 license = "MIT"
 

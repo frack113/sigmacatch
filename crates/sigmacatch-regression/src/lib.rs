@@ -906,7 +906,7 @@ mod tests {
             format!("regression_data/rules/{rule_id}/{rule_id}.evtx")
         );
 
-        let events = input_evtx::parse_evtx_file(&evtx_path).unwrap();
+        let events = input_windows_evtx::parse_evtx_file(&evtx_path).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].record_id(), Some(7));
 

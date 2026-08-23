@@ -4,7 +4,7 @@ Regression data format for Sigma rules, compatible with SigmaHQ.
 
 ## Purpose
 
-A regression test set consists per rule of an `info.yml` file (metadata) and a **data file** (`<rule_id>.evtx` for Windows, `<rule_id>.log` for auditd). An auxiliary `.json` (raw event) can be added via the `regression.add_json_output` option (default: `false`). This allows validating that a Sigma engine always produces the same results for a given rule against a known event.
+A regression test set consists per rule of an `info.yml` file (metadata) and a **data file** (`<rule_id>.evtx` for Windows, `<rule_id>.log` for Linux). An auxiliary `.json` (raw event) can be added via the `regression.add_json_output` option (default: `false`). This allows validating that a Sigma engine always produces the same results for a given rule against a known event.
 
 ## Directory tree
 
@@ -106,7 +106,7 @@ rule_metadata:
 ```yaml
 regression_tests_info:
   - name: Positive Detection Test
-    type: evtx                  # or "raw" for cisco, "log" for auditd
+    type: evtx                  # or "raw" for cisco, "log" for Linux (auditd/syslog/sysmon)
     provider: <ProviderName>    # dynamically extracted from event's XML ProviderName (e.g., Microsoft-Windows-Sysmon, or "auditd")
     match_count: <int>          # Number of matches found
     path: regression_data/.../<rule_id>.evtx  # Relative path to the template
@@ -145,8 +145,8 @@ regression_tests_info:
 |------|--------|------|---------|
 | `info.yml` | YAML | Always `info.yml` | Metadata + results |
 | `<rule_id>.evtx` | Binary | UUID v4 | Valid EVTX (EvtExportLog or pure-Rust writer; validated ≥ 1 record at write time) |
-| `<rule_id>.log` | Text | UUID v4 | Complete audit event (original auditd lines, multi-record, for the auditd collector) |
-| `<rule_id>.json` | JSON | UUID v4 | Optional (`regression.add_json_output`) — raw event (nested Winevt JSON or flat auditd JSON) |
+| `<rule_id>.log` | Text | UUID v4 | Complete event (multi-record auditd lines, syslog lines, or Sysmon-for-Linux XML) |
+| `<rule_id>.json` | JSON | UUID v4 | Optional (`regression.add_json_output`) — raw event (nested Winevt JSON or flat Linux JSON) |
 
 The `<rule_id>` in file names is always the UUID from `rule_metadata[0].id`.
 
@@ -190,9 +190,15 @@ The majority of rules (process_creation, file_event, registry, etc.) target Wind
 
 Some network rules use native formats (`.raw` instead of `.json` + `.evtx`). The `provider` field in `regression_tests_info` may be absent.
 
-### Linux (auditd)
+### Linux (auditd / syslog / sysmon)
 
-The `sigmacatch-auditd` collector tails `/var/log/audit/audit.log`, parses records with `linux-audit-parser`, and emits one event per record. Records sharing the same audit event id (`msg=audit(timestamp:sequence)`) are grouped: each event carries `event_raw` = all original lines of the audit event. Regression data uses `.log` (complete lines). The provider is `auditd`.
+The `sigmacatch-linux` binary runs three collectors in parallel, each guarded by its source:
+
+- **auditd** if `/var/log/audit/audit.log` exists: tails the file, parses records with `linux-audit-parser`, emits one event per record. Records sharing the same audit event id (`msg=audit(timestamp:sequence)`) are grouped: each event carries `event_raw` = all original lines of the audit event.
+- **builtin syslog** tails every existing file among central (`/var/log/messages`, `/var/log/syslog`), authpriv (`/var/log/secure`, `/var/log/auth.log`) and cron (`/var/log/cron`, `/var/log/cron.log`): one RFC3164 line per event, flat `event_json` `{message, program, host, service}` with `service` derived from the program tag (`sshd` → `sshd`, `CRON` → `cron`, …) plus a per-file-group fallback (authpriv → `auth`, cron → `cron`). Lines tagged `sysmon` are excluded — handled by the dedicated collector.
+- **Sysmon-for-Linux** keeps the central-syslog lines tagged `sysmon` whose body is winevt XML (`<Event>…</Event>`): the shared winevt parser produces the full nested field set and the Windows pipelines apply unchanged; logsource is resolved from the channel `Linux-Sysmon/Operational` → `product: linux`, `service: sysmon`. Truncated XML lines (rsyslog size limits) are skipped.
+
+On hosts forwarding audit records into syslog (audisp/rsyslog), the same activity is captured twice through distinct pipelines — an auditd-based rule and a syslog-based rule can both produce regression data from it. In every case regression data uses `.log` (complete original lines). The provider written to `info.yml` comes from the event XML provider when present (`Linux-Sysmon` for Sysmon-for-Linux events), falling back to `auditd` for plain-text events.
 
 ### Emerging Threats
 

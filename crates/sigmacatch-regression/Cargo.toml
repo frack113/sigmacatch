@@ -15,7 +15,7 @@ tracing = "0.1"
 
 sigmacatch-types = { path = "../sigmacatch-types" }
 sigmacatch-evtx-writer = { path = "../sigmacatch-evtx-writer" }
-input-evtx = { path = "../input-evtx" }
+input-windows-evtx = { path = "../input-windows-evtx" }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

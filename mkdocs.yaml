@@ -37,6 +37,7 @@ nav:
   - English:
     - Overview: architecture.md
     - Build: build.md
+    - CLI: cli.md
     - Git: git.md
     - Output Format: output-format.md
     - Regression Data Format: regression-data-format.md
@@ -58,6 +59,7 @@ plugins:
             Accueil: Home
             Overview: Aperçu
             Build: Build
+            CLI: CLI
             Git: Git
             Output Format: Format de Sortie
             Regression Data Format: Format des Données de Régression
