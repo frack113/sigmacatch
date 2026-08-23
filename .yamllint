@@ -1,0 +1,37 @@
+# yamllint config for pipeline YAML files
+extends: default
+
+rules:
+  # 2-space indentation
+  indentation:
+    spaces: 2
+    indent-sequences: true
+
+  # 120 char line length
+  line-length:
+    max: 120
+    level: warning
+
+  # Allow GitHub Actions truthy values (v7.0.1, v2.9.2, etc.)
+  truthy: disable
+
+  # No trailing spaces
+  trailing-spaces:
+    level: error
+
+  # Comments — warn but don't fail
+  comments:
+    level: warning
+
+  # Document start --- not required
+  document-start:
+    level: warning
+
+  # Max 2 blank lines in a row
+  empty-lines:
+    max: 2
+    level: error
+
+  # Require newline at end of file
+  new-line-at-end-of-file:
+    level: error
