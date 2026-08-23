@@ -397,10 +397,10 @@ impl EnrichState {
                     }
                     fields.insert("TargetFilename".to_string(), name);
                 }
-                if event_id == 11 {
-                    if let Some(fk) = fields.get("FileKey") {
-                        self.filekey.purge(fk);
-                    }
+                if event_id == 11
+                    && let Some(fk) = fields.get("FileKey")
+                {
+                    self.filekey.purge(fk);
                 }
             }
             // Create (12): name-bearing, keyed by FileObject (+ FileKey alias).
@@ -409,15 +409,15 @@ impl EnrichState {
                     .get("TargetFilename")
                     .cloned()
                     .map(|n| self.normalize_path(&n));
-                if let Some(fo) = fields.get("FileObject").cloned() {
-                    if let Some(n) = &name {
-                        self.filekey.insert(fo, n.clone());
-                    }
+                if let Some(fo) = fields.get("FileObject").cloned()
+                    && let Some(n) = &name
+                {
+                    self.filekey.insert(fo, n.clone());
                 }
-                if let Some(fk) = fields.get("FileKey").cloned() {
-                    if let Some(n) = &name {
-                        self.filekey.insert(fk, n.clone());
-                    }
+                if let Some(fk) = fields.get("FileKey").cloned()
+                    && let Some(n) = &name
+                {
+                    self.filekey.insert(fk, n.clone());
                 }
                 if let Some(n) = name {
                     fields.insert("TargetFilename".to_string(), n);
@@ -427,10 +427,10 @@ impl EnrichState {
             // it through the FileObject table (AD-9).
             13 | 15 | 16 => {
                 let key = fields.get("FileObject").or_else(|| fields.get("FileKey"));
-                if let Some(key) = key {
-                    if let Some(name) = self.filekey.resolve(key) {
-                        fields.insert("TargetFilename".to_string(), name.to_string());
-                    }
+                if let Some(key) = key
+                    && let Some(name) = self.filekey.resolve(key)
+                {
+                    fields.insert("TargetFilename".to_string(), name.to_string());
                 }
             }
             // Close (14): resolve the name, then purge the object.
@@ -471,10 +471,10 @@ impl EnrichState {
         fields.insert("RuleName".to_string(), String::new());
         fields.insert("UtcTime".to_string(), filetime_quad_to_sysmon_utc(ts));
         self.ensure_enriched(pid);
-        if let Some(ct) = self.process_table.get(pid).and_then(|p| p.create_time) {
-            if let Some(mg) = &self.machine_guid {
-                fields.insert("ProcessGuid".to_string(), sysmon::process_guid(mg, ct, pid));
-            }
+        if let Some(ct) = self.process_table.get(pid).and_then(|p| p.create_time)
+            && let Some(mg) = &self.machine_guid
+        {
+            fields.insert("ProcessGuid".to_string(), sysmon::process_guid(mg, ct, pid));
         }
         self.enrich_pid_context(pid, fields);
     }
@@ -512,14 +512,13 @@ impl EnrichState {
         let Some(create_time) = process_query::query_create_time(pid) else {
             return; // fail-open: process gone/unreadable, retried on next event
         };
-        if let Some(entry) = self.process_table.get(pid) {
-            if entry.create_time == Some(create_time)
-                && (entry.enrichment.command_line.is_some()
-                    || entry.enrichment.user.is_some()
-                    || entry.enrichment.integrity_level.is_some())
-            {
-                return;
-            }
+        if let Some(entry) = self.process_table.get(pid)
+            && entry.create_time == Some(create_time)
+            && (entry.enrichment.command_line.is_some()
+                || entry.enrichment.user.is_some()
+                || entry.enrichment.integrity_level.is_some())
+        {
+            return;
         }
         let command_line = process_query::query_command_line(pid);
         let user = process_query::query_user_name(pid);

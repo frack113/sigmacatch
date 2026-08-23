@@ -38,11 +38,11 @@ pub(crate) fn find_rules_dirs(root: &Path) -> Result<Vec<PathBuf>> {
                     #[cfg(not(unix))]
                     {
                         let abs_path = dunce::canonicalize(&path).ok();
-                        if let Some(abs) = abs_path {
-                            if !visited_paths.insert(abs) {
-                                warn!("Skipping symlink cycle detected at: {:?}", path);
-                                continue;
-                            }
+                        if let Some(abs) = abs_path
+                            && !visited_paths.insert(abs)
+                        {
+                            warn!("Skipping symlink cycle detected at: {:?}", path);
+                            continue;
                         }
                     }
                     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {

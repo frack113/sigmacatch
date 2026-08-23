@@ -209,10 +209,10 @@ pub fn build_mounts() -> Vec<(String, String)> {
             replacement.push('\\');
         }
 
-        if let Some(dev) = &device {
-            if dev.starts_with('\\') {
-                mounts.push((with_trailing_sep(dev), replacement.clone()));
-            }
+        if let Some(dev) = &device
+            && dev.starts_with('\\')
+        {
+            mounts.push((with_trailing_sep(dev), replacement.clone()));
         }
         mounts.push((vol_name.clone(), replacement.clone()));
 

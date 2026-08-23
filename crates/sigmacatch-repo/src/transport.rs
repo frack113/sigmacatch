@@ -85,12 +85,12 @@ fn resolve_ssh_path() -> String {
     // First try the OS resolver (works on both Windows and Unix when PATH is set)
     let mut cmd = std::process::Command::new("which");
     cmd.arg("ssh").stdin(std::process::Stdio::null());
-    if let Ok(output) = cmd.output() {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                return path;
-            }
+    if let Ok(output) = cmd.output()
+        && output.status.success()
+    {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return path;
         }
     }
 

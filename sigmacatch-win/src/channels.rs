@@ -203,10 +203,9 @@ impl EventCollector {
                         if let Some(rid) = event
                             .record_id()
                             .or_else(|| Self::extract_record_id_from_raw(&event.event_raw))
+                            && rid > last_record_id
                         {
-                            if rid > last_record_id {
-                                last_record_id = rid;
-                            }
+                            last_record_id = rid;
                         }
                         if tx.blocking_send(event).is_err() {
                             // Receiver dropped — close remaining handles and exit
@@ -517,7 +516,9 @@ impl EventCollector {
 
         // EvtRender writes a null-terminated UTF-16LE string (not UTF-8).
         let mut units: Vec<u16> = buffer[..bytes_used as usize]
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .collect();
         if units.last() == Some(&0) {
