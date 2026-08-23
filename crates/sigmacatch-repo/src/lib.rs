@@ -607,7 +607,17 @@ impl SigmaRepo {
     /// remote (which would cause `RejectNonFastForward` on the next run); the
     /// generated files stay on disk and are reconciled by the next startup.
     /// When contrib is disabled, commits stay local and no push is attempted.
-    pub fn upload_rule_batches(&self, batches: Vec<(Uuid, Vec<String>)>) -> Result<()> {
+    ///
+    /// `should_abort` is polled before each rule commit (Ctrl+C during a large
+    /// batch must not block shutdown behind a long commit/push sequence). On
+    /// abort the already-made commits are kept — the local branch is strictly
+    /// ahead of the remote, so a later run can still push them — and the
+    /// remaining rules are left for the next cycle.
+    pub fn upload_rule_batches(
+        &self,
+        batches: Vec<(Uuid, Vec<String>)>,
+        should_abort: &dyn Fn() -> bool,
+    ) -> Result<()> {
         if self.offline {
             info!(
                 "Offline mode — skipping {} rule commit(s) (data left on disk)",
@@ -622,6 +632,14 @@ impl SigmaRepo {
             if files.is_empty() {
                 info!("Skipping empty batch for rule {}", rule_id);
                 continue;
+            }
+            if committed > 0 && should_abort() {
+                warn!(
+                    "Shutdown requested — stopping after {committed}/{} rule commit(s); \
+                     remaining rules and push are deferred to the next cycle",
+                    batches.len()
+                );
+                return Ok(());
             }
             let message = format!("🧪 test: add regression data for rule {}", rule_id);
             if let Err(e) = self.git_commit_files(files.clone(), message) {
@@ -1029,7 +1047,7 @@ mod tests {
 
         let before = repo.working_branch_oid().unwrap();
         let rule_id = Uuid::new_v4();
-        repo.upload_rule_batches(vec![(rule_id, vec![rel.to_string()])])
+        repo.upload_rule_batches(vec![(rule_id, vec![rel.to_string()])], &|| false)
             .unwrap();
         let after = repo.working_branch_oid().unwrap();
         assert_ne!(
@@ -1054,9 +1072,52 @@ mod tests {
 
         let before = repo.working_branch_oid().unwrap();
         let rule_id = Uuid::new_v4();
-        repo.upload_rule_batches(vec![(rule_id, vec![])]).unwrap();
+        repo.upload_rule_batches(vec![(rule_id, vec![])], &|| false)
+            .unwrap();
         let after = repo.working_branch_oid().unwrap();
         assert_eq!(before, after, "empty batches must not create a commit");
+    }
+
+    /// A `should_abort` closure that fires must stop the batch loop after the
+    /// first commit: the loop polls before each subsequent commit, keeps what
+    /// landed, and returns Ok (the local branch is simply ahead of the remote).
+    #[test]
+    fn test_upload_rule_batches_aborts_between_commits() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_committed_repo(&tmp);
+        let git_dir = tmp.path().join(".git");
+        crate::branch::create_branch(&git_dir, "sigmacatch/20260803").unwrap();
+
+        let mut repo = SigmaRepo::new();
+        repo.repo_path = tmp.path().to_path_buf();
+        repo.working_branch = Some("sigmacatch/20260803".to_string());
+        repo.contrib = false;
+
+        let file_a = tmp.path().join("a.txt");
+        std::fs::write(&file_a, b"a").unwrap();
+        let file_b = tmp.path().join("b.txt");
+        std::fs::write(&file_b, b"b").unwrap();
+
+        let before = repo.working_branch_oid().unwrap();
+        let rule_a = Uuid::new_v4();
+        let rule_b = Uuid::new_v4();
+
+        // Always-abort: guarded by `committed > 0`, so the first rule still
+        // lands and the second is skipped.
+        repo.upload_rule_batches(
+            vec![
+                (rule_a, vec![file_a.to_string_lossy().into()]),
+                (rule_b, vec![file_b.to_string_lossy().into()]),
+            ],
+            &|| true,
+        )
+        .unwrap();
+
+        let after = repo.working_branch_oid().unwrap();
+        assert_ne!(
+            before, after,
+            "the first commit must have landed before the abort"
+        );
     }
 
     /// `push()` must no-op (Ok) when contrib is disabled — no working branch,
@@ -1147,8 +1208,11 @@ mod tests {
         repo.offline = true;
 
         let rule_id = Uuid::new_v4();
-        repo.upload_rule_batches(vec![(rule_id, vec!["regression_data/a.json".to_string()])])
-            .unwrap();
+        repo.upload_rule_batches(
+            vec![(rule_id, vec!["regression_data/a.json".to_string()])],
+            &|| false,
+        )
+        .unwrap();
 
         assert!(
             !tmp.path().join(".git").exists(),
@@ -1183,10 +1247,13 @@ mod tests {
         let before = repo.working_branch_oid().unwrap();
         let rule_a = Uuid::new_v4();
         let rule_b = Uuid::new_v4();
-        let result = repo.upload_rule_batches(vec![
-            (rule_a, vec![good.to_string()]),
-            (rule_b, vec![bad.clone()]),
-        ]);
+        let result = repo.upload_rule_batches(
+            vec![
+                (rule_a, vec![good.to_string()]),
+                (rule_b, vec![bad.clone()]),
+            ],
+            &|| false,
+        );
 
         assert!(
             result.is_err(),
