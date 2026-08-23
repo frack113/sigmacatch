@@ -17,11 +17,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// Embedded pipeline for flattening Winevt XML event structure.
-pub const FLATTEN_WINEVT_PIPELINE: &str = include_str!("../pipelines/flatten_winevt.yml");
+/// Windows logsource add_condition + change_logsource transformations.
+pub const WIN_LOGSOURCE_PIPELINE: &str = include_str!("../pipelines/1_win_logsource.yml");
 
-/// Embedded pipeline for Windows Sigma rule transformation.
-pub const WINDOWS_PIPELINE: &str = include_str!("../pipelines/windows.yml");
+/// Windows field_name_mapping transformations.
+pub const WIN_FIELD_PIPELINE: &str = include_str!("../pipelines/2_win_field_name.yml");
+
+/// Linux logsource add_condition + change_logsource transformations.
+pub const LNX_LOGSOURCE_PIPELINE: &str = include_str!("../pipelines/3_lnx_logsource.yml");
+
+/// Linux field_name_mapping transformations.
+pub const LNX_FIELD_PIPELINE: &str = include_str!("../pipelines/4_lnx_field_name.yml");
 
 mod channel_resolver;
 
@@ -29,8 +35,11 @@ pub struct DetectionEngine {
     engine: Engine,
     /// Cached parsed pipelines — cloned (not re-parsed) on reload_rules to
     /// avoid YAML parsing overhead each cycle.
-    flatten_pipeline: Pipeline,
-    windows_pipeline: Pipeline,
+    win_logsource_pipeline: Pipeline,
+    win_field_pipeline: Pipeline,
+    /// Linux-specific pipelines for Sysmon-for-Linux events (product: linux).
+    lnx_logsource_pipeline: Pipeline,
+    lnx_field_pipeline: Pipeline,
     events: Vec<Event>,
     alerts: Vec<Alert>,
     stats: EngineStats,
@@ -42,11 +51,16 @@ pub struct DetectionEngine {
 
 impl DetectionEngine {
     pub fn new(rules: &SigmahqRules) -> Result<Self> {
-        let flatten = parse_pipeline(FLATTEN_WINEVT_PIPELINE)
-            .map_err(|e| anyhow!("flatten_winevt pipeline: {e}"))?;
-        let windows =
-            parse_pipeline(WINDOWS_PIPELINE).map_err(|e| anyhow!("windows pipeline: {e}"))?;
-        let mut engine = Self::create_engine(&flatten, &windows)?;
+        let win_logsource = parse_pipeline(WIN_LOGSOURCE_PIPELINE)
+            .map_err(|e| anyhow!("win_logsource pipeline: {e}"))?;
+        let win_field =
+            parse_pipeline(WIN_FIELD_PIPELINE).map_err(|e| anyhow!("win_field pipeline: {e}"))?;
+        let lnx_logsource = parse_pipeline(LNX_LOGSOURCE_PIPELINE)
+            .map_err(|e| anyhow!("lnx_logsource pipeline: {e}"))?;
+        let lnx_field =
+            parse_pipeline(LNX_FIELD_PIPELINE).map_err(|e| anyhow!("lnx_field pipeline: {e}"))?;
+        let mut engine =
+            Self::create_engine(&win_logsource, &win_field, &lnx_logsource, &lnx_field)?;
 
         // add_rules (&[SigmaRule]) instead of add_collection avoids cloning the
         // whole Vec; indexes are rebuilt once at the end.
@@ -67,8 +81,10 @@ impl DetectionEngine {
 
         Ok(Self {
             engine,
-            flatten_pipeline: flatten,
-            windows_pipeline: windows,
+            win_logsource_pipeline: win_logsource,
+            win_field_pipeline: win_field,
+            lnx_logsource_pipeline: lnx_logsource,
+            lnx_field_pipeline: lnx_field,
             events: Vec::new(),
             alerts: Vec::new(),
             stats: EngineStats::default(),
@@ -79,7 +95,12 @@ impl DetectionEngine {
 
     pub fn reload_rules(&mut self, rules: &SigmahqRules) -> Result<()> {
         // Reuse cached pipelines (clone, not re-parse YAML) for the new engine.
-        let mut engine = Self::create_engine(&self.flatten_pipeline, &self.windows_pipeline)?;
+        let mut engine = Self::create_engine(
+            &self.win_logsource_pipeline,
+            &self.win_field_pipeline,
+            &self.lnx_logsource_pipeline,
+            &self.lnx_field_pipeline,
+        )?;
 
         let errors = engine.add_rules(rules.rules());
         if !errors.is_empty() {
@@ -106,7 +127,12 @@ impl DetectionEngine {
     }
 
     /// Create a fresh rsigma-eval Engine with pipelines + optimizations.
-    fn create_engine(flatten: &Pipeline, windows: &Pipeline) -> Result<Engine> {
+    fn create_engine(
+        win_logsource: &Pipeline,
+        win_field: &Pipeline,
+        lnx_logsource: &Pipeline,
+        lnx_field: &Pipeline,
+    ) -> Result<Engine> {
         let mut engine = Engine::new();
         engine.set_include_event(true);
 
@@ -120,8 +146,10 @@ impl DetectionEngine {
         // an event without logsource fields evaluates all rules.
         engine.set_logsource_extractor(Some(LogSourceExtractor::new()));
 
-        engine.add_pipeline(flatten.clone());
-        engine.add_pipeline(windows.clone());
+        engine.add_pipeline(win_logsource.clone());
+        engine.add_pipeline(win_field.clone());
+        engine.add_pipeline(lnx_logsource.clone());
+        engine.add_pipeline(lnx_field.clone());
 
         Ok(engine)
     }
@@ -189,12 +217,29 @@ impl DetectionEngine {
     /// Events must have logsource fields (product, service, category) already
     /// injected by the collector via `Event::inject_logsource_fields()`.
     /// The bloom pre-filter and logsource pruning are both active.
+    ///
+    /// The engine carries BOTH the Windows and Linux pipelines; each
+    /// transformation is gated by rule_conditions (product/service), so a
+    /// single evaluation pass routes Windows and Sysmon-for-Linux events
+    /// correctly — no per-product engine needed here.
     pub fn process_events(&mut self) {
         let events = std::mem::take(&mut self.events);
+        if events.is_empty() {
+            return;
+        }
+        tracing::info!(events = events.len(), "processing events");
         self.stats.events_processed += events.len() as u64;
+
         for event in events {
             let json_event = JsonEvent::borrow(&event.event_json);
             let matches = self.engine.evaluate(&json_event);
+            if !matches.is_empty() {
+                tracing::debug!(
+                    product = ?event.event_json.get("product"),
+                    matches = matches.len(),
+                    "event matched"
+                );
+            }
             for result in matches {
                 let rule_id = result
                     .header
