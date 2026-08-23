@@ -46,15 +46,39 @@ sigmacatch/
 
 ## Collecteurs
 
-Trois binaires sont produits depuis deux crates, chacun embarquant un seul collecteur (features cargo `winevt`/`etw` et `auditd`/`builtin`, `required-features` par binaire) :
+Trois binaires sont produits depuis deux crates, chacun embarquant un seul collecteur
+(features cargo `winevt`/`etw` et `auditd`/`builtin`, `required-features` par binaire) :
 
 | Binaire | Crate | Description |
 |---|---|---|
 | `sigmacatch-channel` | `sigmacatch-win/src/channels.rs` | API Winevt native (`EvtQueryW`/`EvtNext`/`EvtRender`), multi-channel, rejouable |
-| `sigmacatch-etw` | `sigmacatch-win/src/etw/` | Collecte ETW directe via ferrisetw, 18 providers (9 Sysmon-masquerade + 9 génériques), routing générique provider→channel, EventID réel conservé [beta] |
-| `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog,sysmon}.rs` | Les trois collecteurs tournent en parallèle, chacun gardé par sa source : **auditd** si `/var/log/audit/audit.log` existe (tail, parsing linux-audit-parser, groupement par event id `timestamp:sequence`, logsource `product:linux, service:auditd`) ; **syslog builtin** taille chaque fichier existant parmi central (`/var/log/messages`, `/var/log/syslog`), authpriv (`/var/log/secure`, `/var/log/auth.log`) et cron (`/var/log/cron`, `/var/log/cron.log`) — lignes RFC3164, service dérivé du program tag (fallback par groupe de fichier : authpriv → `auth`, cron → `cron`) ; **Sysmon-for-Linux** garde les lignes du syslog central taggées `sysmon` dont le corps est XML winevt (parsing via `parse_winevt_xml`/`_raw` → logsource `product:linux, service:sysmon` via channel `Linux-Sysmon/Operational` ; ces lignes sont exclues du collecteur builtin). Aucune des sources → bail. Format de régression `DataFormat::Log` |
+| `sigmacatch-etw` | `sigmacatch-win/src/etw/` | Collecte ETW directe via ferrisetw (détail ci-dessous) |
+| `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog,sysmon}.rs` | Les trois collecteurs tournent en parallèle (détail ci-dessous) |
 
-Le collecteur ETW couvre les mêmes channels que le collecteur Winevt (Security, Defender, Firewall, Sysmon, …) en résolvant provider→channel à partir d'une table de mapping, et en gardant le vrai EventID. Pour les providers génériques, les champs `EventData` sont fournis par des field maps par provider (fidelité variable). Sur non-Windows, les collecteurs Winevt/ETW sont des stubs no-op.
+### ETW direct
+
+Le collecteur ETW couvre les mêmes channels que le collecteur Winevt (Security, Defender,
+Firewall, Sysmon, …) : 18 providers (9 Sysmon-masquerade + 9 génériques), résolution
+provider→channel par table de mapping, EventID réel conservé [beta]. Pour les providers
+génériques, les champs `EventData` sont fournis par des field maps par provider (fidelité
+variable). Sur non-Windows, les collecteurs Winevt/ETW sont des stubs no-op.
+
+### Les trois collecteurs Linux
+
+Chacun gardé par sa source ; aucune source disponible → bail :
+
+- **auditd** — si `/var/log/audit/audit.log` existe : tail, parsing linux-audit-parser,
+  groupement par event id `timestamp:sequence`, logsource `product:linux, service:auditd`.
+- **syslog builtin** — tail de chaque fichier existant parmi central (`/var/log/messages`,
+  `/var/log/syslog`), authpriv (`/var/log/secure`, `/var/log/auth.log`) et cron
+  (`/var/log/cron`, `/var/log/cron.log`) : lignes RFC3164, service dérivé du program tag
+  (fallback par groupe de fichier : authpriv → `auth`, cron → `cron`). Les lignes taggées
+  `sysmon` sont exclues (prises en charge par le collecteur dédié).
+- **Sysmon-for-Linux** — lignes du syslog central taggées `sysmon` dont le corps est XML
+  winevt (`parse_winevt_xml`/`_raw`) → logsource `product:linux, service:sysmon` via le
+  channel `Linux-Sysmon/Operational`.
+
+Format de régression : `DataFormat::Log`.
 
 Chaque binaire définit son propre `CollectorKind` dans son `main_*.rs` (`name()`/`mode()`/`channels()`/`build()`/`regression_format()`) et l'injecte dans `sigmacatch_runner::run()`. Le format de régression est choisi par `regression_format()` : `DataFormat::Evtx` pour les deux bins Windows, `DataFormat::Log` pour `sigmacatch-linux`.
 
@@ -70,14 +94,15 @@ sigmacatch-lnx ──┤   ├── sigmacatch-config      (Config, CliArgs)
                  │   ├── sigmacatch-types       (Event, Alert, RegressionHeader, Product, EventProducer, parsing XML)
                  │   └── sigmacatch-repo        (SigmaRepo, wrapper grit-lib)
                  ├── [win tools] input-windows-evtx (parse EVTX → Event pour `check`)
-                 └── [tools] clap, serde
+                 └── [tools] serde (sérialisation JSON des sorties diagnostics)
 ```
 
 `sigmacatch-detection` dépend de `sigmacatch-rule` + `sigmacatch-types` + `rsigma-eval`.
 Les collecteurs vivent dans leur crate binaire et ne dépendent que de `sigmacatch-types`
 (types partagés + tables de mapping logsource). `input-windows-evtx` dépend de
-`sigmacatch-types` + la crate `evtx`. Les sous-commandes de diagnostic (`cli.rs`)
-utilisent `clap` + `serde` (feature `tools`, désactivée par défaut).
+`sigmacatch-types` + la crate `evtx`. Les sous-commandes de diagnostic (`cli.rs`) font un
+parsing manuel des arguments et utilisent `serde` pour leurs sorties JSON (feature `tools`,
+désactivée par défaut).
 
 ## Pipeline (boucle continue)
 
@@ -134,8 +159,8 @@ upload_regression() → upload_rule_batches() (dans sigmacatch-repo)
 ```
 
 Toute la génération tourne en `spawn_blocking` (état `Pipeline` déplacé puis restitué) —
-les retries `EvtExportLog` ne gèlent jamais la collecte (les events continuent à bufferiser
-dans le canal mpsc).
+les retries `EvtExportLog` ne gèlent jamais la collecte (les événements continuent à
+s'accumuler dans le canal mpsc).
 
 ## Notes de conception
 
@@ -147,9 +172,10 @@ dans le canal mpsc).
   Les règles dont les données commitées sont invalides (EVTX cassé / texte vide) sont exclues du skip set → régénérées.
 - **Output toujours dans le repo sigma** : `<sigma_repo_path>/regression_data/<rule_rel_path>/`
   (`info.yml` + fichier de données `.evtx`/`.log`, `.json` optionnel), commité sur le fork si `contrib` (commits locaux sinon).
-- **Collecteur observable** : les channels inexistants sont exclus une fois pour toutes sur
-  `ERROR_EVT_CHANNEL_NOT_FOUND` (un seul `error!`) ; chaque channel vivant log « initial query OK »
-  puis un heartbeat « still alive » (60s) ; `warn!` quand des events sont fetchés mais perdus au
-render/parse. Les collecteurs Linux détectent la rotation du fichier tailé (changement d'inode)
-   et rouvrent le fichier ; le collecteur syslog exclut les lignes taggées `sysmon`
-   pour éviter les doubles événements (pris en charge par le collecteur sysmon dédié).
+- **Collecteur observable** : le collecteur exclut une fois pour toutes les channels
+  inexistants dès `ERROR_EVT_CHANNEL_NOT_FOUND` (un seul `error!`) ; chaque channel vivant
+  journalise « initial query OK » puis un heartbeat « still alive » (60s) ; `warn!` quand des
+  events sont récupérés mais perdus au rendu/parsing. Les collecteurs Linux détectent la
+  rotation du fichier tailé (changement d'inode) et rouvrent le fichier ; le collecteur syslog
+  exclut les lignes taggées `sysmon` pour éviter les doubles événements (pris en charge par le
+  collecteur sysmon dédié).

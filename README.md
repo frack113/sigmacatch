@@ -37,7 +37,14 @@ sigma/regression_data/<rule_rel_path>/
 One commit per rule — single push to fork when contrib is enabled
 ```
 
-The pipeline runs continuously until Ctrl+C; remaining events are flushed before exit.
+The pipeline runs continuously until Ctrl+C; on exit the pipeline flushes the remaining events.
+
+## Requirements
+
+- **Windows** with [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) installed — required for rich events (ParentImage, CommandLine, hashes, etc.)
+- **Linux** with `auditd` running or a syslog source (`/var/log/messages` or `/var/log/syslog`, optionally authpriv/cron files) — for `sigmacatch-linux`; [Sysmon for Linux](https://github.com/SysmonForLinux/SysmonForLinux) optional, adds rich process/network events through the syslog stream
+- Rust 2024 edition (1.85+)
+- Admin rights for the `Security` and `System` Event Log channels (Windows)
 
 ## Quick start
 
@@ -48,12 +55,14 @@ cargo build --release
 ./target/release/sigmacatch-linux     # auditd + builtin syslog + Sysmon-for-Linux collectors (Linux)
 ```
 
-On first run a `config.yaml` is created with defaults:
+On first run a `config.yaml` is created with placeholder defaults, and the run stops (`exit 1`)
+until you edit it — `author: sigmacatch` (placeholder, rejected by validation) and an empty
+`email` both bail:
 
 ```yaml
 git:
-  author: "your-username"
-  email: "you@example.com"
+  author: "sigmacatch"      # PLACEHOLDER — replace with your GitHub username before the next run
+  email: ""                 # required (any non-empty value)
   github_token: ""          # GitHub token (or set GITHUB_TOKEN env var) — required for HTTP transport when network is active
   transport: http           # http or ssh
   ssh_key_path: ""          # path to SSH private key (optional, only needed for SSH)
@@ -98,7 +107,7 @@ Collectors are selected via cargo features, not CLI flags:
 |---|---|---|
 | `sigmacatch-channel` | `winevt` | Windows Event Log API |
 | `sigmacatch-etw` | `etw` | Direct ETW via ferrisetw |
-| `sigmacatch-linux` | `auditd` + `builtin` | Three collectors guarded by their sources: **auditd** tail if `/var/log/audit/audit.log` exists; **builtin syslog** tails every existing file among central (`/var/log/messages`, `/var/log/syslog`), authpriv (`/var/log/secure`, `/var/log/auth.log`) and cron (`/var/log/cron`, `/var/log/cron.log`); **Sysmon-for-Linux** parses the `sysmon`-tagged XML lines of the central syslog (excluded from the builtin collector to avoid double capture). Bail at startup if no source exists |
+| `sigmacatch-linux` | `auditd` + `builtin` | Three collectors in parallel, each guarded by its source (auditd / builtin syslog / Sysmon-for-Linux) — details in [docs/fr/architecture.md](docs/fr/architecture.md) |
 
 Build a single collector in isolation:
 
@@ -117,45 +126,15 @@ cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win --n
 | `sigmacatch-channel get-atomic` | Generate a `run_atomic.ps1` (Invoke-AtomicRedTeam chain) for rules without regression data |
 | `sigmacatch-linux check` / `check-filter` / `list-rules` | Same diagnostics for the Linux binary |
 
-## Requirements
-
-- **Windows** with [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) installed — required for rich events (ParentImage, CommandLine, hashes, etc.)
-- **Linux** with `auditd` running or a syslog source (`/var/log/messages` or `/var/log/syslog`, optionally authpriv/cron files) — for `sigmacatch-linux`; [Sysmon for Linux](https://github.com/SysmonForLinux/SysmonForLinux) optional, adds rich process/network events through the syslog stream
-- Rust 2024 edition (1.85+)
-- Admin rights for the `Security` and `System` Event Log channels (Windows)
-
 ## Build & cross-compilation
 
-Cross-compilation from Linux to Windows:
+Cross-compile from Linux: `cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win` (requires `cargo install cargo-xwin`; isolated builds and details in [docs/fr/build.md](docs/fr/build.md)).
 
-```bash
-cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win
-```
-
-> Requires `cargo install cargo-xwin`. Downloads the Windows SDK automatically.
-
-`.cargo/config.toml` forces `target-feature=+crt-static`: without it the binary depends on **VCRUNTIME140.dll** (Visual C++ Redistributable) and crashes if the runtime is missing on the target machine. With `+crt-static` the `.exe` is standalone.
-
-Linux native build:
-
-```bash
-cargo build --release -p sigmacatch-lnx
-```
-
-On Linux/macOS the Windows collectors are stubs that return no events — the pipeline still runs end-to-end for testing.
+> `.cargo/config.toml` forces `target-feature=+crt-static`: without it the binary depends on **VCRUNTIME140.dll** (Visual C++ Redistributable) and crashes if the runtime is missing on the target machine. With `+crt-static` the `.exe` is standalone.
 
 ## Documentation
 
-A built version of this documentation is published to GitHub Pages: **https://frack113.github.io/sigmacatch/**
-
-| | English | Français |
-|---|---|---|
-| Architecture | [EN](docs/en/architecture.md) | [FR](docs/fr/architecture.md) |
-| Build | [EN](docs/en/build.md) | [FR](docs/fr/build.md) |
-| Git | [EN](docs/en/git.md) | [FR](docs/fr/git.md) |
-| Output format | [EN](docs/en/output-format.md) | [FR](docs/fr/output-format.md) |
-| Regression data format | [EN](docs/en/regression-data-format.md) | [FR](docs/fr/regression-data-format.md) |
-| CLI diagnostics | [EN](docs/en/cli.md) | [FR](docs/fr/cli.md) |
+A built version of this documentation is published to GitHub Pages: **https://frack113.github.io/sigmacatch/** (source: [`docs/fr/`](docs/fr/), English mirror in [`docs/en/`](docs/en/)).
 
 ## Workspace
 

@@ -8,7 +8,7 @@ compatible with the SigmaHQ format.
 
 Prerequisites:
 
-- Rust (stable, 2021 edition), `cargo`, `rustfmt`, `clippy`
+- Rust (stable, edition 2024 — 1.85+), `cargo`, `rustfmt`, `clippy`
 - For Windows builds from Linux: `cargo xwin build --release --target x86_64-pc-windows-msvc`
 - `pipx` (linting scripts only: `typos`, `zizmor`)
 - `node` + `npx` (markdownlint only)
@@ -31,10 +31,13 @@ dependency.
 The CI runs the same checks locally via:
 
 ```bash
-uvx typos .
-uvx zizmor .
+pipx run typos .
+pipx run zizmor .
 npx --yes markdownlint-cli2 "docs/**/*.md" "*.md"
 ```
+
+(`markdownlint` runs in CI as the `DavidAnson/markdownlint-cli2-action`; `npx` is the local
+equivalent.)
 
 - `typos` — spelling, configured in `.typos.toml`. `docs/fr/**` is excluded (French is legitimate).
 - `zizmor` — GitHub Actions security audit. All `uses:` are SHA-pinned; never introduce an
