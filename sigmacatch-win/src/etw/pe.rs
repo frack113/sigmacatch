@@ -16,6 +16,16 @@
 //! a truncated header or a missing resource yields absent fields — never a
 //! lost event.
 
+// Parked 2026-08-23: callers not wired yet (see quality-plan-20260823.md P0-1).
+// This self-removing expectation forces a revisit as soon as any item here is used.
+#![cfg_attr(
+    not(windows),
+    expect(
+        dead_code,
+        reason = "alive only under the windows target; revisit >= 2026-09-30"
+    )
+)]
+
 /// Max bytes of a PE we are willing to hash (fail-open above).
 const MAX_PE_SIZE: u64 = 256 * 1024 * 1024;
 

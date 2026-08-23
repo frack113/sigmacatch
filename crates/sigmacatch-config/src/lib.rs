@@ -407,28 +407,25 @@ impl Config {
             );
         }
 
-        if self
+        if let Some(status) = self
             .filter
             .min_status
             .as_ref()
-            .is_some_and(|s| *s >= MinStatus(Status::Stable))
+            .filter(|s| **s >= MinStatus(Status::Stable))
         {
             // Pre-logger warning: validate() runs before init_logger.
             eprintln!(
-                "WARNING: filter.min_status = {} — very restrictive, only stable rules will be loaded",
-                self.filter.min_status.as_ref().unwrap()
+                "WARNING: filter.min_status = {status} — very restrictive, only stable rules will be loaded"
             );
         }
-        if self
+        if let Some(level) = self
             .filter
             .min_level
             .as_ref()
-            .is_some_and(|l| *l >= MinLevel(Level::High))
+            .filter(|l| **l >= MinLevel(Level::High))
         {
             eprintln!(
-                "WARNING: filter.min_level = {} — very restrictive, only {} and higher rules will be loaded",
-                self.filter.min_level.as_ref().unwrap(),
-                self.filter.min_level.as_ref().unwrap()
+                "WARNING: filter.min_level = {level} — very restrictive, only {level} and higher rules will be loaded"
             );
         }
         Ok(())

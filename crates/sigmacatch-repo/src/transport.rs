@@ -132,10 +132,18 @@ fn resolve_ssh_path() -> String {
 #[derive(Clone, Debug)]
 pub(crate) enum SshMode {
     /// Use grit-lib's default: resolve from environment (`GIT_SSH_COMMAND`, `GIT_SSH`, `ssh`).
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "variant kept for API completeness; no caller selects it yet"
+    )]
     Default,
     /// Use `SshCommand::ShellCommand` — runs via `sh -c`. Requires a POSIX shell.
-    #[allow(dead_code)]
+    /// Constructed only by non-Windows callers: dead under the `windows` target,
+    /// alive otherwise — hence the target-gated expectation.
+    #[cfg_attr(
+        windows,
+        expect(dead_code, reason = "no Windows caller constructs the sh -c transport")
+    )]
     ShellCommand(String),
     /// Use `SshCommand::Program` — direct exec, no shell. Works on Windows.
     /// The vector holds the full argv: `["ssh.exe", "-i", "/path/to/key"]`.

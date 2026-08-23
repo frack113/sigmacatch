@@ -33,6 +33,10 @@ pub struct ProcessEnrichment {
 pub struct ProcessInfo {
     /// Executable path (Win32 form) or process name.
     pub image: Option<String>,
+    #[cfg_attr(
+        not(windows),
+        expect(dead_code, reason = "parent-child chain enrichment (AD-7)")
+    )]
     pub parent_pid: Option<u32>,
     /// Cached PEB/token enrichment (AD-7). Validated against `create_time`.
     pub enrichment: ProcessEnrichment,
@@ -132,6 +136,10 @@ impl ProcessTable {
     }
 
     /// Record a CreateTime seen on the ETW stream (Kernel-Process event 1).
+    #[cfg_attr(
+        not(windows),
+        expect(dead_code, reason = "Kernel-Process create-time enrichment (AD-7)")
+    )]
     pub fn set_create_time(&mut self, pid: u32, create_time: i64) {
         self.map.entry(pid).or_default().create_time = Some(create_time);
     }
@@ -140,10 +148,24 @@ impl ProcessTable {
         self.map.get(&pid)
     }
 
+    #[cfg_attr(
+        not(windows),
+        expect(
+            dead_code,
+            reason = "in-place enrichment mutation; alive under windows"
+        )
+    )]
     pub fn get_mut(&mut self, pid: u32) -> Option<&mut ProcessInfo> {
         self.map.get_mut(&pid)
     }
 
+    #[cfg_attr(
+        not(windows),
+        expect(
+            dead_code,
+            reason = "table-size diagnostics helper; alive under windows"
+        )
+    )]
     pub fn len(&self) -> usize {
         self.map.len()
     }

@@ -237,7 +237,11 @@ fn cmd_check(args: &[String]) -> i32 {
             "pass_rate": pass_rate,
             "failed": failed,
         });
-        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output)
+                .expect("serde_json Value serialization is infallible")
+        );
     } else {
         println!("\n{}", "=".repeat(60));
         println!("  VALIDATION SUMMARY");
@@ -473,10 +477,10 @@ fn run_filter_tests(tests: &[FilterTest], json_output: bool) -> bool {
                     stats.rules_filtered_author,
                     stats.rules_total_candidate,
                 );
-                if all_ok {
-                    println!("    ✅ all dimensions match ground truth");
+                if let Some(mismatch) = mismatch.as_ref() {
+                    println!("    ❌ MISMATCH: {mismatch}");
                 } else {
-                    println!("    ❌ MISMATCH: {}", mismatch.as_ref().unwrap());
+                    println!("    ✅ all dimensions match ground truth");
                 }
             }
 
@@ -510,7 +514,11 @@ fn run_filter_tests(tests: &[FilterTest], json_output: bool) -> bool {
             "total_failed": total_failed,
             "tests": results,
         });
-        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output)
+                .expect("serde_json Value serialization is infallible")
+        );
     } else {
         println!("{}", "=".repeat(60));
         println!("  SUMMARY");
@@ -795,7 +803,11 @@ fn cmd_list_rules(args: &[String]) -> i32 {
             rules: rule_infos,
             coverage: coverage_info,
         };
-        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output)
+                .expect("serde_json Value serialization is infallible")
+        );
     } else {
         println!("Loaded {} rule(s):\n", rule_infos.len());
         for r in &rule_infos {
