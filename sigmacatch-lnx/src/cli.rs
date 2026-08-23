@@ -9,7 +9,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
-use sigmacatch_config::{self, Config, parse_args};
+use sigmacatch_config::{self, Config};
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_regression::SigmahqRegression;
 use sigmacatch_repo::SigmaRepo;
@@ -18,7 +18,7 @@ use sigmacatch_rule::{
 };
 use uuid::Uuid;
 
-use sigmacatch_lnx::auditd::{parse_line, record_to_event};
+use sigmacatch_lnx::{auditd, syslog, sysmon};
 
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
 
@@ -33,6 +33,22 @@ pub fn dispatch() -> i32 {
         "list-rules" => cmd_list_rules(&args[1..]),
         _ => 0,
     }
+}
+
+// ─── regression format detection ───────────────────────────────────────────────
+
+/// Detect the collector format from the first non-empty line of raw data.
+fn detect_format(raw: &[u8]) -> &'static str {
+    for line in raw.split(|b| *b == b'\n').filter(|l| !l.is_empty()).take(1) {
+        if let Some(record) = syslog::parse_line(line) {
+            if record.program.eq_ignore_ascii_case("sysmon") {
+                return "sysmon";
+            }
+            return "syslog";
+        }
+        return "auditd";
+    }
+    "auditd"
 }
 
 // ─── check ────────────────────────────────────────────────────────────────────
@@ -114,23 +130,41 @@ fn cmd_check(args: &[String]) -> i32 {
             }
         };
 
-        let events: Vec<sigmacatch_types::Event> = raw
-            .split(|b| *b == b'\n')
-            .filter(|line| !line.is_empty())
-            .filter_map(|line| {
-                let record = parse_line(line)?;
-                Some(record_to_event(line, &record))
-            })
-            .collect();
+        let events: Vec<sigmacatch_types::Event> = match detect_format(&raw) {
+            "sysmon" => raw
+                .split(|b| *b == b'\n')
+                .filter(|line| !line.is_empty())
+                .filter_map(|line| {
+                    let record = sysmon::parse_line(line)?;
+                    sysmon::record_to_event(line, &record)
+                })
+                .collect(),
+            "syslog" => raw
+                .split(|b| *b == b'\n')
+                .filter(|line| !line.is_empty())
+                .filter_map(|line| {
+                    let record = syslog::parse_line(line)?;
+                    Some(syslog::record_to_event(line, &record))
+                })
+                .collect(),
+            _ => raw
+                .split(|b| *b == b'\n')
+                .filter(|line| !line.is_empty())
+                .filter_map(|line| {
+                    let record = auditd::parse_line(line)?;
+                    Some(auditd::record_to_event(line, &record))
+                })
+                .collect(),
+        };
 
         if events.is_empty() {
             total += 1;
             failed.push(CheckFail {
                 rule_name: entry.rule_name.clone(),
-                error: "EMPTY — auditd produced no events".to_string(),
+                error: "EMPTY — no events produced from raw data".to_string(),
             });
             if !json_output {
-                println!("[FAIL] EMPTY — auditd produced no events");
+                println!("[FAIL] EMPTY — no events produced from raw data");
             }
             continue;
         }
