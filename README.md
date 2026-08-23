@@ -65,8 +65,8 @@ log:
   level_file: "debug"
 filter:
   product: windows          # windows, linux, or macos
-  min_status: "stable"      # load rules with status >= this threshold
-  min_level: "critical"     # load rules with level >= this threshold
+  # min_status: stable      # optional — load rules with status >= this threshold (unset = no filter)
+  # min_level: critical     # optional — load rules with level >= this threshold (unset = no filter)
   author: ""                # filter rules by author (optional, empty = no filter)
   max_rule_size: 1048576    # bytes (1MB default)
 regression:

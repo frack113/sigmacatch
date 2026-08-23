@@ -69,13 +69,14 @@ type with emoji and commit hashes), `## Tests` (results of fmt/clippy/test/build
 
 ## Architecture
 
-Architectural invariants are non-negotiable; read them in [`AGENTS.md`](AGENTS.md) and
-[`docs/en/architecture-reference.md`](docs/en/architecture-reference.md) before touching the
+Architectural invariants are non-negotiable; read them in
+[`docs/fr/architecture.md`](docs/fr/architecture.md) before touching the
 pipeline. Highlights:
 
 - One continuous run until Ctrl+C: collect + evaluate + generate (30s) + commit + push.
 - All aggregation in memory — no intermediate database.
-- Winevt collection only (`EvtQueryW`/`EvtNext`/`EvtRender`) — no ETW, no ferrisetw.
+- Windows collection via the Windows Event Log API (`EvtQueryW`/`EvtNext`/`EvtRender`) or direct
+  ETW; Linux collection via auditd tail, builtin syslog files, and Sysmon-for-Linux.
 - No external `git` binary: everything goes through grit-lib via `sigmacatch-repo`.
 - No hand-rolled parsers: use `rsigma-parser`, `serde_yaml`, `serde_json`, etc.
 - Security first: validate paths, cap sizes, sanitize inputs.
