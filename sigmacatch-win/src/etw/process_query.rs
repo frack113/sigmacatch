@@ -495,7 +495,7 @@ fn query_logon_id_with(handle: HANDLE) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::FILETIME_TO_UNIX_EPOCH_100NS;
+    use super::super::FILETIME_TO_UNIX_EPOCH_100NS;
     use super::*;
 
     #[test]
