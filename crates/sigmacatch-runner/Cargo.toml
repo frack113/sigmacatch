@@ -32,3 +32,7 @@ windows = { version = "0.62", features = [
     "Win32_System_Threading",
     "Win32_Security",
 ] }
+
+# Quality contract (quality.md Q2.1): inherit workspace lint tiers.
+[lints]
+workspace = true

@@ -14,3 +14,7 @@ tokio = { version = "1", features = ["rt", "sync"] }
 async-trait = "0.1"
 phf = { version = "0.14", features = ["macros"] }
 uuid = { version = "1", features = ["v4"] }
+
+# Quality contract (quality.md Q2.1): inherit workspace lint tiers.
+[lints]
+workspace = true
