@@ -3057,6 +3057,7 @@ dependencies = [
  "clap",
  "linux-audit-parser",
  "regex",
+ "rsigma-eval",
  "serde",
  "serde_json",
  "sigmacatch-config",
