@@ -321,22 +321,20 @@ impl Config {
             {
                 let mode = meta.permissions().mode() & 0o777;
                 if mode & 0o077 != 0 {
-                    tracing::warn!(
-                        "config: SSH key '{}' has overly permissive mode 0{:o} — should be 0600. \
-                                 SSH may refuse to use it. Run: chmod 600 {}",
-                        key_path,
-                        mode,
-                        key_path
+                    // Pre-logger warning: validate() runs before init_logger,
+                    // so tracing events would be dropped here.
+                    eprintln!(
+                        "WARNING: config: SSH key '{}' has overly permissive mode 0{:o} — should be 0600. \
+                         SSH may refuse to use it. Run: chmod 600 {}",
+                        key_path, mode, key_path
                     );
                 }
                 // Also check that the key is readable by the current user
                 if mode & 0o400 == 0 {
-                    tracing::warn!(
-                        "config: SSH key '{}' is not readable by the owner (mode 0{:o}). \
-                                 SSH will reject it. Run: chmod 400 {}",
-                        key_path,
-                        mode,
-                        key_path
+                    eprintln!(
+                        "WARNING: config: SSH key '{}' is not readable by the owner (mode 0{:o}). \
+                         SSH will reject it. Run: chmod 400 {}",
+                        key_path, mode, key_path
                     );
                 }
             }
@@ -415,8 +413,9 @@ impl Config {
             .as_ref()
             .is_some_and(|s| *s >= MinStatus(Status::Stable))
         {
-            tracing::warn!(
-                "filter.min_status = {} — very restrictive, only stable rules will be loaded",
+            // Pre-logger warning: validate() runs before init_logger.
+            eprintln!(
+                "WARNING: filter.min_status = {} — very restrictive, only stable rules will be loaded",
                 self.filter.min_status.as_ref().unwrap()
             );
         }
@@ -426,8 +425,8 @@ impl Config {
             .as_ref()
             .is_some_and(|l| *l >= MinLevel(Level::High))
         {
-            tracing::warn!(
-                "filter.min_level = {} — very restrictive, only {} and higher rules will be loaded",
+            eprintln!(
+                "WARNING: filter.min_level = {} — very restrictive, only {} and higher rules will be loaded",
                 self.filter.min_level.as_ref().unwrap(),
                 self.filter.min_level.as_ref().unwrap()
             );
@@ -484,7 +483,12 @@ OPTIONS:
 /// Parse CLI arguments from environment.
 pub fn parse_args() -> CliArgs {
     let args: Vec<String> = std::env::args().collect();
-    for arg in &args {
+    parse_args_from(&args)
+}
+
+/// Core argument parsing over an explicit argv (`args[0]` = program name).
+fn parse_args_from(args: &[String]) -> CliArgs {
+    for arg in args {
         if arg == "--help" || arg == "-h" {
             print!("{HELP}");
             std::process::exit(0);
@@ -501,7 +505,13 @@ pub fn parse_args() -> CliArgs {
         match args[i].as_str() {
             "--author" => {
                 i += 1;
-                author = args.get(i).cloned();
+                match args.get(i) {
+                    Some(v) if !v.starts_with('-') => author = Some(v.clone()),
+                    _ => {
+                        eprintln!("Error: --author requires a value");
+                        std::process::exit(1);
+                    }
+                }
             }
             "-a" | "--all-rules" => all_rules = true,
             "-c" | "--contrib" => contrib = true,
@@ -510,11 +520,9 @@ pub fn parse_args() -> CliArgs {
                 i += 1;
                 if let Some(n) = args.get(i) {
                     match n.parse::<u32>() {
+                        // 0 = unlimited (documented in --help): mapped to no limit.
                         Ok(v) if v > 0 => max_runs = Some(v),
-                        Ok(_) => {
-                            eprintln!("Error: --max-runs must be > 0");
-                            std::process::exit(1);
-                        }
+                        Ok(_) => max_runs = None,
                         Err(_) => {
                             eprintln!("Error: --max-runs requires a numeric value");
                             std::process::exit(1);
@@ -540,6 +548,47 @@ pub fn parse_args() -> CliArgs {
         contrib,
         verbose,
         max_runs,
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        std::iter::once("sigmacatch")
+            .chain(list.iter().copied())
+            .map(String::from)
+            .collect()
+    }
+
+    #[test]
+    fn test_parse_author_takes_next_token() {
+        let parsed = parse_args_from(&args(&["--author", "frack113"]));
+        assert_eq!(parsed.author.as_deref(), Some("frack113"));
+    }
+
+    #[test]
+    fn test_parse_max_runs_zero_means_unlimited() {
+        let parsed = parse_args_from(&args(&["-r", "0"]));
+        assert_eq!(parsed.max_runs, None);
+    }
+
+    #[test]
+    fn test_parse_max_runs_positive() {
+        let parsed = parse_args_from(&args(&["--max-runs", "3"]));
+        assert_eq!(parsed.max_runs, Some(3));
+    }
+
+    #[test]
+    fn test_parse_flags_combined() {
+        let parsed = parse_args_from(&args(&["-a", "-c", "-o", "-v", "--author", "bob"]));
+        assert!(parsed.all_rules);
+        assert!(parsed.contrib);
+        assert!(parsed.offline);
+        assert!(parsed.verbose);
+        assert_eq!(parsed.author.as_deref(), Some("bob"));
+        assert_eq!(parsed.max_runs, None);
     }
 }
 
