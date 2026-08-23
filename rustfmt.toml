@@ -1,0 +1,3 @@
+# Pin the style edition explicitly: bare `rustfmt` defaults to style 2015
+# while `cargo fmt` infers from Cargo.toml — pinning removes editor/CI drift
+style_edition = "2024"
