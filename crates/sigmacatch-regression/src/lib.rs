@@ -106,9 +106,15 @@ impl SigmahqRegression {
         if regression_path.exists() {
             let info_paths = list_all(regression_path);
             for path in &info_paths {
-                if let Ok(info) = InfoYml::load(path) {
-                    let entry = RegressionEntry::from_info(&info, path);
-                    entries.push((path.clone(), info, entry));
+                match InfoYml::load(path) {
+                    Ok(info) => {
+                        let entry = RegressionEntry::from_info(&info, path);
+                        entries.push((path.clone(), info, entry));
+                    }
+                    // An unparsable entry must not vanish silently: it would
+                    // leave the rule out of the skip set and get re-captured
+                    // over existing data on the next cycle.
+                    Err(e) => tracing::warn!("skipping {}: {e}", path.display()),
                 }
             }
         }
