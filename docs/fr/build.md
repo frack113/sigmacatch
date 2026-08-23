@@ -15,7 +15,7 @@ cargo build --release -p sigmacatch-lnx
 cargo clippy -- -W warnings
 ```
 
-Produit `sigmacatch-linux` : collecteur **auditd** si `/var/log/audit/audit.log` existe **et** collecteur **syslog central** (`/var/log/messages` puis `/var/log/syslog`) — les deux tournent en parallèle quand les deux sources existent ; bail au démarrage si aucune source.
+Produit `sigmacatch-linux` : collecteur **auditd** si `/var/log/audit/audit.log` existe **et** collecteurs **syslog builtin** (chaque fichier existant parmi central `/var/log/messages`, `/var/log/syslog` ; authpriv `/var/log/secure`, `/var/log/auth.log` ; cron `/var/log/cron`, `/var/log/cron.log`) plus le collecteur **Sysmon-for-Linux** sur le syslog central — tous tournent en parallèle ; bail au démarrage si aucune source.
 
 Sur Linux/macOS les collecteurs Windows sont des stubs no-op — le pipeline tourne de bout en bout pour tests (`cargo build -p sigmacatch-win`).
 
@@ -98,7 +98,7 @@ cargo build -p input-windows-evtx
 |---|---|---|
 | `sigmacatch-channel` | `sigmacatch-win/src/main_winevt.rs` | Capture Winevt (multi-channel) + évaluation + génération de régression |
 | `sigmacatch-etw` | `sigmacatch-win/src/main_etw.rs` | Capture ETW (ferrisetw) + évaluation + génération de régression [beta] |
-| `sigmacatch-linux` | `sigmacatch-lnx/src/main_linux.rs` | Capture auditd **et** syslog (en parallèle, selon disponibilité) + évaluation + génération de régression |
+| `sigmacatch-linux` | `sigmacatch-lnx/src/main_linux.rs` | Capture auditd + syslog + Sysmon-for-Linux (en parallèle, selon disponibilité) + évaluation + génération de régression |
 
 ## Sous-commandes de diagnostic
 

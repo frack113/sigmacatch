@@ -1,6 +1,6 @@
 # Sigmacatch
 
-Outil headless qui capture de vrais événements Windows via l'**API Windows Event Log** (`winevt`) ou l'**ETW direct** (`ferrisetw`), ou des événements Linux via **auditd**/**syslog**, les compare à des règles [SigmaHQ](https://github.com/SigmaHQ/sigma), et produit des données de régression structurées prêtes pour les PR SigmaHQ.
+Outil headless qui capture de vrais événements Windows via l'**API Windows Event Log** (`winevt`) ou l'**ETW direct** (`ferrisetw`), ou des événements Linux via **auditd**, le **syslog builtin** (fichiers central, authpriv et cron) et **Sysmon-for-Linux**, les compare à des règles [SigmaHQ](https://github.com/SigmaHQ/sigma), et produit des données de régression structurées prêtes pour les PR SigmaHQ.
 
 ## Workspace
 
@@ -9,7 +9,7 @@ Le projet est un cargo workspace de 12 packages (2 crates binaires + 10 biblioth
 | Crate | Rôle |
 |---|---|
 | `sigmacatch-win` | Binaires Windows : `sigmacatch-channel` (winevt) et `sigmacatch-etw` (ETW direct) + collecteurs `channels.rs`/`etw/` + diagnostics `cli.rs` |
-| `sigmacatch-lnx` | Binaire Linux : `sigmacatch-linux` (collecteurs auditd + syslog en parallèle, garde par source) + diagnostics `cli.rs` |
+| `sigmacatch-lnx` | Binaire Linux : `sigmacatch-linux` (collecteurs auditd + syslog builtin + Sysmon-for-Linux en parallèle, garde par source) + diagnostics `cli.rs` |
 | `sigmacatch-runner` | Pipeline partagé (`run<C: CollectorKind>`) : config, init repo, boucle d'événements, génération, commit/push |
 | `sigmacatch-config` | Config YAML + parsing CLI + custom_channels.yaml |
 | `sigmacatch-logger` | Abonnement tracing à deux couches (stderr `error` par défaut / `info` avec `-v`, fichier journal rolling debug) |
@@ -27,7 +27,7 @@ Le projet est un cargo workspace de 12 packages (2 crates binaires + 10 biblioth
 cargo build --release
 ./target/release/sigmacatch-channel   # Winevt (Windows)
 ./target/release/sigmacatch-etw       # ETW direct (Windows)
-./target/release/sigmacatch-linux     # auditd + syslog (Linux)
+./target/release/sigmacatch-linux     # auditd + syslog + sysmon (Linux)
 ```
 
 ## Documentation

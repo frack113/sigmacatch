@@ -10,7 +10,10 @@ Diagnostic commands are subcommands of the binaries, behind the `tools` feature 
 An unknown or absent subcommand → the binary starts its normal collection loop.
 The sections below document the Windows subcommands; the Linux equivalents
 (`check`, `check-filter`, `list-rules`) share the same logic with the `linux`
-product filter and `.log` data validation.
+product filter and `.log` data validation. The Linux `check` auto-detects the
+data format of each regression entry from its first non-empty line —
+Sysmon-for-Linux XML (`sysmon`), RFC3164 syslog (`syslog`) or auditd records
+(`auditd`) — and parses events accordingly before evaluation.
 
 ## check
 

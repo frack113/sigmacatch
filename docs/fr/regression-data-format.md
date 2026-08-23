@@ -67,7 +67,7 @@ Chaque règle avec régression contient un dossier (slug) avec :
 
 Le `<rule_id>` est toujours l'**UUID** contenu dans `rule_metadata[0].id` du fichier `info.yml`. Il n'est jamais le nom du dossier.
 
-Variantes : certaines règles (ex: cisco) utilisent `.raw` quand le format EVTX n'est pas applicable. Les règles auditd utilisent `.log` (lignes auditd originales complètes). Le fichier de données + `info.yml` constituent la sortie obligatoire ; le `.json` est un supplément optionnel.
+Variantes : certaines règles (ex: cisco) utilisent `.raw` quand le format EVTX n'est pas applicable. Les règles Linux utilisent `.log` (lignes originales complètes : auditd, syslog ou XML Sysmon-for-Linux). Le fichier de données + `info.yml` constituent la sortie obligatoire ; le `.json` est un supplément optionnel.
 
 ## Schéma `info.yml`
 
@@ -106,7 +106,7 @@ rule_metadata:
 ```yaml
 regression_tests_info:
   - name: Positive Detection Test
-    type: evtx                  # ou "raw" pour cisco, "log" pour auditd
+    type: evtx                  # ou "raw" pour cisco, "log" pour Linux (auditd/syslog/sysmon)
     provider: <ProviderName>    # extrait dynamiquement du ProviderName XML (ex: Microsoft-Windows-Sysmon, ou "auditd")
     match_count: <int>          # Nombre de correspondances trouvées
     path: regression_data/.../<rule_id>.evtx  # Chemin relatif vers le template
@@ -145,8 +145,8 @@ regression_tests_info:
 |---------|--------|-----|---------|
 | `info.yml` | YAML | Toujours `info.yml` | Métadonnées + résultats |
 | `<rule_id>.evtx` | Binaire | UUID v4 | EVTX valide (EvtExportLog ou writer pur-Rust ; validé ≥ 1 record à l'écriture) |
-| `<rule_id>.log` | Texte | UUID v4 | Événement audit complet (lignes auditd originales, multi-records, pour le collecteur auditd) |
-| `<rule_id>.json` | JSON | UUID v4 | Optionnel (`regression.add_json_output`) — événement brut (JSON imbriqué Winevt ou JSON plat auditd) |
+| `<rule_id>.log` | Texte | UUID v4 | Événement complet (lignes auditd originales multi-records, lignes syslog, ou XML Sysmon-for-Linux) |
+| `<rule_id>.json` | JSON | UUID v4 | Optionnel (`regression.add_json_output`) — événement brut (JSON imbriqué Winevt ou JSON plat Linux) |
 
 Le `<rule_id>` dans les noms de fichiers est toujours le UUID de `rule_metadata[0].id`.
 
@@ -190,14 +190,15 @@ La majorité des règles (process_creation, file_event, registry, etc.) ciblent 
 
 Certaines règles réseau utilisent des formats natifs (`.raw` au lieu de `.json` + `.evtx`). Le champ `provider` dans `regression_tests_info` peut être absent.
 
-### Linux (auditd / syslog)
+### Linux (auditd / syslog / sysmon)
 
-Le binaire `sigmacatch-linux` lance les deux collecteurs en parallèle, chacun gardé par sa source :
+Le binaire `sigmacatch-linux` lance trois collecteurs en parallèle, chacun gardé par sa source :
 
 - **auditd** si `/var/log/audit/audit.log` existe : tail du fichier, parsing des records avec `linux-audit-parser`, un event par record. Les records d'un même événement audit (`msg=audit(timestamp:sequence)`) sont groupés : chaque event porte `event_raw` = toutes les lignes originales de l'événement.
-- **syslog** si `/var/log/messages` ou `/var/log/syslog` existe : une ligne RFC3164 par event, `event_json` plat `{message, program, host, service}` avec `service` dérivé du program tag (`sshd` → `sshd`, `CRON` → `cron`, …).
+- **syslog (builtin)** taille chaque fichier existant parmi central (`/var/log/messages`, `/var/log/syslog`), authpriv (`/var/log/secure`, `/var/log/auth.log`) et cron (`/var/log/cron`, `/var/log/cron.log`) : une ligne RFC3164 par event, `event_json` plat `{message, program, host, service}` avec `service` dérivé du program tag (`sshd` → `sshd`, `CRON` → `cron`, …) avec fallback par groupe de fichier (authpriv → `auth`, cron → `cron`). Les lignes taggées `sysmon` sont exclues — prises en charge par le collecteur dédié.
+- **Sysmon-for-Linux** garde les lignes du syslog central taggées `sysmon` dont le corps est XML winevt (`<Event>…</Event>`) : le parser winevt partagé produit le jeu de champs imbriqués complet et les pipelines Windows s'appliquent à l'identique ; la logsource est résolue depuis le channel `Linux-Sysmon/Operational` → `product: linux`, `service: sysmon`. Les lignes XML tronquées (limites de taille rsyslog) sont ignorées.
 
-Sur les hôtes qui forwardent les records audit vers syslog (audisp/rsyslog), une même activité est capturée deux fois via des pipelines distincts — une règle basée auditd et une règle basée syslog peuvent toutes deux produire des données de régression à partir d'elle. Dans les deux cas les données de régression utilisent `.log` (lignes originales complètes) et le provider écrit dans `info.yml` est `auditd`.
+Sur les hôtes qui forwardent les records audit vers syslog (audisp/rsyslog), une même activité est capturée deux fois via des pipelines distincts — une règle basée auditd et une règle basée syslog peuvent toutes deux produire des données de régression à partir d'elle. Dans tous les cas les données de régression utilisent `.log` (lignes originales complètes). Le provider écrit dans `info.yml` provient du provider XML de l'event quand il existe (`Linux-Sysmon` pour les événements Sysmon-for-Linux), avec repli sur `auditd` pour les événements en texte brut.
 
 ### Emerging Threats
 

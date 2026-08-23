@@ -20,9 +20,10 @@ sigmacatch/
 ├── sigmacatch-lnx/               # Linux binary (lib + 1 bin)
 │   └── src/
 │       ├── lib.rs
-│       ├── main_linux.rs         # bin `sigmacatch-linux`: runs auditd and syslog collectors in parallel (per-source availability guard)
+│       ├── main_linux.rs         # bin `sigmacatch-linux`: runs auditd, syslog and sysmon collectors in parallel (per-source availability guard)
 │       ├── auditd.rs             # Auditd collector (tail /var/log/audit/audit.log, event id grouping)
-│       ├── syslog.rs             # Central syslog collector (/var/log/messages → /var/log/syslog, RFC3164)
+│       ├── syslog.rs             # Builtin syslog collector (central /var/log/messages → /var/log/syslog + authpriv + cron files, RFC3164)
+│       ├── sysmon.rs             # Sysmon-for-Linux collector (`sysmon`-tagged syslog lines, winevt XML parsing)
 │       └── cli.rs                # Diagnostic subcommands (feature `tools`): check, check-filter, list-rules
 └── crates/
     ├── sigmacatch-runner/        # Pipeline shared by both binary crates:
@@ -32,7 +33,9 @@ sigmacatch/
     ├── sigmacatch-logger/        # Two-layer tracing subscriber (stderr `error` by default / `info` with `-v`, daily rolling file debug)
     ├── sigmacatch-rule/          # SigmahqRules: rule loading (parse_sigma_yaml), filter, dedupe, remove_id
     │                             #   + attack.rs (SigmaRuleExt ATT&CK) + discover.rs + thresholds.rs (LoadStats)
-    ├── sigmacatch-detection/     # DetectionEngine wrapper + embedded pipelines (windows.yml, flatten_winevt.yml) + channel_resolver
+    ├── sigmacatch-detection/     # DetectionEngine wrapper + embedded per-platform pipelines
+    │                             #   (1_win_logsource.yml, 2_win_field_name.yml, 3_lnx_logsource.yml,
+    │                             #   4_lnx_field_name.yml — transformations gated by product rule_conditions) + channel_resolver
     ├── sigmacatch-regression/    # SigmahqRegression (get_sigma_id, add, retire), InfoYml, DataFormat
     │                             #   (evtx.rs, format.rs, info.rs, logtype.rs, long_path.rs)
     ├── sigmacatch-types/         # Shared types: Event, Alert, RegressionHeader + XML parsing + logsource mapping tables
@@ -49,7 +52,7 @@ Three binaries are produced from two crates, each embedding a single collector (
 |---|---|---|
 | `sigmacatch-channel` | `sigmacatch-win/src/channels.rs` | Native Winevt API (`EvtQueryW`/`EvtNext`/`EvtRender`), multi-channel, replayable |
 | `sigmacatch-etw` | `sigmacatch-win/src/etw/` | Direct ETW collection via ferrisetw, 18 providers (9 Sysmon-masquerade + 9 generic), generic provider→channel routing, real EventID preserved [beta] |
-| `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog}.rs` | Both collectors run in parallel, each guarded by its source: **auditd** if `/var/log/audit/audit.log` exists (tail, linux-audit-parser parsing, event id grouping `timestamp:sequence`, logsource `product:linux, service:auditd`) **and** **central syslog** (`/var/log/messages` then `/var/log/syslog`, RFC3164 lines, service derived from the program tag). No source found → bail. Regression format `DataFormat::Log` |
+| `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog,sysmon}.rs` | Three collectors run in parallel, each guarded by its source: **auditd** if `/var/log/audit/audit.log` exists (tail, linux-audit-parser parsing, event id grouping `timestamp:sequence`, logsource `product:linux, service:auditd`); **builtin syslog** tails every existing file among central (`/var/log/messages`, `/var/log/syslog`), authpriv (`/var/log/secure`, `/var/log/auth.log`) and cron (`/var/log/cron`, `/var/log/cron.log`) — RFC3164 lines, service derived from the program tag (fallback per file group: authpriv → `auth`, cron → `cron`); **Sysmon-for-Linux** keeps the central-syslog lines tagged `sysmon` whose body is winevt XML (parsed via `parse_winevt_xml`/`_raw` → logsource `product:linux, service:sysmon` via channel `Linux-Sysmon/Operational`; those lines are excluded from the builtin collector). No source found → bail. Regression format `DataFormat::Log` |
 
 The ETW collector covers the same channels as the Winevt collector (Security, Defender, Firewall, Sysmon, …) by resolving provider→channel from a mapping table and keeping the real EventID. For generic providers, `EventData` fields are provided by per-provider field maps (variable fidelity). On non-Windows the Winevt/ETW collectors are no-op stubs.
 
@@ -101,7 +104,7 @@ The collectors live inside their binary crates and depend only on `sigmacatch-ty
 10. collector = kind.build(&cycle_channels) → tokio::spawn(collector.run(tx, stop))
     ├── sigmacatch-channel (winevt)  → EventCollector::new(cycle_channels).run(tx, stop)
     ├── sigmacatch-etw (etw) → EventCollector::new().run(tx, stop) (provider→channel routing internal)
-    └── sigmacatch-linux (auditd + syslog) → MultiCollector (both tails in parallel, rotation detected)
+    └── sigmacatch-linux (auditd + syslog + sysmon) → MultiCollector (all tails in parallel, rotation detected)
 11. Loop: tokio::select!
     ├── shutdown_rx (Ctrl+C or --max-runs reached) → break
     ├── event from rx → engine.put_events(vec![event])
@@ -147,4 +150,6 @@ All generation runs in `spawn_blocking` (the `Pipeline` state is moved out and r
 - **Collector observability**: non-existent channels are excluded once on
   `ERROR_EVT_CHANNEL_NOT_FOUND` (single `error!`); live channels log "initial query OK" and
   a "still alive" heartbeat (60s); `warn!` when events are fetched but dropped at render/parse.
-  The Linux collectors detect tail-file rotation (inode change) and re-open the file.
+  The Linux collectors detect tail-file rotation (inode change) and re-open the file; the
+  builtin syslog collector excludes lines tagged `sysmon` to avoid double capture
+  (handled by the dedicated Sysmon-for-Linux collector).

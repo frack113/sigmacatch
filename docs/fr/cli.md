@@ -11,7 +11,10 @@ Les commandes de diagnostic sont des sous-commandes des binaires, derrière la f
 Une sous-commande inconnue ou absente → le binaire démarre sa boucle de collecte normale.
 Les sections ci-dessous documentent les sous-commandes Windows ; les équivalentes Linux
 (`check`, `check-filter`, `list-rules`) partagent la même logique avec le filtre produit
-`linux` et la validation `.log`.
+`linux` et la validation `.log`. Le `check` Linux auto-détecte le format des données de
+chaque entrée de régression depuis sa première ligne non vide — XML Sysmon-for-Linux
+(`sysmon`), syslog RFC3164 (`syslog`) ou records auditd (`auditd`) — et parse les events
+en conséquence avant évaluation.
 
 ## check
 

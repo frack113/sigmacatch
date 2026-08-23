@@ -129,8 +129,11 @@ est ajouté seulement si `regression.add_json_output: true` (défaut : `false`).
 est possible pour des données non-Winevt
 (ex. `regression_data/rules/cisco/aaa/cisco_cli_dot1x_disabled/ef0ff092-....raw`, `type: raw`,
 généré hors pipeline — sa section `regression_tests_info` est commentée).
+Pour les events `evtx` le provider doit être présent dans le XML de l'event (sinon la
+génération échoue) ; pour les events `log` il provient du XML quand il existe
+(Sysmon for Linux), avec repli sur `auditd` pour les events en texte brut.
 
-**Exemple auditd (`type: log`) :**
+**Exemple auditd (`type: log`, provider de repli `auditd` — event en texte brut sans XML) :**
 
 ```yaml
 id: 60ff02c2-a649-436c-972d-7c6fe6af8711
@@ -146,6 +149,24 @@ regression_tests_info:
     provider: auditd
     match_count: 1
     path: regression_data/rules/linux/auditd/execve/lnx_auditd_susp_cmds/1543ae20-cbdf-4ec1-8d12-7664d667a825.log
+```
+
+**Exemple Sysmon-for-Linux (`type: log`, provider extrait du XML de l'event) :**
+
+```yaml
+id: 8f2a5c31-9d64-4b7e-a1c2-3f5d8e90b7aa
+description: N/A
+date: 2026-08-23
+author: frack113
+rule_metadata:
+  - id: f74107df-b6c6-4e80-bf00-4170b658162b
+    title: Sudo Privilege Escalation CVE-2019-14287
+regression_tests_info:
+  - name: Positive Detection Test
+    type: log
+    provider: Linux-Sysmon
+    match_count: 1
+    path: regression_data/rules/linux/builtin/lnx_sudo_privilege_escalation_cve_2019_14287/f74107df-b6c6-4e80-bf00-4170b658162b.log
 ```
 
 ## Contraintes

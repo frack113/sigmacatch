@@ -11,7 +11,7 @@ Sigmacatch captures real OS events, matches them against [SigmaHQ](https://githu
 |---|---|---|
 | Windows | Windows Event Log API (`winevt`) | `sigmacatch-channel` |
 | Windows | Direct ETW (`ferrisetw`) | `sigmacatch-etw` |
-| Linux | auditd tail and/or central syslog | `sigmacatch-linux` |
+| Linux | auditd tail and/or syslog tails (central + authpriv + cron, incl. Sysmon-for-Linux XML) | `sigmacatch-linux` |
 
 ## How it works
 
@@ -30,7 +30,7 @@ Every 30 s: write regression data for each matched rule
     ↓
 sigma/regression_data/<rule_rel_path>/
     ├── <rule_id>.evtx    ← valid EVTX (EvtExportLog, validated ≥ 1 record)
-    ├── <rule_id>.log     ← original auditd lines (auditd collector)
+    ├── <rule_id>.log     ← original auditd/syslog lines (Linux collectors)
     ├── <rule_id>.json    ← optional raw event (regression.add_json_output)
     └── info.yml          ← SigmaHQ-compatible metadata
     ↓
@@ -45,7 +45,7 @@ The pipeline runs continuously until Ctrl+C; remaining events are flushed before
 cargo build --release
 ./target/release/sigmacatch-channel   # Winevt collector (Windows)
 ./target/release/sigmacatch-etw       # ETW collector (Windows)
-./target/release/sigmacatch-linux     # auditd + syslog collectors (Linux)
+./target/release/sigmacatch-linux     # auditd + builtin syslog + Sysmon-for-Linux collectors (Linux)
 ```
 
 On first run a `config.yaml` is created with defaults:
@@ -98,7 +98,7 @@ Collectors are selected via cargo features, not CLI flags:
 |---|---|---|
 | `sigmacatch-channel` | `winevt` | Windows Event Log API |
 | `sigmacatch-etw` | `etw` | Direct ETW via ferrisetw |
-| `sigmacatch-linux` | `auditd` + `builtin` | auditd tail if `/var/log/audit/audit.log` exists **and** central syslog (`/var/log/messages`, `/var/log/syslog`) — both collectors run in parallel when both sources exist |
+| `sigmacatch-linux` | `auditd` + `builtin` | Three collectors guarded by their sources: **auditd** tail if `/var/log/audit/audit.log` exists; **builtin syslog** tails every existing file among central (`/var/log/messages`, `/var/log/syslog`), authpriv (`/var/log/secure`, `/var/log/auth.log`) and cron (`/var/log/cron`, `/var/log/cron.log`); **Sysmon-for-Linux** parses the `sysmon`-tagged XML lines of the central syslog (excluded from the builtin collector to avoid double capture). Bail at startup if no source exists |
 
 Build a single collector in isolation:
 
@@ -120,7 +120,7 @@ cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win --n
 ## Requirements
 
 - **Windows** with [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) installed — required for rich events (ParentImage, CommandLine, hashes, etc.)
-- **Linux** with `auditd` running or a central syslog file (`/var/log/messages`, `/var/log/syslog`) — for `sigmacatch-linux`
+- **Linux** with `auditd` running or a syslog source (`/var/log/messages` or `/var/log/syslog`, optionally authpriv/cron files) — for `sigmacatch-linux`; [Sysmon for Linux](https://github.com/SysmonForLinux/SysmonForLinux) optional, adds rich process/network events through the syslog stream
 - Rust 2024 edition (1.85+)
 - Admin rights for the `Security` and `System` Event Log channels (Windows)
 
@@ -164,12 +164,12 @@ The project is a cargo workspace of 12 packages (2 binary crates + 10 libraries)
 | Crate | Purpose |
 |---|---|
 | `sigmacatch-win` | Windows binaries: `sigmacatch-channel` (winevt), `sigmacatch-etw` (ETW) + `channels.rs` / `etw/` collectors + `cli.rs` diagnostics |
-| `sigmacatch-lnx` | Linux binary: `sigmacatch-linux` (auditd + syslog in parallel) + `cli.rs` diagnostics |
+| `sigmacatch-lnx` | Linux binary: `sigmacatch-linux` (auditd + builtin syslog + Sysmon-for-Linux in parallel) + `cli.rs` diagnostics |
 | `sigmacatch-runner` | Shared pipeline (`run<C: CollectorKind>`): config, repo init, event loop, generation, commit/push |
 | `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml |
 | `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug, max 3 kept) |
 | `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication, remove_id |
-| `sigmacatch-detection` | `DetectionEngine` + pipelines (windows.yml, flatten_winevt.yml) + channel_resolver + bloom pre-filter |
+| `sigmacatch-detection` | `DetectionEngine` + per-platform pipelines (win/lnx logsource + field_name) + channel_resolver + bloom pre-filter |
 | `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, `DataFormat` (Evtx/Log) + validation (evtx/format/info/logtype/long_path) |
 | `sigmacatch-evtx-writer` | Pure Rust EVTX writer for ETW / record-id-less events |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource mapping tables (phf) |
@@ -184,6 +184,7 @@ The project is a cargo workspace of 12 packages (2 binary crates + 10 libraries)
 - [windows](https://crates.io/crates/windows) — Windows Event Log API, cfg-gated
 - [ferrisetw](https://crates.io/crates/ferrisetw) — direct ETW collection, cfg-gated
 - [linux-audit-parser](https://crates.io/crates/linux-audit-parser) — auditd log parsing
+- [regex](https://crates.io/crates/regex) — RFC3164 syslog line parsing (builtin collector)
 - [serde](https://crates.io/crates/serde) / [serde_json](https://crates.io/crates/serde_json) / [serde_yaml](https://crates.io/crates/serde_yaml) — serialization
 - [roxmltree](https://crates.io/crates/roxmltree) — XML parsing for Winevt events
 - [evtx](https://crates.io/crates/evtx) — EVTX file parsing
