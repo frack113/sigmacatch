@@ -45,7 +45,7 @@ pub const CRON_LOG_PATHS: &[&str] = &["/var/log/cron", "/var/log/cron.log"];
 /// service injected for programs that carry no explicit mapping: an unknown
 /// program writing to the authpriv file is Sigma service `auth`, one writing
 /// to the cron file is `cron` (Sigma taxonomy appendix).
-#[cfg(target_os = "linux")]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum SourceKind {
     Central,
@@ -53,8 +53,8 @@ enum SourceKind {
     Cron,
 }
 
-#[cfg(target_os = "linux")]
 impl SourceKind {
+    #[cfg(target_os = "linux")]
     fn paths(self) -> &'static [&'static str] {
         match self {
             Self::Central => DEFAULT_LOG_PATHS,
@@ -71,6 +71,7 @@ impl SourceKind {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn all() -> [Self; 3] {
         [Self::Central, Self::Auth, Self::Cron]
     }
@@ -180,7 +181,6 @@ pub fn record_to_event(raw: &[u8], record: &Record) -> Event {
     build_event(SourceKind::Central, raw, record)
 }
 
-#[cfg(target_os = "linux")]
 fn build_event(kind: SourceKind, raw: &[u8], record: &Record) -> Event {
     let mut flat = Map::new();
     flat.insert("message".into(), JsonValue::String(record.message.clone()));
