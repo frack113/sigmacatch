@@ -215,6 +215,6 @@ re-listées au prochain run (le skip set n'exclut que ce qui est déjà génér�
 
 ```bash
 sigmacatch-channel get-atomic
-sigmacatch-channel get-atomic --output /tmp/run_atomic.ps1
+sigmacatch-channel get-atomic --output $env:TEMP\run_atomic.ps1
 sigmacatch-channel get-atomic --getprereqs --json
 ```

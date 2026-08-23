@@ -8,51 +8,17 @@ A regression test set consists per rule of an `info.yml` file (metadata) and a *
 
 ## Directory tree
 
+The output mirrors the SigmaHQ hierarchy under `rules/`, `rules-emerging-threats/` and
+`rules-threat-hunting/`:
+
 ```text
 regression_data/
-├── rules/                            # Main SigmaHQ rules
-│   ├── cisco/
-│   │   └── aaa/
-│   │       └── cisco_cli_dot1x_disabled/
-│   ├── linux/
-│   │   ├── auditd/
-│   │   │   ├── execve/               → <slug>/
-│   │   │   ├── path/                 → <slug>/
-│   │   │   └── syscall/              → <slug>/
-│   │   └── builtin/                  → <slug>/
-│   └── windows/
-│       ├── builtin/
-│       │   ├── security/             → <slug>/
-│       │   ├── taskscheduler/        → <slug>/
-│       │   └── wmi/                  → <slug>/
-│       ├── file/
-│       │   └── file_event/           → <slug>/
-│       ├── image_load/               → <slug>/
-│       ├── process_access/           → <slug>/
-│       ├── process_creation/         → <slug>/
-│       ├── registry/
-│       │   ├── registry_delete/      → <slug>/
-│       │   ├── registry_event/       → <slug>/
-│       │   └── registry_set/         → <slug>/
-│       └── sysmon/
-│           └── sysmon_config_modification/ → <slug>/
-├── rules-emerging-threats/           # Emerging threats
-│   ├── 2025/
-│   │   ├── Exploits/
-│   │   │   └── CVE-2025-55182/      → <slug>/
-│   │   └── Malware/
-│   │       ├── Grixba/               → <slug>/
-│   │       └── Shai-Hulud/           → <slug>/
-│   └── 2026/
-│       └── Exploits/
-│           ├── CVE-2026-33829/       → <slug>/
-│           └── RedSun/               → <slug>/
-└── rules-threat-hunting/             # Threat hunting
-    └── windows/
-        └── image_load/               → <slug>/
+├── rules/windows/process_creation/<slug>/            # main rules
+├── rules/linux/auditd/execve/<slug>/
+└── rules-emerging-threats/2026/Exploits/CVE-2026-33829/<slug>/
 ```
 
-Intermediate directories (`cisco/`, `windows/`, `builtin/`, etc.) reflect the SigmaHQ category hierarchy. The last directory before the files is always a **slug** derived from the rule YAML name.
+Intermediate directories reflect the SigmaHQ category hierarchy. The last directory before the files is always a **slug** derived from the rule YAML name.
 
 ## Regression directory contents
 
@@ -61,13 +27,13 @@ Each rule with regression contains a directory (slug) with:
 ```text
 <slug>/
 ├── info.yml                    # Metadata + test results
-├── <rule_id>.evtx              # Valid EVTX (EvtExportLog or pure-Rust writer)
+├── <rule_id>.evtx              # Valid EVTX (EvtExportLog or pure Rust writer)
 └── <rule_id>.json              # Optional (regression.add_json_output) — raw event
 ```
 
 The `<rule_id>` is always the **UUID** contained in `rule_metadata[0].id` of the `info.yml` file. It is never the directory name.
 
-Variants: some rules (e.g., cisco) use `.raw` when the EVTX format is not applicable. Auditd rules use `.log` (complete original audit event lines). The data file + `info.yml` are the mandatory output; the `.json` is an optional extra.
+Variants: some rules (e.g. cisco) use `.raw` when the EVTX format is not applicable. Linux rules use `.log` (complete original lines: auditd, syslog or Sysmon-for-Linux XML). The data file + `info.yml` are the mandatory output; the `.json` is an optional extra.
 
 ## `info.yml` schema
 
@@ -109,7 +75,7 @@ regression_tests_info:
     type: evtx                  # or "raw" for cisco, "log" for Linux (auditd/syslog/sysmon)
     provider: <ProviderName>    # dynamically extracted from event's XML ProviderName (e.g., Microsoft-Windows-Sysmon, or "auditd")
     match_count: <int>          # Number of matches found
-    path: regression_data/.../<rule_id>.evtx  # Relative path to the template
+    path: regression_data/.../<rule_id>.evtx  # Relative path to the data file
 ```
 
 ### Complete example
@@ -130,6 +96,44 @@ regression_tests_info:
     path: regression_data/rules/windows/process_creation/proc_creation_win_bitsadmin_download/d059842b-6b9d-4ed1-b5c3-5b89143c6ede.evtx
 ```
 
+### `.log` examples (Linux)
+
+**auditd (`type: log`, fallback provider `auditd` — plain-text event without XML):**
+
+```yaml
+id: 60ff02c2-a649-436c-972d-7c6fe6af8711
+description: N/A
+date: 2026-08-20
+author: frack113
+rule_metadata:
+  - id: 1543ae20-cbdf-4ec1-8d12-7664d667a825
+    title: Suspicious Commands Linux
+regression_tests_info:
+  - name: Positive Detection Test
+    type: log
+    provider: auditd
+    match_count: 1
+    path: regression_data/rules/linux/auditd/execve/lnx_auditd_susp_cmds/1543ae20-cbdf-4ec1-8d12-7664d667a825.log
+```
+
+**Sysmon-for-Linux (`type: log`, provider extracted from the event XML):**
+
+```yaml
+id: 8f2a5c31-9d64-4b7e-a1c2-3f5d8e90b7aa
+description: N/A
+date: 2026-08-23
+author: frack113
+rule_metadata:
+  - id: f74107df-b6c6-4e80-bf00-4170b658162b
+    title: Sudo Privilege Escalation CVE-2019-14287
+regression_tests_info:
+  - name: Positive Detection Test
+    type: log
+    provider: Linux-Sysmon
+    match_count: 1
+    path: regression_data/rules/linux/builtin/lnx_sudo_privilege_escalation_cve_2019_14287/f74107df-b6c6-4e80-bf00-4170b658162b.log
+```
+
 ## Naming conventions
 
 ### Directories
@@ -144,7 +148,7 @@ regression_tests_info:
 | File | Format | Name | Content |
 |------|--------|------|---------|
 | `info.yml` | YAML | Always `info.yml` | Metadata + results |
-| `<rule_id>.evtx` | Binary | UUID v4 | Valid EVTX (EvtExportLog or pure-Rust writer; validated ≥ 1 record at write time) |
+| `<rule_id>.evtx` | Binary | UUID v4 | Valid EVTX (EvtExportLog or pure Rust writer; validated ≥ 1 record at write time) |
 | `<rule_id>.log` | Text | UUID v4 | Complete event (multi-record auditd lines, syslog lines, or Sysmon-for-Linux XML) |
 | `<rule_id>.json` | JSON | UUID v4 | Optional (`regression.add_json_output`) — raw event (nested Winevt JSON or flat Linux JSON) |
 
@@ -180,25 +184,26 @@ For an `info.yml` to be valid:
 - Data files must be named exactly `<rule_id>.<ext>`
 - Hidden files (starting with `.`) are ignored
 
+Unparsable `info.yml` files are skipped with a warning (never silently) so they cannot fall out of the skip set unnoticed.
+
 ## Platforms
 
 ### Windows
 
-The majority of rules (process_creation, file_event, registry, etc.) target Windows. The `.json` event files contain Windows-specific Sigma keys (`Image`, `CommandLine`, `ParentImage`, etc.).
+The majority of rules (process_creation, file_event, registry, etc.) target Windows. The `.json` event files contain Windows-specific keys (`Image`, `CommandLine`, `ParentImage`, etc.).
 
 ### Cisco
 
-Some network rules use native formats (`.raw` instead of `.json` + `.evtx`). The `provider` field in `regression_tests_info` may be absent.
+Some network rules use native formats (`.raw` instead of `.json` + `.evtx`). The `provider` field in `regression_tests_info` may be absent on read.
 
 ### Linux (auditd / syslog / sysmon)
 
-The `sigmacatch-linux` binary runs three collectors in parallel, each guarded by its source:
+Three collectors run in parallel, each guarded by its source — the full specification
+(tailed files, guards, parsing) lives in [architecture.md](architecture.md). All their
+regression data uses `.log` (complete original lines: auditd records grouped by
+`timestamp:sequence`, RFC3164 syslog lines, or Sysmon-for-Linux XML).
 
-- **auditd** if `/var/log/audit/audit.log` exists: tails the file, parses records with `linux-audit-parser`, emits one event per record. Records sharing the same audit event id (`msg=audit(timestamp:sequence)`) are grouped: each event carries `event_raw` = all original lines of the audit event.
-- **builtin syslog** tails every existing file among central (`/var/log/messages`, `/var/log/syslog`), authpriv (`/var/log/secure`, `/var/log/auth.log`) and cron (`/var/log/cron`, `/var/log/cron.log`): one RFC3164 line per event, flat `event_json` `{message, program, host, service}` with `service` derived from the program tag (`sshd` → `sshd`, `CRON` → `cron`, …) plus a per-file-group fallback (authpriv → `auth`, cron → `cron`). Lines tagged `sysmon` are excluded — handled by the dedicated collector.
-- **Sysmon-for-Linux** keeps the central-syslog lines tagged `sysmon` whose body is winevt XML (`<Event>…</Event>`): the shared winevt parser produces the full nested field set and the Windows pipelines apply unchanged; logsource is resolved from the channel `Linux-Sysmon/Operational` → `product: linux`, `service: sysmon`. Truncated XML lines (rsyslog size limits) are skipped.
-
-On hosts forwarding audit records into syslog (audisp/rsyslog), the same activity is captured twice through distinct pipelines — an auditd-based rule and a syslog-based rule can both produce regression data from it. In every case regression data uses `.log` (complete original lines). The provider written to `info.yml` comes from the event XML provider when present (`Linux-Sysmon` for Sysmon-for-Linux events), falling back to `auditd` for plain-text events.
+On hosts forwarding audit records into syslog (audisp/rsyslog), both pipelines capture the same activity: an auditd-based rule and a syslog-based rule can both produce regression data from it. The provider written to `info.yml` comes from the event XML when present (`Linux-Sysmon` for Sysmon-for-Linux events), falling back to `auditd` for plain-text events.
 
 ### Emerging Threats
 

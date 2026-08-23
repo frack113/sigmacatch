@@ -51,10 +51,33 @@ Three binaries are produced from two crates, each embedding a single collector (
 | Binary | Crate | Description |
 |---|---|---|
 | `sigmacatch-channel` | `sigmacatch-win/src/channels.rs` | Native Winevt API (`EvtQueryW`/`EvtNext`/`EvtRender`), multi-channel, replayable |
-| `sigmacatch-etw` | `sigmacatch-win/src/etw/` | Direct ETW collection via ferrisetw, 18 providers (9 Sysmon-masquerade + 9 generic), generic provider→channel routing, real EventID preserved [beta] |
-| `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog,sysmon}.rs` | Three collectors run in parallel, each guarded by its source: **auditd** if `/var/log/audit/audit.log` exists (tail, linux-audit-parser parsing, event id grouping `timestamp:sequence`, logsource `product:linux, service:auditd`); **builtin syslog** tails every existing file among central (`/var/log/messages`, `/var/log/syslog`), authpriv (`/var/log/secure`, `/var/log/auth.log`) and cron (`/var/log/cron`, `/var/log/cron.log`) — RFC3164 lines, service derived from the program tag (fallback per file group: authpriv → `auth`, cron → `cron`); **Sysmon-for-Linux** keeps the central-syslog lines tagged `sysmon` whose body is winevt XML (parsed via `parse_winevt_xml`/`_raw` → logsource `product:linux, service:sysmon` via channel `Linux-Sysmon/Operational`; those lines are excluded from the builtin collector). No source found → bail. Regression format `DataFormat::Log` |
+| `sigmacatch-etw` | `sigmacatch-win/src/etw/` | Direct ETW collection via ferrisetw (details below) |
+| `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog,sysmon}.rs` | Three collectors run in parallel (details below) |
 
-The ETW collector covers the same channels as the Winevt collector (Security, Defender, Firewall, Sysmon, …) by resolving provider→channel from a mapping table and keeping the real EventID. For generic providers, `EventData` fields are provided by per-provider field maps (variable fidelity). On non-Windows the Winevt/ETW collectors are no-op stubs.
+### Direct ETW
+
+The ETW collector covers the same channels as the Winevt collector (Security, Defender,
+Firewall, Sysmon, …): 18 providers (9 Sysmon-masquerade + 9 generic), provider→channel
+resolution from a mapping table, real EventID preserved [beta]. For generic providers,
+`EventData` fields are provided by per-provider field maps (variable fidelity). On
+non-Windows the Winevt/ETW collectors are no-op stubs.
+
+### The three Linux collectors
+
+Each guarded by its source; no source available → bail:
+
+- **auditd** — when `/var/log/audit/audit.log` exists: tail, linux-audit-parser parsing,
+  grouping by event id `timestamp:sequence`, logsource `product:linux, service:auditd`.
+- **builtin syslog** — tails every existing file among central (`/var/log/messages`,
+  `/var/log/syslog`), authpriv (`/var/log/secure`, `/var/log/auth.log`) and cron
+  (`/var/log/cron`, `/var/log/cron.log`): RFC3164 lines, service derived from the program
+  tag (fallback per file group: authpriv → `auth`, cron → `cron`). Lines tagged `sysmon`
+  are excluded (handled by the dedicated collector).
+- **Sysmon-for-Linux** — central-syslog lines tagged `sysmon` whose body is winevt XML
+  (`parse_winevt_xml`/`_raw`) → logsource `product:linux, service:sysmon` via channel
+  `Linux-Sysmon/Operational`.
+
+Regression format: `DataFormat::Log`.
 
 Each binary defines its own `CollectorKind` in its `main_*.rs` (`name()`/`mode()`/`channels()`/`build()`/`regression_format()`) and injects it into `sigmacatch_runner::run()`. The regression format comes from `regression_format()`: `DataFormat::Evtx` for both Windows binaries, `DataFormat::Log` for `sigmacatch-linux`.
 
@@ -70,14 +93,14 @@ sigmacatch-lnx ──┤   ├── sigmacatch-config      (Config, CliArgs)
                  │   ├── sigmacatch-types       (Event, Alert, RegressionHeader, Product, EventProducer, XML parsing)
                  │   └── sigmacatch-repo        (SigmaRepo, grit-lib wrapper)
                  ├── [win tools] input-windows-evtx (parse EVTX → Event for `check`)
-                 └── [tools] clap, serde
+                 └── [tools] serde (JSON serialization of diagnostic output)
 ```
 
 `sigmacatch-detection` depends on `sigmacatch-rule` + `sigmacatch-types` + `rsigma-eval`.
 The collectors live inside their binary crates and depend only on `sigmacatch-types`
 (shared types + logsource mapping tables). `input-windows-evtx` depends on
-`sigmacatch-types` + the `evtx` crate. The diagnostic subcommands (`cli.rs`) use
-`clap` + `serde` (feature `tools`, off by default).
+`sigmacatch-types` + the `evtx` crate. The diagnostic subcommands (`cli.rs`) parse
+arguments manually and use `serde` for their JSON output (feature `tools`, off by default).
 
 ## Pipeline (continuous loop)
 
@@ -146,10 +169,12 @@ All generation runs in `spawn_blocking` (the `Pipeline` state is moved out and r
   are excluded from the skip set → regenerated.
 - **Output always in the sigma repo**: `<sigma_repo_path>/regression_data/<rule_rel_path>/`
   (`info.yml` + data file `.evtx`/`.log`, optional `.json`), committed to the fork if
-  `contrib` (local commits otherwise).
-- **Collector observability**: non-existent channels are excluded once on
-  `ERROR_EVT_CHANNEL_NOT_FOUND` (single `error!`); live channels log "initial query OK" and
-  a "still alive" heartbeat (60s); `warn!` when events are fetched but dropped at render/parse.
-  The Linux collectors detect tail-file rotation (inode change) and re-open the file; the
-  builtin syslog collector excludes lines tagged `sysmon` to avoid double capture
-  (handled by the dedicated Sysmon-for-Linux collector).
+  `contrib` (local commits otherwise). Caution: the generation path is hardwired to the
+  local `./sigma` checkout — keep `git.sigma_repo_path: "sigma"`; any other value breaks
+  the path mirroring and partial-artifact cleanup.
+- **Collector observability**: the collector excludes non-existent channels once on
+  `ERROR_EVT_CHANNEL_NOT_FOUND` (single `error!`); each live channel logs "initial query OK"
+  then a "still alive" heartbeat (60s); `warn!` when events are fetched but dropped at
+  render/parse. The Linux collectors detect tail-file rotation (inode change) and re-open
+  the file; the builtin syslog collector excludes lines tagged `sysmon` to avoid double
+  capture (handled by the dedicated Sysmon-for-Linux collector).

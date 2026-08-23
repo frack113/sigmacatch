@@ -10,16 +10,23 @@ Diagnostic commands are subcommands of the binaries, behind the `tools` feature 
 An unknown or absent subcommand → the binary starts its normal collection loop.
 The sections below document the Windows subcommands; the Linux equivalents
 (`check`, `check-filter`, `list-rules`) share the same logic with the `linux`
-product filter and `.log` data validation. The Linux `check` auto-detects the
-data format of each regression entry from its first non-empty line —
-Sysmon-for-Linux XML (`sysmon`), RFC3164 syslog (`syslog`) or auditd records
-(`auditd`) — and parses events accordingly before evaluation.
+product filter and `.log` data validation.
+
+> **Common prerequisite:** every subcommand loads `config.yaml` through `Config::load`,
+> which runs **full** validation (including git.author/email/token) — not just the
+> `filter` section. On a fresh machine with the default `config.yaml`, a diagnostic
+> subcommand can therefore fail on a git error before reaching its own work.
 
 ## check
 
 **Usage:** `sigmacatch-channel check [--json]` / `sigmacatch-linux check [--json]`
 
 **Purpose:** deep validation of all regression data in `./sigma/regression_data`.
+
+**Linux variant:** the Linux `check` auto-detects the data format of each regression
+entry from its first non-empty line: Sysmon-for-Linux XML (`sysmon`), RFC3164 syslog
+(`syslog`) or auditd records (`auditd`). It then parses events accordingly before
+evaluation.
 
 ### Pipeline
 
@@ -77,14 +84,11 @@ Running validation...
   "failed": [
     {
       "rule_name": "registry_event_add_local_hidden_user",
-      "rule_id": "460479f3-80b7-42da-9c43-2cc1d54dbccd",
       "error": "RULE NOT MATCHED — expected '460479f3-...' (0 alert(s), matched: )"
     }
   ]
 }
 ```
-
----
 
 ## check-filter
 
@@ -110,8 +114,6 @@ directly from the raw rules — so a self-consistent but wrong `stats()` would s
 sigmacatch-channel check-filter
 ```
 
----
-
 ## check-channels
 
 **Usage:** `sigmacatch-channel check-channels [--json]`
@@ -131,14 +133,14 @@ sigmacatch-channel check-filter
 sigmacatch-channel check-channels
 ```
 
----
-
 ## list-rules
 
 **Usage:** `sigmacatch-channel list-rules [--json] [--coverage]`
 
-**Purpose:** lists the loaded rules with their path. With `--coverage`, also shows
-coverage stats (rules with local regression data, pending remote branches, coverage %).
+**Purpose:** lists the loaded rules with their path. With `--coverage`, also shows the ratio
+of rules that have local regression data (`with_data / total`, not a percentage); the ids on
+pending remote `sigmacatch/*` branches are counted in the skip set without being listed
+separately.
 
 ### Pipeline
 
@@ -154,17 +156,15 @@ sigmacatch-channel list-rules
 sigmacatch-channel list-rules --json --coverage
 ```
 
----
-
 ## get-atomic
 
 **Usage:** `sigmacatch-channel get-atomic [--output run_atomic.ps1] [--getprereqs] [--json]`
 
-**Purpose:** generates a `run_atomic.ps1` script chaining `Invoke-AtomicTest
-T1xxx.xxx` commands for the ATT&CK techniques of rules **without regression
-data** according to the config filter. The script is copied to the Windows VM
-and run manually; sigmacatch-channel (continuous loop) captures the generated events
-and produces the regression data.
+**Purpose:** generates a `run_atomic.ps1` script chaining `Invoke-AtomicTest T1xxx.xxx`
+commands for the ATT&CK techniques of rules **without regression data** according to the
+config filter. Copy the script to the Windows VM and run it manually;
+`sigmacatch-channel` (continuous loop) captures the generated events and produces the
+regression data.
 
 ### Pipeline
 
@@ -205,6 +205,6 @@ next run (the skip set only excludes what is already generated).
 
 ```bash
 sigmacatch-channel get-atomic
-sigmacatch-channel get-atomic --output /tmp/run_atomic.ps1
+sigmacatch-channel get-atomic --output $env:TEMP\run_atomic.ps1
 sigmacatch-channel get-atomic --getprereqs --json
 ```

@@ -67,7 +67,7 @@ git:
   transport: http           # http or ssh
   ssh_key_path: ""          # path to SSH private key (optional, only needed for SSH)
   sigma_repo_url: "https://github.com/SigmaHQ/sigma.git"
-  sigma_repo_path: "sigma"
+  sigma_repo_path: "sigma"  # keep the default — generation writes to ./sigma/regression_data
   offline: false            # true = zero git operations (no pull/clone/commit/push; on-disk files used as-is, .git optional)
   contrib: false            # true = push commits to remote fork. Default: false (local commits only)
 log:
