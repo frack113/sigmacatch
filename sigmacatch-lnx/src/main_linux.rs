@@ -11,7 +11,7 @@ use sigmacatch_runner::{self, CollectorKind};
 use sigmacatch_types::{Event, EventProducer};
 use tokio::sync::{mpsc, watch};
 
-use sigmacatch_lnx::{auditd, syslog};
+use sigmacatch_lnx::{auditd, syslog, sysmon};
 
 fn auditd_available() -> bool {
     std::path::Path::new(auditd::DEFAULT_LOG_PATH).is_file()
@@ -19,9 +19,9 @@ fn auditd_available() -> bool {
 
 fn mode_for(auditd_ok: bool, syslog_ok: bool) -> &'static str {
     match (auditd_ok, syslog_ok) {
-        (true, true) => "linux auditd+syslog",
+        (true, true) => "linux auditd+syslog+sysmon",
         (true, false) => "linux auditd",
-        (false, true) => "linux syslog",
+        (false, true) => "linux syslog+sysmon",
         (false, false) => "linux (no source)",
     }
 }
@@ -36,6 +36,7 @@ fn select_collectors(
     }
     if syslog_ok {
         collectors.push(("syslog", Box::new(syslog::EventCollector::new())));
+        collectors.push(("sysmon", Box::new(sysmon::EventCollector::new())));
     }
     collectors
 }
@@ -149,17 +150,17 @@ mod tests {
 
     #[test]
     fn test_mode_for() {
-        assert_eq!(mode_for(true, true), "linux auditd+syslog");
+        assert_eq!(mode_for(true, true), "linux auditd+syslog+sysmon");
         assert_eq!(mode_for(true, false), "linux auditd");
-        assert_eq!(mode_for(false, true), "linux syslog");
+        assert_eq!(mode_for(false, true), "linux syslog+sysmon");
         assert_eq!(mode_for(false, false), "linux (no source)");
     }
 
     #[test]
     fn test_select_collectors() {
-        assert_eq!(select_collectors(true, true).len(), 2);
+        assert_eq!(select_collectors(true, true).len(), 3);
         assert_eq!(select_collectors(true, false).len(), 1);
-        assert_eq!(select_collectors(false, true).len(), 1);
+        assert_eq!(select_collectors(false, true).len(), 2);
         assert!(select_collectors(false, false).is_empty());
     }
 

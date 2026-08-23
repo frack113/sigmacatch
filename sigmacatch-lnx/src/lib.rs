@@ -7,3 +7,5 @@ pub use sigmacatch_runner::{CollectorKind, run};
 pub mod auditd;
 #[cfg(feature = "builtin")]
 pub mod syslog;
+#[cfg(feature = "builtin")]
+pub mod sysmon;

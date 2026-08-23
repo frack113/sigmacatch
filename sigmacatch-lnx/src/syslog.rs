@@ -5,10 +5,11 @@
 //!
 //! The builtin linux Sigma rules (`sigma/rules/linux/builtin/{sshd,syslog,cron,
 //! vsftpd,clamav,guacamole}`) are keyword rules matched against the raw message
-//! text. Each line of the central syslog is emitted as one [`Event`] carrying
-//! `product: linux` and a `service` derived from the RFC3164 program tag
-//! (`sshd` → `sshd`, `CRON` → `cron`, …), so the logsource extractor prunes the
-//! rules that do not apply. Non-matching lines are dropped.
+//! text. Each non-sysmon line of the central syslog is emitted as one [`Event`]
+//! carrying `product: linux` and a `service` derived from the RFC3164 program
+//! tag (`sshd` → `sshd`, `CRON` → `cron`, …). Sysmon-for-Linux lines
+//! (program tag `sysmon`, XML body) are excluded and handled by the dedicated
+//! sysmon collector to prevent double-capture. Non-matching lines are dropped.
 //!
 //! # API
 //! - `EventCollector::new()` → collector discovering the first existing default
@@ -304,7 +305,9 @@ impl TailState {
         while let Some(pos) = self.pending.iter().position(|&b| b == b'\n') {
             let line = self.pending[..=pos].to_vec();
             self.pending = self.pending[pos + 1..].to_vec();
+            // sysmon for Linux handled exclusively by the sysmon collector.
             if let Some(record) = parse_line(&line)
+                && !record.program.eq_ignore_ascii_case("sysmon")
                 && tx.send(record_to_event(&line, &record)).await.is_err()
             {
                 return Ok(());
