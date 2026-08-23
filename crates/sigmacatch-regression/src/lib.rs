@@ -12,7 +12,6 @@ mod long_path;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow};
 use sigmacatch_types::{Alert, RegressionHeader};
 use tracing::{error, info, info_span, warn};
 use uuid::Uuid;
@@ -411,16 +410,19 @@ impl RegressionData {
     /// later without orphaned files. The provider is resolved before any file
     /// is written so a malformed event fails fast.
     fn generate(&self) -> Result<()> {
-        let alert = self
-            .alerts
-            .first()
-            .ok_or_else(|| anyhow!("no matched event for rule {}", self.header.rule_id))?;
+        let alert = self.alerts.first().ok_or_else(|| {
+            RegressionError::Invalid(format!("no matched event for rule {}", self.header.rule_id))
+        })?;
         let provider = self.format.resolve_provider(alert)?;
 
         let rule_dir = self.rule_dir()?;
         let rule_dir = crate::long_path::long_path(&rule_dir);
-        std::fs::create_dir_all(&rule_dir)
-            .with_context(|| format!("Failed to create rule directory {:?}", rule_dir))?;
+        std::fs::create_dir_all(&rule_dir).map_err(|e| {
+            RegressionError::Invalid(format!(
+                "Failed to create rule directory {:?}: {e}",
+                rule_dir
+            ))
+        })?;
 
         let rule_id = &self.header.rule_id;
         let ext = self.format.ext();
@@ -429,7 +431,10 @@ impl RegressionData {
             if self.add_json_output {
                 let raw_json_path =
                     crate::long_path::long_path(&rule_dir.join(format!("{rule_id}.json")));
-                let raw_json = serde_json::to_string_pretty(&alert.event_json_raw)?;
+                let raw_json =
+                    serde_json::to_string_pretty(&alert.event_json_raw).map_err(|e| {
+                        RegressionError::Invalid(format!("failed to serialize raw event json: {e}"))
+                    })?;
                 std::fs::write(&raw_json_path, raw_json)?;
                 written.push(raw_json_path);
             }
@@ -478,6 +483,27 @@ impl RegressionData {
         Ok(())
     }
 }
+
+/// Errors produced while generating, reading or writing regression data.
+#[derive(Debug, thiserror::Error)]
+pub enum RegressionError {
+    /// Filesystem failure.
+    #[error("filesystem error: {0}")]
+    Io(#[from] std::io::Error),
+    /// YAML could not be parsed or serialized.
+    #[error("YAML error: {0}")]
+    Yaml(String),
+    /// Structural contract violated by the data itself.
+    #[error("{0}")]
+    Invalid(String),
+    /// EVTX export could not produce usable data for a rule this cycle;
+    /// the rule is skipped and re-captured on a later cycle.
+    #[error("{0}")]
+    Export(String),
+}
+
+/// Crate-local result alias over [`RegressionError`].
+pub type Result<T> = std::result::Result<T, RegressionError>;
 
 // ─── Free functions ─────────────────────────────────────────────────────
 
@@ -530,10 +556,9 @@ pub(crate) fn update_regression_tests_path(rule_yaml_path: &Path, tests_path: &s
 
 pub(crate) fn try_read_rule_id(info_path: &Path) -> Result<Uuid> {
     let info = InfoYml::load(info_path)?;
-    info.rule_metadata
-        .first()
-        .map(|m| m.id)
-        .ok_or_else(|| anyhow!("No rule_metadata in {}", info_path.display()))
+    info.rule_metadata.first().map(|m| m.id).ok_or_else(|| {
+        RegressionError::Invalid(format!("No rule_metadata in {}", info_path.display()))
+    })
 }
 
 // ─── list_all ──────────────────────────────────────────────────────────

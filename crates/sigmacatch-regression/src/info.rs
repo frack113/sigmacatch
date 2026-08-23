@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use uuid::Uuid;
@@ -98,27 +97,29 @@ impl InfoYml {
         }
     }
 
-    pub fn save(&self, path: &Path) -> anyhow::Result<()> {
+    pub fn save(&self, path: &Path) -> crate::Result<()> {
         let path = crate::long_path::long_path(path);
         let file = std::fs::File::create(&path)?;
-        serde_yaml::to_writer(file, self)?;
+        serde_yaml::to_writer(file, self)
+            .map_err(|e| crate::RegressionError::Yaml(e.to_string()))?;
         Ok(())
     }
 
-    pub fn load(path: &Path) -> anyhow::Result<Self> {
+    pub fn load(path: &Path) -> crate::Result<Self> {
         let path = crate::long_path::long_path(path);
-        let mut content = std::fs::read_to_string(&path)
-            .map_err(|e| anyhow!("Failed to read info.yml: {}", e))?;
+        let mut content = std::fs::read_to_string(&path).map_err(|e| {
+            crate::RegressionError::Invalid(format!("Failed to read info.yml: {}", e))
+        })?;
         if content.starts_with('\u{feff}') {
             let mut chars = content.chars();
             chars.next();
             content = chars.as_str().to_string();
         }
         let info: Self = serde_yaml::from_str(&content)
-            .map_err(|e| anyhow!("Failed to parse info.yml: {}", e))?;
+            .map_err(|e| crate::RegressionError::Yaml(e.to_string()))?;
         if info.rule_metadata.is_empty() {
-            return Err(anyhow!(
-                "info.yml: 'rule_metadata' must be a non-empty sequence"
+            return Err(crate::RegressionError::Invalid(
+                "info.yml: 'rule_metadata' must be a non-empty sequence".to_string(),
             ));
         }
         Ok(info)

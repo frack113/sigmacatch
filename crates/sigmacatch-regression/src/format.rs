@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use anyhow::{Result, anyhow};
+use crate::{RegressionError, Result};
 use tracing::warn;
 
 use sigmacatch_types::Alert;
@@ -60,8 +60,9 @@ impl DataFormat {
             Self::Evtx => {
                 let provider = alert.provider();
                 if provider.is_empty() {
-                    return Err(anyhow!(
+                    return Err(RegressionError::Invalid(
                         "event has no XML provider — refusing to generate with default provider metadata"
+                            .to_string(),
                     ));
                 }
                 Ok(provider.to_string())
@@ -89,14 +90,18 @@ impl DataFormat {
             ),
             Self::Log => {
                 if alert.event_raw.len() > self.max_blob_size() {
-                    return Err(anyhow!(
+                    return Err(RegressionError::Invalid(format!(
                         "audit event exceeds {} MiB — refusing to write {}",
                         self.max_blob_size() / 1024 / 1024,
                         path.display()
-                    ));
+                    )));
                 }
-                std::fs::write(path, &alert.event_raw)
-                    .map_err(|e| anyhow!("Failed to write log data {}: {e}", path.display()))
+                std::fs::write(path, &alert.event_raw).map_err(|e| {
+                    RegressionError::Invalid(format!(
+                        "Failed to write log data {}: {e}",
+                        path.display()
+                    ))
+                })
             }
         }
     }
