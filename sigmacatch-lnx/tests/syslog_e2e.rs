@@ -37,5 +37,8 @@ fn builtin_syslog_line_matches_service_rule() {
     for a in &alerts {
         println!("matched rule: {} ({})", a.rule_title, a.rule_id);
     }
-    assert!(!alerts.is_empty(), "builtin syslog line must match sshd rule(s)");
+    assert!(
+        !alerts.is_empty(),
+        "builtin syslog line must match sshd rule(s)"
+    );
 }
