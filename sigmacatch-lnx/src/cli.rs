@@ -22,16 +22,18 @@ use sigmacatch_lnx::{auditd, syslog, sysmon};
 
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
 
-pub fn dispatch() -> i32 {
+/// Dispatch on argv[1]. `None` = no/unknown subcommand → caller runs the
+/// normal collection loop; `Some(code)` = subcommand handled → exit with code.
+pub fn dispatch() -> Option<i32> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        return 0;
+        return None;
     }
     match args[1].as_str() {
-        "check" => cmd_check(&args[1..]),
-        "check-filter" => cmd_check_filter(&args[1..]),
-        "list-rules" => cmd_list_rules(&args[1..]),
-        _ => 0,
+        "check" => Some(cmd_check(&args[1..])),
+        "check-filter" => Some(cmd_check_filter(&args[1..])),
+        "list-rules" => Some(cmd_list_rules(&args[1..])),
+        _ => None,
     }
 }
 
@@ -62,8 +64,12 @@ struct CheckFail {
 fn cmd_check(args: &[String]) -> i32 {
     let mut json_output = false;
     for arg in args {
-        if arg == "--json" {
-            json_output = true;
+        match arg.as_str() {
+            "--json" => json_output = true,
+            other => {
+                eprintln!("Unknown argument: {other}");
+                return 1;
+            }
         }
     }
 
@@ -226,6 +232,7 @@ fn cmd_check(args: &[String]) -> i32 {
         let output = serde_json::json!({
             "total": total,
             "passed": passed,
+            "skipped": 0,
             "failed_count": failed.len(),
             "pass_rate": pass_rate,
             "failed": failed,
@@ -519,16 +526,23 @@ fn run_filter_tests(tests: &[FilterTest], json_output: bool) -> bool {
 fn cmd_check_filter(args: &[String]) -> i32 {
     let mut json_output = false;
     for arg in args {
-        if arg == "--json" {
-            json_output = true;
+        match arg.as_str() {
+            "--json" => json_output = true,
+            other => {
+                eprintln!("Unknown argument: {other}");
+                return 1;
+            }
         }
     }
 
     if !json_output {
-        println!(
-            "Loaded {} total rules from ./sigma",
-            SigmahqRules::new().unwrap().len()
-        );
+        match SigmahqRules::new() {
+            Ok(r) => println!("Loaded {} total rules from ./sigma", r.len()),
+            Err(e) => {
+                eprintln!("Failed to load rules: {e}");
+                return 1;
+            }
+        }
         println!();
     }
 
@@ -662,7 +676,10 @@ fn cmd_list_rules(args: &[String]) -> i32 {
         match arg.as_str() {
             "--json" => json_output = true,
             "--coverage" => coverage = true,
-            _ => {}
+            other => {
+                eprintln!("Unknown argument: {other}");
+                return 1;
+            }
         }
     }
 
