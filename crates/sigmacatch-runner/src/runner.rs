@@ -284,7 +284,9 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
             }
             Some(event) = rx.recv(), if pipeline_slot.is_some() => {
                 if let Some(pipeline) = pipeline_slot.as_mut() {
+                    let product = event.event_json.get("product").map(|v| v.to_string());
                     pipeline.engine.put_events(vec![event]);
+                    tracing::info!("event received (product={:?})", product);
                 }
             }
             _ = generate_interval.tick() => {
