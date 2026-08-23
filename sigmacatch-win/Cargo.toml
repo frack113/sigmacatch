@@ -21,7 +21,7 @@ etw = [
     "dep:sha2",
     "dep:phf",
 ]
-tools = ["dep:clap", "dep:serde", "dep:input-windows-evtx"]
+tools = ["dep:serde", "dep:input-windows-evtx"]
 
 [[bin]]
 name = "sigmacatch-channel"
@@ -58,7 +58,6 @@ serde_json = "1.0"
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 
-clap = { version = "4", features = ["derive"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 
 [target.'cfg(windows)'.dependencies]

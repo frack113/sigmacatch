@@ -12,7 +12,7 @@ license.workspace = true
 default = ["auditd", "builtin"]
 auditd = ["dep:async-trait", "dep:linux-audit-parser"]
 builtin = ["dep:async-trait", "dep:regex"]
-tools = ["dep:clap", "dep:serde"]
+tools = ["dep:serde"]
 
 [[bin]]
 name = "sigmacatch-linux"
@@ -39,7 +39,6 @@ serde_json = "1.0"
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 
-clap = { version = "4", features = ["derive"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 
 [dev-dependencies]
