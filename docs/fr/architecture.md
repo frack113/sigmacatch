@@ -23,6 +23,7 @@ sigmacatch/
 │       ├── main_linux.rs         # bin `sigmacatch-linux` : lance les collecteurs auditd et syslog en parallèle (garde par source)
 │       ├── auditd.rs             # Collecteur auditd (tail /var/log/audit/audit.log, groupement par event id)
 │       ├── syslog.rs             # Collecteur syslog central (/var/log/messages → /var/log/syslog, RFC3164)
+│       └── sysmon.rs             # Collecteur Sysmon-for-Linux (tail syslog, parsing XML winevt)
 │       └── cli.rs                # Sous-commandes de diagnostic (feature `tools`) : check, check-filter, list-rules
 └── crates/
     ├── sigmacatch-runner/        # Pipeline partagé aux 2 crates binaires :
@@ -49,7 +50,7 @@ Trois binaires sont produits depuis deux crates, chacun embarquant un seul colle
 |---|---|---|
 | `sigmacatch-channel` | `sigmacatch-win/src/channels.rs` | API Winevt native (`EvtQueryW`/`EvtNext`/`EvtRender`), multi-channel, rejouable |
 | `sigmacatch-etw` | `sigmacatch-win/src/etw/` | Collecte ETW directe via ferrisetw, 18 providers (9 Sysmon-masquerade + 9 génériques), routing générique provider→channel, EventID réel conservé [beta] |
-| `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog}.rs` | Les deux collecteurs tournent en parallèle, chacun gardé par sa source : **auditd** si `/var/log/audit/audit.log` existe (tail, parsing linux-audit-parser, groupement par event id `timestamp:sequence`, logsource `product:linux, service:auditd`) **et** **syslog central** (`/var/log/messages` puis `/var/log/syslog`, lignes RFC3164, service dérivé du program tag). Aucune des deux sources → bail. Format de régression `DataFormat::Log` |
+| `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog,sysmon}.rs` | Les trois collecteurs tournent en parallèle, chacun gardé par sa source : **auditd** si `/var/log/audit/audit.log` existe (tail, parsing linux-audit-parser, groupement par event id `timestamp:sequence`, logsource `product:linux, service:auditd`), **et** **syslog central** (`/var/log/messages` puis `/var/log/syslog`, lignes RFC3164, service dérivé du program tag) et **Sysmon-for-Linux** (lignes syslog taggées `sysmon` dont le corps est XML winevt, parsées via `parse_winevt_xml`/`_raw` → logsource `product:linux, service:sysmon` via channel `Linux-Sysmon/Operational`). Aucune des sources → bail. Format de régression `DataFormat::Log` |
 
 Le collecteur ETW couvre les mêmes channels que le collecteur Winevt (Security, Defender, Firewall, Sysmon, …) en résolvant provider→channel à partir d'une table de mapping, et en gardant le vrai EventID. Pour les providers génériques, les champs `EventData` sont fournis par des field maps par provider (fidelité variable). Sur non-Windows, les collecteurs Winevt/ETW sont des stubs no-op.
 
@@ -101,7 +102,7 @@ utilisent `clap` + `serde` (feature `tools`, désactivée par défaut).
 10. collector = kind.build(&cycle_channels) → tokio::spawn(collector.run(tx, stop))
     ├── sigmacatch-channel (winevt)  → EventCollector::new(cycle_channels).run(tx, stop)
     ├── sigmacatch-etw (etw) → EventCollector::new().run(tx, stop) (routing provider→channel interne)
-    └── sigmacatch-linux (auditd + syslog) → MultiCollector (les deux tails en parallèle, rotation détectée)
+     └── sigmacatch-linux (auditd + syslog + sysmon) → MultiCollector (les trois tails en parallèle, rotation détectée)
 11. Boucle : tokio::select!
     ├── shutdown_rx (Ctrl+C ou --max-runs atteint) → break
     ├── event depuis rx → engine.put_events(vec![event])
@@ -147,5 +148,6 @@ dans le canal mpsc).
 - **Collecteur observable** : les channels inexistants sont exclus une fois pour toutes sur
   `ERROR_EVT_CHANNEL_NOT_FOUND` (un seul `error!`) ; chaque channel vivant log « initial query OK »
   puis un heartbeat « still alive » (60s) ; `warn!` quand des events sont fetchés mais perdus au
-  render/parse. Les collecteurs Linux détectent la rotation du fichier tailé (changement d'inode)
-  et rouvrent le fichier.
+render/parse. Les collecteurs Linux détectent la rotation du fichier tailé (changement d'inode)
+   et rouvrent le fichier ; le collecteur syslog exclut les lignes taggées `sysmon`
+   pour éviter les doubles événements (pris en charge par le collecteur sysmon dédié).
