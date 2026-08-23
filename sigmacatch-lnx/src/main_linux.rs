@@ -123,14 +123,14 @@ mod cli;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    if !std::path::Path::new(auditd::DEFAULT_LOG_PATH).is_file()
-        && syslog::discover_default_path().is_none()
-    {
+    if !std::path::Path::new(auditd::DEFAULT_LOG_PATH).is_file() && !syslog::default_log_exists() {
         anyhow::bail!(
-            "no linux log source found: {} (auditd) nor {:?} (central syslog). \
+            "no linux log source found: {} (auditd) nor {:?} / {:?} / {:?} (syslog). \
              Install/configure one of them first.",
             auditd::DEFAULT_LOG_PATH,
             syslog::DEFAULT_LOG_PATHS,
+            syslog::AUTH_LOG_PATHS,
+            syslog::CRON_LOG_PATHS,
         );
     }
     #[cfg(feature = "tools")]

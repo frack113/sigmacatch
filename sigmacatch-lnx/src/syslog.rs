@@ -28,31 +28,75 @@ use sigmacatch_types::{Event, EventProducer};
 use std::sync::OnceLock;
 use tokio::sync::{mpsc, watch};
 
-/// Central syslog files, in discovery order. The first existing one is tailed.
+/// Central syslog files, in discovery order (general messages + Sysmon-for-
+/// Linux XML lines). The first existing one is tailed by the sysmon collector;
+/// the builtin collector tails every existing default file.
 pub const DEFAULT_LOG_PATHS: &[&str] = &["/var/log/messages", "/var/log/syslog"];
+
+/// authpriv files: sshd, sudo, su, login, … Rsyslog routes the authpriv
+/// facility here and EXCLUDES it from the central files (`/var/log/secure` on
+/// RHEL families, `/var/log/auth.log` on Debian families).
+pub const AUTH_LOG_PATHS: &[&str] = &["/var/log/secure", "/var/log/auth.log"];
+
+/// cron files (`cron.*` facility, also excluded from the central files).
+pub const CRON_LOG_PATHS: &[&str] = &["/var/log/cron", "/var/log/cron.log"];
+
+/// Which default file group a tailed path belongs to. Drives the fallback
+/// service injected for programs that carry no explicit mapping: an unknown
+/// program writing to the authpriv file is Sigma service `auth`, one writing
+/// to the cron file is `cron` (Sigma taxonomy appendix).
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SourceKind {
+    Central,
+    Auth,
+    Cron,
+}
+
+#[cfg(target_os = "linux")]
+impl SourceKind {
+    fn paths(self) -> &'static [&'static str] {
+        match self {
+            Self::Central => DEFAULT_LOG_PATHS,
+            Self::Auth => AUTH_LOG_PATHS,
+            Self::Cron => CRON_LOG_PATHS,
+        }
+    }
+
+    fn fallback_service(self) -> Option<&'static str> {
+        match self {
+            Self::Central => None,
+            Self::Auth => Some("auth"),
+            Self::Cron => Some("cron"),
+        }
+    }
+
+    fn all() -> [Self; 3] {
+        [Self::Central, Self::Auth, Self::Cron]
+    }
+}
 
 /// Compiled RFC3164 line parser.
 static SYSLOG_RE: OnceLock<Regex> = OnceLock::new();
 
 /// Map a syslog program tag to the Sigma linux service name (taxonomy appendix).
-/// Unknown programs keep their own (lowercased) name so logsource pruning stays
-/// exact: an unmapped service simply never matches a specific builtin rule.
-fn service_for_program(program: &str) -> String {
-    let lower = program.to_lowercase();
-    let mapped: &str = match lower.as_str() {
-        "sshd" => "sshd",
-        "cron" | "crond" => "cron",
-        "vsftpd" | "proftpd" | "pure-ftpd" => "vsftpd",
-        "clamd" | "clamd.scan" | "clamonacc" | "freshclam" => "clamav",
-        "guacamole" | "guac" => "guacamole",
-        "sudo" => "sudo",
-        "syslog" | "rsyslogd" | "rsyslog" => "syslog",
-        other => other,
-    };
-    mapped.to_string()
+/// Unknown programs carry no mapping — the caller applies its source-file
+/// fallback, else keeps the lowercased name so logsource pruning stays exact.
+fn mapped_service(program: &str) -> Option<&'static str> {
+    match program.to_lowercase().as_str() {
+        "sshd" | "sshd-session" => Some("sshd"),
+        "cron" | "crond" => Some("cron"),
+        "vsftpd" | "proftpd" | "pure-ftpd" => Some("vsftpd"),
+        "clamd" | "clamd.scan" | "clamonacc" | "freshclam" => Some("clamav"),
+        "guacamole" | "guac" => Some("guacamole"),
+        "sudo" => Some("sudo"),
+        "syslog" | "rsyslogd" | "rsyslog" => Some("syslog"),
+        _ => None,
+    }
 }
 
-/// First existing default syslog path, or `None`.
+/// First existing default syslog path, or `None` (central files only — used
+/// by the sysmon collector which pins to them).
 pub fn discover_default_path() -> Option<&'static str> {
     DEFAULT_LOG_PATHS
         .iter()
@@ -60,9 +104,26 @@ pub fn discover_default_path() -> Option<&'static str> {
         .find(|p| std::path::Path::new(p).exists())
 }
 
+/// Every existing default file across all groups (central + authpriv + cron).
+#[cfg(target_os = "linux")]
+fn discover_sources() -> Vec<(&'static str, SourceKind)> {
+    SourceKind::all()
+        .into_iter()
+        .flat_map(|kind| {
+            kind.paths()
+                .iter()
+                .filter(|p| std::path::Path::new(p).exists())
+                .map(move |p| (*p, kind))
+        })
+        .collect()
+}
+
 /// True when any default syslog path exists on disk.
 pub fn default_log_exists() -> bool {
-    discover_default_path().is_some()
+    #[cfg(target_os = "linux")]
+    return !discover_sources().is_empty();
+    #[cfg(not(target_os = "linux"))]
+    return discover_default_path().is_some();
 }
 
 /// A parsed syslog line: host, program tag, message and the original bytes.
@@ -116,13 +177,21 @@ pub fn parse_line(line: &[u8]) -> Option<Record> {
 ///   with `product: linux` + the derived `service` injected;
 /// - `event_raw`: the original line.
 pub fn record_to_event(raw: &[u8], record: &Record) -> Event {
+    build_event(SourceKind::Central, raw, record)
+}
+
+#[cfg(target_os = "linux")]
+fn build_event(kind: SourceKind, raw: &[u8], record: &Record) -> Event {
     let mut flat = Map::new();
     flat.insert("message".into(), JsonValue::String(record.message.clone()));
     flat.insert("program".into(), JsonValue::String(record.program.clone()));
     if let Some(host) = &record.host {
         flat.insert("host".into(), JsonValue::String(host.clone()));
     }
-    let service = service_for_program(&record.program);
+    let service = mapped_service(&record.program)
+        .or(kind.fallback_service())
+        .map(str::to_string)
+        .unwrap_or_else(|| record.program.to_lowercase());
     let raw_json = JsonValue::Object({
         let mut root = Map::new();
         root.insert("message".into(), JsonValue::String(record.message.clone()));
@@ -151,7 +220,7 @@ impl Default for EventCollector {
 }
 
 impl EventCollector {
-    /// Create a new collector discovering the first existing default path.
+    /// Create a new collector discovering every existing default file.
     pub fn new() -> Self {
         #[cfg(target_os = "linux")]
         let path = None::<String>;
@@ -163,7 +232,8 @@ impl EventCollector {
         }
     }
 
-    /// Create a new collector pinned to a custom path, or `None` to discover.
+    /// Create a new collector pinned to a single custom path, or `None` to
+    /// discover all defaults.
     pub fn with_path(path: Option<impl Into<String>>) -> Self {
         #[cfg(target_os = "linux")]
         let path = path.map(Into::into);
@@ -172,16 +242,6 @@ impl EventCollector {
         Self {
             #[cfg(target_os = "linux")]
             path,
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    fn resolved_path(&self) -> String {
-        match &self.path {
-            Some(p) => p.clone(),
-            None => discover_default_path()
-                .map(str::to_string)
-                .unwrap_or_else(|| DEFAULT_LOG_PATHS[0].to_string()),
         }
     }
 }
@@ -195,11 +255,38 @@ impl EventProducer for EventCollector {
     ) -> anyhow::Result<()> {
         #[cfg(target_os = "linux")]
         {
-            let path = self.resolved_path();
-            if !std::path::Path::new(&path).exists() {
-                anyhow::bail!("default syslog not found at {path}");
+            let sources = match &self.path {
+                Some(p) => vec![(p.clone(), SourceKind::Central)],
+                None => discover_sources()
+                    .into_iter()
+                    .map(|(p, kind)| (p.to_string(), kind))
+                    .collect(),
+            };
+            if sources.is_empty() {
+                anyhow::bail!("no syslog source found");
             }
-            tail_loop(&path, tx, stop).await
+            let mut tasks = Vec::with_capacity(sources.len());
+            for (path, kind) in sources {
+                let tx = tx.clone();
+                let stop = stop.clone();
+                tasks.push(tokio::task::spawn_blocking(move || {
+                    blocking_tail(&path, kind, tx, stop)
+                }));
+            }
+            drop(tx);
+            let mut result = Ok(());
+            for task in tasks {
+                match task
+                    .await
+                    .map_err(|e| anyhow::anyhow!("syslog tail task panicked: {e}"))
+                    .and_then(|r| r)
+                {
+                    Ok(()) => {}
+                    Err(e) if result.is_ok() => result = Err(e),
+                    Err(_) => {}
+                }
+            }
+            result
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -209,13 +296,13 @@ impl EventProducer for EventCollector {
     }
 }
 
-/// Blocking tail loop: read appended lines from the syslog, parse and emit one
-/// [`Event`] per line. Detects log rotation (inode change) and re-opens the
-/// file. Exits when `stop` is set or the receiver is dropped. Runs in
-/// `spawn_blocking`.
+/// Blocking tail loop body for one file: read appended lines, parse and emit
+/// one [`Event`] per line. Detects log rotation (inode change) and re-opens
+/// the file. Exits when `stop` is set or the receiver is dropped.
 #[cfg(target_os = "linux")]
-async fn tail_loop(
+fn blocking_tail(
     path: &str,
+    kind: SourceKind,
     tx: mpsc::Sender<Event>,
     stop: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
@@ -224,13 +311,12 @@ async fn tail_loop(
 
     tracing::info!("builtin syslog collector starting (tail {path})");
     let file = OpenOptions::new().read(true).open(path)?;
-    tracing::info!("builtin syslog collector starting (tail {path})");
     let mut state = TailState::new(file, path.to_string());
     while !*stop.borrow() && !tx.is_closed() {
-        if let Err(e) = state.poll(&tx).await {
+        if let Err(e) = state.poll(kind, &tx) {
             tracing::warn!("builtin syslog tail error: {e}");
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        std::thread::sleep(Duration::from_millis(100));
     }
     Ok(())
 }
@@ -287,7 +373,7 @@ impl TailState {
         Ok(())
     }
 
-    async fn poll(&mut self, tx: &mpsc::Sender<Event>) -> std::io::Result<()> {
+    fn poll(&mut self, kind: SourceKind, tx: &mpsc::Sender<Event>) -> std::io::Result<()> {
         if self.check_rotation()? {
             self.reopen()?;
         }
@@ -298,17 +384,17 @@ impl TailState {
             return Ok(());
         }
         self.pending.extend_from_slice(&buf[..n]);
-        self.drain_lines(tx).await
+        self.drain_lines(kind, tx)
     }
 
-    async fn drain_lines(&mut self, tx: &mpsc::Sender<Event>) -> std::io::Result<()> {
+    fn drain_lines(&mut self, kind: SourceKind, tx: &mpsc::Sender<Event>) -> std::io::Result<()> {
         while let Some(pos) = self.pending.iter().position(|&b| b == b'\n') {
             let line = self.pending[..=pos].to_vec();
             self.pending = self.pending[pos + 1..].to_vec();
             // sysmon for Linux handled exclusively by the sysmon collector.
             if let Some(record) = parse_line(&line)
                 && !record.program.eq_ignore_ascii_case("sysmon")
-                && tx.send(record_to_event(&line, &record)).await.is_err()
+                && tx.blocking_send(build_event(kind, &line, &record)).is_err()
             {
                 return Ok(());
             }
@@ -323,19 +409,39 @@ mod tests {
 
     #[test]
     fn test_service_map_known_programs() {
-        assert_eq!(service_for_program("sshd"), "sshd");
-        assert_eq!(service_for_program("CRON"), "cron");
-        assert_eq!(service_for_program("vsftpd"), "vsftpd");
-        assert_eq!(service_for_program("clamd.scan"), "clamav");
-        assert_eq!(service_for_program("guacamole"), "guacamole");
-        assert_eq!(service_for_program("sudo"), "sudo");
-        assert_eq!(service_for_program("rsyslogd"), "syslog");
+        assert_eq!(mapped_service("sshd"), Some("sshd"));
+        assert_eq!(mapped_service("sshd-session"), Some("sshd"));
+        assert_eq!(mapped_service("CRON"), Some("cron"));
+        assert_eq!(mapped_service("vsftpd"), Some("vsftpd"));
+        assert_eq!(mapped_service("clamd.scan"), Some("clamav"));
+        assert_eq!(mapped_service("guacamole"), Some("guacamole"));
+        assert_eq!(mapped_service("sudo"), Some("sudo"));
+        assert_eq!(mapped_service("rsyslogd"), Some("syslog"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_source_kind_fallback_service() {
+        let su = b"Aug 23 10:00:00 sigmacatch-linux su[999]: pam_unix(su:session): session opened";
+        let record = parse_line(su).unwrap();
+        // Unknown program in the authpriv file → Sigma service `auth`.
+        let event = build_event(SourceKind::Auth, su, &record);
+        assert_eq!(event.event_json["service"], "auth");
+        // Same line from a central file keeps its own (lowercased) name.
+        let event = build_event(SourceKind::Central, su, &record);
+        assert_eq!(event.event_json["service"], "su");
+
+        let crond = b"Aug 23 10:01:01 sigmacatch-linux CROND[3805]: (root) CMD (run-parts /etc/cron.hourly)";
+        let record = parse_line(crond).unwrap();
+        // Explicit mapping wins over the file fallback.
+        let event = build_event(SourceKind::Cron, crond, &record);
+        assert_eq!(event.event_json["service"], "cron");
     }
 
     #[test]
-    fn test_service_map_unknown_keeps_program() {
-        assert_eq!(service_for_program("nginx"), "nginx");
-        assert_eq!(service_for_program("Kernel"), "kernel");
+    fn test_service_map_unknown_has_no_mapping() {
+        assert_eq!(mapped_service("nginx"), None);
+        assert_eq!(mapped_service("Kernel"), None);
     }
 
     #[test]
@@ -348,7 +454,7 @@ mod tests {
             rec.message,
             "Failed password for invalid user root from 1.2.3.4"
         );
-        assert_eq!(service_for_program(&rec.program), "sshd");
+        assert_eq!(mapped_service(&rec.program), Some("sshd"));
     }
 
     #[test]
@@ -357,7 +463,7 @@ mod tests {
         let rec = parse_line(line).expect("PRI line must parse");
         assert_eq!(rec.program, "CRON");
         assert_eq!(rec.message, "(root) CMD (run-pam)");
-        assert_eq!(service_for_program(&rec.program), "cron");
+        assert_eq!(mapped_service(&rec.program), Some("cron"));
     }
 
     #[test]
@@ -366,7 +472,6 @@ mod tests {
         let rec = parse_line(line).expect("no-pid line must parse");
         assert_eq!(rec.program, "kernel");
         assert_eq!(rec.message, "Uptime: 12345 secs");
-        assert_eq!(service_for_program(&rec.program), "kernel");
     }
 
     #[test]
