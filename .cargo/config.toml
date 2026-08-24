@@ -3,3 +3,8 @@
 
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=/IGNORE:4099"]
+
+[build]
+# Quality gate (quality.md Q7.1, stable since Rust 1.97): warnings fail the build
+# without RUSTFLAGS cache invalidation. Keep the toolchain pinned in CI.
+warnings = "deny"

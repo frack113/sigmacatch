@@ -3,7 +3,7 @@
 
 //! Commit object creation.
 
-use anyhow::Result;
+use crate::{RepoError, Result};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::refs;
@@ -53,7 +53,7 @@ pub(crate) fn commit_tree(
 
     let commit_oid = odb
         .write(ObjectKind::Commit, &raw)
-        .map_err(|e| anyhow::anyhow!("Failed to write commit object: {}", e))?;
+        .map_err(|e| RepoError::Grit(format!("Failed to write commit object: {}", e)))?;
 
     match symbolic_ref_target(git_dir, "HEAD")? {
         Some(ref_name) => {

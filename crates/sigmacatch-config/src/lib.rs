@@ -13,6 +13,23 @@ use std::path::PathBuf;
 /// Git transport protocol re-exported from sigmacatch-repo.
 pub use sigmacatch_repo::GitTransport;
 
+/// Errors produced by loading, saving or validating `config.yaml`.
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    /// Filesystem failure while reading, writing or chmod'ing config.yaml.
+    #[error("config.yaml filesystem error: {0}")]
+    Io(#[from] std::io::Error),
+    /// YAML could not be parsed or serialized.
+    #[error("config.yaml format error: {0}")]
+    Format(String),
+    /// A validation rule rejected the configuration.
+    #[error("{0}")]
+    Invalid(String),
+}
+
+/// Crate-local result alias over [`ConfigError`].
+pub type Result<T> = std::result::Result<T, ConfigError>;
+
 /// Git transport configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -176,7 +193,7 @@ pub struct Config {
 }
 
 impl Config {
-    fn load_unvalidated(path: &PathBuf) -> anyhow::Result<Self> {
+    fn load_unvalidated(path: &PathBuf) -> Result<Self> {
         if !path.exists() {
             let default = Config::default();
             default.save(path)?;
@@ -201,20 +218,18 @@ impl Config {
             }
         }
 
-        let yaml = std::fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("Failed to read config file: {}", e))?;
-        serde_yaml::from_str(&yaml)
-            .map_err(|e| anyhow::anyhow!("Failed to parse config file: {}", e))
+        let yaml = std::fs::read_to_string(path)?;
+        serde_yaml::from_str(&yaml).map_err(|e| ConfigError::Format(e.to_string()))
     }
 
-    pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
+    pub fn load(path: &PathBuf) -> Result<Self> {
         let mut config = Self::load_unvalidated(path)?;
         config.normalize_git();
         config.validate()?;
         Ok(config)
     }
 
-    pub fn load_with_cli(path: &PathBuf, cli: &CliArgs) -> anyhow::Result<Self> {
+    pub fn load_with_cli(path: &PathBuf, cli: &CliArgs) -> Result<Self> {
         let mut config = Self::load_unvalidated(path)?;
         if let Some(author) = &cli.author {
             config.git.author.clone_from(author);
@@ -242,9 +257,8 @@ impl Config {
         }
     }
 
-    pub fn save(&self, path: &PathBuf) -> anyhow::Result<()> {
-        let yaml = serde_yaml::to_string(self)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize config: {}", e))?;
+    pub fn save(&self, path: &PathBuf) -> Result<()> {
+        let yaml = serde_yaml::to_string(self).map_err(|e| ConfigError::Format(e.to_string()))?;
 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -258,12 +272,13 @@ impl Config {
         Ok(())
     }
 
-    pub fn validate(&self) -> anyhow::Result<()> {
+    pub fn validate(&self) -> Result<()> {
         if self.git.author == "sigmacatch" {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(
                 "config: 'git.author' is the placeholder 'sigmacatch'. \
                  Set 'author' to your GitHub username in config.yaml"
-            );
+                    .to_string(),
+            ));
         }
         if !self.git.author.is_empty()
             && !self
@@ -272,19 +287,21 @@ impl Config {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '-')
         {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(format!(
                 "config: 'git.author' must be a valid GitHub username (alphanumeric + hyphens), got {:?}",
                 self.git.author
-            );
+            )));
         }
         if self.git.email.is_empty() {
-            anyhow::bail!("config: 'git.email' is required");
+            return Err(ConfigError::Invalid(
+                "config: 'git.email' is required".to_string(),
+            ));
         }
         if !self.git.email.contains('@') {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(format!(
                 "config: 'git.email' must contain '@', got {:?}",
                 self.git.email
-            );
+            )));
         }
         // Validate SSH key path if configured. Skipped offline: no network op
         // can use the key, so a stale path must not block an offline startup.
@@ -294,49 +311,44 @@ impl Config {
         {
             let path = std::path::Path::new(key_path);
             if !path.is_absolute() {
-                anyhow::bail!(
+                return Err(ConfigError::Invalid(format!(
                     "config: SSH key path '{}' is not absolute (transport={}); \
                              use a full path like /home/user/.ssh/id or C:\\Users\\user\\.ssh\\id",
-                    key_path,
-                    self.git.transport
-                );
+                    key_path, self.git.transport
+                )));
             }
             let meta = std::fs::metadata(key_path).map_err(|_| {
-                anyhow::anyhow!(
+                ConfigError::Invalid(format!(
                     "config: SSH key path '{}' does not exist (transport={}); \
                              remove ssh_key_path from config or switch to transport = http",
-                    key_path,
-                    self.git.transport
-                )
+                    key_path, self.git.transport
+                ))
             })?;
             if !meta.is_file() {
-                anyhow::bail!(
+                return Err(ConfigError::Invalid(format!(
                     "config: SSH key path '{}' is not a file (transport={}); \
                              remove ssh_key_path from config or switch to transport = http",
-                    key_path,
-                    self.git.transport
-                );
+                    key_path, self.git.transport
+                )));
             }
             #[cfg(unix)]
             {
                 let mode = meta.permissions().mode() & 0o777;
                 if mode & 0o077 != 0 {
-                    tracing::warn!(
-                        "config: SSH key '{}' has overly permissive mode 0{:o} — should be 0600. \
-                                 SSH may refuse to use it. Run: chmod 600 {}",
-                        key_path,
-                        mode,
-                        key_path
+                    // Pre-logger warning: validate() runs before init_logger,
+                    // so tracing events would be dropped here.
+                    eprintln!(
+                        "WARNING: config: SSH key '{}' has overly permissive mode 0{:o} — should be 0600. \
+                         SSH may refuse to use it. Run: chmod 600 {}",
+                        key_path, mode, key_path
                     );
                 }
                 // Also check that the key is readable by the current user
                 if mode & 0o400 == 0 {
-                    tracing::warn!(
-                        "config: SSH key '{}' is not readable by the owner (mode 0{:o}). \
-                                 SSH will reject it. Run: chmod 400 {}",
-                        key_path,
-                        mode,
-                        key_path
+                    eprintln!(
+                        "WARNING: config: SSH key '{}' is not readable by the owner (mode 0{:o}). \
+                         SSH will reject it. Run: chmod 400 {}",
+                        key_path, mode, key_path
                     );
                 }
             }
@@ -350,93 +362,91 @@ impl Config {
                 .map(|t| !t.trim().is_empty())
                 .unwrap_or(false);
             if !has_config_token && !has_env_token {
-                anyhow::bail!(
-                    "config: 'git.github_token' is required for HTTP transport when offline=false or contrib=true. \
+                return Err(ConfigError::Invalid("config: 'git.github_token' is required for HTTP transport when offline=false or contrib=true. \
                      Set git.github_token in config.yaml or GITHUB_TOKEN env var. \
                      Create a token at https://github.com/settings/tokens. \
-                     Alternatively, set offline: true and contrib: false for fully offline mode (no network)."
-                );
+                     Alternatively, set offline: true and contrib: false for fully offline mode (no network).".to_string()));
             }
             if has_config_token {
                 let trimmed = self.git.github_token.trim();
                 if trimmed.contains(char::is_whitespace) {
-                    anyhow::bail!("config: 'git.github_token' contains whitespace — trim it");
+                    return Err(ConfigError::Invalid(
+                        "config: 'git.github_token' contains whitespace — trim it".to_string(),
+                    ));
                 }
             }
         }
 
         if self.filter.max_rule_size < 1024 {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(format!(
                 "config: 'filter.max_rule_size' must be at least 1024 bytes, got {}",
                 self.filter.max_rule_size
-            );
+            )));
         }
 
         if self.filter.max_rule_size > 10 * 1024 * 1024 {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(format!(
                 "config: 'filter.max_rule_size' exceeds maximum allowed value (10MB), got {}",
                 self.filter.max_rule_size
-            );
+            )));
         }
 
         if self.regression.max_failed_cycles < 1 {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(format!(
                 "config: 'regression.max_failed_cycles' must be at least 1, got {}",
                 self.regression.max_failed_cycles
-            );
+            )));
         }
 
         // Validate sigma_repo_path — reject empty, path traversal, and absolute paths
         if self.git.sigma_repo_path.trim().is_empty() {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(format!(
                 "config: 'git.sigma_repo_path' must not be empty, got {:?}",
                 self.git.sigma_repo_path
-            );
+            )));
         }
         if std::path::Path::new(&self.git.sigma_repo_path)
             .components()
             .any(|c| c == std::path::Component::ParentDir)
         {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(format!(
                 "config: 'git.sigma_repo_path' contains '..' path traversal, got {:?}",
                 self.git.sigma_repo_path
-            );
+            )));
         }
         if std::path::Path::new(&self.git.sigma_repo_path).is_absolute() {
-            anyhow::bail!(
+            return Err(ConfigError::Invalid(format!(
                 "config: 'git.sigma_repo_path' must be a relative path, got {:?}",
                 self.git.sigma_repo_path
-            );
+            )));
         }
 
-        if self
+        if let Some(status) = self
             .filter
             .min_status
             .as_ref()
-            .is_some_and(|s| *s >= MinStatus(Status::Stable))
+            .filter(|s| **s >= MinStatus(Status::Stable))
         {
-            tracing::warn!(
-                "filter.min_status = {} — very restrictive, only stable rules will be loaded",
-                self.filter.min_status.as_ref().unwrap()
+            // Pre-logger warning: validate() runs before init_logger.
+            eprintln!(
+                "WARNING: filter.min_status = {status} — very restrictive, only stable rules will be loaded"
             );
         }
-        if self
+        if let Some(level) = self
             .filter
             .min_level
             .as_ref()
-            .is_some_and(|l| *l >= MinLevel(Level::High))
+            .filter(|l| **l >= MinLevel(Level::High))
         {
-            tracing::warn!(
-                "filter.min_level = {} — very restrictive, only {} and higher rules will be loaded",
-                self.filter.min_level.as_ref().unwrap(),
-                self.filter.min_level.as_ref().unwrap()
+            eprintln!(
+                "WARNING: filter.min_level = {level} — very restrictive, only {level} and higher rules will be loaded"
             );
         }
         Ok(())
     }
 
     /// Ensure required directories exist.
-    pub fn ensure_dirs(&self) -> anyhow::Result<()> {
+    pub fn ensure_dirs(&self) -> Result<()> {
         let repo = std::path::Path::new(&self.git.sigma_repo_path);
         std::fs::create_dir_all(repo)?;
         std::fs::create_dir_all("logs")?;
@@ -484,7 +494,12 @@ OPTIONS:
 /// Parse CLI arguments from environment.
 pub fn parse_args() -> CliArgs {
     let args: Vec<String> = std::env::args().collect();
-    for arg in &args {
+    parse_args_from(&args)
+}
+
+/// Core argument parsing over an explicit argv (`args[0]` = program name).
+fn parse_args_from(args: &[String]) -> CliArgs {
+    for arg in args {
         if arg == "--help" || arg == "-h" {
             print!("{HELP}");
             std::process::exit(0);
@@ -501,7 +516,13 @@ pub fn parse_args() -> CliArgs {
         match args[i].as_str() {
             "--author" => {
                 i += 1;
-                author = args.get(i).cloned();
+                match args.get(i) {
+                    Some(v) if !v.starts_with('-') => author = Some(v.clone()),
+                    _ => {
+                        eprintln!("Error: --author requires a value");
+                        std::process::exit(1);
+                    }
+                }
             }
             "-a" | "--all-rules" => all_rules = true,
             "-c" | "--contrib" => contrib = true,
@@ -510,11 +531,9 @@ pub fn parse_args() -> CliArgs {
                 i += 1;
                 if let Some(n) = args.get(i) {
                     match n.parse::<u32>() {
+                        // 0 = unlimited (documented in --help): mapped to no limit.
                         Ok(v) if v > 0 => max_runs = Some(v),
-                        Ok(_) => {
-                            eprintln!("Error: --max-runs must be > 0");
-                            std::process::exit(1);
-                        }
+                        Ok(_) => max_runs = None,
                         Err(_) => {
                             eprintln!("Error: --max-runs requires a numeric value");
                             std::process::exit(1);
@@ -540,6 +559,47 @@ pub fn parse_args() -> CliArgs {
         contrib,
         verbose,
         max_runs,
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        std::iter::once("sigmacatch")
+            .chain(list.iter().copied())
+            .map(String::from)
+            .collect()
+    }
+
+    #[test]
+    fn test_parse_author_takes_next_token() {
+        let parsed = parse_args_from(&args(&["--author", "frack113"]));
+        assert_eq!(parsed.author.as_deref(), Some("frack113"));
+    }
+
+    #[test]
+    fn test_parse_max_runs_zero_means_unlimited() {
+        let parsed = parse_args_from(&args(&["-r", "0"]));
+        assert_eq!(parsed.max_runs, None);
+    }
+
+    #[test]
+    fn test_parse_max_runs_positive() {
+        let parsed = parse_args_from(&args(&["--max-runs", "3"]));
+        assert_eq!(parsed.max_runs, Some(3));
+    }
+
+    #[test]
+    fn test_parse_flags_combined() {
+        let parsed = parse_args_from(&args(&["-a", "-c", "-o", "-v", "--author", "bob"]));
+        assert!(parsed.all_rules);
+        assert!(parsed.contrib);
+        assert!(parsed.offline);
+        assert!(parsed.verbose);
+        assert_eq!(parsed.author.as_deref(), Some("bob"));
+        assert_eq!(parsed.max_runs, None);
     }
 }
 

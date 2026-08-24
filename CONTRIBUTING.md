@@ -8,7 +8,7 @@ compatible with the SigmaHQ format.
 
 Prerequisites:
 
-- Rust (stable, 2021 edition), `cargo`, `rustfmt`, `clippy`
+- Rust (stable, edition 2024 — 1.85+), `cargo`, `rustfmt`, `clippy`
 - For Windows builds from Linux: `cargo xwin build --release --target x86_64-pc-windows-msvc`
 - `pipx` (linting scripts only: `typos`, `zizmor`)
 - `node` + `npx` (markdownlint only)
@@ -31,10 +31,13 @@ dependency.
 The CI runs the same checks locally via:
 
 ```bash
-uvx typos .
-uvx zizmor .
+pipx run typos .
+pipx run zizmor .
 npx --yes markdownlint-cli2 "docs/**/*.md" "*.md"
 ```
+
+(`markdownlint` runs in CI as the `DavidAnson/markdownlint-cli2-action`; `npx` is the local
+equivalent.)
 
 - `typos` — spelling, configured in `.typos.toml`. `docs/fr/**` is excluded (French is legitimate).
 - `zizmor` — GitHub Actions security audit. All `uses:` are SHA-pinned; never introduce an
@@ -69,13 +72,14 @@ type with emoji and commit hashes), `## Tests` (results of fmt/clippy/test/build
 
 ## Architecture
 
-Architectural invariants are non-negotiable; read them in [`AGENTS.md`](AGENTS.md) and
-[`docs/en/architecture-reference.md`](docs/en/architecture-reference.md) before touching the
+Architectural invariants are non-negotiable; read them in
+[`docs/fr/architecture.md`](docs/fr/architecture.md) before touching the
 pipeline. Highlights:
 
 - One continuous run until Ctrl+C: collect + evaluate + generate (30s) + commit + push.
 - All aggregation in memory — no intermediate database.
-- Winevt collection only (`EvtQueryW`/`EvtNext`/`EvtRender`) — no ETW, no ferrisetw.
+- Windows collection via the Windows Event Log API (`EvtQueryW`/`EvtNext`/`EvtRender`) or direct
+  ETW; Linux collection via auditd tail, builtin syslog files, and Sysmon-for-Linux.
 - No external `git` binary: everything goes through grit-lib via `sigmacatch-repo`.
 - No hand-rolled parsers: use `rsigma-parser`, `serde_yaml`, `serde_json`, etc.
 - Security first: validate paths, cap sizes, sanitize inputs.

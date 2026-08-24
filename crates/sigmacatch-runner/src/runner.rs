@@ -300,7 +300,14 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
                         info!("Cycle {} completed", runs_completed);
 
                         if !batches.is_empty() {
-                            upload_regression(&sigma_repo, batches, &mut branch_pushed, &push_branch);
+                            let shutdown = shutdown_rx.clone();
+                            upload_regression(
+                                &sigma_repo,
+                                batches,
+                                &mut branch_pushed,
+                                &push_branch,
+                                &move || *shutdown.borrow(),
+                            );
                         }
                     }
                     Err(e) => {
@@ -378,7 +385,15 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
         }
     };
     if !batches.is_empty() {
-        upload_regression(&sigma_repo, batches, &mut branch_pushed, &push_branch);
+        // Final flush: we are already shutting down — never abort the
+        // promised last commit/push.
+        upload_regression(
+            &sigma_repo,
+            batches,
+            &mut branch_pushed,
+            &push_branch,
+            &|| false,
+        );
     }
 
     info!("{} finished", kind.name());
@@ -395,12 +410,13 @@ fn upload_regression(
     batches: Vec<(Uuid, Vec<String>)>,
     branch_pushed: &mut bool,
     push_branch: &str,
+    should_abort: &dyn Fn() -> bool,
 ) {
     if batches.is_empty() {
         return;
     }
 
-    if let Err(e) = sigma_repo.upload_rule_batches(batches) {
+    if let Err(e) = sigma_repo.upload_rule_batches(batches, should_abort) {
         error!("Failed to commit/push regression data: {}", e);
     } else if sigma_repo.contrib_enabled() && !*branch_pushed {
         *branch_pushed = true;

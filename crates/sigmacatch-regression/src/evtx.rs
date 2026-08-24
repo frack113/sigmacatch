@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-#[cfg(windows)]
-use anyhow::Context;
-use anyhow::Result;
-use anyhow::anyhow;
+use crate::{RegressionError, Result};
 use std::path::Path;
 #[cfg(windows)]
 use std::thread::sleep;
@@ -66,7 +63,9 @@ fn write_evtx_winevt(_xml: &str, channel: &str, rid: u64, path: &Path) -> Result
     use windows::core::HSTRING;
 
     if channel.is_empty() {
-        return Err(anyhow!("Cannot export EVTX: empty channel"));
+        return Err(RegressionError::Export(
+            "Cannot export EVTX: empty channel".to_string(),
+        ));
     }
 
     let path = crate::long_path::long_path(path);
@@ -138,23 +137,23 @@ fn write_evtx_winevt(_xml: &str, channel: &str, rid: u64, path: &Path) -> Result
         let _ = std::fs::remove_file(&path);
     }
 
-    Err(anyhow!(
+    Err(RegressionError::Export(format!(
         "EvtExportLog produced no records for {} (channel={}, rid={}) after {} attempts — \
          the event likely rotated out of log retention; the rule will be re-captured on a later cycle",
         path.display(),
         channel,
         rid,
         EVTX_EXPORT_MAX_ATTEMPTS
-    ))
+    )))
 }
 
 /// Non-Windows has no `EvtExportLog`: error so the rule is skipped this cycle
 /// rather than producing a file that does not match the live log.
 #[cfg(not(windows))]
 fn write_evtx_winevt(_xml: &str, channel: &str, _rid: u64, _path: &Path) -> Result<()> {
-    Err(anyhow!(
+    Err(RegressionError::Export(format!(
         "EvtExportLog is not available on non-Windows (channel={channel})"
-    ))
+    )))
 }
 
 /// Write a synthesized single-record EVTX from the event XML (pure-Rust
@@ -165,6 +164,9 @@ fn write_evtx_etw(xml: &str, channel: &str, rid: u64, path: &Path) -> Result<()>
     let path = crate::long_path::long_path(path);
 
     let result = sigmacatch_evtx_writer::write_evtx_from_xml(xml, rid, &path)
+        .map_err(|e| {
+            RegressionError::Export(format!("evtx-writer failed for {}: {e}", path.display()))
+        })
         .and_then(|()| exported_has_records(&path));
 
     match result {
@@ -182,25 +184,25 @@ fn write_evtx_etw(xml: &str, channel: &str, rid: u64, path: &Path) -> Result<()>
             if path.exists() {
                 let _ = std::fs::remove_file(&path);
             }
-            Err(anyhow!(
+            Err(RegressionError::Export(format!(
                 "evtx-writer produced an empty EVTX for {} (channel={}, rid={}) — \
                  the rule will be re-captured on a later cycle",
                 path.display(),
                 channel,
                 rid
-            ))
+            )))
         }
         Err(e) => {
             if path.exists() {
                 let _ = std::fs::remove_file(&path);
             }
-            Err(anyhow!(
+            Err(RegressionError::Export(format!(
                 "evtx-writer produced an unreadable EVTX for {} (channel={}, rid={}): {}",
                 path.display(),
                 channel,
                 rid,
                 e
-            ))
+            )))
         }
     }
 }
@@ -209,8 +211,12 @@ fn write_evtx_etw(xml: &str, channel: &str, rid: u64, path: &Path) -> Result<()>
 #[cfg(windows)]
 fn exported_has_records(path: &Path) -> Result<bool> {
     let path = crate::long_path::long_path(path);
-    let events = input_windows_evtx::parse_evtx_file(&path)
-        .with_context(|| format!("Failed to parse exported EVTX {}", path.display()))?;
+    let events = input_windows_evtx::parse_evtx_file(&path).map_err(|e| {
+        RegressionError::Invalid(format!(
+            "Failed to parse exported EVTX {}: {e}",
+            path.display()
+        ))
+    })?;
     Ok(!events.is_empty())
 }
 
@@ -218,7 +224,12 @@ fn exported_has_records(path: &Path) -> Result<bool> {
 /// needed there).
 #[cfg(not(windows))]
 fn exported_has_records(path: &Path) -> Result<bool> {
-    let events = input_windows_evtx::parse_evtx_file(path)?;
+    let events = input_windows_evtx::parse_evtx_file(path).map_err(|e| {
+        RegressionError::Invalid(format!(
+            "Failed to parse exported EVTX {}: {e}",
+            path.display()
+        ))
+    })?;
     Ok(!events.is_empty())
 }
 

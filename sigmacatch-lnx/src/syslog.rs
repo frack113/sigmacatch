@@ -160,7 +160,11 @@ pub fn parse_line(line: &[u8]) -> Option<Record> {
     }
     let caps = syslog_re().captures(text)?;
     let host = caps.name("host").map(|h| h.as_str().to_string());
-    let program = caps.name("program").unwrap().as_str().to_string();
+    let program = caps
+        .name("program")
+        .expect("regex defines an unconditional 'program' group")
+        .as_str()
+        .to_string();
     let message = caps
         .name("msg")
         .map(|m| m.as_str().to_string())

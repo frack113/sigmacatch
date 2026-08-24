@@ -8,51 +8,18 @@ Un jeu de régression se compose par règle d'un fichier `info.yml` (métadonné
 
 ## Arborescence
 
+La sortie miroir la hiérarchie SigmaHQ sous `rules/`, `rules-emerging-threats/` et
+`rules-threat-hunting/` :
+
 ```text
 regression_data/
-├── rules/                            # Règles principales SigmaHQ
-│   ├── cisco/
-│   │   └── aaa/
-│   │       └── cisco_cli_dot1x_disabled/
-│   ├── linux/
-│   │   ├── auditd/
-│   │   │   ├── execve/               → <slug>/
-│   │   │   ├── path/                 → <slug>/
-│   │   │   └── syscall/              → <slug>/
-│   │   └── builtin/                  → <slug>/
-│   └── windows/
-│       ├── builtin/
-│       │   ├── security/             → <slug>/
-│       │   ├── taskscheduler/        → <slug>/
-│       │   └── wmi/                  → <slug>/
-│       ├── file/
-│       │   └── file_event/           → <slug>/
-│       ├── image_load/               → <slug>/
-│       ├── process_access/           → <slug>/
-│       ├── process_creation/         → <slug>/
-│       ├── registry/
-│       │   ├── registry_delete/      → <slug>/
-│       │   ├── registry_event/       → <slug>/
-│       │   └── registry_set/         → <slug>/
-│       └── sysmon/
-│           └── sysmon_config_modification/ → <slug>/
-├── rules-emerging-threats/           # Menaces émergentes
-│   ├── 2025/
-│   │   ├── Exploits/
-│   │   │   └── CVE-2025-55182/      → <slug>/
-│   │   └── Malware/
-│   │       ├── Grixba/               → <slug>/
-│   │       └── Shai-Hulud/           → <slug>/
-│   └── 2026/
-│       └── Exploits/
-│           ├── CVE-2026-33829/       → <slug>/
-│           └── RedSun/               → <slug>/
-└── rules-threat-hunting/             # Chasse aux menaces
-    └── windows/
-        └── image_load/               → <slug>/
+├── rules/windows/process_creation/<slug>/            # règles principales
+├── rules/linux/auditd/execve/<slug>/
+└── rules-emerging-threats/2026/Exploits/CVE-2026-33829/<slug>/
 ```
 
-Les dossiers intermédiaires (`cisco/`, `windows/`, `builtin/`, etc.) reflètent la hiérarchie des catégories SigmaHQ. Le dernier dossier avant les fichiers est toujours un **slug** dérivé du nom de la règle YAML.
+Les dossiers intermédiaires reflètent la hiérarchie des catégories SigmaHQ. Le dernier
+dossier avant les fichiers est toujours un **slug** dérivé du nom de la règle YAML.
 
 ## Contenu d'un dossier de régression
 
@@ -61,13 +28,13 @@ Chaque règle avec régression contient un dossier (slug) avec :
 ```text
 <slug>/
 ├── info.yml                    # Métadonnées + résultats du test
-├── <rule_id>.evtx              # EVTX valide (EvtExportLog ou writer pur-Rust)
+├── <rule_id>.evtx              # EVTX valide (EvtExportLog ou writer pur Rust)
 └── <rule_id>.json              # Optionnel (regression.add_json_output) — événement brut
 ```
 
 Le `<rule_id>` est toujours l'**UUID** contenu dans `rule_metadata[0].id` du fichier `info.yml`. Il n'est jamais le nom du dossier.
 
-Variantes : certaines règles (ex: cisco) utilisent `.raw` quand le format EVTX n'est pas applicable. Les règles Linux utilisent `.log` (lignes originales complètes : auditd, syslog ou XML Sysmon-for-Linux). Le fichier de données + `info.yml` constituent la sortie obligatoire ; le `.json` est un supplément optionnel.
+Variantes : certaines règles (ex. cisco) utilisent `.raw` quand le format EVTX n'est pas applicable. Les règles Linux utilisent `.log` (lignes originales complètes : auditd, syslog ou XML Sysmon-for-Linux). Le fichier de données + `info.yml` constituent la sortie obligatoire ; le `.json` est un supplément optionnel.
 
 ## Schéma `info.yml`
 
@@ -109,7 +76,7 @@ regression_tests_info:
     type: evtx                  # ou "raw" pour cisco, "log" pour Linux (auditd/syslog/sysmon)
     provider: <ProviderName>    # extrait dynamiquement du ProviderName XML (ex: Microsoft-Windows-Sysmon, ou "auditd")
     match_count: <int>          # Nombre de correspondances trouvées
-    path: regression_data/.../<rule_id>.evtx  # Chemin relatif vers le template
+    path: regression_data/.../<rule_id>.evtx  # Chemin relatif vers le fichier de données
 ```
 
 ### Exemple complet
@@ -130,6 +97,44 @@ regression_tests_info:
     path: regression_data/rules/windows/process_creation/proc_creation_win_bitsadmin_download/d059842b-6b9d-4ed1-b5c3-5b89143c6ede.evtx
 ```
 
+### Exemples `.log` (Linux)
+
+**auditd (`type: log`, provider de repli `auditd` — event en texte brut sans XML) :**
+
+```yaml
+id: 60ff02c2-a649-436c-972d-7c6fe6af8711
+description: N/A
+date: 2026-08-20
+author: frack113
+rule_metadata:
+  - id: 1543ae20-cbdf-4ec1-8d12-7664d667a825
+    title: Suspicious Commands Linux
+regression_tests_info:
+  - name: Positive Detection Test
+    type: log
+    provider: auditd
+    match_count: 1
+    path: regression_data/rules/linux/auditd/execve/lnx_auditd_susp_cmds/1543ae20-cbdf-4ec1-8d12-7664d667a825.log
+```
+
+**Sysmon-for-Linux (`type: log`, provider extrait du XML de l'event) :**
+
+```yaml
+id: 8f2a5c31-9d64-4b7e-a1c2-3f5d8e90b7aa
+description: N/A
+date: 2026-08-23
+author: frack113
+rule_metadata:
+  - id: f74107df-b6c6-4e80-bf00-4170b658162b
+    title: Sudo Privilege Escalation CVE-2019-14287
+regression_tests_info:
+  - name: Positive Detection Test
+    type: log
+    provider: Linux-Sysmon
+    match_count: 1
+    path: regression_data/rules/linux/builtin/lnx_sudo_privilege_escalation_cve_2019_14287/f74107df-b6c6-4e80-bf00-4170b658162b.log
+```
+
 ## Conventions de nommage
 
 ### Dossiers
@@ -144,11 +149,11 @@ regression_tests_info:
 | Fichier | Format | Nom | Contenu |
 |---------|--------|-----|---------|
 | `info.yml` | YAML | Toujours `info.yml` | Métadonnées + résultats |
-| `<rule_id>.evtx` | Binaire | UUID v4 | EVTX valide (EvtExportLog ou writer pur-Rust ; validé ≥ 1 record à l'écriture) |
+| `<rule_id>.evtx` | Binaire | UUID v4 | EVTX valide (EvtExportLog ou writer pur Rust ; validé ≥ 1 record à l'écriture) |
 | `<rule_id>.log` | Texte | UUID v4 | Événement complet (lignes auditd originales multi-records, lignes syslog, ou XML Sysmon-for-Linux) |
 | `<rule_id>.json` | JSON | UUID v4 | Optionnel (`regression.add_json_output`) — événement brut (JSON imbriqué Winevt ou JSON plat Linux) |
 
-Le `<rule_id>` dans les noms de fichiers est toujours le UUID de `rule_metadata[0].id`.
+Le `<rule_id>` dans les noms de fichiers est toujours l'UUID de `rule_metadata[0].id`.
 
 ## Règles de validation
 
@@ -163,7 +168,7 @@ Un jeu est **complet** si :
 - `info.yml` existe
 - le fichier de données référencé par `regression_tests_info[0].path` existe et est valide (magic EVTX / texte non-vide, taille ≤ 64 MiB)
 
-Le `.json` auxiliaire n'entre pas en compte dans la validité.
+Le `.json` auxiliaire n'entre pas en ligne de compte dans la validité.
 
 ### Validation du format info.yml
 
@@ -184,7 +189,7 @@ Pour qu'un `info.yml` soit valide :
 
 ### Windows
 
-La majorité des règles (process_creation, file_event, registry, etc.) ciblent Windows. Les événements `.json` contiennent des clés SigmaWindows spécifiques (`Image`, `CommandLine`, `ParentImage`, etc.).
+La majorité des règles (process_creation, file_event, registry, etc.) ciblent Windows. Les événements `.json` contiennent des clés propres aux événements Windows (`Image`, `CommandLine`, `ParentImage`, etc.).
 
 ### Cisco
 
@@ -192,13 +197,16 @@ Certaines règles réseau utilisent des formats natifs (`.raw` au lieu de `.json
 
 ### Linux (auditd / syslog / sysmon)
 
-Le binaire `sigmacatch-linux` lance trois collecteurs en parallèle, chacun gardé par sa source :
+Trois collecteurs tournent en parallèle, chacun gardé par sa source — la spécification
+complète (fichiers tailés, gardes, parsing) vit dans [architecture.md](architecture.md).
+Toutes leurs données de régression utilisent `.log` (lignes originales complètes : records
+auditd groupés par `timestamp:sequence`, lignes syslog RFC3164, ou XML Sysmon-for-Linux).
 
-- **auditd** si `/var/log/audit/audit.log` existe : tail du fichier, parsing des records avec `linux-audit-parser`, un event par record. Les records d'un même événement audit (`msg=audit(timestamp:sequence)`) sont groupés : chaque event porte `event_raw` = toutes les lignes originales de l'événement.
-- **syslog (builtin)** taille chaque fichier existant parmi central (`/var/log/messages`, `/var/log/syslog`), authpriv (`/var/log/secure`, `/var/log/auth.log`) et cron (`/var/log/cron`, `/var/log/cron.log`) : une ligne RFC3164 par event, `event_json` plat `{message, program, host, service}` avec `service` dérivé du program tag (`sshd` → `sshd`, `CRON` → `cron`, …) avec fallback par groupe de fichier (authpriv → `auth`, cron → `cron`). Les lignes taggées `sysmon` sont exclues — prises en charge par le collecteur dédié.
-- **Sysmon-for-Linux** garde les lignes du syslog central taggées `sysmon` dont le corps est XML winevt (`<Event>…</Event>`) : le parser winevt partagé produit le jeu de champs imbriqués complet et les pipelines Windows s'appliquent à l'identique ; la logsource est résolue depuis le channel `Linux-Sysmon/Operational` → `product: linux`, `service: sysmon`. Les lignes XML tronquées (limites de taille rsyslog) sont ignorées.
-
-Sur les hôtes qui forwardent les records audit vers syslog (audisp/rsyslog), une même activité est capturée deux fois via des pipelines distincts — une règle basée auditd et une règle basée syslog peuvent toutes deux produire des données de régression à partir d'elle. Dans tous les cas les données de régression utilisent `.log` (lignes originales complètes). Le provider écrit dans `info.yml` provient du provider XML de l'event quand il existe (`Linux-Sysmon` pour les événements Sysmon-for-Linux), avec repli sur `auditd` pour les événements en texte brut.
+Sur les hôtes qui transfèrent les records audit vers syslog (audisp/rsyslog), les deux
+pipelines capturent la même activité : une règle basée sur auditd et une règle basée sur
+syslog peuvent toutes deux produire des données de régression à partir d'elle. Le provider
+écrit dans `info.yml` provient du XML de l'event quand il existe (`Linux-Sysmon` pour les
+événements Sysmon-for-Linux), avec repli sur `auditd` pour les événements en texte brut.
 
 ### Emerging Threats
 

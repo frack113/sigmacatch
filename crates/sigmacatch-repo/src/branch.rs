@@ -7,7 +7,7 @@
 //! loose + reftable). Creating/switching a branch is therefore two native calls
 //! rather than hand-rolled file/path handling.
 
-use anyhow::Result;
+use crate::{RepoError, Result};
 use grit_lib::refs;
 use grit_lib::refs::{RawRefLookup, read_raw_ref};
 use std::path::Path;
@@ -17,25 +17,36 @@ use crate::plumbing::refs::{map_grit, read_loose_or_packed_ref, resolve_head};
 
 fn validate_branch_name(name: &str) -> Result<()> {
     if name.is_empty() {
-        anyhow::bail!("branch name must not be empty");
+        return Err(RepoError::InvalidRef(
+            "branch name must not be empty".to_string(),
+        ));
     }
     for c in ['\0', '\n', '\r', '\\', '~', '^', ':', '?', '*', '['] {
         if name.contains(c) {
-            anyhow::bail!("branch name contains invalid character {:?}: {:?}", c, name);
+            return Err(RepoError::InvalidRef(format!(
+                "branch name contains invalid character {:?}: {:?}",
+                c, name
+            )));
         }
     }
     if name.starts_with('/') || name.ends_with('/') || name.contains("//") {
-        anyhow::bail!("branch name has invalid '/' placement: {:?}", name);
+        return Err(RepoError::InvalidRef(format!(
+            "branch name has invalid '/' placement: {:?}",
+            name
+        )));
     }
     for component in name.split('/') {
         if component.is_empty() || component == "." || component == ".." {
-            anyhow::bail!(
+            return Err(RepoError::InvalidRef(format!(
                 "branch name component cannot be empty, '.' or '..': {:?}",
                 name
-            );
+            )));
         }
         if component.ends_with(".lock") {
-            anyhow::bail!("branch name component cannot end with '.lock': {:?}", name);
+            return Err(RepoError::InvalidRef(format!(
+                "branch name component cannot end with '.lock': {:?}",
+                name
+            )));
         }
     }
     Ok(())
@@ -62,22 +73,20 @@ pub(crate) fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
         // create a sibling commit rejected as RejectNonFastForward).
         Ok(RawRefLookup::Exists) => {
             let oid = map_grit(refs::resolve_ref(git_dir, &remote_ref)).map_err(|e| {
-                anyhow::anyhow!(
+                RepoError::Grit(format!(
                     "Remote tracking ref '{}' exists but cannot be resolved: {}. \
                      Delete the branch on GitHub and re-run.",
-                    remote_ref,
-                    e
-                )
+                    remote_ref, e
+                ))
             })?;
             (oid, format!("remote tracking ref '{}'", remote_ref))
         }
         Ok(_) => (resolve_head(git_dir)?, "HEAD".to_string()),
         Err(e) => {
-            return Err(anyhow::anyhow!(
+            return Err(RepoError::Grit(format!(
                 "Failed to read remote tracking ref '{}': {}",
-                remote_ref,
-                e
-            ));
+                remote_ref, e
+            )));
         }
     };
 
@@ -95,11 +104,10 @@ pub(crate) fn switch_head(git_dir: &Path, branch_name: &str) -> Result<()> {
     validate_branch_name(branch_name)?;
     let local_ref = format!("refs/heads/{}", branch_name);
     if read_loose_or_packed_ref(git_dir, &local_ref).is_none() {
-        anyhow::bail!(
+        return Err(RepoError::State(format!(
             "Cannot switch to branch '{}' — ref '{}' not found locally",
-            branch_name,
-            local_ref
-        );
+            branch_name, local_ref
+        )));
     }
     map_grit(refs::write_symbolic_ref(git_dir, "HEAD", &local_ref))?;
     info!("Switched HEAD to branch '{}'", branch_name);

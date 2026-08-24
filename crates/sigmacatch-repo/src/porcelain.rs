@@ -3,7 +3,7 @@
 
 //! Porcelain layer — high-level wrappers: clone, pull, push, add, commit.
 
-use anyhow::Result;
+use crate::{RepoError, Result};
 use std::path::Path;
 use tracing::{info, warn};
 
@@ -54,7 +54,9 @@ pub(crate) fn git_clone_ssh(url: &str, dest: &Path, ssh_key_path: Option<&str>) 
     };
     if count == 0 {
         let _ = std::fs::remove_dir_all(&git_dir);
-        anyhow::bail!("No refs fetched from remote via SSH — empty or unreachable repository");
+        return Err(RepoError::State(
+            "No refs fetched from remote via SSH — empty or unreachable repository".to_string(),
+        ));
     }
 
     set_head_after_fetch(&git_dir, default_branch.as_deref());
@@ -74,7 +76,7 @@ pub(crate) fn git_pull(git_dir: &Path, token: Option<&str>) -> Result<()> {
     let http_client = AuthHttpClient::new(token.map(|s| zeroize::Zeroizing::new(s.to_string())))?;
     let remote_url = read_remote_url_from_config(git_dir, "origin")?;
     let branch = current_branch_name(git_dir)?
-        .ok_or_else(|| anyhow::anyhow!("Cannot pull — HEAD is detached"))?;
+        .ok_or_else(|| RepoError::State("Cannot pull — HEAD is detached".to_string()))?;
     let opts = fetch_options_for_branches(&[branch.as_str()]);
 
     fetch_remote(&http_client, git_dir, &remote_url, &opts)?;
@@ -85,7 +87,7 @@ pub(crate) fn git_pull(git_dir: &Path, token: Option<&str>) -> Result<()> {
     // Re-checkout worktree to reflect any changes from fast-forward
     let work_tree = git_dir
         .parent()
-        .ok_or_else(|| anyhow::anyhow!("Cannot determine worktree from git_dir"))?;
+        .ok_or_else(|| RepoError::State("Cannot determine worktree from git_dir".to_string()))?;
     checkout_main_branch(git_dir, work_tree)?;
     Ok(())
 }
@@ -96,7 +98,7 @@ pub(crate) fn git_pull_ssh(git_dir: &Path, ssh_key_path: Option<&str>) -> Result
     let ssh_url = https_to_ssh_url(&remote_url).unwrap_or(remote_url);
     let ssh_mode = build_ssh_shell_command(ssh_key_path);
     let branch = current_branch_name(git_dir)?
-        .ok_or_else(|| anyhow::anyhow!("Cannot pull — HEAD is detached"))?;
+        .ok_or_else(|| RepoError::State("Cannot pull — HEAD is detached".to_string()))?;
     let opts = fetch_options_for_branches(&[branch.as_str()]);
 
     fetch_remote_ssh(git_dir, &ssh_url, &ssh_mode, &opts)?;
@@ -107,7 +109,7 @@ pub(crate) fn git_pull_ssh(git_dir: &Path, ssh_key_path: Option<&str>) -> Result
     // Re-checkout worktree to reflect any changes from fast-forward
     let work_tree = git_dir
         .parent()
-        .ok_or_else(|| anyhow::anyhow!("Cannot determine worktree from git_dir"))?;
+        .ok_or_else(|| RepoError::State("Cannot determine worktree from git_dir".to_string()))?;
     checkout_main_branch(git_dir, work_tree)?;
     Ok(())
 }
@@ -145,19 +147,21 @@ pub(crate) fn git_commit(
 ) -> Result<()> {
     let index_path = git_dir.join("index");
     if !index_path.exists() {
-        anyhow::bail!("No index to commit — call git_add first");
+        return Err(RepoError::State(
+            "No index to commit — call git_add first".to_string(),
+        ));
     }
     let odb = open_odb(git_dir);
 
     let staged_index = grit_lib::index::Index::load(&index_path)
-        .map_err(|e| anyhow::anyhow!("Failed to load index: {}", e))?;
+        .map_err(|e| RepoError::Grit(format!("Failed to load index: {}", e)))?;
 
     let parent_oid = resolve_head(git_dir)?;
     let parent_obj = odb
         .read(&parent_oid)
-        .map_err(|e| anyhow::anyhow!("Failed to read HEAD commit: {}", e))?;
+        .map_err(|e| RepoError::Grit(format!("Failed to read HEAD commit: {}", e)))?;
     let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)
-        .map_err(|e| anyhow::anyhow!("Failed to parse HEAD commit: {}", e))?;
+        .map_err(|e| RepoError::Grit(format!("Failed to parse HEAD commit: {}", e)))?;
 
     // Add the full parent (HEAD) tree at stage 0, then overlay the staged
     // entries with `add_or_replace` so staged blob content wins. There is no
@@ -170,11 +174,13 @@ pub(crate) fn git_commit(
     }
 
     let tree_oid = grit_lib::write_tree::write_tree_from_index(&odb, &merged_index, "")
-        .map_err(|e| anyhow::anyhow!("Failed to write tree: {}", e))?;
+        .map_err(|e| RepoError::Grit(format!("Failed to write tree: {}", e)))?;
 
     // Nothing changed relative to HEAD — skip creating an empty commit.
     if tree_oid == parent_commit.tree {
-        anyhow::bail!("Nothing to commit — the staged changes match the current HEAD tree");
+        return Err(RepoError::Grit(
+            "Nothing to commit — the staged changes match the current HEAD tree".to_string(),
+        ));
     }
 
     commit_tree(git_dir, &odb, tree_oid, msg, author, email, signing_key)

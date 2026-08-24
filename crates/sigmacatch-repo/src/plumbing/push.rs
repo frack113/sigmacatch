@@ -3,7 +3,8 @@
 
 //! Push local branches to remote via smart HTTP or SSH.
 
-use anyhow::Result;
+use super::refs::map_grit;
+use crate::{RepoError, Result};
 use grit_lib::fetch::NoProgress;
 use grit_lib::objects::ObjectId;
 use grit_lib::transfer::PushOptions;
@@ -55,9 +56,10 @@ pub fn push_branch(
 ) -> Result<()> {
     let ref_name = format!("refs/heads/{}", branch_name);
     let oid_str = read_loose_or_packed_ref(git_dir, &ref_name)
-        .ok_or_else(|| anyhow::anyhow!("Branch '{}' not found locally", branch_name))?;
-    let head_oid = ObjectId::from_hex(&oid_str)
-        .map_err(|e| anyhow::anyhow!("Invalid OID for branch '{}': {}", branch_name, e))?;
+        .ok_or_else(|| RepoError::State(format!("Branch '{}' not found locally", branch_name)))?;
+    let head_oid = ObjectId::from_hex(&oid_str).map_err(|e| {
+        RepoError::InvalidRef(format!("Invalid OID for branch '{}': {}", branch_name, e))
+    })?;
     let spec = PushRefSpec {
         src: Some(head_oid),
         dst: format!("refs/heads/{}", branch_name),
@@ -71,26 +73,25 @@ pub fn push_branch(
         dry_run: false,
         push_options: Vec::new(),
     };
-    let outcome = grit_lib::push::push_http(
+    let outcome = map_grit(grit_lib::push::push_http(
         http_client,
         git_dir,
         remote_url,
         &[spec],
         &opts,
         &mut NoProgress,
-    )?;
+    ))?;
     if outcome.results.is_empty() {
         warn!("No refs were pushed");
     } else {
         for result in &outcome.results {
             if result.status.is_error() {
-                anyhow::bail!(
+                return Err(RepoError::Grit(format!(
                     "Push of '{}' rejected by remote: {:?}. \
                      The remote branch has diverged (likely another machine or a prior \
                      partial push). Delete the branch on GitHub and re-run, or rename it.",
-                    branch_name,
-                    result.status
-                );
+                    branch_name, result.status
+                )));
             }
         }
         info!("Pushed branch '{}'", branch_name);
@@ -107,9 +108,10 @@ pub fn push_branch_ssh(
 ) -> Result<()> {
     let ref_name = format!("refs/heads/{}", branch_name);
     let oid_str = read_loose_or_packed_ref(git_dir, &ref_name)
-        .ok_or_else(|| anyhow::anyhow!("Branch '{}' not found locally", branch_name))?;
-    let head_oid = ObjectId::from_hex(&oid_str)
-        .map_err(|e| anyhow::anyhow!("Invalid OID for branch '{}': {}", branch_name, e))?;
+        .ok_or_else(|| RepoError::State(format!("Branch '{}' not found locally", branch_name)))?;
+    let head_oid = ObjectId::from_hex(&oid_str).map_err(|e| {
+        RepoError::InvalidRef(format!("Invalid OID for branch '{}': {}", branch_name, e))
+    })?;
     let spec = PushRefSpec {
         src: Some(head_oid),
         dst: format!("refs/heads/{}", branch_name),
@@ -132,13 +134,18 @@ pub fn push_branch_ssh(
             ssh_command: SshCommand::Program(args[0].clone()),
         },
     };
-    let mut conn = transport.connect(
+    let mut conn = map_grit(transport.connect(
         remote_url,
         grit_lib::transport::Service::ReceivePack,
         &grit_lib::transport::ConnectOptions::default(),
-    )?;
-    let outcome =
-        grit_lib::push::push_remote(git_dir, &mut *conn, &[spec], &opts, &mut NoProgress)?;
+    ))?;
+    let outcome = map_grit(grit_lib::push::push_remote(
+        git_dir,
+        &mut *conn,
+        &[spec],
+        &opts,
+        &mut NoProgress,
+    ))?;
     if outcome.results.is_empty() {
         warn!("No refs were pushed via SSH");
     } else {
@@ -159,14 +166,11 @@ pub fn push_branch_ssh(
                 } else {
                     &reason
                 };
-                anyhow::bail!(
+                return Err(RepoError::Grit(format!(
                     "Push of '{}' rejected by remote via SSH: {:?}{}.\n    \
                      Fix: {}",
-                    branch_name,
-                    result.status,
-                    remote_msg,
-                    action_hint
-                );
+                    branch_name, result.status, remote_msg, action_hint
+                )));
             }
         }
         info!("Pushed branch '{}' via SSH", branch_name);

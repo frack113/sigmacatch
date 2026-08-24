@@ -123,6 +123,12 @@ mod cli;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Diagnostics first: the tools subcommands must work on machines with no
+    // local log source; only the collection loop requires one.
+    #[cfg(feature = "tools")]
+    if let Some(code) = cli::dispatch() {
+        std::process::exit(code);
+    }
     if !std::path::Path::new(auditd::DEFAULT_LOG_PATH).is_file() && !syslog::default_log_exists() {
         anyhow::bail!(
             "no linux log source found: {} (auditd) nor {:?} / {:?} / {:?} (syslog). \
@@ -132,13 +138,6 @@ async fn main() -> Result<()> {
             syslog::AUTH_LOG_PATHS,
             syslog::CRON_LOG_PATHS,
         );
-    }
-    #[cfg(feature = "tools")]
-    {
-        let code = cli::dispatch();
-        if code != 0 {
-            std::process::exit(code);
-        }
     }
     sigmacatch_runner::run(&LinuxCollector).await
 }

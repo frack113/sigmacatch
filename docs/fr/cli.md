@@ -11,16 +11,24 @@ Les commandes de diagnostic sont des sous-commandes des binaires, derrière la f
 Une sous-commande inconnue ou absente → le binaire démarre sa boucle de collecte normale.
 Les sections ci-dessous documentent les sous-commandes Windows ; les équivalentes Linux
 (`check`, `check-filter`, `list-rules`) partagent la même logique avec le filtre produit
-`linux` et la validation `.log`. Le `check` Linux auto-détecte le format des données de
-chaque entrée de régression depuis sa première ligne non vide — XML Sysmon-for-Linux
-(`sysmon`), syslog RFC3164 (`syslog`) ou records auditd (`auditd`) — et parse les events
-en conséquence avant évaluation.
+`linux` et la validation `.log`.
+
+> **Prérequis commun :** chaque sous-commande charge `config.yaml` via `Config::load`, qui
+> exécute la validation **complète** (git.author/email/token compris) — pas seulement la
+> section `filter`. Sur une machine neuve avec le `config.yaml` par défaut, une
+> sous-commande diagnostic peut donc échouer sur une erreur git avant d'atteindre son
+> propre travail.
 
 ## check
 
 **Usage :** `sigmacatch-channel check [--json]` / `sigmacatch-linux check [--json]`
 
 **Fonction :** validation approfondie de toutes les données de régression dans `./sigma/regression_data`.
+
+**Variante Linux :** le `check` Linux auto-détecte le format des données de chaque entrée
+de régression depuis sa première ligne non vide : XML Sysmon-for-Linux (`sysmon`),
+syslog RFC3164 (`syslog`) ou records auditd (`auditd`). Il parse ensuite les events en
+conséquence avant évaluation.
 
 ### Pipeline
 
@@ -33,7 +41,7 @@ en conséquence avant évaluation.
    - Évalue les events contre la règle
    - Valide : la règle DOIT matcher (test de détection positive)
 5. Rapport pass/fail par règle + résumé (exit 1 en cas d'échec de détection)
-6. Exit 0 si succès (toutes les règles passent ou sont skipées)
+6. Exit 0 si succès (toutes les règles passent ou sont ignorées)
 
 ### Sortie
 
@@ -78,7 +86,6 @@ Running validation...
   "failed": [
     {
       "rule_name": "registry_event_add_local_hidden_user",
-      "rule_id": "460479f3-80b7-42da-9c43-2cc1d54dbccd",
       "error": "RULE NOT MATCHED — expected '460479f3-...' (0 alert(s), matched: )"
     }
   ]
@@ -92,7 +99,7 @@ Running validation...
 **Usage :** `sigmacatch-channel check-filter [--json]`
 
 **Fonction :** valide `SigmaFilterConfig` (product / status / level / author) contre le vrai jeu
-de règles Sigma. Pas d'args CLI — exécute toutes les combinaisons de filtres automatiquement.
+de règles Sigma. Aucun argument CLI — exécute toutes les combinaisons de filtres automatiquement.
 
 ### Pipeline
 
@@ -102,7 +109,7 @@ de règles Sigma. Pas d'args CLI — exécute toutes les combinaisons de filtres
 4. Compare chaque bucket : `loaded`, `product`, `status`, `level`, `author`, `total`
 5. Rapport pass/fail par test + résumé (exit 1 si écart)
 
-Ce n'est **pas circulaire** : les stats viennent de `filter()`, le ground truth est compté
+Ce n'est **pas circulaire** : les stats viennent de `filter()`, le ground-truth est compté
 directement depuis les règles brutes — donc un `stats()` auto-cohérent mais faux échouerait quand même.
 
 ### Exemple
@@ -139,7 +146,9 @@ sigmacatch-channel check-channels
 **Usage :** `sigmacatch-channel list-rules [--json] [--coverage]`
 
 **Fonction :** liste les règles chargées avec leur chemin. Avec `--coverage`, affiche aussi
-les stats de couverture (règles avec régression locale, branches remote en attente, % de couverture).
+le ratio de règles ayant des données de régression locale (`with_data / total`, pas un
+pourcentage) ; les ids des branches remote `sigmacatch/*` en attente sont comptés dans le
+skip set sans être listés séparément.
 
 ### Pipeline
 
@@ -161,17 +170,17 @@ sigmacatch-channel list-rules --json --coverage
 
 **Usage :** `sigmacatch-channel get-atomic [--output run_atomic.ps1] [--getprereqs] [--json]`
 
-**Fonction :** génère un script `run_atomic.ps1` qui chaîne les commandes
-`Invoke-AtomicTest T1xxx.xxx` pour les techniques ATT&CK des règles **sans
-regression data** selon le filtre config. Le script est copié sur la VM Windows
-et exécuté manuellement ; sigmacatch-channel (boucle continue) capte les events
-générés et produit la regression data.
+**Fonction :** génère un script `run_atomic.ps1` qui enchaîne les commandes
+`Invoke-AtomicTest T1xxx.xxx` pour les techniques ATT&CK des règles **sans données de
+régression** selon le filtre config. Copiez le script sur la VM Windows et exécutez-le
+manuellement ; `sigmacatch-channel` (boucle continue) capte les événements générés et
+produit les données de régression.
 
 ### Pipeline
 
 1. `Config::load("config.yaml")` (section filter + `git.sigma_repo_path`)
 2. Charge les règles Sigma depuis `./sigma` + filtre config
-3. Skip set = règles avec regression data déjà valide (local `regression_data/`)
+3. Skip set = règles avec données de régression déjà valides (local `regression_data/`)
    ∪ ids des branches remote `sigmacatch/*` en attente de merge
 4. Pour chaque règle restante : `rule.attack_techniques()` (extension trait
     `SigmaRuleExt` de `sigmacatch-rule`)
@@ -199,13 +208,13 @@ Invoke-AtomicTest T1547.001 -TimeoutSeconds 120
 ### Limitations
 
 Pas de garantie de couverture : une règle avec une condition spécifique peut ne
-pas matcher l'event produit par le test ART. Les règles restées sans data sont
+pas matcher l'event produit par le test ART. Les règles restées sans données sont
 re-listées au prochain run (le skip set n'exclut que ce qui est déjà généré).
 
 ### Exemple
 
 ```bash
 sigmacatch-channel get-atomic
-sigmacatch-channel get-atomic --output /tmp/run_atomic.ps1
+sigmacatch-channel get-atomic --output $env:TEMP\run_atomic.ps1
 sigmacatch-channel get-atomic --getprereqs --json
 ```

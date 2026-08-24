@@ -40,11 +40,8 @@ mod cli;
 #[tokio::main]
 async fn main() -> Result<()> {
     #[cfg(feature = "tools")]
-    {
-        let code = cli::dispatch();
-        if code != 0 {
-            std::process::exit(code);
-        }
+    if let Some(code) = cli::dispatch() {
+        std::process::exit(code);
     }
     sigmacatch_runner::run(&WinevtCollector).await
 }

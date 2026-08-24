@@ -9,7 +9,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
-use sigmacatch_config::{self, Config, load_custom_channel_mapping, parse_args};
+use sigmacatch_config::{self, Config, load_custom_channel_mapping};
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_regression::SigmahqRegression;
 use sigmacatch_repo::SigmaRepo;
@@ -23,18 +23,20 @@ use input_windows_evtx::parse_evtx_bytes;
 
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
 
-pub fn dispatch() -> i32 {
+/// Dispatch on argv[1]. `None` = no/unknown subcommand → caller runs the
+/// normal collection loop; `Some(code)` = subcommand handled → exit with code.
+pub fn dispatch() -> Option<i32> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        return 0; // no subcommand → fall through to normal loop
+        return None; // no subcommand → fall through to normal loop
     }
     match args[1].as_str() {
-        "check" => cmd_check(&args[1..]),
-        "check-filter" => cmd_check_filter(&args[1..]),
-        "check-channels" => cmd_check_channels(&args[1..]),
-        "list-rules" => cmd_list_rules(&args[1..]),
-        "get-atomic" => cmd_get_atomic(&args[1..]),
-        _ => 0, // unknown subcommand → normal loop
+        "check" => Some(cmd_check(&args[1..])),
+        "check-filter" => Some(cmd_check_filter(&args[1..])),
+        "check-channels" => Some(cmd_check_channels(&args[1..])),
+        "list-rules" => Some(cmd_list_rules(&args[1..])),
+        "get-atomic" => Some(cmd_get_atomic(&args[1..])),
+        _ => None, // unknown subcommand → normal loop
     }
 }
 
@@ -49,8 +51,12 @@ struct CheckFail {
 fn cmd_check(args: &[String]) -> i32 {
     let mut json_output = false;
     for arg in args {
-        if arg == "--json" {
-            json_output = true;
+        match arg.as_str() {
+            "--json" => json_output = true,
+            other => {
+                eprintln!("Unknown argument: {other}");
+                return 1;
+            }
         }
     }
 
@@ -88,7 +94,7 @@ fn cmd_check(args: &[String]) -> i32 {
 
     let mut total = 0usize;
     let mut passed = 0usize;
-    let skipped = 0usize;
+    let mut skipped = 0usize;
     let mut failed: Vec<CheckFail> = Vec::new();
 
     for i in 0..regression.len() {
@@ -161,41 +167,17 @@ fn cmd_check(args: &[String]) -> i32 {
                 continue;
             }
         } else {
-            #[cfg(feature = "auditd")]
-            {
-                let events: Vec<sigmacatch_types::Event> = raw
-                    .split(|b| *b == b'\n')
-                    .filter(|line| !line.is_empty())
-                    .filter_map(|line| {
-                        let record = parse_line(line)?;
-                        Some(record_to_event(line, &record))
-                    })
-                    .collect();
-                if events.is_empty() {
-                    total += 1;
-                    failed.push(CheckFail {
-                        rule_name: entry.rule_name.clone(),
-                        error: "EMPTY — auditd produced no events".to_string(),
-                    });
-                    if !json_output {
-                        println!("[FAIL] EMPTY — auditd produced no events");
-                    }
-                    continue;
-                }
-                engine.put_events(events);
+            // The Windows binaries have no auditd/syslog collector: `.log`
+            // entries belong to `sigmacatch-linux check`.
+            total += 1;
+            skipped += 1;
+            if !json_output {
+                println!(
+                    "[SKIP] {} (.log data requires sigmacatch-linux)",
+                    entry.rule_name
+                );
             }
-            #[cfg(not(feature = "auditd"))]
-            {
-                total += 1;
-                skipped += 1;
-                if !json_output {
-                    println!(
-                        "[SKIP] {} (auditd not available in this build)",
-                        entry.rule_name
-                    );
-                }
-                continue;
-            }
+            continue;
         }
 
         engine.process_events();
@@ -260,7 +242,11 @@ fn cmd_check(args: &[String]) -> i32 {
             "pass_rate": pass_rate,
             "failed": failed,
         });
-        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output)
+                .expect("serde_json Value serialization is infallible")
+        );
     } else {
         println!("\n{}", "=".repeat(60));
         println!("  VALIDATION SUMMARY");
@@ -497,10 +483,10 @@ fn run_filter_tests(tests: &[FilterTest], json_output: bool) -> bool {
                     stats.rules_filtered_author,
                     stats.rules_total_candidate,
                 );
-                if all_ok {
-                    println!("    ✅ all dimensions match ground truth");
+                if let Some(mismatch) = mismatch.as_ref() {
+                    println!("    ❌ MISMATCH: {mismatch}");
                 } else {
-                    println!("    ❌ MISMATCH: {}", mismatch.as_ref().unwrap());
+                    println!("    ✅ all dimensions match ground truth");
                 }
             }
 
@@ -534,7 +520,11 @@ fn run_filter_tests(tests: &[FilterTest], json_output: bool) -> bool {
             "total_failed": total_failed,
             "tests": results,
         });
-        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output)
+                .expect("serde_json Value serialization is infallible")
+        );
     } else {
         println!("{}", "=".repeat(60));
         println!("  SUMMARY");
@@ -550,16 +540,23 @@ fn run_filter_tests(tests: &[FilterTest], json_output: bool) -> bool {
 fn cmd_check_filter(args: &[String]) -> i32 {
     let mut json_output = false;
     for arg in args {
-        if arg == "--json" {
-            json_output = true;
+        match arg.as_str() {
+            "--json" => json_output = true,
+            other => {
+                eprintln!("Unknown argument: {other}");
+                return 1;
+            }
         }
     }
 
     if !json_output {
-        println!("Loaded {} total rules from ./sigma", {
-            let r = SigmahqRules::new().unwrap();
-            r.len()
-        });
+        match SigmahqRules::new() {
+            Ok(r) => println!("Loaded {} total rules from ./sigma", r.len()),
+            Err(e) => {
+                eprintln!("Failed to load rules: {e}");
+                return 1;
+            }
+        }
         println!();
     }
 
@@ -717,8 +714,12 @@ fn cmd_check_filter(args: &[String]) -> i32 {
 fn cmd_check_channels(args: &[String]) -> i32 {
     let mut json_output = false;
     for arg in args {
-        if arg == "--json" {
-            json_output = true;
+        match arg.as_str() {
+            "--json" => json_output = true,
+            other => {
+                eprintln!("Unknown argument: {other}");
+                return 1;
+            }
         }
     }
 
@@ -764,7 +765,7 @@ fn cmd_check_channels(args: &[String]) -> i32 {
                     "channel_count": 0,
                     "channels": Vec::<String>::new(),
                 }))
-                .unwrap()
+                .expect("serde_json Value serialization is infallible")
             );
         } else {
             println!("0 channels resolved — nothing to collect");
@@ -778,7 +779,11 @@ fn cmd_check_channels(args: &[String]) -> i32 {
             "channel_count": cycle_channels.len(),
             "channels": cycle_channels,
         });
-        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output)
+                .expect("serde_json Value serialization is infallible")
+        );
     } else {
         println!("Resolved {} channel(s):", cycle_channels.len());
         for ch in &cycle_channels {
@@ -822,7 +827,10 @@ fn cmd_list_rules(args: &[String]) -> i32 {
         match arg.as_str() {
             "--json" => json_output = true,
             "--coverage" => coverage = true,
-            _ => {}
+            other => {
+                eprintln!("Unknown argument: {other}");
+                return 1;
+            }
         }
     }
 
@@ -938,7 +946,11 @@ fn cmd_list_rules(args: &[String]) -> i32 {
             rules: rule_infos,
             coverage: coverage_info,
         };
-        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output)
+                .expect("serde_json Value serialization is infallible")
+        );
     } else {
         println!("Loaded {} rule(s):\n", rule_infos.len());
         for r in &rule_infos {
@@ -1129,7 +1141,11 @@ fn cmd_get_atomic(args: &[String]) -> i32 {
             techniques: techniques.into_iter().collect(),
             rules_without_attack_tag,
         };
-        println!("{}", serde_json::to_string_pretty(&info).unwrap());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&info)
+                .expect("serde_json Value serialization is infallible")
+        );
     } else {
         let mode = if get_prereqs {
             "get-prereqs"
