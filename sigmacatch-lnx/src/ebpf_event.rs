@@ -58,6 +58,7 @@ impl Default for EventBuilder {
 }
 
 impl EventBuilder {
+    /// Builder primed with this host's hostname.
     pub fn new() -> Self {
         let hostname = fs::read_to_string("/proc/sys/kernel/hostname")
             .map(|s| s.trim().to_string())

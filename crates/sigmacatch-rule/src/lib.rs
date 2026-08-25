@@ -26,10 +26,15 @@ use uuid::Uuid;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "snake_case")]
 pub struct SigmaFilterConfig {
+    /// SigmaHQ `product` to keep (`windows`/`linux`); empty = no filter.
     pub product: String,
+    /// Keep only rules whose status ranks at or above this.
     pub min_status: Option<MinStatus>,
+    /// Keep only rules whose level ranks at or above this.
     pub min_level: Option<MinLevel>,
+    /// Reject rules whose YAML exceeds this many bytes (0 = no limit).
     pub max_rule_size: usize,
+    /// Keep only rules authored by this author (normalized).
     pub author: Option<String>,
 }
 
@@ -46,6 +51,7 @@ impl Default for SigmaFilterConfig {
 }
 
 impl SigmaFilterConfig {
+    /// Filter with every knob disabled (loads everything).
     pub fn new() -> Self {
         Self::default()
     }
@@ -61,6 +67,7 @@ impl SigmaFilterConfig {
     }
 }
 
+/// In-memory rule set with per-rule paths and load statistics.
 #[derive(Debug, Clone, Default)]
 pub struct SigmahqRules {
     rules: Vec<SigmaRule>,
@@ -69,10 +76,12 @@ pub struct SigmahqRules {
 }
 
 impl SigmahqRules {
+    /// Load rules from the default `./sigma` directory.
     pub fn new() -> Result<Self> {
         Self::new_from_path(Path::new("./sigma"))
     }
 
+    /// Load rules from an explicit sigma repository root.
     pub fn new_from_path(sigma_path: &Path) -> Result<Self> {
         let dirs = find_rules_dirs(sigma_path)?;
         if dirs.is_empty() {
@@ -146,6 +155,7 @@ impl SigmahqRules {
         Ok(set)
     }
 
+    /// Apply the configured filters, dropping non-matching rules.
     pub fn filter(self, filters: SigmaFilterConfig) -> Self {
         let total = self.rules.len() as u64;
         let mut filtered_product = 0u64;
@@ -225,38 +235,47 @@ impl SigmahqRules {
         }
     }
 
+    /// Borrowed view of the loaded rules.
     pub fn rules(&self) -> &[SigmaRule] {
         &self.rules
     }
 
+    /// Consume the set, returning the rules.
     pub fn into_rules(self) -> Vec<SigmaRule> {
         self.rules
     }
 
+    /// Map of rule UUID → source file path.
     pub fn rule_paths(&self) -> &HashMap<Uuid, PathBuf> {
         &self.rule_paths
     }
 
+    /// Source file path for one rule id.
     pub fn get_rule_path(&self, id: &Uuid) -> Option<&Path> {
         self.rule_paths.get(id).map(|p| p.as_path())
     }
 
+    /// Load/filter counters from the last `new_from_path`/`filter`.
     pub fn stats(&self) -> &LoadStats {
         &self.stats
     }
 
+    /// Iterate the loaded rules.
     pub fn iter(&self) -> std::slice::Iter<'_, SigmaRule> {
         self.rules.iter()
     }
 
+    /// Number of loaded rules.
     pub fn len(&self) -> usize {
         self.rules.len()
     }
 
+    /// True when no rule is loaded.
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty()
     }
 
+    /// Look up a rule by its Sigma `id` UUID.
     pub fn get(&self, id: &Uuid) -> Option<&SigmaRule> {
         let id_str = id.to_string();
         self.rules
@@ -264,6 +283,7 @@ impl SigmahqRules {
             .find(|r| r.id.as_deref() == Some(id_str.as_str()))
     }
 
+    /// Drop the rule with this UUID; returns true when something was removed.
     pub fn remove_id(&mut self, id: &Uuid) -> bool {
         let id_str = id.to_string();
         let before = self.rules.len();
@@ -273,6 +293,7 @@ impl SigmahqRules {
         self.rules.len() != before
     }
 
+    /// Convert into an evaluation-ready Sigma collection.
     pub fn to_collection(&self) -> SigmaCollection {
         let mut collection = SigmaCollection::new();
         collection.rules = self.rules.clone();

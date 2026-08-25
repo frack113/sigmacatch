@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
+//! Linux collectors selected by cargo features: `auditd`, `builtin` (syslog),
+//! `sysmon` (legacy tail), `ebpf` (native probes). The shared sysmon XML
+//! parsing lives in [`sysmon_parse`] and is always compiled.
+
 pub use sigmacatch_runner::{CollectorKind, run};
 
 #[cfg(feature = "auditd")]

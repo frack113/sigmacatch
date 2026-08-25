@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
+//! Shared entry point of the three Linux binaries; cargo features select
+//! which sysmon source (legacy tail / eBPF / none) is compiled in.
+
 use std::collections::HashMap;
 
 use anyhow::Result;

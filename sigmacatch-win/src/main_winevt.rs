@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
+//! `sigmacatch-channel` — Winevt multi-channel binary (feature `winevt`).
+
 use std::collections::HashMap;
 
 use anyhow::Result;

@@ -80,6 +80,7 @@ pub struct SigmaRepo {
 }
 
 impl SigmaRepo {
+    /// Repo rooted at the default `./sigma` path, offline disabled.
     pub fn new() -> Self {
         Self {
             repo_path: PathBuf::from("sigma"),
@@ -147,12 +148,14 @@ impl SigmaRepo {
         self.contrib
     }
 
+    /// Select (and switch to) the working branch for this session.
     pub fn set_working_branch(&mut self, branch_name: String) -> Result<()> {
         assert!(!branch_name.is_empty(), "working_branch must not be empty");
         self.working_branch = Some(branch_name);
         self.switch_to_working_branch()
     }
 
+    /// Clone or open the sigma repository (no-op in offline mode).
     pub async fn init(&mut self) -> Result<()> {
         if self.offline {
             info!("Offline mode — skipping all repository operations (on-disk files used as-is)");
@@ -223,6 +226,7 @@ impl SigmaRepo {
         Ok(())
     }
 
+    /// Point at a remote (fork) URL and re-run init against it.
     pub async fn set_remote_url(&mut self, url: String) -> Result<()> {
         self.remote_url = Some(url);
         self.init().await

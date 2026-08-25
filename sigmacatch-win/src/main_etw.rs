@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
+//! `sigmacatch-etw` — direct ETW collection binary (feature `etw`).
+
 use std::collections::HashMap;
 
 use anyhow::Result;

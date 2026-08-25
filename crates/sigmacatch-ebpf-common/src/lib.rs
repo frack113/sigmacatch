@@ -26,10 +26,12 @@ pub const EVENT_DNS: u32 = 5;
 
 /// Directory-fd sentinel meaning "path is relative to cwd".
 pub const AT_FDCWD: i32 = -100;
+/// Bounded path buffer carried by [`FileCreateEvent`].
 pub const PATH_LEN: usize = 256;
 /// Bounded raw DNS wire payload carried in [`DnsEvent`].
 pub const DNS_PAYLOAD_LEN: usize = 256;
 
+/// Bounded executable-path buffer carried by [`ExecEvent`].
 pub const IMAGE_LEN: usize = 128;
 /// First argv element captured in-kernel (race-free naming floor); the full
 /// command line is enriched from `/proc` in userspace.
@@ -52,6 +54,7 @@ pub struct ExecEvent {
     pub uid: u32,
     /// Real GID of the executing task.
     pub gid: u32,
+    /// Explicit padding keeping the record size a multiple of 8 (zeroed).
     pub _pad0: u32,
     /// Task comm at exec time (NUL-padded, may be truncated by the kernel).
     pub comm: [u8; COMM_LEN],
@@ -59,6 +62,7 @@ pub struct ExecEvent {
     pub image: [u8; IMAGE_LEN],
     /// First argv element (NUL-padded) — race-free fallback for CommandLine.
     pub arg0: [u8; ARG0_LEN],
+    /// Explicit padding keeping the record size a multiple of 8 (zeroed).
     pub _pad1: u32,
 }
 
@@ -121,9 +125,11 @@ pub struct NetEvent {
     pub gid: u32,
     /// Address family (`AF_INET` = 2, `AF_INET6` = 10); others dropped.
     pub family: u16,
+    /// Explicit padding keeping field offsets kernel-aligned (zeroed).
     pub _pad0: u16,
     /// Destination port in network byte order.
     pub port_be: u16,
+    /// Explicit padding keeping field offsets kernel-aligned (zeroed).
     pub _pad1: u16,
     /// IPv4 bytes occupy `[..4]`; IPv6 fills the whole array.
     pub addr: [u8; 16],
@@ -189,6 +195,7 @@ pub struct FileCreateEvent {
     pub gid: u32,
     /// Directory-fd argument of openat (may be [`AT_FDCWD`]).
     pub dirfd: i32,
+    /// Explicit padding keeping the record size a multiple of 8 (zeroed).
     pub _pad0: i32,
     /// Path as passed to openat (NUL-padded; may be relative).
     pub path: [u8; PATH_LEN],
@@ -238,6 +245,7 @@ pub struct DnsEvent {
     pub gid: u32,
     /// Bytes of valid payload written into [`DnsEvent::payload`].
     pub payload_len: u32,
+    /// Explicit padding keeping the record size a multiple of 8 (zeroed).
     pub _pad0: u32,
     /// Task comm at query time (NUL-padded).
     pub comm: [u8; 16],

@@ -80,6 +80,8 @@ const ATTACHMENTS: &[(&str, &str, &str)] = &[
     ("sys_enter_sendmsg", "syscalls", "sys_enter_sendmsg"),
 ];
 
+/// eBPF-backed sysmon collector (feature `ebpf`): loads the embedded probe
+/// object, attaches the tracepoints and produces Sysmon-XML events.
 pub struct EventCollector {
     _ebpf: Ebpf,
     builder: EventBuilder,

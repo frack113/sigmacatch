@@ -41,6 +41,8 @@ pub enum WriterError {
 /// Crate-local result alias over [`WriterError`].
 pub type Result<T> = std::result::Result<T, WriterError>;
 
+/// Write a single-record EVTX file from event XML, using the timestamp
+/// embedded in the XML (fallback: current time).
 pub fn write_evtx_from_xml(xml: &str, record_id: u64, path: &Path) -> Result<()> {
     let filetime = filetime_from_event_xml(xml).unwrap_or_else(|_| now_filetime());
     write_evtx_from_xml_with_time(xml, record_id, filetime, path)

@@ -20,13 +20,17 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Eq, Default, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Product {
+    /// Microsoft Windows event pipelines.
     #[default]
     Windows,
+    /// Linux event pipelines (auditd/syslog/eBPF).
     Linux,
+    /// macOS (reserved; no collector today).
     Macos,
 }
 
 impl Product {
+    /// Lowercase SigmaHQ `product` value for this platform.
     pub fn as_str(&self) -> &'static str {
         match self {
             Product::Windows => "windows",
@@ -63,6 +67,8 @@ pub struct Event {
     /// Transformed JSON for Sigma detection (EventData keys have spaces stripped).
     /// Used by the detection engine — makes field paths easier in Sigma rules.
     pub event_json: Value,
+    /// Raw wire bytes as collected (XML for Winevt/sysmon paths, RFC3164 line
+    /// for Linux collectors) — written verbatim to regression `.log` data.
     pub event_raw: Vec<u8>,
     /// True when this event was synthesized from ETW raw data rather than
     /// re-exported from the live Event Log. Affects EVTX generation.
@@ -70,6 +76,7 @@ pub struct Event {
 }
 
 impl Event {
+    /// Build an event from its JSON views and raw bytes (non-ETW source).
     pub fn new(event_json_raw: Value, event_json: Value, event_raw: Vec<u8>) -> Self {
         Self {
             event_json_raw,
@@ -130,6 +137,7 @@ impl Event {
     }
 
     /// EventRecordID extracted from the parsed JSON (`Event.System.EventRecordID`).
+    /// Record id from the event System section, when present.
     pub fn record_id(&self) -> Option<u64> {
         self.event_json
             .get("Event")?
@@ -774,8 +782,10 @@ fn handle_event_data_raw(node: Node) -> Value {
     Value::Object(map)
 }
 
+/// XML parse failure surfaced by the Winevt/sysmon XML readers.
 #[derive(Debug, Clone)]
 pub struct ParseError {
+    /// Human-readable description of what failed to parse.
     pub message: String,
 }
 
@@ -792,10 +802,15 @@ impl std::error::Error for ParseError {}
 /// An alert produced when an event matches a Sigma rule.
 #[derive(Debug, Clone)]
 pub struct Alert {
+    /// Matched rule UUID (Sigma `id`).
     pub rule_id: Uuid,
+    /// Matched rule title.
     pub rule_title: String,
+    /// Matched rule description, when present.
     pub description: Option<String>,
+    /// Path of the matched rule file, when known.
     pub rule_path: Option<PathBuf>,
+    /// Matched rule severity (`low`/`medium`/`high`/`critical`).
     pub severity: String,
     /// Raw JSON as collected from Winevt (preserves original EventData key names).
     /// Used for regression data generation — must match the EVTX content exactly.
@@ -803,12 +818,14 @@ pub struct Alert {
     /// Transformed JSON for Sigma detection (EventData keys have spaces stripped).
     /// Used by the detection engine.
     pub event_json: Value,
+    /// Raw wire bytes as collected (see [`Event::event_raw`]).
     pub event_raw: Vec<u8>,
     /// True when this alert came from an ETW-synthesized event.
     pub is_etw: bool,
 }
 
 impl Alert {
+    /// Channel extracted from the event System section (empty when absent).
     pub fn channel(&self) -> &str {
         self.event_json
             .get("Event")
@@ -819,6 +836,7 @@ impl Alert {
             .unwrap_or("")
     }
 
+    /// Record id from the event System section, when present.
     pub fn record_id(&self) -> Option<u64> {
         self.event_json
             .get("Event")?
@@ -827,6 +845,7 @@ impl Alert {
             .and_then(|v| v.as_u64())
     }
 
+    /// Provider name from the event System section (empty when absent).
     pub fn provider(&self) -> &str {
         self.event_json
             .get("Event")
@@ -838,6 +857,7 @@ impl Alert {
             .unwrap_or("")
     }
 
+    /// Raw wire bytes interpreted as UTF-8 (lossy).
     pub fn raw_xml(&self) -> &str {
         std::str::from_utf8(&self.event_raw).unwrap_or("")
     }
@@ -851,11 +871,14 @@ impl Alert {
 /// Evolutive — add fields here without touching rsigma internals.
 #[derive(Debug, Clone)]
 pub struct RegressionHeader {
+    /// Rule UUID (Sigma `id`) used as the regression directory/file key.
     pub rule_id: Uuid,
+    /// Human-readable rule title stored in `info.yml`.
     pub rule_title: String,
 }
 
 impl RegressionHeader {
+    /// Convenience constructor.
     pub fn new(rule_id: Uuid, rule_title: String) -> Self {
         Self {
             rule_id,

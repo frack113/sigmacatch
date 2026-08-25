@@ -37,6 +37,7 @@ pub enum DataFormat {
 }
 
 impl DataFormat {
+    /// File extension of the regression data file for this format.
     pub fn ext(self) -> &'static str {
         match self {
             Self::Evtx => "evtx",
@@ -44,6 +45,7 @@ impl DataFormat {
         }
     }
 
+    /// Safety bound on a single data blob (AGENTS.md size limits).
     pub fn max_blob_size(self) -> usize {
         MAX_DATA_BLOB_SIZE
     }

@@ -3,17 +3,25 @@
 
 use crate::{Level, Status};
 
+/// Counters describing one rule-loading pass.
 #[derive(Debug, Clone, Default)]
 pub struct LoadStats {
+    /// Rules kept after all filters.
     pub rules_loaded: u64,
+    /// Rules dropped by the product filter.
     pub rules_filtered_product: u64,
+    /// Rules dropped by the status filter.
     pub rules_filtered_status: u64,
+    /// Rules dropped by the level filter.
     pub rules_filtered_level: u64,
+    /// Rules dropped by the author filter.
     pub rules_filtered_author: u64,
+    /// Total rules seen before filtering.
     pub rules_total_candidate: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// Minimum acceptable rule status (ordinal: stable > test > experimental > …).
 #[serde(transparent)]
 pub struct MinStatus(pub Status);
 
@@ -28,6 +36,7 @@ impl MinStatus {
         }
     }
 
+    /// True when a rule with `rule_status` passes this threshold.
     pub fn accepts(&self, rule_status: &Status) -> bool {
         let rule_rank = match rule_status {
             Status::Unsupported => 0,
@@ -72,6 +81,7 @@ impl std::fmt::Display for MinStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// Minimum acceptable rule level (ordinal: critical > high > … > informational).
 #[serde(transparent)]
 pub struct MinLevel(pub Level);
 
@@ -86,6 +96,7 @@ impl MinLevel {
         }
     }
 
+    /// True when a rule with `rule_level` passes this threshold.
     pub fn accepts(&self, rule_level: &Level) -> bool {
         let rule_rank = match rule_level {
             Level::Informational => 0,
