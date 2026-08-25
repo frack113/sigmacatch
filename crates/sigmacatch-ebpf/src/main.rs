@@ -86,6 +86,9 @@ fn read_cstr(dst: &mut [u8], src: *const u8) -> usize {
         return 0;
     }
     let cap = dst.len();
+    // SAFETY: bpf_probe_read_user_str reads at most dst.len() bytes and stops
+    // at the user-space NUL; faults on unmapped user addresses are handled by
+    // the helper (Err), never trap the probe.
     let raw = unsafe { bpf_probe_read_user_str(src, dst) }.unwrap_or(0);
     raw.min(cap).saturating_sub(1)
 }
@@ -99,11 +102,16 @@ fn sys_enter_execve(ctx: TracePointContext) -> i32 {
 }
 
 fn try_stage_execve(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: read_at validates the offset against the tracepoint context
+    // size and copies a pointer-sized argument; out-of-range yields Err.
     let filename: *const u8 = unsafe { ctx.read_at(16)? };
     let argv_base: *const *const u8 = unsafe { ctx.read_at(24)? };
     let pid = bpf_get_current_pid_tgid() as u32;
 
     let pending = match STAGE_SCRATCH.get_ptr_mut(0) {
+        // SAFETY: index 0 < MAX_ENTRIES(1) is checked by get_ptr_mut; the
+        // returned pointer targets per-cpu map storage valid for the whole
+        // program run and exclusive to this CPU.
         Some(p) => unsafe { &mut *p },
         None => return Err(-28),
     };
@@ -111,6 +119,8 @@ fn try_stage_execve(ctx: &TracePointContext) -> Result<(), i64> {
     pending.arg0 = [0; ARG0_LEN];
     read_cstr(&mut pending.image, filename);
     // argv[0]: one indirection, fixed-size destination — trivially provable.
+    // SAFETY: argv_base points to user memory (validated non-faulting by the
+    // helper); a fixed-size pointer read whose failure degrades to null.
     let arg0p: *const u8 = unsafe { bpf_probe_read_user(argv_base) }.unwrap_or(ptr::null());
     read_cstr(&mut pending.arg0, arg0p);
 
@@ -130,6 +140,8 @@ fn try_emit_exec() -> Result<(), i64> {
     let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
     // Field-wise copy into the ring buffer slot: a whole-PendingExec local
     // would eat into the 512-byte BPF stack for no benefit.
+    // SAFETY: get returns a borrowed view of map value storage, alive until
+    // the remove below; no mutation aliases it inside this program run.
     let Some(staged) = (unsafe { EXEC_ARGS.get(&pid) }) else {
         return Ok(());
     };
@@ -139,6 +151,9 @@ fn try_emit_exec() -> Result<(), i64> {
     let comm = bpf_get_current_comm().unwrap_or([0; 16]);
     if let Some(mut entry) = EVENTS.reserve::<ExecEvent>(0) {
         let p = entry.as_mut_ptr();
+        // SAFETY: reserve handed us a T-sized, T-aligned ring-buffer slot
+        // owned exclusively until submit(); all field writes stay in bounds
+        // of ExecEvent.
         unsafe {
             (*p).kind = EVENT_EXEC;
             (*p).pid = pid;
@@ -199,11 +214,15 @@ fn sys_enter_connect(ctx: TracePointContext) -> i32 {
 }
 
 fn try_emit_connect(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: read_at bounds-checked against the tracepoint context.
     let uservaddr: *const u8 = unsafe { ctx.read_at(24)? };
+    // SAFETY: two-byte user read; fault handled by helper → 0.
     let family = unsafe { bpf_probe_read_user::<u16>(uservaddr.cast()) }.unwrap_or(0);
     let (port_be, addr) = match family {
         // AF_INET
         2 => {
+            // SAFETY: sizeof::<SockAddr4>() fixed-size user read; helper is
+            // fault-tolerant and the struct mirrors the kernel sockaddr_in.
             let s: SockAddr4 = unsafe { bpf_probe_read_user(uservaddr.cast()) }?;
             let mut a = [0u8; 16];
             a[..4].copy_from_slice(&s.addr);
@@ -211,6 +230,8 @@ fn try_emit_connect(ctx: &TracePointContext) -> Result<(), i64> {
         }
         // AF_INET6
         10 => {
+            // SAFETY: fixed-size user read of sockaddr_in6 mirror; helper
+            // handles page faults by returning Err.
             let s: SockAddr6 = unsafe { bpf_probe_read_user(uservaddr.cast()) }?;
             (s.port, s.addr)
         }
@@ -222,6 +243,7 @@ fn try_emit_connect(ctx: &TracePointContext) -> Result<(), i64> {
     let comm = bpf_get_current_comm().unwrap_or([0; 16]);
     if let Some(mut entry) = EVENTS.reserve::<NetEvent>(0) {
         let p = entry.as_mut_ptr();
+        // SAFETY: exclusive reserved NetEvent slot; field writes in bounds.
         unsafe {
             (*p).kind = EVENT_NET;
             (*p).pid = (ids >> 32) as u32;
@@ -253,6 +275,8 @@ fn sys_enter_openat(ctx: TracePointContext) -> i32 {
 }
 
 fn try_stage_openat(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: read_at offsets are bounds-checked against the syscall
+    // tracepoint context (args[0..2]).
     let dirfd: i32 = unsafe { ctx.read_at(16)? };
     let pathname: *const u8 = unsafe { ctx.read_at(24)? };
     let flags: u64 = unsafe { ctx.read_at(32)? };
@@ -262,6 +286,8 @@ fn try_stage_openat(ctx: &TracePointContext) -> Result<(), i64> {
     let pid = bpf_get_current_pid_tgid() as u32;
 
     let pending = match FILE_SCRATCH.get_ptr_mut(0) {
+        // SAFETY: index validated by get_ptr_mut; per-cpu map storage valid
+        // and unaliased for this program invocation.
         Some(p) => unsafe { &mut *p },
         None => return Err(-28),
     };
@@ -282,11 +308,14 @@ fn sys_exit_openat(ctx: TracePointContext) -> i32 {
 }
 
 fn try_emit_file_create(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: bounds-checked context read of the syscall return value.
     let ret: i64 = unsafe { ctx.read_at(16)? };
     if ret < 0 {
         return Ok(()); // failed open — nothing was created
     }
     let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    // SAFETY: read-only map borrow, copied out immediately; lifetime ends
+    // with the expression.
     let Some(staged) = (unsafe { FILE_STAGE.get(&pid) }).map(|p| PendingFile {
         path: p.path,
         dirfd: p.dirfd,
@@ -299,6 +328,7 @@ fn try_emit_file_create(ctx: &TracePointContext) -> Result<(), i64> {
     let comm = bpf_get_current_comm().unwrap_or([0; 16]);
     if let Some(mut entry) = EVENTS.reserve::<FileCreateEvent>(0) {
         let p = entry.as_mut_ptr();
+        // SAFETY: exclusive reserved FileCreateEvent slot; writes in bounds.
         unsafe {
             (*p).kind = EVENT_FILE;
             (*p).pid = pid;
@@ -326,6 +356,8 @@ fn read_user_bytes(dst: &mut [u8], src: *const u8, size: usize) -> usize {
     }
     let n = size.min(dst.len());
     let head = &mut dst[..n];
+    // SAFETY: n ≤ dst.len() clamps the copy; the helper tolerates user-page
+    // faults by returning Err instead of trapping.
     match unsafe { bpf_probe_read_user_buf(src, head) } {
         Ok(()) => n,
         Err(_) => 0,
@@ -336,6 +368,7 @@ fn read_user_bytes(dst: &mut [u8], src: *const u8, size: usize) -> usize {
 fn emit_dns(scratch: &DnsQuery) {
     if let Some(mut entry) = EVENTS.reserve::<DnsEvent>(0) {
         let p = entry.as_mut_ptr();
+        // SAFETY: exclusive reserved DnsEvent slot; writes in bounds.
         unsafe {
             (*p).kind = EVENT_DNS;
             (*p).pid = scratch.pid;
@@ -378,15 +411,18 @@ fn sys_enter_sendto(ctx: TracePointContext) -> i32 {
 
 fn try_dns_sendto(ctx: &TracePointContext) -> Result<(), i64> {
     // sendto(fd, buf, len, flags, addr, addrlen)
+    // SAFETY: bounds-checked context reads (sendto args buf/len).
     let buf: *const u8 = unsafe { ctx.read_at(24)? };
     let size: usize = unsafe { ctx.read_at(32)? };
     // No kernel-side port filter: destination resolution proved flaky across
     // connected/unconnected sockets; userspace DNS parsing is the filter.
+    // SAFETY: bounds-checked context read of the addr argument (unused).
     let _addr: *const u8 = unsafe { ctx.read_at(48)? };
     let ids = bpf_get_current_pid_tgid();
     let uidgid = bpf_get_current_uid_gid();
     let comm = bpf_get_current_comm().unwrap_or([0; 16]);
     let scratch = match DNS_SCRATCH.get_ptr_mut(0) {
+        // SAFETY: index validated by get_ptr_mut; per-cpu exclusivity.
         Some(p) => unsafe { &mut *p },
         None => return Err(-28),
     };
@@ -406,9 +442,14 @@ fn sys_enter_sendmsg(ctx: TracePointContext) -> i32 {
 fn try_dns_sendmsg(ctx: &TracePointContext) -> Result<(), i64> {
     // sendmsg(fd, msg, flags): struct msghdr { msg_name, msg_namelen,
     // msg_iov, msg_iovlen, ... } — user pointers dereferenced one level.
+    // SAFETY: bounds-checked context read of the msghdr argument.
     let msghdr: *const u8 = unsafe { ctx.read_at(24)? };
     // Connected sockets pass msg_name=NULL — captured too; the userspace
     // query parser drops non-DNS payloads.
+    // SAFETY: each read dereferences one level of a user msghdr/iovec at the
+    // documented x86_64 field offsets (msg_name@0, msg_iov@16; iov_base@0,
+    // iov_len@8); every access is fixed-size and fault-tolerant via the
+    // helper — a bad pointer fails the probe, not the kernel.
     let _msg_name: *const u8 = unsafe { bpf_probe_read_user(msghdr.cast()) }?;
     let msg_iov: *const u8 = unsafe { bpf_probe_read_user(msghdr.wrapping_add(16).cast()) }?;
     let iov_base: *const u8 = unsafe { bpf_probe_read_user(msg_iov.cast()) }?;
@@ -418,6 +459,7 @@ fn try_dns_sendmsg(ctx: &TracePointContext) -> Result<(), i64> {
     let uidgid = bpf_get_current_uid_gid();
     let comm = bpf_get_current_comm().unwrap_or([0; 16]);
     let scratch = match DNS_SCRATCH.get_ptr_mut(0) {
+        // SAFETY: index validated by get_ptr_mut; per-cpu exclusivity.
         Some(p) => unsafe { &mut *p },
         None => return Err(-28),
     };

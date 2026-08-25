@@ -271,11 +271,15 @@ fn version_info(path: &str) -> VersionInfo {
     use windows::core::PCWSTR;
 
     let path_w: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: `path_w` is a NUL-terminated UTF-16 buffer alive across the call;
+    // GetFileVersionInfoSizeW only reads it and reports the needed size.
     let size = unsafe { GetFileVersionInfoSizeW(PCWSTR(path_w.as_ptr()), None) };
     if size == 0 {
         return VersionInfo::default();
     }
     let mut buf = vec![0u8; size as usize];
+    // SAFETY: `path_w` is NUL-terminated UTF-16 and still alive; `buf` holds
+    // exactly the `size` bytes GetFileVersionInfoSizeW required for this image.
     if unsafe { GetFileVersionInfoW(PCWSTR(path_w.as_ptr()), None, size, buf.as_mut_ptr().cast()) }
         .is_err()
     {
@@ -288,6 +292,9 @@ fn version_info(path: &str) -> VersionInfo {
         .collect();
     let mut ptr: *mut core::ffi::c_void = core::ptr::null_mut();
     let mut len = 0u32;
+    // SAFETY: `buf` holds a valid version block written by the successful
+    // GetFileVersionInfoW above; `trans_key` is NUL-terminated UTF-16 and the
+    // out-parameters are locals, per the API contract.
     let ok = unsafe {
         VerQueryValueW(
             buf.as_ptr().cast(),
@@ -297,6 +304,10 @@ fn version_info(path: &str) -> VersionInfo {
         )
     };
     let (lang, cp) = if ok.as_bool() && !ptr.is_null() && len >= 4 {
+        // SAFETY: guarded by ok && !ptr.is_null() && len >= 4; on success
+        // VerQueryValueW yields a pointer to the 4-byte Translation struct
+        // inside `buf` (version data is DWORD-aligned), so the deref is
+        // in-bounds and aligned.
         let pair = unsafe { &*ptr.cast::<[u16; 2]>() };
         (pair[0], pair[1])
     } else {
@@ -311,6 +322,9 @@ fn version_info(path: &str) -> VersionInfo {
             .collect();
         let mut ptr: *mut core::ffi::c_void = core::ptr::null_mut();
         let mut len = 0u32;
+        // SAFETY: `buf` still holds the valid version block; `k` is
+        // NUL-terminated UTF-16; out-parameters are locals, per the API
+        // contract.
         let ok =
             unsafe { VerQueryValueW(buf.as_ptr().cast(), PCWSTR(k.as_ptr()), &mut ptr, &mut len) };
         if !ok.as_bool() || ptr.is_null() || len == 0 {
@@ -321,6 +335,9 @@ fn version_info(path: &str) -> VersionInfo {
         // (`len` is the byte count, but treating it as a generous WCHAR bound
         // is safe because the NUL cut happens first.)
         let base = buf.as_ptr();
+        // SAFETY: both operands point into the same `buf` allocation —
+        // VerQueryValueW returns a pointer inside the block it was queried on;
+        // a negative result is rejected by the rel < 0 check below.
         let rel = unsafe { ptr.cast::<u8>().offset_from(base) };
         if rel < 0 {
             return None;
@@ -330,6 +347,9 @@ fn version_info(path: &str) -> VersionInfo {
         if n == 0 {
             return None;
         }
+        // SAFETY: n = min((size - rel)/2, MAX) with rel >= 0 and n > 0, so
+        // rel + 2n <= size keeps the u16 slice inside the `size` bytes backing
+        // `buf`; version data is WCHAR-aligned within the block.
         let slice = unsafe { std::slice::from_raw_parts(ptr.cast::<u16>(), n) };
         let end = slice.iter().position(|&c| c == 0).unwrap_or(n);
         let s = String::from_utf16_lossy(&slice[..end]);

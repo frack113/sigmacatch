@@ -85,6 +85,9 @@ pub fn read_machine_guid() -> Option<String> {
     let flags: REG_ROUTINE_FLAGS = RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY;
 
     let mut size = 0u32;
+    // SAFETY: `subkey` and `value` are valid null-terminated UTF-16 buffers,
+    // alive for the whole call. Passing no type/data out-params makes this a
+    // size query only: the API writes nothing but the `u32` behind `&mut size`.
     let rc = unsafe {
         RegGetValueW(
             HKEY_LOCAL_MACHINE,
@@ -102,6 +105,10 @@ pub fn read_machine_guid() -> Option<String> {
     let mut buf = vec![0u16; (size as usize).div_ceil(2)];
     let mut actual = size;
     let mut ty: REG_VALUE_TYPE = Default::default();
+    // SAFETY: same valid, still-alive null-terminated UTF-16 pointers as the
+    // size query above. `buf` holds `(size + 1) / 2` u16s (>= `size` bytes),
+    // and `actual` is initialized to `size`, so RegGetValueW cannot write
+    // beyond the buffer; `&mut ty` is a valid out-pointer.
     let rc = unsafe {
         RegGetValueW(
             HKEY_LOCAL_MACHINE,

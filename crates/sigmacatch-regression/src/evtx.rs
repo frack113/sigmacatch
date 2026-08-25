@@ -72,6 +72,10 @@ fn write_evtx_winevt(_xml: &str, channel: &str, rid: u64, path: &Path) -> Result
     let query = format!("*[System[EventRecordID={}]]", rid);
 
     for attempt in 0..EVTX_EXPORT_MAX_ATTEMPTS {
+        // SAFETY: pure FFI wrapper — the three HSTRING arguments are valid
+        // BSTR-compatible wide strings alive for the call; flags select
+        // channel-path source + overwrite semantics per the EvtExportLog
+        // contract. No pointers retained by the API.
         let result = unsafe {
             EvtExportLog(
                 None,

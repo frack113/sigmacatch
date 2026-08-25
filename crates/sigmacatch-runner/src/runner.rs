@@ -47,6 +47,9 @@ pub trait CollectorKind {
 #[cfg(windows)]
 fn setup_console() {
     use windows::Win32::System::Console::*;
+    // SAFETY: plain console API calls on the current thread; handles come from
+    // GetStdHandle and are only passed to GetConsoleMode/SetConsoleMode; all
+    // failures are ignored by design (best-effort UTF-8 enablement).
     unsafe {
         let _ = SetConsoleOutputCP(65001);
         if let Ok(handle) = GetStdHandle(STD_OUTPUT_HANDLE) {

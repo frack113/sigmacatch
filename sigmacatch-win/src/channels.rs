@@ -194,6 +194,10 @@ impl EventCollector {
 
                     let event_handle = EVT_HANDLE(handle_value);
                     let render_result = Self::render_event(event_handle);
+                    // SAFETY: `event_handle` is a live EVT_HANDLE returned by
+                    // EvtNext this cycle (zero slots skipped above); EvtClose
+                    // releases it exactly once and the slot is zeroed below so
+                    // the batch-close loops cannot double-free.
                     unsafe {
                         let _ = EvtClose(event_handle);
                     }
@@ -215,12 +219,17 @@ impl EventCollector {
                                 .skip(i + 1)
                             {
                                 if *handle != 0 {
+                                    // SAFETY: non-zero entries are live EVT_HANDLEs
+                                    // from EvtNext this cycle, not yet closed nor
+                                    // zeroed; each is closed exactly once here.
                                     unsafe {
                                         let _ = EvtClose(EVT_HANDLE(*handle));
                                     }
                                     *handle = 0;
                                 }
                             }
+                            // SAFETY: `query_handle` came from EvtQuery and has
+                            // no other closer on this path.
                             unsafe {
                                 let _ = EvtClose(query_handle);
                             }
@@ -236,6 +245,8 @@ impl EventCollector {
                                 .skip(i + 1)
                             {
                                 if *handle != 0 {
+                                    // SAFETY: same invariant as above — live
+                                    // EvtNext handles closed exactly once.
                                     unsafe {
                                         let _ = EvtClose(EVT_HANDLE(*handle));
                                     }
@@ -251,6 +262,8 @@ impl EventCollector {
                 }
             }
 
+            // SAFETY: single owner — query_handle was obtained from EvtQuery,
+            // every event handle it yielded was already closed above.
             unsafe {
                 let _ = EvtClose(query_handle);
             }
@@ -377,6 +390,9 @@ impl EventCollector {
         let mut events_fetched: u32 = 0;
         let mut max_record_id: u64 = 0;
 
+        // SAFETY: `query_handle` is a live reverse-direction query handle;
+        // `event_handles` is a 1-slot writable buffer and `events_fetched` a
+        // valid out-parameter per the EvtNext contract.
         let result = unsafe {
             EvtNext(
                 query_handle,
@@ -392,11 +408,14 @@ impl EventCollector {
             if let Some(event) = Self::render_event(event_handle) {
                 max_record_id = event.record_id().unwrap_or(0);
             }
+            // SAFETY: handle validated non-zero above, fetched by EvtNext,
+            // closed exactly once.
             unsafe {
                 let _ = EvtClose(event_handle);
             }
         }
 
+        // SAFETY: sole owner of the query handle on this path.
         unsafe {
             let _ = EvtClose(query_handle);
         }
@@ -426,6 +445,9 @@ impl EventCollector {
         let path = PCWSTR::from_raw(channel_wide.as_ptr());
         let query = PCWSTR::from_raw(query_wide.as_ptr());
 
+        // SAFETY: both slices are NUL-terminated UTF-16 built by `str_to_wide`
+        // and outlive the call; `flags` is an EvtQueryFlags mask forwarded by
+        // the caller.
         unsafe { EvtQuery(None, path, query, flags) }
     }
 
@@ -434,6 +456,8 @@ impl EventCollector {
     fn init_com() -> Result<ComGuard, String> {
         use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 
+        // SAFETY: standard COM apartment init for this thread; the reserved
+        // parameter must be NULL per the API contract.
         let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
 
         if hr.is_ok() {
@@ -453,6 +477,9 @@ impl EventCollector {
 
         let mut events_fetched: u32 = 0;
 
+        // SAFETY: `query_handle` is live; `event_handles` is caller-allocated
+        // writable storage whose length bounds the batch; `events_fetched` is
+        // the required out-parameter.
         unsafe {
             EvtNext(
                 query_handle,
@@ -475,6 +502,9 @@ impl EventCollector {
         // Size-probe: EvtRender fails with ERROR_INSUFFICIENT_BUFFER and
         // reports the required size through `buffer_size` — normal, not a failure.
         let mut buffer_size: u32 = 0;
+        // SAFETY: documented two-call size probe — null buffer with size 0;
+        // the API writes nothing and reports the required size via
+        // `buffer_size` (ERROR_INSUFFICIENT_BUFFER expected).
         let result = unsafe {
             EvtRender(
                 None,
@@ -498,6 +528,9 @@ impl EventCollector {
 
         let mut buffer: Vec<u8> = vec![0u8; buffer_size as usize];
         let mut bytes_used: u32 = 0;
+        // SAFETY: `buffer` is allocated with exactly the `buffer_size` bytes
+        // reported by the size probe above; `bytes_used` receives the written
+        // length and stays within the allocation.
         let result = unsafe {
             EvtRender(
                 None,
@@ -549,6 +582,8 @@ struct ComGuard;
 impl Drop for ComGuard {
     fn drop(&mut self) {
         use windows::Win32::System::Com::CoUninitialize;
+        // SAFETY: ComGuard is only constructed after a successful
+        // CoInitializeEx, so this balances exactly one init per thread.
         unsafe { CoUninitialize() };
     }
 }
