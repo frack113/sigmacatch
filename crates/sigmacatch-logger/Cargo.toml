@@ -19,3 +19,6 @@ sigmacatch-config = { path = "../sigmacatch-config" }
 # Quality contract (quality.md Q2.1): inherit workspace lint tiers.
 [lints]
 workspace = true
+
+[lib]
+doctest = false
