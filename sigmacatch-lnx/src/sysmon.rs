@@ -26,7 +26,8 @@
 //! watch or by dropping the receiver. Log rotation (inode change) is detected
 //! and the file re-opened. Non-Linux → silent stub.
 
-use crate::syslog::{self, Record};
+use crate::syslog;
+use crate::sysmon_parse::{parse_line, record_to_event};
 use async_trait::async_trait;
 use sigmacatch_types::{Event, EventProducer};
 use tokio::sync::{mpsc, watch};
@@ -34,36 +35,6 @@ use tokio::sync::{mpsc, watch};
 /// Poll interval of the tail loop (how often new bytes are read from the file).
 #[cfg(target_os = "linux")]
 const TAIL_POLL_MS: u64 = 100;
-
-/// Parse a single syslog line into a [`Record`] when it carries a Sysmon for
-/// Linux event: RFC3164 program tag `sysmon` and an `<Event>` XML body.
-pub fn parse_line(line: &[u8]) -> Option<Record> {
-    let record = syslog::parse_line(line)?;
-    if !is_sysmon_record(&record) {
-        return None;
-    }
-    Some(record)
-}
-
-fn is_sysmon_record(record: &Record) -> bool {
-    record.program.eq_ignore_ascii_case("sysmon") && record.message.starts_with("<Event>")
-}
-
-/// Build the [`Event`] for a Sysmon for Linux syslog line:
-/// - `event_json_raw`: nested winevt JSON preserving the original XML content;
-/// - `event_json` (detection): nested winevt JSON + logsource `product: linux`
-///   with `service`/`category` resolved from `Linux-Sysmon/Operational`;
-/// - `event_raw`: the original line bytes (regression `.log` source).
-///
-/// Returns `None` when the XML body cannot be parsed (truncated by the
-/// syslog daemon) — callers must skip the line.
-pub fn record_to_event(raw: &[u8], record: &Record) -> Option<Event> {
-    let json_raw = sigmacatch_types::parse_winevt_xml_raw(&record.message).ok()?;
-    let json = sigmacatch_types::parse_winevt_xml(&record.message).ok()?;
-    let mut event = Event::new(json_raw, json, raw.to_vec());
-    event.inject_logsource_fields_for("linux", None);
-    Some(event)
-}
 
 /// Sysmon for Linux event collector (implements `EventProducer` directly).
 pub struct EventCollector {

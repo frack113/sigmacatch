@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[build]
+target = "bpfel-unknown-none"
+
+[target.bpfel-unknown-none]
+linker = "bpf-linker"
+# Mirrors aya-build RUSTFLAGS: arch cfg for aya-ebpf bindings + BTF emission.
+rustflags = [
+    "--cfg=bpf_target_arch=\"x86_64\"",
+    "-Cdebuginfo=2",
+    "-Clink-arg=--btf",
+]
+
+[unstable]
+build-std = ["core"]

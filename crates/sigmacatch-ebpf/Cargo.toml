@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+#
+# Standalone crate, deliberately EXCLUDED from the root workspace: it only
+# builds with nightly + rust-src + bpf-linker for the bpf-el target. The
+# resulting object is embedded by sigmacatch-lnx/build.rs (include_bytes!).
+
+[workspace]
+
+[package]
+name = "sigmacatch-ebpf"
+version = "0.1.0"
+edition = "2021"
+description = "sigmacatch eBPF probes (bpf-el object)"
+license = "MIT"
+
+[dependencies]
+aya-ebpf = "0.2"
+sigmacatch-ebpf-common = { path = "../sigmacatch-ebpf-common" }
+
+[[bin]]
+name = "sigmacatch-ebpf"
+path = "src/main.rs"
+
+[profile.release]
+strip = true
+debug = false
+lto = true
+codegen-units = 1
+panic = "abort"

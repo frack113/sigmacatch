@@ -5,19 +5,44 @@
 name = "sigmacatch-lnx"
 version.workspace = true
 edition.workspace = true
-description = "Linux sigmacatch binary (auditd + syslog collectors)"
+description = "Linux sigmacatch binary (auditd + syslog collectors, optional eBPF sysmon input)"
 license.workspace = true
+build = "src/build.rs"
 
 [features]
 default = ["auditd", "builtin"]
 auditd = ["dep:async-trait", "dep:linux-audit-parser"]
 builtin = ["dep:async-trait", "dep:regex"]
+sysmon = ["dep:async-trait"]
+ebpf = ["dep:async-trait", "dep:aya", "dep:sigmacatch-ebpf-common", "dep:sha2"]
 tools = ["dep:serde"]
 
+# Three release flavours share this main; cargo features select the sysmon
+# source per binary. Build each with --no-default-features --features <set>.
 [[bin]]
 name = "sigmacatch-linux"
 path = "src/main_linux.rs"
 required-features = ["auditd", "builtin"]
+
+[[bin]]
+name = "sigmacatch-linux-sysmon"
+path = "src/main_linux.rs"
+required-features = ["auditd", "builtin", "sysmon"]
+
+[[bin]]
+name = "sigmacatch-linux-ebpf"
+path = "src/main_linux.rs"
+required-features = ["auditd", "builtin", "ebpf"]
+
+# Diagnostics eBPF-only (parses the embedded probe object).
+[[example]]
+name = "ebpf_parse_check"
+required-features = ["ebpf"]
+
+# End-to-end regression against the legacy Sysmon-for-Linux tail.
+[[test]]
+name = "sysmon_e2e"
+required-features = ["auditd", "builtin", "sysmon"]
 
 [dependencies]
 sigmacatch-runner = { path = "../crates/sigmacatch-runner" }
@@ -27,10 +52,13 @@ sigmacatch-regression = { path = "../crates/sigmacatch-regression" }
 sigmacatch-rule = { path = "../crates/sigmacatch-rule" }
 sigmacatch-repo = { path = "../crates/sigmacatch-repo" }
 sigmacatch-types = { path = "../crates/sigmacatch-types" }
+sigmacatch-ebpf-common = { path = "../crates/sigmacatch-ebpf-common", optional = true }
 
 async-trait = { version = "0.1", optional = true }
 linux-audit-parser = { version = "0.2", optional = true }
 regex = { version = "1", optional = true }
+aya = { version = "0.14", optional = true }
+sha2 = { version = "0.10", optional = true }
 
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "signal"] }
 tracing = "0.1"

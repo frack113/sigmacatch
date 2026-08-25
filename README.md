@@ -11,7 +11,9 @@ Sigmacatch captures real OS events, matches them against [SigmaHQ](https://githu
 |---|---|---|
 | Windows | Windows Event Log API (`winevt`) | `sigmacatch-channel` |
 | Windows | Direct ETW (`ferrisetw`) | `sigmacatch-etw` |
-| Linux | auditd tail and/or syslog tails (central + authpriv + cron, incl. Sysmon-for-Linux XML) | `sigmacatch-linux` |
+| Linux | auditd + builtin syslog (default, no root needed) | `sigmacatch-linux` |
+| Linux | + legacy Sysmon-for-Linux XML tail | `sigmacatch-linux-sysmon` |
+| Linux | + native eBPF probes (process/network/file/DNS) | `sigmacatch-linux-ebpf` |
 
 ## How it works
 
@@ -42,7 +44,7 @@ The pipeline runs continuously until Ctrl+C; on exit the pipeline flushes the re
 ## Requirements
 
 - **Windows** with [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) installed — required for rich events (ParentImage, CommandLine, hashes, etc.)
-- **Linux** with `auditd` running or a syslog source (`/var/log/messages` or `/var/log/syslog`, optionally authpriv/cron files) — for `sigmacatch-linux`; [Sysmon for Linux](https://github.com/SysmonForLinux/SysmonForLinux) optional, adds rich process/network events through the syslog stream
+- **Linux** with `auditd` running or a syslog source (`/var/log/messages` or `/var/log/syslog`, optionally authpriv/cron files) — for `sigmacatch-linux`; [Sysmon for Linux](https://github.com/SysmonForLinux/SysmonForLinux) optional via `sigmacatch-linux-sysmon`; native eBPF probes via `sigmacatch-linux-ebpf` (root or CAP_BPF+CAP_PERFMON at runtime, kernel 5.14+/BTF, nightly build toolchain)
 - Rust 2024 edition (1.85+)
 - Admin rights for the `Security` and `System` Event Log channels (Windows)
 
@@ -50,9 +52,11 @@ The pipeline runs continuously until Ctrl+C; on exit the pipeline flushes the re
 
 ```bash
 cargo build --release
-./target/release/sigmacatch-channel   # Winevt collector (Windows)
-./target/release/sigmacatch-etw       # ETW collector (Windows)
-./target/release/sigmacatch-linux     # auditd + builtin syslog + Sysmon-for-Linux collectors (Linux)
+./target/release/sigmacatch-channel     # Winevt collector (Windows)
+./target/release/sigmacatch-etw         # ETW collector (Windows)
+./target/release/sigmacatch-linux       # auditd + builtin syslog (Linux, no root)
+./target/release/sigmacatch-linux-sysmon  # + Sysmon-for-Linux tail (Linux)
+./target/release/sigmacatch-linux-ebpf  # + eBPF probes (Linux, root required)
 ```
 
 On first run a `config.yaml` is created with placeholder defaults, and the run stops (`exit 1`)
@@ -103,11 +107,13 @@ Rules below the configured `min_status` / `min_level` thresholds are skipped at 
 
 Collectors are selected via cargo features, not CLI flags:
 
-| Binary | Feature | Backend |
+| Binary | Default features | Backend |
 |---|---|---|
-| `sigmacatch-channel` | `winevt` | Windows Event Log API |
-| `sigmacatch-etw` | `etw` | Direct ETW via ferrisetw |
-| `sigmacatch-linux` | `auditd` + `builtin` | Three collectors in parallel, each guarded by its source (auditd / builtin syslog / Sysmon-for-Linux) — details in [docs/fr/architecture.md](docs/fr/architecture.md) |
+| `sigmacatch-channel` | `winevt` + `etw` | Windows Event Log API / Direct ETW |
+| `sigmacatch-etw` | `winevt` + `etw` | Direct ETW via ferrisetw |
+| `sigmacatch-linux` | `auditd` + `builtin` | Auditd parser + RFC3164 syslog parsing (no root needed) |
+| `sigmacatch-linux-sysmon` | `auditd` + `builtin` + `sysmon` | + legacy Sysmon-for-Linux XML tail (reads `/var/log/messages` or syslog) |
+| `sigmacatch-linux-ebpf` | `auditd` + `builtin` + `ebpf` | + native eBPF probes (needs root/CAP_BPF+CAP_PERFMON, kernel 5.14+/BTF) |
 
 Build a single collector in isolation:
 
@@ -124,7 +130,7 @@ cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win --n
 | `sigmacatch-channel check-filter` | Validate the filter config against the real rule set (ground-truth counts) |
 | `sigmacatch-channel list-rules` | List loaded rules with techniques and ART link (`--coverage` for stats) |
 | `sigmacatch-channel get-atomic` | Generate a `run_atomic.ps1` (Invoke-AtomicRedTeam chain) for rules without regression data |
-| `sigmacatch-linux check` / `check-filter` / `list-rules` | Same diagnostics for the Linux binary |
+| `sigmacatch-linux check` / `check-filter` / `list-rules` | Same diagnostics for the Linux binaries (all 3 flavours share the same `tools` output) |
 
 ## Build & cross-compilation
 
@@ -138,12 +144,14 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 
 ## Workspace
 
-The project is a cargo workspace of 12 packages (2 binary crates + 10 libraries):
+The project is a cargo workspace of 14 packages (3 binary crates + 11 libraries):
 
 | Crate | Purpose |
 |---|---|
 | `sigmacatch-win` | Windows binaries: `sigmacatch-channel` (winevt), `sigmacatch-etw` (ETW) + `channels.rs` / `etw/` collectors + `cli.rs` diagnostics |
-| `sigmacatch-lnx` | Linux binary: `sigmacatch-linux` (auditd + builtin syslog + Sysmon-for-Linux in parallel) + `cli.rs` diagnostics |
+| `sigmacatch-lnx` | Linux binaries (3 flavours): `sigmacatch-linux` (base), `sigmacatch-linux-sysmon` (adds legacy tail), `sigmacatch-linux-ebpf` (adds native eBPF probes) — feature-gated via `sysmon` / `ebpf`; shared `sysmon_parse.rs` always compiled |
+| `sigmacatch-ebpf` | eBPF probe crate (excluded workspace, nightly, `bpfel-unknown-none`) — `execve`/`exec`/`exit`/`connect`/`openat`/`sendto`/`sendmsg` tracepoints |
+| `sigmacatch-ebpf-common` | Shared `no_std` types for eBPF ring buffer (`ExecEvent`, `ExitEvent`, `NetEvent`, `FileCreateEvent`, `DnsEvent`) |
 | `sigmacatch-runner` | Shared pipeline (`run<C: CollectorKind>`): config, repo init, event loop, generation, commit/push |
 | `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml |
 | `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug, max 3 kept) |

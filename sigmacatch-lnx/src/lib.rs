@@ -5,7 +5,15 @@ pub use sigmacatch_runner::{CollectorKind, run};
 
 #[cfg(feature = "auditd")]
 pub mod auditd;
+#[cfg(feature = "ebpf")]
+pub mod ebpf;
+#[cfg(feature = "ebpf")]
+pub mod ebpf_event;
 #[cfg(feature = "builtin")]
 pub mod syslog;
-#[cfg(feature = "builtin")]
+// Legacy Sysmon-for-Linux tail collector — flavour-gated: only the
+// `-sysmon` binary (or explicit --features sysmon) carries it.
+#[cfg(feature = "sysmon")]
 pub mod sysmon;
+// Wire-format parsing shared by every flavour and the diagnostics CLI.
+pub mod sysmon_parse;

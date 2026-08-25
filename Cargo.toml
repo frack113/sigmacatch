@@ -16,6 +16,13 @@ members = [
     "crates/sigmacatch-evtx-writer",
     "crates/sigmacatch-rule",
     "crates/sigmacatch-repo",
+    "crates/sigmacatch-ebpf-common",
+]
+
+# Nightly-only bpf-el crate: built separately (see crates/sigmacatch-ebpf/Cargo.toml
+# and sigmacatch-lnx/build.rs), never as part of the stable workspace graph.
+exclude = [
+    "crates/sigmacatch-ebpf",
 ]
 
 [workspace.package]

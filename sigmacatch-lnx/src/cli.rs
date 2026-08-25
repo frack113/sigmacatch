@@ -18,7 +18,7 @@ use sigmacatch_rule::{
 };
 use uuid::Uuid;
 
-use sigmacatch_lnx::{auditd, syslog, sysmon};
+use sigmacatch_lnx::{auditd, syslog, sysmon_parse};
 
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
 
@@ -30,9 +30,9 @@ pub fn dispatch() -> Option<i32> {
         return None;
     }
     match args[1].as_str() {
-        "check" => Some(cmd_check(&args[1..])),
-        "check-filter" => Some(cmd_check_filter(&args[1..])),
-        "list-rules" => Some(cmd_list_rules(&args[1..])),
+        "check" => Some(cmd_check(&args[2..])),
+        "check-filter" => Some(cmd_check_filter(&args[2..])),
+        "list-rules" => Some(cmd_list_rules(&args[2..])),
         _ => None,
     }
 }
@@ -41,16 +41,14 @@ pub fn dispatch() -> Option<i32> {
 
 /// Detect the collector format from the first non-empty line of raw data.
 fn detect_format(raw: &[u8]) -> &'static str {
-    for line in raw.split(|b| *b == b'\n').filter(|l| !l.is_empty()).take(1) {
-        if let Some(record) = syslog::parse_line(line) {
-            if record.program.eq_ignore_ascii_case("sysmon") {
-                return "sysmon";
-            }
-            return "syslog";
-        }
+    let Some(line) = raw.split(|b| *b == b'\n').find(|l| !l.is_empty()) else {
         return "auditd";
+    };
+    match syslog::parse_line(line) {
+        Some(record) if record.program.eq_ignore_ascii_case("sysmon") => "sysmon",
+        Some(_) => "syslog",
+        None => "auditd",
     }
-    "auditd"
 }
 
 // ─── check ────────────────────────────────────────────────────────────────────
@@ -141,8 +139,8 @@ fn cmd_check(args: &[String]) -> i32 {
                 .split(|b| *b == b'\n')
                 .filter(|line| !line.is_empty())
                 .filter_map(|line| {
-                    let record = sysmon::parse_line(line)?;
-                    sysmon::record_to_event(line, &record)
+                    let record = sysmon_parse::parse_line(line)?;
+                    sysmon_parse::record_to_event(line, &record)
                 })
                 .collect(),
             "syslog" => raw
