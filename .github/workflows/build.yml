@@ -39,6 +39,14 @@ jobs:
           tar --zstd -xf /tmp/bpf-linker.tar.zst -C "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # Supply-chain gates: advisories/licenses/bans/sources policy (deny.toml)
+      # + unused-dependency detection.
+      - name: Install cargo-deny + cargo-machete
+        uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
+        with:
+          tool: cargo-deny,cargo-machete
+      - run: cargo deny check
+      - run: cargo machete
       - name: Build all 3 flavours
         run: |
           cargo build --release --locked -p sigmacatch-lnx --no-default-features --features auditd,builtin

@@ -3173,7 +3173,6 @@ version = "0.5.0"
 dependencies = [
  "anyhow",
  "sigmacatch-config",
- "tracing",
  "tracing-appender",
  "tracing-subscriber",
 ]
@@ -3273,7 +3272,6 @@ version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "chrono",
  "ferrisetw",
  "hex",
  "input-windows-evtx",
