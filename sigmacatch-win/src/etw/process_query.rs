@@ -237,12 +237,20 @@ fn read_unicode_string(handle: HANDLE, off: usize) -> Option<String> {
         return None;
     }
     let byte_len = us.length as usize;
-    if byte_len == 0 || byte_len > MAX_COMMAND_LINE_BYTES || us.buffer.is_null() {
+    // UNICODE_STRING.Length counts UTF-16 bytes, so it must be even; a hostile
+    // or corrupted odd value would overflow the half-length buffer below.
+    if byte_len == 0
+        || byte_len % 2 != 0
+        || byte_len > MAX_COMMAND_LINE_BYTES
+        || us.buffer.is_null()
+    {
         return None;
     }
     let mut buf = vec![0u16; byte_len / 2];
     read = 0;
-    // SAFETY: buf holds byte_len/2 ×u16 (i.e. byte_len bytes when byte_len is even) and us.buffer is checked non-null with byte_len ≤ MAX_COMMAND_LINE_BYTES; an unmapped remote page just fails the call. REVIEW REQUIRED: assumes UNICODE_STRING.Length is even — an odd Length would overflow buf by one byte.
+    // SAFETY: the guard above enforces byte_len % 2 == 0, so buf holds exactly
+    // byte_len bytes (byte_len/2 ×u16); us.buffer is non-null and bounded by
+    // MAX_COMMAND_LINE_BYTES; an unmapped remote page makes the call fail.
     let ok = unsafe {
         ReadProcessMemory(
             handle,
@@ -318,8 +326,10 @@ fn query_user_name_with(handle: HANDLE) -> Option<String> {
         if rc.is_err() || size == 0 || size > 4096 {
             return None;
         }
-        let mut buf = vec![0u8; size as usize];
-        // SAFETY: buf is allocated with exactly the size reported by the probe above (bounded ≤ 4096) and the API writes at most that much TokenUser data; rc is checked before the buffer is read.
+        // Align-8 storage: TokenUserLayout begins with a pointer field, so a
+        // reference cast out of a Vec<u8> (align-1) would be UB.
+        let mut buf = vec![0u64; (size as usize).div_ceil(8)];
+        // SAFETY: buf is at least the size reported by the probe above (bounded ≤ 4096) and the API writes at most that much TokenUser data; rc is checked before the buffer is read.
         let rc = unsafe {
             GetTokenInformation(
                 token,
@@ -339,7 +349,10 @@ fn query_user_name_with(handle: HANDLE) -> Option<String> {
             sid: *mut SID,
             attributes: u32,
         }
-        // SAFETY: rc.ok() means buf holds a complete self-relative TOKEN_USER; TokenUserLayout mirrors its documented layout and the SID pointer is null-checked below. REVIEW REQUIRED: the cast requires align-8 while Vec<u8> only guarantees align-1.
+        // SAFETY: rc.ok() means buf holds a complete self-relative TOKEN_USER;
+        // TokenUserLayout mirrors its documented layout and the SID pointer is
+        // null-checked below; the u64-backed buffer guarantees the align-8 the
+        // reference cast requires.
         let token_user = unsafe { &*(buf.as_ptr().cast::<TokenUserLayout>()) };
         if token_user.sid.is_null() {
             return None;
@@ -428,8 +441,10 @@ fn query_integrity_level_with(handle: HANDLE) -> Option<String> {
         if rc.is_err() || size == 0 || size > 4096 {
             return None;
         }
-        let mut buf = vec![0u8; size as usize];
-        // SAFETY: buf is allocated with exactly the size reported by the probe above (bounded ≤ 4096) and the API writes at most that much TOKEN_MANDATORY_LABEL data; rc is checked before the buffer is read.
+        // Align-8 storage: TOKEN_MANDATORY_LABEL embeds a SID pointer field;
+        // a reference cast out of a Vec<u8> (align-1) would be UB.
+        let mut buf = vec![0u64; (size as usize).div_ceil(8)];
+        // SAFETY: buf is at least the size reported by the probe above (bounded ≤ 4096) and the API writes at most that much TOKEN_MANDATORY_LABEL data; rc is checked before the buffer is read.
         let rc = unsafe {
             GetTokenInformation(
                 token,
@@ -444,7 +459,10 @@ fn query_integrity_level_with(handle: HANDLE) -> Option<String> {
         }
         // TOKEN_MANDATORY_LABEL { Label: SID_AND_ATTRIBUTES { SID*, Attributes } };
         // the SID (in our buffer) exposes the last sub-authority as the label.
-        // SAFETY: rc.ok() means buf holds a complete TOKEN_MANDATORY_LABEL whose self-relative SID lives inside buf; only fields within the written data are read. REVIEW REQUIRED: the cast requires align-8 while Vec<u8> only guarantees align-1.
+        // SAFETY: rc.ok() means buf holds a complete TOKEN_MANDATORY_LABEL
+        // whose self-relative SID lives inside buf; only fields within the
+        // written data are read; the u64-backed buffer provides the align-8
+        // the reference cast requires.
         let label = unsafe { &*(buf.as_ptr().cast::<TOKEN_MANDATORY_LABEL>()) };
         let sid = label.Label.Sid.0;
         if sid.is_null() {
@@ -503,8 +521,10 @@ fn query_logon_id_with(handle: HANDLE) -> Option<String> {
         if rc.is_err() || size == 0 || size > 512 {
             return None;
         }
-        let mut buf = vec![0u8; size as usize];
-        // SAFETY: buf is allocated with exactly the size reported by the probe above (bounded ≤ 512) and the API writes at most that much TOKEN_STATISTICS data; rc is checked before the buffer is read.
+        // Align-8 storage: TOKEN_STATISTICS mixes u32/LUID/LARGE_INTEGER
+        // fields; a reference cast out of a Vec<u8> (align-1) would be UB.
+        let mut buf = vec![0u64; (size as usize).div_ceil(8)];
+        // SAFETY: buf is at least the size reported by the probe above (bounded ≤ 512) and the API writes at most that much TOKEN_STATISTICS data; rc is checked before the buffer is read.
         let rc = unsafe {
             GetTokenInformation(
                 token,
@@ -517,7 +537,9 @@ fn query_logon_id_with(handle: HANDLE) -> Option<String> {
         if rc.is_err() {
             return None;
         }
-        // SAFETY: rc.ok() means buf holds a complete TOKEN_STATISTICS (fixed-size class, probe bounded ≤ 512). REVIEW REQUIRED: the cast requires align-8 (LUID field) while Vec<u8> only guarantees align-1.
+        // SAFETY: rc.ok() means buf holds a complete TOKEN_STATISTICS
+        // (fixed-size class, probe bounded ≤ 512); the u64-backed buffer
+        // provides the alignment the reference cast requires.
         let stats = unsafe { &*(buf.as_ptr().cast::<TOKEN_STATISTICS>()) };
         let auth = stats.AuthenticationId;
         let value = ((auth.HighPart as u64) << 32) | u64::from(auth.LowPart);
