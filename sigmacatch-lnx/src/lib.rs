@@ -9,11 +9,11 @@ pub use sigmacatch_runner::{CollectorKind, run};
 
 #[cfg(feature = "auditd")]
 pub mod auditd;
-pub mod entry;
 #[cfg(feature = "ebpf")]
 pub mod ebpf;
 #[cfg(feature = "ebpf")]
 pub mod ebpf_event;
+pub mod entry;
 #[cfg(feature = "builtin")]
 pub mod syslog;
 // Legacy Sysmon-for-Linux tail collector — flavour-gated: only the

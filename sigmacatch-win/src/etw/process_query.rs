@@ -240,7 +240,7 @@ fn read_unicode_string(handle: HANDLE, off: usize) -> Option<String> {
     // UNICODE_STRING.Length counts UTF-16 bytes, so it must be even; a hostile
     // or corrupted odd value would overflow the half-length buffer below.
     if byte_len == 0
-        || byte_len % 2 != 0
+        || !byte_len.is_multiple_of(2)
         || byte_len > MAX_COMMAND_LINE_BYTES
         || us.buffer.is_null()
     {
