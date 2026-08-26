@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
+//! Shared pipeline entry of the three Linux binaries (`sigmacatch-linux`,
+//! `-sysmon`, `-ebpf`); cargo features select which sysmon source
+//! (legacy tail / eBPF / none) is compiled in. Each binary is a thin
+//! wrapper calling [`run`].
+
 use std::collections::HashMap;
 
 use anyhow::Result;
@@ -11,19 +16,59 @@ use sigmacatch_runner::{self, CollectorKind};
 use sigmacatch_types::{Event, EventProducer};
 use tokio::sync::{mpsc, watch};
 
-use sigmacatch_lnx::{auditd, syslog, sysmon};
+#[cfg(feature = "sysmon")]
+use crate::sysmon;
+use crate::{auditd, syslog};
 
 fn auditd_available() -> bool {
     std::path::Path::new(auditd::DEFAULT_LOG_PATH).is_file()
 }
 
-fn mode_for(auditd_ok: bool, syslog_ok: bool) -> &'static str {
-    match (auditd_ok, syslog_ok) {
-        (true, true) => "linux auditd+syslog+sysmon",
-        (true, false) => "linux auditd",
-        (false, true) => "linux syslog+sysmon",
-        (false, false) => "linux (no source)",
+fn mode_for(auditd_ok: bool, syslog_ok: bool, ebpf_planned: bool) -> &'static str {
+    match (auditd_ok, syslog_ok, ebpf_planned) {
+        (true, true, true) => "linux auditd+syslog+sysmon(ebpf)",
+        (true, false, true) => "linux auditd+sysmon(ebpf)",
+        (false, true, true) => "linux syslog+sysmon(ebpf)",
+        (false, false, true) => "linux sysmon(ebpf)",
+        (true, true, false) => "linux auditd+syslog",
+        (true, false, false) => "linux auditd",
+        (false, true, false) => "linux syslog",
+        (false, false, false) => "linux (no source)",
     }
+}
+
+/// Sysmon source for this binary flavour, if any:
+/// - `ebpf` feature: the eBPF collector (privilege-gated at startup); a
+///   failed load warns and yields `None` — no silent downgrade;
+/// - `sysmon` feature: the legacy Sysmon-for-Linux syslog tail;
+/// - both (dev/all-features builds): eBPF first, tail as fallback;
+/// - neither: `None` — the plain binary carries no sysmon source.
+#[allow(unused_variables)]
+fn make_sysmon_collector(syslog_ok: bool) -> Option<(&'static str, Box<dyn EventProducer>)> {
+    #[cfg(feature = "ebpf")]
+    {
+        match crate::ebpf::EventCollector::new() {
+            Ok(collector) => return Some(("sysmon", Box::new(collector))),
+            Err(e) => {
+                tracing::warn!("eBPF collector unavailable ({e:#})");
+                if !cfg!(feature = "sysmon") {
+                    tracing::warn!("no sysmon fallback in this flavour — continuing without it");
+                    return None;
+                }
+                tracing::warn!("falling back to the Sysmon-for-Linux syslog tail");
+            }
+        }
+    }
+    #[cfg(feature = "sysmon")]
+    {
+        return if syslog_ok {
+            Some(("sysmon", Box::new(sysmon::EventCollector::new())))
+        } else {
+            None
+        };
+    }
+    #[allow(unreachable_code)]
+    None
 }
 
 fn select_collectors(
@@ -36,7 +81,9 @@ fn select_collectors(
     }
     if syslog_ok {
         collectors.push(("syslog", Box::new(syslog::EventCollector::new())));
-        collectors.push(("sysmon", Box::new(sysmon::EventCollector::new())));
+    }
+    if let Some(sysmon) = make_sysmon_collector(syslog_ok) {
+        collectors.push(sysmon);
     }
     collectors
 }
@@ -89,13 +136,29 @@ impl EventProducer for MultiCollector {
 
 struct LinuxCollector;
 
+/// Whether the eBPF sysmon input is planned for this run: compiled in and
+/// usable privileges-wise. Loader failure later still falls back.
+#[cfg(feature = "ebpf")]
+fn ebpf_planned() -> bool {
+    crate::ebpf::has_required_privileges()
+}
+
+#[cfg(not(feature = "ebpf"))]
+fn ebpf_planned() -> bool {
+    false
+}
+
 impl CollectorKind for LinuxCollector {
     fn name(&self) -> &'static str {
         "sigmacatch-linux"
     }
 
     fn mode(&self) -> &'static str {
-        mode_for(auditd_available(), syslog::default_log_exists())
+        mode_for(
+            auditd_available(),
+            syslog::default_log_exists(),
+            ebpf_planned(),
+        )
     }
 
     fn channels(
@@ -119,17 +182,31 @@ impl CollectorKind for LinuxCollector {
 }
 
 #[cfg(feature = "tools")]
+#[path = "cli.rs"]
 mod cli;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// Async entry shared by every flavour: diagnostics dispatch, privilege and
+/// source guards, then the continuous runner.
+pub async fn run() -> Result<()> {
     // Diagnostics first: the tools subcommands must work on machines with no
     // local log source; only the collection loop requires one.
     #[cfg(feature = "tools")]
     if let Some(code) = cli::dispatch() {
         std::process::exit(code);
     }
-    if !std::path::Path::new(auditd::DEFAULT_LOG_PATH).is_file() && !syslog::default_log_exists() {
+    // Spec constraint: refuse to start without eBPF privileges rather than
+    // degrade silently — the syslog fallback only covers old kernels.
+    #[cfg(feature = "ebpf")]
+    if !crate::ebpf::has_required_privileges() {
+        anyhow::bail!(
+            "insufficient privileges for the eBPF collector: run as root \
+             or grant CAP_BPF+CAP_PERFMON"
+        );
+    }
+    if !std::path::Path::new(auditd::DEFAULT_LOG_PATH).is_file()
+        && !syslog::default_log_exists()
+        && !cfg!(feature = "ebpf")
+    {
         anyhow::bail!(
             "no linux log source found: {} (auditd) nor {:?} / {:?} / {:?} (syslog). \
              Install/configure one of them first.",
@@ -149,18 +226,43 @@ mod tests {
 
     #[test]
     fn test_mode_for() {
-        assert_eq!(mode_for(true, true), "linux auditd+syslog+sysmon");
-        assert_eq!(mode_for(true, false), "linux auditd");
-        assert_eq!(mode_for(false, true), "linux syslog+sysmon");
-        assert_eq!(mode_for(false, false), "linux (no source)");
+        assert_eq!(mode_for(true, true, false), "linux auditd+syslog");
+        assert_eq!(mode_for(true, false, false), "linux auditd");
+        assert_eq!(mode_for(false, true, false), "linux syslog");
+        assert_eq!(mode_for(false, false, false), "linux (no source)");
+        assert_eq!(
+            mode_for(true, true, true),
+            "linux auditd+syslog+sysmon(ebpf)"
+        );
+        assert_eq!(mode_for(true, false, true), "linux auditd+sysmon(ebpf)");
+        assert_eq!(mode_for(false, true, true), "linux syslog+sysmon(ebpf)");
+        assert_eq!(mode_for(false, false, true), "linux sysmon(ebpf)");
     }
 
     #[test]
-    fn test_select_collectors() {
-        assert_eq!(select_collectors(true, true).len(), 3);
-        assert_eq!(select_collectors(true, false).len(), 1);
-        assert_eq!(select_collectors(false, true).len(), 2);
-        assert!(select_collectors(false, false).is_empty());
+    fn test_select_collectors_source_guards() {
+        let names = |a: bool, s: bool| -> Vec<&'static str> {
+            select_collectors(a, s).iter().map(|(n, _)| *n).collect()
+        };
+        // Source guards are honoured regardless of flavour.
+        assert!(!names(false, true).contains(&"auditd"));
+        assert!(!names(true, false).contains(&"syslog"));
+        assert!(names(true, true).contains(&"auditd"));
+        assert!(names(true, true).contains(&"syslog"));
+        // Nothing to run without any source file.
+        assert!(names(false, false).is_empty());
+    }
+
+    #[cfg(feature = "sysmon")]
+    #[test]
+    fn test_sysmon_flavour_carries_tail_only_with_syslog_file() {
+        let has_sysmon = |syslog_ok| {
+            select_collectors(true, syslog_ok)
+                .iter()
+                .any(|(n, _)| *n == "sysmon")
+        };
+        assert!(has_sysmon(true));
+        assert!(!has_sysmon(false));
     }
 
     struct FakeProducer {

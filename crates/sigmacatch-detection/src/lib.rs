@@ -31,6 +31,8 @@ pub const LNX_FIELD_PIPELINE: &str = include_str!("../pipelines/4_lnx_field_name
 
 mod channel_resolver;
 
+/// Sigma evaluation engine wrapper: compiled rule set + per-platform
+/// pipelines + a small FIFO of pending events and alerts.
 pub struct DetectionEngine {
     engine: Engine,
     /// Cached parsed pipelines — cloned (not re-parsed) on reload_rules to
@@ -50,6 +52,7 @@ pub struct DetectionEngine {
 }
 
 impl DetectionEngine {
+    /// Compile `rules` and load the embedded platform pipelines.
     pub fn new(rules: &SigmahqRules) -> Result<Self> {
         let win_logsource = parse_pipeline(WIN_LOGSOURCE_PIPELINE)
             .map_err(|e| anyhow!("win_logsource pipeline: {e}"))?;
@@ -93,6 +96,7 @@ impl DetectionEngine {
         })
     }
 
+    /// Swap in a freshly compiled rule set without re-parsing pipelines.
     pub fn reload_rules(&mut self, rules: &SigmahqRules) -> Result<()> {
         // Reuse cached pipelines (clone, not re-parse YAML) for the new engine.
         let mut engine = Self::create_engine(
@@ -154,6 +158,7 @@ impl DetectionEngine {
         Ok(engine)
     }
 
+    /// Number of compiled rules currently loaded.
     pub fn rule_count(&self) -> usize {
         self.engine.rule_count()
     }
@@ -166,30 +171,36 @@ impl DetectionEngine {
         channel_resolver::resolve_channels(self.engine.rules(), custom_map)
     }
 
+    /// Read-only access to the underlying rsigma engine.
     pub fn engine(&self) -> &Engine {
         &self.engine
     }
 
+    /// Mutable access to the underlying rsigma engine.
     pub fn engine_mut(&mut self) -> &mut Engine {
         &mut self.engine
     }
 
+    /// Serialize the compiled engine (HIR cache).
     pub fn save_hir(&self) -> Result<Vec<u8>> {
         self.engine
             .save_hir()
             .map_err(|e| anyhow!("save_hir failed: {e}"))
     }
 
+    /// Restore a previously saved HIR blob.
     pub fn load_hir(&mut self, blob: &[u8]) -> Result<()> {
         self.engine
             .load_hir(blob)
             .map_err(|e| anyhow!("load_hir failed: {e}"))
     }
 
+    /// Copy of the processing counters.
     pub fn stats(&self) -> EngineStats {
         self.stats.clone()
     }
 
+    /// Per-field match explanation for diagnostics (`check` deep mode).
     pub fn explain_rule(&self, rule_id: &Uuid, event: &Event) -> Option<serde_json::Value> {
         let rule_id_str = rule_id.to_string();
         let compiled = self
@@ -204,10 +215,12 @@ impl DetectionEngine {
 
     // ─── FIFO API ─────────────────────────────────────────────────────────
 
+    /// Append collected events to the pending FIFO.
     pub fn put_events(&mut self, events: Vec<Event>) {
         self.events.extend(events);
     }
 
+    /// Drain the pending events FIFO.
     pub fn get_events(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.events)
     }
@@ -269,6 +282,7 @@ impl DetectionEngine {
         }
     }
 
+    /// Drain matched alerts (updates [`EngineStats::alerts_generated`]).
     pub fn get_alerts(&mut self) -> Vec<Alert> {
         let alerts = std::mem::take(&mut self.alerts);
         self.stats.alerts_generated += alerts.len() as u64;
@@ -278,9 +292,12 @@ impl DetectionEngine {
 
 // ─── Engine Stats ─────────────────────────────────────────────────────────
 
+/// Cumulative processing counters.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct EngineStats {
+    /// Total events evaluated so far.
     pub events_processed: u64,
+    /// Total alerts produced so far.
     pub alerts_generated: u64,
 }
 

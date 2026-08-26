@@ -182,6 +182,9 @@ pub fn snapshot() -> ProcessTable {
     let mut table = ProcessTable::new();
     let mut pids = vec![0u32; 16384];
     let mut needed = 0u32;
+    // SAFETY: `pids` is a live Vec of 16384 u32s and the byte count passed is
+    // exactly `pids.len() * size_of::<u32>()`, so EnumProcesses cannot write
+    // out of bounds; `&mut needed` is a valid initialized out-pointer.
     if unsafe {
         EnumProcesses(
             pids.as_mut_ptr(),

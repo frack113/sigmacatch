@@ -6,6 +6,7 @@
 mod evtx;
 mod format;
 mod info;
+/// SigmaHQ `logtype` metadata helpers for `info.yml`.
 pub mod logtype;
 mod long_path;
 
@@ -36,10 +37,14 @@ fn data_file_exists(dir: &Path, rule_id: &Uuid, format: DataFormat) -> bool {
     std::fs::metadata(&candidate).is_ok_and(|m| m.len() > 0)
 }
 
+/// One loaded regression entry (one rule with existing data).
 #[derive(Debug, Clone)]
 pub struct RegressionEntry {
+    /// Rule UUID the data belongs to.
     pub rule_id: Uuid,
+    /// Rule title as recorded in `info.yml`.
     pub rule_name: String,
+    /// Data format of the stored regression file.
     pub logtype: LogType,
 }
 
@@ -78,6 +83,8 @@ impl RegressionEntry {
     }
 }
 
+/// In-memory index of existing regression data plus the write-side state
+/// (author, format, failure tracking) for generating new data.
 pub struct SigmahqRegression {
     entries: Vec<(PathBuf, InfoYml, RegressionEntry)>,
     author: String,
@@ -96,10 +103,12 @@ pub struct SigmahqRegression {
 }
 
 impl SigmahqRegression {
+    /// Scan the default `./sigma/regression_data` directory.
     pub fn new() -> Result<Self> {
         Self::new_from_path(Path::new("./sigma/regression_data"))
     }
 
+    /// Scan an explicit regression-data directory for existing entries.
     pub fn new_from_path(regression_path: &Path) -> Result<Self> {
         let mut entries = Vec::new();
         if regression_path.exists() {
@@ -150,38 +159,47 @@ impl SigmahqRegression {
         self.max_failed_cycles = max.max(1);
     }
 
+    /// Configured consecutive-failure bound.
     pub fn max_failed_cycles(&self) -> u32 {
         self.max_failed_cycles
     }
 
+    /// Set the author recorded in generated `info.yml` files.
     pub fn set_author(&mut self, author: String) {
         self.author = author;
     }
 
+    /// Configured author string.
     pub fn author(&self) -> &str {
         &self.author
     }
 
+    /// Number of loaded regression entries.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    /// True when no regression entry was found.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
+    /// Iterate `(info.yml path, parsed info)` pairs.
     pub fn iter(&self) -> impl Iterator<Item = (&PathBuf, &InfoYml)> {
         self.entries.iter().map(|(path, info, _)| (path, info))
     }
 
+    /// Iterate the parsed `info.yml` documents.
     pub fn infos(&self) -> impl Iterator<Item = &InfoYml> {
         self.entries.iter().map(|(_, info, _)| info)
     }
 
+    /// Iterate the derived [`RegressionEntry`] records.
     pub fn entries(&self) -> impl Iterator<Item = &RegressionEntry> {
         self.entries.iter().map(|(_, _, entry)| entry)
     }
 
+    /// Entry at load order `index`.
     pub fn get_entry(&self, index: usize) -> Option<&RegressionEntry> {
         self.entries.get(index).map(|(_, _, entry)| entry)
     }
@@ -200,6 +218,8 @@ impl SigmahqRegression {
             .collect()
     }
 
+    /// Raw bytes of the regression data file for entry `index` — used by
+    /// diagnostics to re-validate stored events against their rules.
     pub fn get_raw_data(&self, index: usize) -> Option<Vec<u8>> {
         let (info_path, info, _) = self.entries.get(index)?;
         let rule_id = info.rule_metadata.first()?.id;
@@ -257,6 +277,8 @@ impl SigmahqRegression {
         serde_json::from_str(&content).ok()
     }
 
+    /// Record a match: write/refresh the rule's regression data. Returns the
+    /// written relative paths, or `None` when retired/blocked/no output dir.
     pub fn add(&mut self, alert: &Alert) -> Option<Vec<String>> {
         let output_path = self.output_path.as_ref()?;
         let rule_id = &alert.rule_id;
@@ -563,6 +585,7 @@ pub(crate) fn try_read_rule_id(info_path: &Path) -> Result<Uuid> {
 
 // ─── list_all ──────────────────────────────────────────────────────────
 
+/// Recursively list every parsable `info.yml` under `dir`, sorted.
 pub fn list_all(dir: &Path) -> Vec<PathBuf> {
     if !dir.exists() {
         warn!("list_all: directory does not exist: {}", dir.display());
@@ -602,6 +625,8 @@ fn walk(dir: &Path, paths: &mut Vec<PathBuf>, depth: u32) {
 
 // ─── clean_partial_artifacts ───────────────────────────────────────────
 
+/// Remove partially written regression artifacts left by an interrupted run
+/// (`*.part` files and empty directories).
 pub fn clean_partial_artifacts(base: &Path) {
     if !base.exists() {
         return;

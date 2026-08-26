@@ -2,7 +2,7 @@
 
 ## Cargo workspace
 
-Le projet est un cargo workspace de 12 packages (2 crates binaires + 10 bibliothèques) :
+Le projet est un cargo workspace de 12 packages (2 crates binaires + 10 bibliothèques), plus 1 crate nightly exclu (`sigmacatch-ebpf`) :
 
 ```text
 sigmacatch/
@@ -17,43 +17,46 @@ sigmacatch/
 │       │                         #   enrich, mapper, process_table, process_query, sysmon, paths, pe, filekey
 │       └── cli.rs                # Sous-commandes de diagnostic (feature `tools`) : check, check-filter,
 │                                 #   check-channels, list-rules, get-atomic
-├── sigmacatch-lnx/               # Binaire Linux (lib + 1 bin)
+├── sigmacatch-lnx/               # Binaires Linux (lib + 3 bins, feature-gated)
 │   └── src/
-│       ├── lib.rs
-│       ├── main_linux.rs         # bin `sigmacatch-linux` : lance les collecteurs auditd, syslog et sysmon en parallèle (garde par source)
+│       ├── lib.rs                # Module gates : auditd, builtin (syslog), sysmon (tail), ebpf
+│       ├── main_linux.rs         # Shared entry point : `make_sysmon_collector()` par flavour
 │       ├── auditd.rs             # Collecteur auditd (tail /var/log/audit/audit.log, groupement par event id)
-│       ├── syslog.rs             # Collecteur syslog builtin (central /var/log/messages → /var/log/syslog + authpriv + cron, RFC3164)
-│       ├── sysmon.rs             # Collecteur Sysmon-for-Linux (lignes syslog taggées `sysmon`, parsing XML winevt)
-│       └── cli.rs                # Sous-commandes de diagnostic (feature `tools`) : check, check-filter, list-rules
+│       ├── syslog.rs             # Collecteur syslog builtin (central /var/log/messages → authpriv + cron, RFC3164)
+│       ├── sysmon.rs             # Collecteur Sysmon-for-Linux (tail syslog, feature `sysmon`)
+│       ├── sysmon_parse.rs       # Parsing Sysmon XML (toujours compilé, partagé par tail + eBPF)
+│       ├── ebpf.rs               # Loader eBPF + dispatch (feature `ebpf`, privileges requis)
+│       ├── ebpf_event.rs         # Synthèse XML eBPF → format Sysmon + tests (50 unit tests)
+│       └── cli.rs                # Sous-commandes de diagnostic (feature `tools`)
 └── crates/
-    ├── sigmacatch-runner/        # Pipeline partagé aux 2 crates binaires :
-    │   └── src/runner.rs         #   run<C: CollectorKind> + trait CollectorKind (config + repo init +
-    │                             #   event loop + process_and_generate + commit/push)
+    ├── sigmacatch-ebpf/          # eBPF probes (exclue workspace, nightly, bpfel-unknown-none)
+    │   └── src/main.rs           # 6 tracepoints : execve/exec/exit/connect/openat+exit/sendto+sendmsg
+    ├── sigmacatch-ebpf-common/   # Types no_std partagés (ring buffer) : ExecEvent, NetEvent, ...
+    ├── sigmacatch-runner/        # Pipeline partagé aux crates binaires :
+    │   └── src/runner.rs         #   run<C: CollectorKind> + trait CollectorKind
     ├── sigmacatch-config/        # Config YAML + parsing CLI + custom_channels.yaml
-    ├── sigmacatch-logger/        # Abonnement tracing à deux couches (stderr `error` par défaut / `info` avec `-v`, fichier rolling debug)
-    ├── sigmacatch-rule/          # SigmahqRules : chargement de règles (parse_sigma_yaml), filtre, dédupe, remove_id
-    │                             #   + attack.rs (SigmaRuleExt ATT&CK) + discover.rs + thresholds.rs (LoadStats)
-    ├── sigmacatch-detection/     # Wrapper DetectionEngine + pipelines par plateforme embarquées
-    │                             #   (1_win_logsource.yml, 2_win_field_name.yml, 3_lnx_logsource.yml,
-    │                             #   4_lnx_field_name.yml — transformations gated par rule_conditions produit) + channel_resolver
-    ├── sigmacatch-regression/    # SigmahqRegression (get_sigma_id, add, retire), InfoYml, DataFormat
-    │                             #   (evtx.rs, format.rs, info.rs, logtype.rs, long_path.rs)
-    ├── sigmacatch-types/         # Types partagés : Event, Alert, RegressionHeader + parsing XML + tables de mapping logsource
-    ├── sigmacatch-repo/          # wrapper grit-lib + SigmaRepo + opérations git + signing.rs + transport.rs
-    ├── sigmacatch-evtx-writer/   # Writer EVTX pur Rust (events ETW / sans record id — pas d'EvtExportLog possible)
-    └── input-windows-evtx/       # Parser fichiers EVTX → Event (feature `tools` du bin winevt)
+    ├── sigmacatch-logger/        # Abonnement tracing à deux couches (stderr error/info, fichier rolling)
+    ├── sigmacatch-rule/          # SigmahqRules : chargement de règles, filtre, dédupe, remove_id
+    ├── sigmacatch-detection/     # Wrapper DetectionEngine + pipelines par plateforme
+    ├── sigmacatch-regression/    # SigmahqRegression, InfoYml, DataFormat (evtx/log)
+    ├── sigmacatch-types/         # Types partagés : Event, Alert, RegressionHeader + parsing XML + logsource tables
+    ├── sigmacatch-repo/          # wrapper grit-lib + SigmaRepo + opérations git + signing
+    ├── sigmacatch-evtx-writer/   # Writer EVTX pur Rust
+    └── input-windows-evtx/       # Parser fichiers EVTX → Event
 ```
 
 ## Collecteurs
 
-Trois binaires sont produits depuis deux crates, chacun embarquant un seul collecteur
-(features cargo `winevt`/`etw` et `auditd`/`builtin`, `required-features` par binaire) :
+Cinq binaires sont produits depuis trois crates, chacun embarquant un ensemble de collecteurs
+sélectionné par features cargo et `required-features` par binaire :
 
-| Binaire | Crate | Description |
-|---|---|---|
-| `sigmacatch-channel` | `sigmacatch-win/src/channels.rs` | API Winevt native (`EvtQueryW`/`EvtNext`/`EvtRender`), multi-channel, rejouable |
-| `sigmacatch-etw` | `sigmacatch-win/src/etw/` | Collecte ETW directe via ferrisetw (détail ci-dessous) |
-| `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog,sysmon}.rs` | Les trois collecteurs tournent en parallèle (détail ci-dessous) |
+| Binaire | Crate | Features | Description |
+|---|---|---|---|
+| `sigmacatch-channel` | `sigmacatch-win` | `winevt` | API Winevt native (`EvtQueryW`/`EvtNext`/`EvtRender`), multi-channel, rejouable |
+| `sigmacatch-etw` | `sigmacatch-win` | `etw` | Collecte ETW directe via ferrisetw (18 providers, détail ci-dessous) |
+| `sigmacatch-linux` | `sigmacatch-lnx` | `auditd` + `builtin` | auditd + syslog builtin uniquement (pas de sysmon, pas de root requis) |
+| `sigmacatch-linux-sysmon` | `sigmacatch-lnx` | `auditd` + `builtin` + `sysmon` | + tail Sysmon-for-Linux XML (feature `sysmon`) |
+| `sigmacatch-linux-ebpf` | `sigmacatch-lnx` | `auditd` + `builtin` + `ebpf` | + probes eBPF native (feature `ebpf`, root requis) |
 
 ### ETW direct
 
@@ -63,7 +66,7 @@ provider→channel par table de mapping, EventID réel conservé [beta]. Pour le
 génériques, les champs `EventData` sont fournis par des field maps par provider (fidelité
 variable). Sur non-Windows, les collecteurs Winevt/ETW sont des stubs no-op.
 
-### Les trois collecteurs Linux
+### Les collecteurs Linux
 
 Chacun gardé par sa source ; aucune source disponible → bail :
 
@@ -74,13 +77,25 @@ Chacun gardé par sa source ; aucune source disponible → bail :
   (`/var/log/cron`, `/var/log/cron.log`) : lignes RFC3164, service dérivé du program tag
   (fallback par groupe de fichier : authpriv → `auth`, cron → `cron`). Les lignes taggées
   `sysmon` sont exclues (prises en charge par le collecteur dédié).
-- **Sysmon-for-Linux** — lignes du syslog central taggées `sysmon` dont le corps est XML
-  winevt (`parse_winevt_xml`/`_raw`) → logsource `product:linux, service:sysmon` via le
-  channel `Linux-Sysmon/Operational`.
+
+Les deux binaires sysmon ajoutent un collecteur supplémentaire :
+
+- **Sysmon eBPF (feature `ebpf`, `sigmacatch-linux-ebpf`)** — probes Aya embarquées
+  (`crates/sigmacatch-ebpf`, nightly+bpf-linker, exclue du workspace) couvrant EID 1
+  process_create, EID 3 network_connect, EID 5 process_terminate, EID 11 file_create et
+  l'extension DNS (EID 22) : events rendus en XML Sysmon identique au chemin syslog puis
+  injectés via le même pipeline (`inject_logsource_fields_for`). Prérequis runtime :
+  root ou CAP_BPF+CAP_PERFMON (refus de démarrer sinon) + kernel avec BTF. Le hachage
+  SHA256 des images est calculé userspace avec cache (chemin,mtime). En all-features,
+  fallback automatique sur le tail syslog si les probes ne se chargent pas.
+- **Sysmon-for-Linux tail (feature `sysmon`, `sigmacatch-linux-sysmon`)** — lignes du
+  syslog central taggées `sysmon` dont le corps est XML winevt (`parse_winevt_xml`/`_raw`)
+  → logsource `product:linux, service:sysmon` via le channel `Linux-Sysmon/Operational`.
+  Lecture seule, pas de dépendance Aya.
 
 Format de régression : `DataFormat::Log`.
 
-Chaque binaire définit son propre `CollectorKind` dans son `main_*.rs` (`name()`/`mode()`/`channels()`/`build()`/`regression_format()`) et l'injecte dans `sigmacatch_runner::run()`. Le format de régression est choisi par `regression_format()` : `DataFormat::Evtx` pour les deux bins Windows, `DataFormat::Log` pour `sigmacatch-linux`.
+Chaque binaire définit son propre `CollectorKind` dans son `main_*.rs` (`name()`/`mode()`/`channels()`/`build()`/`regression_format()`) et l'injecte dans `sigmacatch_runner::run()`. Le format de régression est choisi par `regression_format()` : `DataFormat::Evtx` pour les deux bins Windows, `DataFormat::Log` pour les trois bins Linux.
 
 ## Graphe de dépendances
 

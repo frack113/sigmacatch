@@ -7,42 +7,18 @@
 
 Sigmacatch captures real OS events, matches them against [SigmaHQ](https://github.com/SigmaHQ/sigma) rules in real time, and generates regression data ready for SigmaHQ pull requests.
 
-| Platform | Collector | Binary |
-|---|---|---|
-| Windows | Windows Event Log API (`winevt`) | `sigmacatch-channel` |
-| Windows | Direct ETW (`ferrisetw`) | `sigmacatch-etw` |
-| Linux | auditd tail and/or syslog tails (central + authpriv + cron, incl. Sysmon-for-Linux XML) | `sigmacatch-linux` |
-
-## How it works
-
-```text
-SigmaHQ rules (auto-cloned via grit-lib)
-    ↓
-Load rules → skip existing regression → filter (product / min_status / min_level)
-    ↓
-Resolve channels from rules (logsource → channel mapping)
-    ↓
-Continuous collector → mpsc
-    ↓
-Sigma engine evaluates every event against every loaded rule
-    ↓
-Every 30 s: write regression data for each matched rule
-    ↓
-sigma/regression_data/<rule_rel_path>/
-    ├── <rule_id>.evtx    ← valid EVTX (EvtExportLog, validated ≥ 1 record)
-    ├── <rule_id>.log     ← original auditd/syslog lines (Linux collectors)
-    ├── <rule_id>.json    ← optional raw event (regression.add_json_output)
-    └── info.yml          ← SigmaHQ-compatible metadata
-    ↓
-One commit per rule — single push to fork when contrib is enabled
-```
-
-The pipeline runs continuously until Ctrl+C; on exit the pipeline flushes the remaining events.
+| Platform | Collector | Binary | Status |
+|---|---|---|---|
+| Windows | Windows Event Log API (`winevt`) | `sigmacatch-channel` | working |
+| Windows | Direct ETW (`ferrisetw`) | `sigmacatch-etw` | POC |
+| Linux | auditd + builtin syslog (default, no root needed) | `sigmacatch-linux` | need user return |
+| Linux | + legacy Sysmon-for-Linux XML tail | `sigmacatch-linux-sysmon` | need user return |
+| Linux | + native eBPF probes (process/network/file/DNS) | `sigmacatch-linux-ebpf` | need user return |
 
 ## Requirements
 
 - **Windows** with [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) installed — required for rich events (ParentImage, CommandLine, hashes, etc.)
-- **Linux** with `auditd` running or a syslog source (`/var/log/messages` or `/var/log/syslog`, optionally authpriv/cron files) — for `sigmacatch-linux`; [Sysmon for Linux](https://github.com/SysmonForLinux/SysmonForLinux) optional, adds rich process/network events through the syslog stream
+- **Linux** with `auditd` running or a syslog source (`/var/log/messages` or `/var/log/syslog`, optionally authpriv/cron files) — for `sigmacatch-linux`; [Sysmon for Linux](https://github.com/SysmonForLinux/SysmonForLinux) optional via `sigmacatch-linux-sysmon`; native eBPF probes via `sigmacatch-linux-ebpf` (root or CAP_BPF+CAP_PERFMON at runtime, kernel 5.14+/BTF, nightly build toolchain)
 - Rust 2024 edition (1.85+)
 - Admin rights for the `Security` and `System` Event Log channels (Windows)
 
@@ -50,9 +26,9 @@ The pipeline runs continuously until Ctrl+C; on exit the pipeline flushes the re
 
 ```bash
 cargo build --release
-./target/release/sigmacatch-channel   # Winevt collector (Windows)
-./target/release/sigmacatch-etw       # ETW collector (Windows)
-./target/release/sigmacatch-linux     # auditd + builtin syslog + Sysmon-for-Linux collectors (Linux)
+./target/release/sigmacatch-channel     # Winevt collector (Windows)
+./target/release/sigmacatch-etw         # ETW collector (Windows)
+./target/release/sigmacatch-linux       # auditd + builtin syslog (Linux, no root)
 ```
 
 On first run a `config.yaml` is created with placeholder defaults, and the run stops (`exit 1`)
@@ -83,8 +59,6 @@ regression:
   add_json_output: false    # true = also write auxiliary <rule_id>.json alongside the data file
 ```
 
-Rules below the configured `min_status` / `min_level` thresholds are skipped at load time; rules missing these fields are always accepted.
-
 **Contrib is opt-in** (`git.contrib: true` or `--contrib`): pushes regression commits to your fork. By default (`false`) commits stay local. The GitHub token is only required when a network operation is active (`offline: false` or `contrib: true`). **`offline: true` neutralizes `contrib`** (forced to `false`, `warn!`): no push in offline mode.
 
 ## CLI
@@ -99,38 +73,7 @@ Rules below the configured `min_status` / `min_level` thresholds are skipped at 
 | `-v`, `--verbose` | Show info-level logs on stderr (default: errors only) |
 | `--help`, `-h` | Print help and exit |
 
-### Collector selection
-
-Collectors are selected via cargo features, not CLI flags:
-
-| Binary | Feature | Backend |
-|---|---|---|
-| `sigmacatch-channel` | `winevt` | Windows Event Log API |
-| `sigmacatch-etw` | `etw` | Direct ETW via ferrisetw |
-| `sigmacatch-linux` | `auditd` + `builtin` | Three collectors in parallel, each guarded by its source (auditd / builtin syslog / Sysmon-for-Linux) — details in [docs/fr/architecture.md](docs/fr/architecture.md) |
-
-Build a single collector in isolation:
-
-```bash
-cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win --no-default-features --features etw
-```
-
-### Diagnostics (feature `tools`)
-
-| Command | Description |
-|---|---|
-| `sigmacatch-channel check` | Deep validation of `./sigma/regression_data` — every rule must match its data (exit 1 otherwise) |
-| `sigmacatch-channel check-channels` | Resolve and list the channels the engine would collect |
-| `sigmacatch-channel check-filter` | Validate the filter config against the real rule set (ground-truth counts) |
-| `sigmacatch-channel list-rules` | List loaded rules with techniques and ART link (`--coverage` for stats) |
-| `sigmacatch-channel get-atomic` | Generate a `run_atomic.ps1` (Invoke-AtomicRedTeam chain) for rules without regression data |
-| `sigmacatch-linux check` / `check-filter` / `list-rules` | Same diagnostics for the Linux binary |
-
-## Build & cross-compilation
-
-Cross-compile from Linux: `cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win` (requires `cargo install cargo-xwin`; isolated builds and details in [docs/fr/build.md](docs/fr/build.md)).
-
-> `.cargo/config.toml` forces `target-feature=+crt-static`: without it the binary depends on **VCRUNTIME140.dll** (Visual C++ Redistributable) and crashes if the runtime is missing on the target machine. With `+crt-static` the `.exe` is standalone.
+Diagnostics subcommands (`check`, `check-filter`, `list-rules`, `get-atomic`) are behind the `tools` feature — see [docs/en/cli.md](docs/en/cli.md).
 
 ## Documentation
 
@@ -138,18 +81,20 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 
 ## Workspace
 
-The project is a cargo workspace of 12 packages (2 binary crates + 10 libraries):
+The project is a cargo workspace of 12 packages (2 binary crates + 10 library crates), plus 1 excluded nightly crate (`sigmacatch-ebpf`):
 
 | Crate | Purpose |
 |---|---|
-| `sigmacatch-win` | Windows binaries: `sigmacatch-channel` (winevt), `sigmacatch-etw` (ETW) + `channels.rs` / `etw/` collectors + `cli.rs` diagnostics |
-| `sigmacatch-lnx` | Linux binary: `sigmacatch-linux` (auditd + builtin syslog + Sysmon-for-Linux in parallel) + `cli.rs` diagnostics |
+| `sigmacatch-win` | Windows binaries: `sigmacatch-channel` (winevt), `sigmacatch-etw` (ETW) + collectors + diagnostics |
+| `sigmacatch-lnx` | Linux binaries (3 flavours): `sigmacatch-linux` (base), `sigmacatch-linux-sysmon` (+ tail), `sigmacatch-linux-ebpf` (+ eBPF) — feature-gated |
+| `sigmacatch-ebpf` | eBPF probe crate (excluded workspace, nightly, `bpfel-unknown-none`) |
+| `sigmacatch-ebpf-common` | Shared `no_std` types for eBPF ring buffer |
 | `sigmacatch-runner` | Shared pipeline (`run<C: CollectorKind>`): config, repo init, event loop, generation, commit/push |
 | `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml |
-| `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug, max 3 kept) |
+| `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug) |
 | `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication, remove_id |
-| `sigmacatch-detection` | `DetectionEngine` + per-platform pipelines (win/lnx logsource + field_name) + channel_resolver + bloom pre-filter |
-| `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, `DataFormat` (Evtx/Log) + validation (evtx/format/info/logtype/long_path) |
+| `sigmacatch-detection` | `DetectionEngine` + per-platform pipelines + channel_resolver + bloom pre-filter |
+| `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, `DataFormat` (Evtx/Log) + validation |
 | `sigmacatch-evtx-writer` | Pure Rust EVTX writer for ETW / record-id-less events |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource mapping tables (phf) |
 | `sigmacatch-repo` | grit-lib wrapper: `SigmaRepo`, GitHub fork detection, plumbing/porcelain git ops, SSH signing |

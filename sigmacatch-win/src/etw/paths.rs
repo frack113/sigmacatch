@@ -108,6 +108,8 @@ pub fn build_mounts() -> Vec<(String, String)> {
 
     // ── Pass 1: drive letters ────────────────────────────────────────────────
     let mut buf = [0u16; 128];
+    // SAFETY: `buf` is a fixed 128-u16 array; the API writes at most
+    // buf.len() wide chars and reports how many were written.
     let len = unsafe { GetLogicalDriveStringsW(Some(&mut buf)) };
     if len != 0 && (len as usize) <= buf.len() {
         // NUL-separated "C:\" strings, double-NUL terminated.
@@ -123,6 +125,8 @@ pub fn build_mounts() -> Vec<(String, String)> {
             // Drive letter → device target, e.g. `C:` → `\Device\HarddiskVolume3`.
             let name_w: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
             let mut target = [0u16; 260];
+            // SAFETY: `name_w` is NUL-terminated UTF-16; `target` is a fixed
+            // 260-u16 buffer the API fills without exceeding its capacity.
             let n = unsafe { QueryDosDeviceW(PCWSTR(name_w.as_ptr()), Some(&mut target)) };
             if n != 0 {
                 let device = String::from_utf16_lossy(trim_utf16_nul(&target[..n as usize]));
@@ -137,6 +141,8 @@ pub fn build_mounts() -> Vec<(String, String)> {
                 .chain(std::iter::once(0))
                 .collect();
             let mut volume = [0u16; 64];
+            // SAFETY: `drive_root_w` is NUL-terminated UTF-16; `volume` is a
+            // 64-u16 buffer sized for a `\\?\Volume{GUID}\` name per the API.
             if unsafe {
                 GetVolumeNameForVolumeMountPointW(PCWSTR(drive_root_w.as_ptr()), &mut volume)
             }
@@ -152,6 +158,8 @@ pub fn build_mounts() -> Vec<(String, String)> {
 
     // ── Pass 2: every volume (incl. letter-less) ─────────────────────────────
     let mut vol_buf = [0u16; 1024];
+    // SAFETY: `vol_buf` is a writable 1024-u16 buffer; the returned handle is
+    // kept in `find` and released by FindVolumeClose after the loop.
     let find = match unsafe { FindFirstVolumeW(&mut vol_buf) } {
         Ok(h) => h,
         Err(_) => return mounts,
@@ -173,6 +181,8 @@ pub fn build_mounts() -> Vec<(String, String)> {
             .chain(std::iter::once(0))
             .collect();
         let mut target = [0u16; 260];
+        // SAFETY: `device_name_w` is NUL-terminated UTF-16; `target` is a
+        // fixed 260-u16 output buffer bounded by the API.
         let n = unsafe { QueryDosDeviceW(PCWSTR(device_name_w.as_ptr()), Some(&mut target)) };
         let device =
             (n != 0).then(|| String::from_utf16_lossy(trim_utf16_nul(&target[..n as usize])));
@@ -181,6 +191,9 @@ pub fn build_mounts() -> Vec<(String, String)> {
         let mut paths_buf = [0u16; 1024];
         let mut paths_len: u32 = 0;
         let mut paths: Vec<String> = Vec::new();
+        // SAFETY: `name_w` is NUL-terminated UTF-16; `paths_buf` is a writable
+        // 1024-u16 buffer; `paths_len` is only used after a successful call,
+        // whose contract bounds the copied length by the buffer capacity.
         if unsafe {
             GetVolumePathNamesForVolumeNameW(
                 PCWSTR(name_w.as_ptr()),
@@ -216,11 +229,15 @@ pub fn build_mounts() -> Vec<(String, String)> {
         }
         mounts.push((vol_name.clone(), replacement.clone()));
 
+        // SAFETY: `find` is the live handle from FindFirstVolumeW, still open
+        // while iterating; `vol_buf` is the same writable 1024-u16 buffer.
         match unsafe { FindNextVolumeW(find, &mut vol_buf) } {
             Ok(()) => vol_name = String::from_utf16_lossy(trim_utf16_nul(&vol_buf)),
             Err(_) => break,
         }
     }
+    // SAFETY: `find` was obtained from FindFirstVolumeW and is still open —
+    // every loop exit reaches here exactly once, closing it exactly once.
     unsafe {
         let _ = FindVolumeClose(find);
     }

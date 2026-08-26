@@ -69,15 +69,19 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn long_path_over_260_chars_adds_prefix() {
-        let long_name = "a".repeat(250);
+        let long_name = "a".repeat(300);
         let full_path = format!(r"C:\{}", long_name);
+        assert!(full_path.len() > 260);
         let p = Path::new(&full_path);
         let result = long_path(p);
         assert!(
             result.to_string_lossy().starts_with(r"\\?\"),
             "long path should be prefixed"
         );
-        assert_eq!(result.to_string_lossy().len(), 261);
+        assert_eq!(
+            result.to_string_lossy().len(),
+            full_path.len() + r"\\?\".len()
+        );
     }
 
     #[cfg(not(windows))]

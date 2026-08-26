@@ -6,16 +6,18 @@ syslog** (central, authpriv and cron files) and **Sysmon-for-Linux**. It matches
 against [SigmaHQ](https://github.com/SigmaHQ/sigma) rules and outputs structured
 regression data ready for SigmaHQ PRs.
 
-The project is a cargo workspace of 12 packages; the full tree and each crate's role are
-detailed in [architecture.md](en/architecture.md).
+The project is a cargo workspace of 12 packages (2 binary crates + 10 library crates), plus 1 excluded nightly crate (`sigmacatch-ebpf`);
+the full tree and each crate's role are detailed in [architecture.md](en/architecture.md).
 
 ## Quick start
 
 ```bash
 cargo build --release
-./target/release/sigmacatch-channel   # Winevt (Windows)
-./target/release/sigmacatch-etw       # Direct ETW (Windows)
-./target/release/sigmacatch-linux     # auditd + syslog + sysmon (Linux)
+./target/release/sigmacatch-channel       # Winevt (Windows)
+./target/release/sigmacatch-etw           # ETW direct (Windows)
+./target/release/sigmacatch-linux         # auditd + syslog builtin (Linux, pas de root)
+./target/release/sigmacatch-linux-sysmon  # + tail Sysmon-for-Linux (Linux)
+./target/release/sigmacatch-linux-ebpf    # + probes eBPF native (Linux, root requis)
 ```
 
 ## Documentation

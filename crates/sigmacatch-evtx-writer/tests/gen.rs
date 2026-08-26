@@ -1,3 +1,5 @@
+//! Generates sample EVTX fixtures for the writer integration tests.
+
 #[test]
 fn generate_evtx_roundtrips() {
     const XML: &str = r#"<?xml version="1.0" encoding="utf-8" standalone="yes"?>

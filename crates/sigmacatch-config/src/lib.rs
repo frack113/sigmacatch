@@ -103,16 +103,22 @@ impl Default for GitConfig {
     }
 }
 
+/// Log verbosity levels accepted in `config.yaml`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
+    /// Verbose tracing output (file log level).
     Debug,
+    /// Informational lifecycle messages.
     Info,
+    /// Recoverable issues worth surfacing.
     Warn,
+    /// Errors only (default stderr level).
     Error,
 }
 
 impl LogLevel {
+    /// Lowercase config spelling of the level.
     pub fn as_str(&self) -> &'static str {
         match self {
             LogLevel::Debug => "debug",
@@ -179,12 +185,16 @@ impl Default for RegressionConfig {
 }
 
 /// Main application configuration.
+/// Root configuration document (`config.yaml`).
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    /// Logging setup (levels, file rotation).
     pub log: LogConfig,
+    /// Rule-loading filters.
     #[serde(default)]
     pub filter: SigmaFilterConfig,
+    /// Git/fork/contrib behaviour.
     #[serde(default)]
     pub git: GitConfig,
     /// Event collection backend: `winevt` (default) or `etw`.
@@ -222,6 +232,7 @@ impl Config {
         serde_yaml::from_str(&yaml).map_err(|e| ConfigError::Format(e.to_string()))
     }
 
+    /// Load, normalize and validate a config file.
     pub fn load(path: &PathBuf) -> Result<Self> {
         let mut config = Self::load_unvalidated(path)?;
         config.normalize_git();
@@ -229,6 +240,7 @@ impl Config {
         Ok(config)
     }
 
+    /// Load with CLI overrides applied on top of file values.
     pub fn load_with_cli(path: &PathBuf, cli: &CliArgs) -> Result<Self> {
         let mut config = Self::load_unvalidated(path)?;
         if let Some(author) = &cli.author {
@@ -257,6 +269,7 @@ impl Config {
         }
     }
 
+    /// Write the config back as YAML with 0600 permissions.
     pub fn save(&self, path: &PathBuf) -> Result<()> {
         let yaml = serde_yaml::to_string(self).map_err(|e| ConfigError::Format(e.to_string()))?;
 
@@ -272,6 +285,7 @@ impl Config {
         Ok(())
     }
 
+    /// Reject placeholder/inconsistent values before first run.
     pub fn validate(&self) -> Result<()> {
         if self.git.author == "sigmacatch" {
             return Err(ConfigError::Invalid(
@@ -458,16 +472,22 @@ impl Config {
 /// Custom channel mappings from custom_channels.yaml.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CustomChannels {
+    /// channel name → custom channel override.
     pub channels: std::collections::HashMap<String, String>,
 }
 
 /// Parsed CLI arguments.
 #[derive(Debug, Clone, Default)]
 pub struct CliArgs {
+    /// `--author`: override git author for this run.
     pub author: Option<String>,
+    /// `-a/--all-rules`: skip nothing, even rules with existing data.
     pub all_rules: bool,
+    /// `-o/--offline`: no git operations at all.
     pub offline: bool,
+    /// `-c/--contrib`: enable push to the fork.
     pub contrib: bool,
+    /// `-v/--verbose`: raise stderr log level to info.
     pub verbose: bool,
     /// Maximum number of collection cycles before auto-exit (0 = unlimited).
     pub max_runs: Option<u32>,

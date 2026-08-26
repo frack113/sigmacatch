@@ -27,6 +27,7 @@ fn filetime_to_quad(ft: &FILETIME) -> i64 {
 }
 
 fn open_process(pid: u32, access: PROCESS_ACCESS_RIGHTS) -> Option<HANDLE> {
+    // SAFETY: plain FFI call with no pointer arguments; any pid/access pair is a valid input and a failed open maps to None via .ok().
     unsafe { OpenProcess(access, false, pid).ok() }
 }
 
@@ -39,7 +40,9 @@ pub fn query_create_time(pid: u32) -> Option<i64> {
     let mut exit = FILETIME::default();
     let mut kernel = FILETIME::default();
     let mut user = FILETIME::default();
+    // SAFETY: handle is an open process handle from open_process (still open here); the four FILETIME out-params are valid stack references of the expected layout.
     let ok = unsafe { GetProcessTimes(handle, &mut create, &mut exit, &mut kernel, &mut user) };
+    // SAFETY: handle is a live handle returned by open_process; it is closed exactly once here and not used afterwards.
     let _ = unsafe { CloseHandle(handle) };
     ok.ok().map(|()| filetime_to_quad(&create))
 }
@@ -49,6 +52,7 @@ pub fn query_image_path(pid: u32) -> Option<String> {
     let handle = open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION)?;
     let mut buf = [0u16; 1024];
     let mut len = buf.len() as u32;
+    // SAFETY: handle is an open query handle; the PWSTR targets a 1024×u16 stack buffer and len is initialised to exactly that capacity, so the API cannot write past the buffer.
     let ok = unsafe {
         QueryFullProcessImageNameW(
             handle,
@@ -57,6 +61,7 @@ pub fn query_image_path(pid: u32) -> Option<String> {
             &mut len,
         )
     };
+    // SAFETY: handle is a live handle returned by open_process; it is closed exactly once here and not used afterwards.
     let _ = unsafe { CloseHandle(handle) };
     ok.ok()
         .map(|()| String::from_utf16_lossy(&buf[..len as usize]))
@@ -67,6 +72,7 @@ pub fn query_image_path(pid: u32) -> Option<String> {
 pub fn query_parent_pid(pid: u32) -> Option<u32> {
     let handle = open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION)?;
     let result = query_parent_pid_with(handle);
+    // SAFETY: handle is a live handle returned by open_process; it is closed exactly once here and not used afterwards.
     let _ = unsafe { CloseHandle(handle) };
     result
 }
@@ -89,6 +95,7 @@ fn query_parent_pid_with(handle: HANDLE) -> Option<u32> {
         unique_process_id: core::ptr::null_mut(),
         inherited_from_unique_process_id: core::ptr::null_mut(),
     };
+    // SAFETY: handle is an open process handle with query access; the out-buffer is a stack ProcessBasicInformation whose exact size is passed as Length (documented 5-pointer NT layout); ReturnLength is optional and NULL; status is checked before any field is read.
     let status = unsafe {
         NtQueryInformationProcess(
             handle,
@@ -125,6 +132,7 @@ fn query_parent_pid_with(_handle: HANDLE) -> Option<u32> {
 pub fn query_command_line(pid: u32) -> Option<String> {
     let handle = open_process(pid, PROCESS_QUERY_INFORMATION | PROCESS_VM_READ)?;
     let result = query_command_line_with(handle);
+    // SAFETY: handle is a live handle returned by open_process; it is closed exactly once here and not used afterwards.
     let _ = unsafe { CloseHandle(handle) };
     result
 }
@@ -134,6 +142,7 @@ pub fn query_command_line(pid: u32) -> Option<String> {
 pub fn query_current_directory(pid: u32) -> Option<String> {
     let handle = open_process(pid, PROCESS_QUERY_INFORMATION | PROCESS_VM_READ)?;
     let result = query_current_directory_with(handle);
+    // SAFETY: handle is a live handle returned by open_process; it is closed exactly once here and not used afterwards.
     let _ = unsafe { CloseHandle(handle) };
     result
 }
@@ -177,6 +186,7 @@ fn process_parameters(handle: HANDLE) -> Option<usize> {
         unique_process_id: core::ptr::null_mut(),
         inherited_from_unique_process_id: core::ptr::null_mut(),
     };
+    // SAFETY: handle is an open process handle with query access; the out-buffer is a stack ProcessBasicInformation whose exact size is passed as Length (documented 5-pointer NT layout); ReturnLength is optional and NULL; status is checked before any field is read.
     let status = unsafe {
         NtQueryInformationProcess(
             handle,
@@ -213,6 +223,7 @@ fn read_unicode_string(handle: HANDLE, off: usize) -> Option<String> {
 
     let mut us = UnicodeString::default();
     let mut read = 0usize;
+    // SAFETY: handle is open with PROCESS_VM_READ; the destination is a stack UnicodeString whose exact size is requested; an unreadable remote address makes ReadProcessMemory fail (checked below) rather than invoke UB.
     let ok = unsafe {
         ReadProcessMemory(
             handle,
@@ -226,11 +237,20 @@ fn read_unicode_string(handle: HANDLE, off: usize) -> Option<String> {
         return None;
     }
     let byte_len = us.length as usize;
-    if byte_len == 0 || byte_len > MAX_COMMAND_LINE_BYTES || us.buffer.is_null() {
+    // UNICODE_STRING.Length counts UTF-16 bytes, so it must be even; a hostile
+    // or corrupted odd value would overflow the half-length buffer below.
+    if byte_len == 0
+        || !byte_len.is_multiple_of(2)
+        || byte_len > MAX_COMMAND_LINE_BYTES
+        || us.buffer.is_null()
+    {
         return None;
     }
     let mut buf = vec![0u16; byte_len / 2];
     read = 0;
+    // SAFETY: the guard above enforces byte_len % 2 == 0, so buf holds exactly
+    // byte_len bytes (byte_len/2 ×u16); us.buffer is non-null and bounded by
+    // MAX_COMMAND_LINE_BYTES; an unmapped remote page makes the call fail.
     let ok = unsafe {
         ReadProcessMemory(
             handle,
@@ -263,6 +283,7 @@ fn query_current_directory_with(_handle: HANDLE) -> Option<String> {
 #[cfg(target_arch = "x86_64")]
 fn read_ptr(handle: HANDLE, address: usize, out: &mut usize) -> bool {
     let mut read = 0usize;
+    // SAFETY: out is a valid &mut usize and exactly size_of::<usize>() bytes are requested; an unreadable remote address fails the call (result checked) and cannot corrupt memory.
     let ok = unsafe {
         ReadProcessMemory(
             handle,
@@ -281,6 +302,7 @@ fn read_ptr(handle: HANDLE, address: usize, out: &mut usize) -> bool {
 pub fn query_user_name(pid: u32) -> Option<String> {
     let handle = open_process(pid, PROCESS_QUERY_INFORMATION)?;
     let result = query_user_name_with(handle);
+    // SAFETY: handle is a live handle returned by open_process; it is closed exactly once here and not used afterwards.
     let _ = unsafe { CloseHandle(handle) };
     result
 }
@@ -291,6 +313,7 @@ fn query_user_name_with(handle: HANDLE) -> Option<String> {
     };
 
     let mut token = HANDLE::default();
+    // SAFETY: handle is an open process handle with PROCESS_QUERY_INFORMATION; token is a valid stack HANDLE out-param verified with is_invalid() afterwards.
     let ok = unsafe { OpenProcessToken(handle, TOKEN_QUERY, &mut token) };
     if ok.is_err() || token.is_invalid() {
         return None;
@@ -298,11 +321,15 @@ fn query_user_name_with(handle: HANDLE) -> Option<String> {
     let result = (|| {
         // First call with null buffer returns the required size.
         let mut size = 0u32;
+        // SAFETY: documented two-call pattern — NULL buffer with length 0 only reports the required size into the out-param; no caller buffer is touched.
         let rc = unsafe { GetTokenInformation(token, TokenUser, None, 0, &mut size) };
         if rc.is_err() || size == 0 || size > 4096 {
             return None;
         }
-        let mut buf = vec![0u8; size as usize];
+        // Align-8 storage: TokenUserLayout begins with a pointer field, so a
+        // reference cast out of a Vec<u8> (align-1) would be UB.
+        let mut buf = vec![0u64; (size as usize).div_ceil(8)];
+        // SAFETY: buf is at least the size reported by the probe above (bounded ≤ 4096) and the API writes at most that much TokenUser data; rc is checked before the buffer is read.
         let rc = unsafe {
             GetTokenInformation(
                 token,
@@ -322,6 +349,10 @@ fn query_user_name_with(handle: HANDLE) -> Option<String> {
             sid: *mut SID,
             attributes: u32,
         }
+        // SAFETY: rc.ok() means buf holds a complete self-relative TOKEN_USER;
+        // TokenUserLayout mirrors its documented layout and the SID pointer is
+        // null-checked below; the u64-backed buffer guarantees the align-8 the
+        // reference cast requires.
         let token_user = unsafe { &*(buf.as_ptr().cast::<TokenUserLayout>()) };
         if token_user.sid.is_null() {
             return None;
@@ -332,6 +363,7 @@ fn query_user_name_with(handle: HANDLE) -> Option<String> {
         let mut name_len = 0u32;
         let mut domain_len = 0u32;
         let mut use_: SID_NAME_USE = Default::default();
+        // SAFETY: two-call pattern — NULL name/domain buffers with zero lengths request the required sizes; every length out-param is a valid stack u32; the result is intentionally ignored and re-derived from the lengths.
         let _ = unsafe {
             LookupAccountSidW(
                 None,
@@ -348,6 +380,7 @@ fn query_user_name_with(handle: HANDLE) -> Option<String> {
         }
         let mut name = vec![0u16; name_len as usize];
         let mut domain = vec![0u16; domain_len as usize];
+        // SAFETY: name/domain vecs are sized exactly to the counts reported by the probe (includes NUL room per contract); sid points into buf (self-relative TOKEN_USER, null-checked above); updated lengths are honoured only after rc.ok().
         let rc = unsafe {
             LookupAccountSidW(
                 None,
@@ -375,6 +408,7 @@ fn query_user_name_with(handle: HANDLE) -> Option<String> {
             format!("{domain}\\{account}")
         })
     })();
+    // SAFETY: token is a live handle from OpenProcessToken (null/invalid checked above); it is closed exactly once here and not used afterwards.
     let _ = unsafe { CloseHandle(token) };
     result
 }
@@ -384,6 +418,7 @@ fn query_user_name_with(handle: HANDLE) -> Option<String> {
 pub fn query_integrity_level(pid: u32) -> Option<String> {
     let handle = open_process(pid, PROCESS_QUERY_INFORMATION)?;
     let result = query_integrity_level_with(handle);
+    // SAFETY: handle is a live handle returned by open_process; it is closed exactly once here and not used afterwards.
     let _ = unsafe { CloseHandle(handle) };
     result
 }
@@ -394,17 +429,22 @@ fn query_integrity_level_with(handle: HANDLE) -> Option<String> {
     };
 
     let mut token = HANDLE::default();
+    // SAFETY: handle is an open process handle with PROCESS_QUERY_INFORMATION; token is a valid stack HANDLE out-param verified with is_invalid() afterwards.
     let ok = unsafe { OpenProcessToken(handle, TOKEN_QUERY, &mut token) };
     if ok.is_err() || token.is_invalid() {
         return None;
     }
     let result = (|| {
         let mut size = 0u32;
+        // SAFETY: documented two-call pattern — NULL buffer with length 0 only reports the required size into the out-param; no caller buffer is touched.
         let rc = unsafe { GetTokenInformation(token, TokenIntegrityLevel, None, 0, &mut size) };
         if rc.is_err() || size == 0 || size > 4096 {
             return None;
         }
-        let mut buf = vec![0u8; size as usize];
+        // Align-8 storage: TOKEN_MANDATORY_LABEL embeds a SID pointer field;
+        // a reference cast out of a Vec<u8> (align-1) would be UB.
+        let mut buf = vec![0u64; (size as usize).div_ceil(8)];
+        // SAFETY: buf is at least the size reported by the probe above (bounded ≤ 4096) and the API writes at most that much TOKEN_MANDATORY_LABEL data; rc is checked before the buffer is read.
         let rc = unsafe {
             GetTokenInformation(
                 token,
@@ -419,11 +459,16 @@ fn query_integrity_level_with(handle: HANDLE) -> Option<String> {
         }
         // TOKEN_MANDATORY_LABEL { Label: SID_AND_ATTRIBUTES { SID*, Attributes } };
         // the SID (in our buffer) exposes the last sub-authority as the label.
+        // SAFETY: rc.ok() means buf holds a complete TOKEN_MANDATORY_LABEL
+        // whose self-relative SID lives inside buf; only fields within the
+        // written data are read; the u64-backed buffer provides the align-8
+        // the reference cast requires.
         let label = unsafe { &*(buf.as_ptr().cast::<TOKEN_MANDATORY_LABEL>()) };
         let sid = label.Label.Sid.0;
         if sid.is_null() {
             return None;
         }
+        // SAFETY: sid points inside buf (self-relative label written by GetTokenInformation), so offset 1 (SID.SubAuthorityCount) lies within the bytes the API wrote for any well-formed label.
         let count = unsafe { *sid.cast::<u8>().add(1) } as usize; // SID.SubAuthorityCount
         if count == 0 {
             return None;
@@ -432,6 +477,7 @@ fn query_integrity_level_with(handle: HANDLE) -> Option<String> {
         if subauth_off + 4 > size as usize {
             return None;
         }
+        // SAFETY: read_unaligned imposes no alignment requirement; for a self-relative TOKEN_MANDATORY_LABEL the SID sits right after the 16-byte Label, so sid+subauth_off+4 lands inside buf for a well-formed token; the guard additionally rejects subauth_off+4 > size.
         let value = unsafe { (sid.cast::<u8>().add(subauth_off) as *const u32).read_unaligned() };
         Some(match value {
             0x0000 => "Untrusted".to_string(),
@@ -442,6 +488,7 @@ fn query_integrity_level_with(handle: HANDLE) -> Option<String> {
             _ => value.to_string(),
         })
     })();
+    // SAFETY: token is a live handle from OpenProcessToken (null/invalid checked above); it is closed exactly once here and not used afterwards.
     let _ = unsafe { CloseHandle(token) };
     result
 }
@@ -451,6 +498,7 @@ fn query_integrity_level_with(handle: HANDLE) -> Option<String> {
 pub fn query_logon_id(pid: u32) -> Option<String> {
     let handle = open_process(pid, PROCESS_QUERY_INFORMATION)?;
     let result = query_logon_id_with(handle);
+    // SAFETY: handle is a live handle returned by open_process; it is closed exactly once here and not used afterwards.
     let _ = unsafe { CloseHandle(handle) };
     result
 }
@@ -461,17 +509,22 @@ fn query_logon_id_with(handle: HANDLE) -> Option<String> {
     };
 
     let mut token = HANDLE::default();
+    // SAFETY: handle is an open process handle with PROCESS_QUERY_INFORMATION; token is a valid stack HANDLE out-param verified with is_invalid() afterwards.
     let ok = unsafe { OpenProcessToken(handle, TOKEN_QUERY, &mut token) };
     if ok.is_err() || token.is_invalid() {
         return None;
     }
     let result = (|| {
         let mut size = 0u32;
+        // SAFETY: documented two-call pattern — NULL buffer with length 0 only reports the required size into the out-param; no caller buffer is touched.
         let rc = unsafe { GetTokenInformation(token, TokenStatistics, None, 0, &mut size) };
         if rc.is_err() || size == 0 || size > 512 {
             return None;
         }
-        let mut buf = vec![0u8; size as usize];
+        // Align-8 storage: TOKEN_STATISTICS mixes u32/LUID/LARGE_INTEGER
+        // fields; a reference cast out of a Vec<u8> (align-1) would be UB.
+        let mut buf = vec![0u64; (size as usize).div_ceil(8)];
+        // SAFETY: buf is at least the size reported by the probe above (bounded ≤ 512) and the API writes at most that much TOKEN_STATISTICS data; rc is checked before the buffer is read.
         let rc = unsafe {
             GetTokenInformation(
                 token,
@@ -484,11 +537,15 @@ fn query_logon_id_with(handle: HANDLE) -> Option<String> {
         if rc.is_err() {
             return None;
         }
+        // SAFETY: rc.ok() means buf holds a complete TOKEN_STATISTICS
+        // (fixed-size class, probe bounded ≤ 512); the u64-backed buffer
+        // provides the alignment the reference cast requires.
         let stats = unsafe { &*(buf.as_ptr().cast::<TOKEN_STATISTICS>()) };
         let auth = stats.AuthenticationId;
         let value = ((auth.HighPart as u64) << 32) | u64::from(auth.LowPart);
         Some(format!("0x{value:x}"))
     })();
+    // SAFETY: token is a live handle from OpenProcessToken (null/invalid checked above); it is closed exactly once here and not used afterwards.
     let _ = unsafe { CloseHandle(token) };
     result
 }

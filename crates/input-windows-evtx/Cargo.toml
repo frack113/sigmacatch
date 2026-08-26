@@ -19,3 +19,6 @@ tokio = { version = "1", features = ["sync"] }
 # Quality contract (quality.md Q2.1): inherit workspace lint tiers.
 [lints]
 workspace = true
+
+[lib]
+doctest = false

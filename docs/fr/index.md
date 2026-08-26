@@ -6,16 +6,19 @@ Outil headless qui capture de vrais événements Windows via l'**API Windows Eve
 compare à des règles [SigmaHQ](https://github.com/SigmaHQ/sigma) et produit des données de
 régression structurées prêtes pour les PR SigmaHQ.
 
-Le projet est un cargo workspace de 12 packages ; l'arborescence complète et les rôles de
-chaque crate sont détaillés dans [architecture.md](architecture.md).
+Le projet est un cargo workspace de 12 packages (2 crates binaires + 10 bibliothèques), plus 1 crate nightly exclu (`sigmacatch-ebpf`) ;
+l'arborescence complète et les rôles de chaque crate sont détaillés dans
+[architecture.md](architecture.md).
 
 ## Démarrage rapide
 
 ```bash
 cargo build --release
-./target/release/sigmacatch-channel   # Winevt (Windows)
-./target/release/sigmacatch-etw       # ETW direct (Windows)
-./target/release/sigmacatch-linux     # auditd + syslog + sysmon (Linux)
+./target/release/sigmacatch-channel       # Winevt (Windows)
+./target/release/sigmacatch-etw           # ETW direct (Windows)
+./target/release/sigmacatch-linux         # auditd + syslog builtin (Linux, pas de root)
+./target/release/sigmacatch-linux-sysmon  # + tail Sysmon-for-Linux (Linux)
+./target/release/sigmacatch-linux-ebpf    # + probes eBPF native (Linux, root requis)
 ```
 
 ## Documentation

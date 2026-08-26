@@ -2,7 +2,7 @@
 
 ## Cargo workspace
 
-The project is a cargo workspace of 12 packages (2 binary crates + 10 libraries):
+The project is a cargo workspace of 12 packages (2 binary crates + 10 libraries), plus 1 excluded nightly crate (`sigmacatch-ebpf`):
 
 ```text
 sigmacatch/
@@ -26,6 +26,9 @@ sigmacatch/
 │       ├── sysmon.rs             # Sysmon-for-Linux collector (`sysmon`-tagged syslog lines, winevt XML parsing)
 │       └── cli.rs                # Diagnostic subcommands (feature `tools`): check, check-filter, list-rules
 └── crates/
+    ├── sigmacatch-ebpf/          # eBPF probes (excluded workspace, nightly, bpfel-unknown-none)
+    │   └── src/main.rs           # 6 tracepoints: execve/exec/exit/connect/openat+exit/sendto+sendmsg
+    ├── sigmacatch-ebpf-common/   # Shared no_std types for eBPF ring buffer (ExecEvent, NetEvent, ...)
     ├── sigmacatch-runner/        # Pipeline shared by both binary crates:
     │   └── src/runner.rs         #   run<C: CollectorKind> + CollectorKind trait (config + repo init +
     │                             #   event loop + process_and_generate + commit/push)
@@ -52,7 +55,9 @@ Three binaries are produced from two crates, each embedding a single collector (
 |---|---|---|
 | `sigmacatch-channel` | `sigmacatch-win/src/channels.rs` | Native Winevt API (`EvtQueryW`/`EvtNext`/`EvtRender`), multi-channel, replayable |
 | `sigmacatch-etw` | `sigmacatch-win/src/etw/` | Direct ETW collection via ferrisetw (details below) |
-| `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog,sysmon}.rs` | Three collectors run in parallel (details below) |
+| `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog}.rs` | auditd + builtin syslog only (no root needed) |
+| `sigmacatch-linux-sysmon` | `sigmacatch-lnx/src/{auditd,syslog,sysmon}.rs` | + legacy Sysmon-for-Linux XML tail |
+| `sigmacatch-linux-ebpf` | `sigmacatch-lnx/src/{auditd,syslog,ebpf}.rs` | + native eBPF probes (root or CAP_BPF+CAP_PERFMON required) |
 
 ### Direct ETW
 
@@ -73,13 +78,25 @@ Each guarded by its source; no source available → bail:
   (`/var/log/cron`, `/var/log/cron.log`): RFC3164 lines, service derived from the program
   tag (fallback per file group: authpriv → `auth`, cron → `cron`). Lines tagged `sysmon`
   are excluded (handled by the dedicated collector).
-- **Sysmon-for-Linux** — central-syslog lines tagged `sysmon` whose body is winevt XML
-  (`parse_winevt_xml`/`_raw`) → logsource `product:linux, service:sysmon` via channel
-  `Linux-Sysmon/Operational`.
+
+The two sysmon binaries add an additional collector:
+
+- **Sysmon eBPF (feature `ebpf`, `sigmacatch-linux-ebpf`)** — embedded Aya probes
+  (`crates/sigmacatch-ebpf`, nightly+bpf-linker, excluded from workspace) covering EID 1
+  process_create, EID 3 network_connect, EID 5 process_terminate, EID 11 file_create and
+  DNS extension (EID 22): events rendered as Sysmon XML identical to the syslog path then
+  injected via the same pipeline (`inject_logsource_fields_for`). Runtime requirements:
+  root or CAP_BPF+CAP_PERFMON (refuses to start otherwise) + kernel with BTF. SHA256
+  hashing of images is calculated userspace with cache (path,mtime). In all-features,
+  automatic fallback to syslog tail if probes fail to load.
+- **Sysmon-for-Linux tail (feature `sysmon`, `sigmacatch-linux-sysmon`)** — central syslog
+  lines tagged `sysmon` whose body is winevt XML (`parse_winevt_xml`/`_raw`) → logsource
+  `product:linux, service:sysmon` via channel `Linux-Sysmon/Operational`. Read-only, no
+  Aya dependency.
 
 Regression format: `DataFormat::Log`.
 
-Each binary defines its own `CollectorKind` in its `main_*.rs` (`name()`/`mode()`/`channels()`/`build()`/`regression_format()`) and injects it into `sigmacatch_runner::run()`. The regression format comes from `regression_format()`: `DataFormat::Evtx` for both Windows binaries, `DataFormat::Log` for `sigmacatch-linux`.
+Each binary defines its own `CollectorKind` in its `main_*.rs` (`name()`/`mode()`/`channels()`/`build()`/`regression_format()`) and injects it into `sigmacatch_runner::run()`. The regression format comes from `regression_format()`: `DataFormat::Evtx` for both Windows binaries, `DataFormat::Log` for all three Linux binaries.
 
 ## Crate dependency graph
 
