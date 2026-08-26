@@ -1,17 +1,33 @@
-## Summary
+## Overview
 
-1-2 sentences describing the change and why it is needed.
+2-3 sentences describing **what** changed and **why** it is needed. No implementation details.
 
-## Changes
+## What's new
 
-- ✨ feat: description (commit hash)
-- 🐛 fix: description (commit hash)
+Group by crate / module / subsystem. Use backticks for filenames and feature names.
 
-One bullet per commit, grouped by type with the corresponding emoji.
+### `<crate>` (new / modified)
+- Key point 1
+- Key point 2
 
-## Tests
+### `<crate>` — `<sub-module>`
+- Key point
 
-Result of the required checks (obligatory for code changes):
+### CI / quality
+- What changed in CI, gates added, lints ratcheted
+
+## Changed files (<N>)
+
+Grouped by category. Do not list every file — use `git diff --stat` for the full list.
+- `crates/<new>/` — new
+- `sigmacatch-lnx/Cargo.toml` — reason
+- `.github/workflows/<f>` — reason
+
+## Testing
+
+What is covered (inline tests, e2e, cross-compile).
+
+Required checks for code changes:
 
 - `cargo fmt --check` — passed
 - `cargo clippy --all-targets -- -W warnings` — passed
@@ -19,9 +35,13 @@ Result of the required checks (obligatory for code changes):
 - `cargo xwin build --release --target x86_64-pc-windows-msvc` — passed
 - `uvx typos .` / `uvx zizmor .` / `markdownlint` — passed (if applicable)
 
-## Files
+## How to build / run
 
-- `path/to/file` — reason
+Reproducible commands for the binaries or features touched.
+
+```bash
+<commands>
+```
 
 ## Checklist
 
