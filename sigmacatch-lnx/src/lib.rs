@@ -13,6 +13,7 @@ pub mod auditd;
 pub mod ebpf;
 #[cfg(feature = "ebpf")]
 pub mod ebpf_event;
+#[cfg(all(feature = "auditd", feature = "builtin"))]
 pub mod entry;
 #[cfg(feature = "builtin")]
 pub mod syslog;
@@ -21,4 +22,5 @@ pub mod syslog;
 #[cfg(feature = "sysmon")]
 pub mod sysmon;
 // Wire-format parsing shared by every flavour and the diagnostics CLI.
+#[cfg(feature = "builtin")]
 pub mod sysmon_parse;
