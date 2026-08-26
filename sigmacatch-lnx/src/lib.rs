@@ -9,6 +9,7 @@ pub use sigmacatch_runner::{CollectorKind, run};
 
 #[cfg(feature = "auditd")]
 pub mod auditd;
+pub mod entry;
 #[cfg(feature = "ebpf")]
 pub mod ebpf;
 #[cfg(feature = "ebpf")]

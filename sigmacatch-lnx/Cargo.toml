@@ -21,17 +21,17 @@ tools = ["dep:serde"]
 # source per binary. Build each with --no-default-features --features <set>.
 [[bin]]
 name = "sigmacatch-linux"
-path = "src/main_linux.rs"
+path = "src/main_base.rs"
 required-features = ["auditd", "builtin"]
 
 [[bin]]
 name = "sigmacatch-linux-sysmon"
-path = "src/main_linux.rs"
+path = "src/main_sysmon.rs"
 required-features = ["auditd", "builtin", "sysmon"]
 
 [[bin]]
 name = "sigmacatch-linux-ebpf"
-path = "src/main_linux.rs"
+path = "src/main_ebpf.rs"
 required-features = ["auditd", "builtin", "ebpf"]
 
 # Diagnostics eBPF-only (parses the embedded probe object).

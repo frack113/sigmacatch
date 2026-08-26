@@ -18,7 +18,7 @@ use sigmacatch_rule::{
 };
 use uuid::Uuid;
 
-use sigmacatch_lnx::{auditd, syslog, sysmon_parse};
+use crate::{auditd, syslog, sysmon_parse};
 
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
 

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Shared entry point of the three Linux binaries; cargo features select
-//! which sysmon source (legacy tail / eBPF / none) is compiled in.
+//! Shared pipeline entry of the three Linux binaries (`sigmacatch-linux`,
+//! `-sysmon`, `-ebpf`); cargo features select which sysmon source
+//! (legacy tail / eBPF / none) is compiled in. Each binary is a thin
+//! wrapper calling [`run`].
 
 use std::collections::HashMap;
 
@@ -15,8 +17,8 @@ use sigmacatch_types::{Event, EventProducer};
 use tokio::sync::{mpsc, watch};
 
 #[cfg(feature = "sysmon")]
-use sigmacatch_lnx::sysmon;
-use sigmacatch_lnx::{auditd, syslog};
+use crate::sysmon;
+use crate::{auditd, syslog};
 
 fn auditd_available() -> bool {
     std::path::Path::new(auditd::DEFAULT_LOG_PATH).is_file()
@@ -45,7 +47,7 @@ fn mode_for(auditd_ok: bool, syslog_ok: bool, ebpf_planned: bool) -> &'static st
 fn make_sysmon_collector(syslog_ok: bool) -> Option<(&'static str, Box<dyn EventProducer>)> {
     #[cfg(feature = "ebpf")]
     {
-        match sigmacatch_lnx::ebpf::EventCollector::new() {
+        match crate::ebpf::EventCollector::new() {
             Ok(collector) => return Some(("sysmon", Box::new(collector))),
             Err(e) => {
                 tracing::warn!("eBPF collector unavailable ({e:#})");
@@ -138,7 +140,7 @@ struct LinuxCollector;
 /// usable privileges-wise. Loader failure later still falls back.
 #[cfg(feature = "ebpf")]
 fn ebpf_planned() -> bool {
-    sigmacatch_lnx::ebpf::has_required_privileges()
+    crate::ebpf::has_required_privileges()
 }
 
 #[cfg(not(feature = "ebpf"))]
@@ -180,10 +182,12 @@ impl CollectorKind for LinuxCollector {
 }
 
 #[cfg(feature = "tools")]
+#[path = "cli.rs"]
 mod cli;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// Async entry shared by every flavour: diagnostics dispatch, privilege and
+/// source guards, then the continuous runner.
+pub async fn run() -> Result<()> {
     // Diagnostics first: the tools subcommands must work on machines with no
     // local log source; only the collection loop requires one.
     #[cfg(feature = "tools")]
@@ -193,7 +197,7 @@ async fn main() -> Result<()> {
     // Spec constraint: refuse to start without eBPF privileges rather than
     // degrade silently — the syslog fallback only covers old kernels.
     #[cfg(feature = "ebpf")]
-    if !sigmacatch_lnx::ebpf::has_required_privileges() {
+    if !crate::ebpf::has_required_privileges() {
         anyhow::bail!(
             "insufficient privileges for the eBPF collector: run as root \
              or grant CAP_BPF+CAP_PERFMON"

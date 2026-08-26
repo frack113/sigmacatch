@@ -79,6 +79,7 @@ Chacun gardé par sa source ; aucune source disponible → bail :
   `sysmon` sont exclues (prises en charge par le collecteur dédié).
 
 Les deux binaires sysmon ajoutent un collecteur supplémentaire :
+
 - **Sysmon eBPF (feature `ebpf`, `sigmacatch-linux-ebpf`)** — probes Aya embarquées
   (`crates/sigmacatch-ebpf`, nightly+bpf-linker, exclue du workspace) couvrant EID 1
   process_create, EID 3 network_connect, EID 5 process_terminate, EID 11 file_create et
