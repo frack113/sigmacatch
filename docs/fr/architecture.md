@@ -2,7 +2,7 @@
 
 ## Cargo workspace
 
-Le projet est un cargo workspace de 14 packages (3 crates binaires + 11 bibliothèques) :
+Le projet est un cargo workspace de 12 packages (2 crates binaires + 10 bibliothèques), plus 1 crate nightly exclu (`sigmacatch-ebpf`) :
 
 ```text
 sigmacatch/
