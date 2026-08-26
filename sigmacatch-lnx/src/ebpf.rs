@@ -17,6 +17,7 @@ use sigmacatch_ebpf_common::{
 };
 use sigmacatch_types::{Event, EventProducer};
 use tokio::sync::{mpsc, watch};
+use tracing::info;
 
 use crate::ebpf_event::EventBuilder;
 
@@ -132,6 +133,10 @@ impl EventProducer for EventCollector {
         tx: mpsc::Sender<Event>,
         stop: watch::Receiver<bool>,
     ) -> anyhow::Result<()> {
+        info!(
+            "sysmon(ebpf) collector starting ({} tracepoints)",
+            ATTACHMENTS.len()
+        );
         let Some(data) = self._ebpf.map_mut("EVENTS") else {
             bail!("EVENTS ring buffer disappeared after attach");
         };

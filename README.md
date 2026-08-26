@@ -121,6 +121,16 @@ Build a single collector in isolation:
 cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win --no-default-features --features etw
 ```
 
+For the Linux flavours always pass an explicit `--bin`: the three binaries
+share one entry point, so a superset-feature build would rebuild earlier-named
+bins with the wider feature set in the shared `target/` directory.
+
+```bash
+cargo build --release -p sigmacatch-lnx --bin sigmacatch-linux --no-default-features --features auditd,builtin
+cargo build --release -p sigmacatch-lnx --bin sigmacatch-linux-sysmon --no-default-features --features auditd,builtin,sysmon
+cargo build --release -p sigmacatch-lnx --bin sigmacatch-linux-ebpf --no-default-features --features auditd,builtin,ebpf
+```
+
 ### Diagnostics (feature `tools`)
 
 | Command | Description |

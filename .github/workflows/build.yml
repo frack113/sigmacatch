@@ -47,11 +47,14 @@ jobs:
           tool: cargo-deny,cargo-machete
       - run: cargo deny check
       - run: cargo machete
+      # Explicit --bin per flavour: a later superset-feature build would
+      # otherwise rebuild earlier-named bins (shared entry point) with the
+      # wider feature set and silently clobber them in the shared target dir.
       - name: Build all 3 flavours
         run: |
-          cargo build --release --locked -p sigmacatch-lnx --no-default-features --features auditd,builtin
-          cargo build --release --locked -p sigmacatch-lnx --no-default-features --features auditd,builtin,sysmon
-          cargo build --release --locked -p sigmacatch-lnx --no-default-features --features auditd,builtin,ebpf
+          cargo build --release --locked -p sigmacatch-lnx --bin sigmacatch-linux --no-default-features --features auditd,builtin
+          cargo build --release --locked -p sigmacatch-lnx --bin sigmacatch-linux-sysmon --no-default-features --features auditd,builtin,sysmon
+          cargo build --release --locked -p sigmacatch-lnx --bin sigmacatch-linux-ebpf --no-default-features --features auditd,builtin,ebpf
       - name: Isolated feature builds
         run: |
           cargo build --release --locked -p sigmacatch-lnx --no-default-features --features tools

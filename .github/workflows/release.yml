@@ -32,17 +32,19 @@ jobs:
           tar --zstd -xf /tmp/bpf-linker.tar.zst -C "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # Explicit --bin per flavour: prevents a superset-feature build from
+      # rebuilding earlier-named bins with the wider features (shared target).
       - name: Build base (auditd + builtin syslog)
         run: >
-          cargo build --release --locked -p sigmacatch-lnx
+          cargo build --release --locked -p sigmacatch-lnx --bin sigmacatch-linux
           --no-default-features --features auditd,builtin
       - name: Build sysmon (adds legacy tail)
         run: >
-          cargo build --release --locked -p sigmacatch-lnx
+          cargo build --release --locked -p sigmacatch-lnx --bin sigmacatch-linux-sysmon
           --no-default-features --features auditd,builtin,sysmon
       - name: Build ebpf (eBPF native probes)
         run: >
-          cargo build --release --locked -p sigmacatch-lnx
+          cargo build --release --locked -p sigmacatch-lnx --bin sigmacatch-linux-ebpf
           --no-default-features --features auditd,builtin,ebpf
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

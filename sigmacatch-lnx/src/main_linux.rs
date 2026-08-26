@@ -28,9 +28,9 @@ fn mode_for(auditd_ok: bool, syslog_ok: bool, ebpf_planned: bool) -> &'static st
         (true, false, true) => "linux auditd+sysmon(ebpf)",
         (false, true, true) => "linux syslog+sysmon(ebpf)",
         (false, false, true) => "linux sysmon(ebpf)",
-        (true, true, false) => "linux auditd+syslog+sysmon",
+        (true, true, false) => "linux auditd+syslog",
         (true, false, false) => "linux auditd",
-        (false, true, false) => "linux syslog+sysmon",
+        (false, true, false) => "linux syslog",
         (false, false, false) => "linux (no source)",
     }
 }
@@ -222,9 +222,9 @@ mod tests {
 
     #[test]
     fn test_mode_for() {
-        assert_eq!(mode_for(true, true, false), "linux auditd+syslog+sysmon");
+        assert_eq!(mode_for(true, true, false), "linux auditd+syslog");
         assert_eq!(mode_for(true, false, false), "linux auditd");
-        assert_eq!(mode_for(false, true, false), "linux syslog+sysmon");
+        assert_eq!(mode_for(false, true, false), "linux syslog");
         assert_eq!(mode_for(false, false, false), "linux (no source)");
         assert_eq!(
             mode_for(true, true, true),
