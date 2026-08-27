@@ -5,7 +5,7 @@ Les commandes de diagnostic sont des sous-commandes des binaires, derrière la f
 
 | Binaire | Sous-commandes |
 |---|---|
-| `sigmacatch-channel` (Windows) | `check`, `check-filter`, `check-channels`, `list-rules`, `get-atomic` |
+| `sigmacatch-channel` (Windows) | `check`, `check-filter`, `check-channels`, `list-rules` |
 | `sigmacatch-linux` (Linux) | `check`, `check-filter`, `list-rules` |
 
 Une sous-commande inconnue ou absente → le binaire démarre sa boucle de collecte normale.
@@ -166,55 +166,8 @@ sigmacatch-channel list-rules --json --coverage
 
 ---
 
-## get-atomic
-
-**Usage :** `sigmacatch-channel get-atomic [--output run_atomic.ps1] [--getprereqs] [--json]`
-
-**Fonction :** génère un script `run_atomic.ps1` qui enchaîne les commandes
-`Invoke-AtomicTest T1xxx.xxx` pour les techniques ATT&CK des règles **sans données de
-régression** selon le filtre config. Copiez le script sur la VM Windows et exécutez-le
-manuellement ; `sigmacatch-channel` (boucle continue) capte les événements générés et
-produit les données de régression.
-
-### Pipeline
-
-1. `Config::load("config.yaml")` (section filter + `git.sigma_repo_path`)
-2. Charge les règles Sigma depuis `./sigma` + filtre config
-3. Skip set = règles avec données de régression déjà valides (local `regression_data/`)
-   ∪ ids des branches remote `sigmacatch/*` en attente de merge
-4. Pour chaque règle restante : `rule.attack_techniques()` (extension trait
-    `SigmaRuleExt` de `sigmacatch-rule`)
-5. Dédupe + tri des techniques (BTreeSet) — une `Invoke-AtomicTest` par technique
-6. Écrit `run_atomic.ps1` (ou `--output <path>`) + rapport
-
-### Script généré
-
-```powershell
-$ErrorActionPreference = "Continue"
-Import-Module Invoke-AtomicRedTeam
-# 12 rule(s) without regression data — 7 technique(s)
-Start-Sleep -Seconds 5
-Invoke-AtomicTest T1055.001 -TimeoutSeconds 120
-Start-Sleep -Seconds 30
-Invoke-AtomicTest T1547.001 -TimeoutSeconds 120
-...
-```
-
-- `Start-Sleep 30` entre les tests → laisse sigmacatch-channel collecter les events
-- `-TimeoutSeconds 120` → évite qu'un test bloquant fige la chaîne
-- Les règles sans tag `attack.*` sont comptées et listées dans le rapport (pas
-  de `Invoke-AtomicTest` généré pour elles)
-
-### Limitations
-
-Pas de garantie de couverture : une règle avec une condition spécifique peut ne
-pas matcher l'event produit par le test ART. Les règles restées sans données sont
-re-listées au prochain run (le skip set n'exclut que ce qui est déjà généré).
-
-### Exemple
-
-```bash
-sigmacatch-channel get-atomic
-sigmacatch-channel get-atomic --output $env:TEMP\run_atomic.ps1
-sigmacatch-channel get-atomic --getprereqs --json
-```
+La sous-commande `get-atomic` a été retirée (remplacée par la liste des techniques
+manquantes produite par `list-rules --json --coverage`, et la génération des données
+de régression), les tests Atomic Red Team étant désormais orchestrés directement sur
+la VM (module `Invoke-AtomicRedTeam` dans `C:\AtomicRedTeam`) en ciblant les règles
+sans données.
