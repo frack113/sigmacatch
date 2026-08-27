@@ -31,11 +31,11 @@ pub fn dispatch() -> Option<i32> {
         return None; // no subcommand → fall through to normal loop
     }
     match args[1].as_str() {
-        "check" => Some(cmd_check(&args[1..])),
-        "check-filter" => Some(cmd_check_filter(&args[1..])),
-        "check-channels" => Some(cmd_check_channels(&args[1..])),
-        "list-rules" => Some(cmd_list_rules(&args[1..])),
-        "get-atomic" => Some(cmd_get_atomic(&args[1..])),
+        "check" => Some(cmd_check(&args[2..])),
+        "check-filter" => Some(cmd_check_filter(&args[2..])),
+        "check-channels" => Some(cmd_check_channels(&args[2..])),
+        "list-rules" => Some(cmd_list_rules(&args[2..])),
+        "get-atomic" => Some(cmd_get_atomic(&args[2..])),
         _ => None, // unknown subcommand → normal loop
     }
 }
