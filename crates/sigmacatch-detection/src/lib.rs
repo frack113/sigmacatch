@@ -6,7 +6,6 @@
 //! read-only mode. No filtering, no skip sets — just the bare essentials for
 //! testing and validation.
 
-use anyhow::{Result, anyhow};
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::pipeline::{Pipeline, parse_pipeline};
 use rsigma_eval::{Engine, LogSourceExtractor};
@@ -15,6 +14,7 @@ use sigmacatch_types::{Alert, Event};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use thiserror::Error;
 use uuid::Uuid;
 
 /// Windows logsource add_condition + change_logsource transformations.
@@ -51,17 +51,56 @@ pub struct DetectionEngine {
     rule_id_map: HashMap<String, Uuid>,
 }
 
+/// Errors produced by the detection engine while building or persisting it.
+#[derive(Debug, Error)]
+pub enum DetectionError {
+    /// A bundled platform pipeline failed to parse.
+    #[error("pipeline {name}: {source}")]
+    Pipeline {
+        /// Pipeline identifier.
+        name: &'static str,
+        /// The underlying parse error.
+        source: rsigma_eval::EvalError,
+    },
+    /// Some rules failed to compile into the engine.
+    #[error("Engine add_rules: {count} rule(s) failed to compile out of {total}")]
+    AddRules {
+        /// Number of rules that failed to compile.
+        count: usize,
+        /// Total number of rules attempted.
+        total: usize,
+    },
+    /// HIR (compiled engine) serialization failed.
+    #[error("save_hir failed: {0}")]
+    SaveHir(#[source] rsigma_eval::EvalError),
+    /// HIR blob deserialization failed.
+    #[error("load_hir failed: {0}")]
+    LoadHir(#[source] rsigma_eval::EvalError),
+}
+
 impl DetectionEngine {
     /// Compile `rules` and load the embedded platform pipelines.
-    pub fn new(rules: &SigmahqRules) -> Result<Self> {
-        let win_logsource = parse_pipeline(WIN_LOGSOURCE_PIPELINE)
-            .map_err(|e| anyhow!("win_logsource pipeline: {e}"))?;
+    pub fn new(rules: &SigmahqRules) -> Result<Self, DetectionError> {
+        let win_logsource =
+            parse_pipeline(WIN_LOGSOURCE_PIPELINE).map_err(|source| DetectionError::Pipeline {
+                name: "win_logsource",
+                source,
+            })?;
         let win_field =
-            parse_pipeline(WIN_FIELD_PIPELINE).map_err(|e| anyhow!("win_field pipeline: {e}"))?;
-        let lnx_logsource = parse_pipeline(LNX_LOGSOURCE_PIPELINE)
-            .map_err(|e| anyhow!("lnx_logsource pipeline: {e}"))?;
+            parse_pipeline(WIN_FIELD_PIPELINE).map_err(|source| DetectionError::Pipeline {
+                name: "win_field",
+                source,
+            })?;
+        let lnx_logsource =
+            parse_pipeline(LNX_LOGSOURCE_PIPELINE).map_err(|source| DetectionError::Pipeline {
+                name: "lnx_logsource",
+                source,
+            })?;
         let lnx_field =
-            parse_pipeline(LNX_FIELD_PIPELINE).map_err(|e| anyhow!("lnx_field pipeline: {e}"))?;
+            parse_pipeline(LNX_FIELD_PIPELINE).map_err(|source| DetectionError::Pipeline {
+                name: "lnx_field",
+                source,
+            })?;
         let mut engine =
             Self::create_engine(&win_logsource, &win_field, &lnx_logsource, &lnx_field)?;
 
@@ -72,11 +111,10 @@ impl DetectionEngine {
             for (idx, err) in &errors {
                 tracing::error!("Rule at index {idx} failed to compile: {err}");
             }
-            anyhow::bail!(
-                "Engine add_rules: {} rule(s) failed to compile out of {}",
-                errors.len(),
-                rules.len()
-            );
+            return Err(DetectionError::AddRules {
+                count: errors.len(),
+                total: rules.len(),
+            });
         }
 
         let rule_paths = Arc::new(rules.rule_paths().clone());
@@ -97,7 +135,7 @@ impl DetectionEngine {
     }
 
     /// Swap in a freshly compiled rule set without re-parsing pipelines.
-    pub fn reload_rules(&mut self, rules: &SigmahqRules) -> Result<()> {
+    pub fn reload_rules(&mut self, rules: &SigmahqRules) -> Result<(), DetectionError> {
         // Reuse cached pipelines (clone, not re-parse YAML) for the new engine.
         let mut engine = Self::create_engine(
             &self.win_logsource_pipeline,
@@ -136,7 +174,7 @@ impl DetectionEngine {
         win_field: &Pipeline,
         lnx_logsource: &Pipeline,
         lnx_field: &Pipeline,
-    ) -> Result<Engine> {
+    ) -> Result<Engine, DetectionError> {
         let mut engine = Engine::new();
         engine.set_include_event(true);
 
@@ -182,17 +220,13 @@ impl DetectionEngine {
     }
 
     /// Serialize the compiled engine (HIR cache).
-    pub fn save_hir(&self) -> Result<Vec<u8>> {
-        self.engine
-            .save_hir()
-            .map_err(|e| anyhow!("save_hir failed: {e}"))
+    pub fn save_hir(&self) -> Result<Vec<u8>, DetectionError> {
+        self.engine.save_hir().map_err(DetectionError::SaveHir)
     }
 
     /// Restore a previously saved HIR blob.
-    pub fn load_hir(&mut self, blob: &[u8]) -> Result<()> {
-        self.engine
-            .load_hir(blob)
-            .map_err(|e| anyhow!("load_hir failed: {e}"))
+    pub fn load_hir(&mut self, blob: &[u8]) -> Result<(), DetectionError> {
+        self.engine.load_hir(blob).map_err(DetectionError::LoadHir)
     }
 
     /// Copy of the processing counters.
@@ -200,7 +234,7 @@ impl DetectionEngine {
         self.stats.clone()
     }
 
-    /// Per-field match explanation for diagnostics (`check` deep mode).
+    /// Per-field match explanation for diagnostics (`sigmacatch-check` deep mode).
     pub fn explain_rule(&self, rule_id: &Uuid, event: &Event) -> Option<serde_json::Value> {
         let rule_id_str = rule_id.to_string();
         let compiled = self
