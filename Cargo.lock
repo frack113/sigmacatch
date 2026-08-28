@@ -1600,7 +1600,6 @@ dependencies = [
 name = "input-windows-evtx"
 version = "0.5.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "evtx",
  "sigmacatch-types",
@@ -3090,6 +3089,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "sigmacatch-check"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "input-windows-evtx",
+ "linux-audit-parser",
+ "serde",
+ "serde_json",
+ "sigmacatch-detection",
+ "sigmacatch-regression",
+ "sigmacatch-rule",
+ "sigmacatch-types",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "sigmacatch-config"
 version = "0.5.0"
 dependencies = [
@@ -3107,7 +3123,6 @@ dependencies = [
 name = "sigmacatch-detection"
 version = "0.5.0"
 dependencies = [
- "anyhow",
  "phf",
  "rsigma-eval",
  "serde",
@@ -3115,6 +3130,7 @@ dependencies = [
  "sigmacatch-rule",
  "sigmacatch-types",
  "tempfile",
+ "thiserror 2.0.20",
  "tracing",
  "uuid",
 ]
@@ -3171,8 +3187,8 @@ dependencies = [
 name = "sigmacatch-logger"
 version = "0.5.0"
 dependencies = [
- "anyhow",
  "sigmacatch-config",
+ "thiserror 2.0.20",
  "tracing-appender",
  "tracing-subscriber",
 ]
@@ -3223,11 +3239,11 @@ dependencies = [
 name = "sigmacatch-rule"
 version = "0.5.0"
 dependencies = [
- "anyhow",
  "dunce",
  "rsigma-parser",
  "serde",
  "tempfile",
+ "thiserror 2.0.20",
  "tracing",
  "uuid",
  "yaml_serde",
@@ -3256,12 +3272,12 @@ dependencies = [
 name = "sigmacatch-types"
 version = "0.5.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "phf",
  "roxmltree",
  "serde",
  "serde_json",
+ "thiserror 2.0.20",
  "tokio",
  "uuid",
 ]
@@ -3274,7 +3290,6 @@ dependencies = [
  "async-trait",
  "ferrisetw",
  "hex",
- "input-windows-evtx",
  "md5",
  "phf",
  "serde",
