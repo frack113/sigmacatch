@@ -41,3 +41,4 @@ jobs:
       - run: cargo test --locked -p sigmacatch-repo
       - run: cargo test --locked -p sigmacatch-types
       - run: cargo test --locked -p sigmacatch-logger
+      - run: cargo test --locked -p sigmacatch-check

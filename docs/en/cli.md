@@ -10,20 +10,18 @@ through the detection engine, and verifies that the expected rule still matches.
 **Usage:**
 
 ```text
-sigmacatch-check [--product <product>] [--json]
+sigmacatch-check [--json]
 ```
 
-- `--product <product>` — filters rules by product (default: `windows`).
 - `--json` — outputs JSON instead of human-readable text.
 
-**Purpose:** deep validation of all regression data in `./sigma/regression_data` for the
-given product. Entries are parsed according to their `LogType`: `.evtx` via
-`input_windows_evtx::parse_evtx_bytes`, `.log` via the auditd parser, straight JSON lines.
-The `Raw` logtype is not supported.
+**Purpose:** deep validation of all regression data in `./sigma/regression_data`. Entries are
+parsed according to their `LogType`: `.evtx` via `input_windows_evtx::parse_evtx_bytes`,
+`.log` via the auditd parser, straight JSON lines. The `Raw` logtype is skipped.
 
 ### Pipeline
 
-1. Loads all Sigma rules from `./sigma`, filters to Windows
+1. Loads all Sigma rules from `./sigma`
 2. Builds the `DetectionEngine` once
 3. Loads regression entries from `./sigma/regression_data`
 4. For each `info.yml` entry:
@@ -58,9 +56,8 @@ The `Raw` logtype is not supported.
 **Example:**
 
 ```bash
-sigmacatch-check                # filters product windows (default)
-sigmacatch-check --product windows
-sigmacatch-check --product linux --json
+sigmacatch-check
+sigmacatch-check --json
 ```
 
 ### JSON output

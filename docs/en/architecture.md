@@ -44,7 +44,7 @@ sigmacatch/
     ├── sigmacatch-repo/          # grit-lib wrapper + SigmaRepo + git operations + signing.rs + transport.rs
     ├── sigmacatch-evtx-writer/   # Pure Rust EVTX writer (ETW / record-id-less events — no EvtExportLog possible)
     ├── input-windows-evtx/       # EVTX file parser → Event
-    └── sigmacatch-check/         # Standalone cross-platform binary: regression check (--product/--json)
+    └── sigmacatch-check/         # Standalone cross-platform binary: regression check (--json)
 ```
 
 ## Collectors
@@ -61,7 +61,7 @@ cross-platform `sigmacatch-check`:
 | `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog}.rs` | auditd + builtin syslog only (no root needed) |
 | `sigmacatch-linux-sysmon` | `sigmacatch-lnx/src/{auditd,syslog,sysmon}.rs` | + legacy Sysmon-for-Linux XML tail |
 | `sigmacatch-linux-ebpf` | `sigmacatch-lnx/src/{auditd,syslog,ebpf}.rs` | + native eBPF probes (root or CAP_BPF+CAP_PERFMON required) |
-| `sigmacatch-check` | `crates/sigmacatch-check/src/main.rs` | Cross-platform regression validation (EVTX + auditd + JSON); no collector, no `tools` feature |
+| `sigmacatch-check` | `sigmacatch-check/src/main.rs` | Cross-platform regression validation (EVTX + auditd + JSON); no collector, no `tools` feature |
 
 ### Direct ETW
 

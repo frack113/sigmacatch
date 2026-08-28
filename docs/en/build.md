@@ -86,7 +86,7 @@ Feature `tools`, off by default and to be combined with a collector feature (see
 On both `sigmacatch-channel` and `sigmacatch-linux`: `check-filter`, `list-rules`.
 
 Regression validation (`check`) is no longer a subcommand: it is the standalone
-**`sigmacatch-check`** binary (`crates/sigmacatch-check`), cross-platform, which needs no
+**`sigmacatch-check`** binary (`sigmacatch-check`), cross-platform, which needs no
 collector and no `tools` feature:
 
 ```bash

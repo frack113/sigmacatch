@@ -10,20 +10,19 @@ event stocké dans le moteur de détection, et vérifie que la règle attendue m
 **Usage :**
 
 ```text
-sigmacatch-check [--product <product>] [--json]
+sigmacatch-check [--json]
 ```
 
-- `--product <product>` — filtre les règles par produit (défaut : `windows`).
 - `--json` — sortie en JSON au lieu du texte lisible.
 
 **Fonction :** validation approfondie de toutes les données de régression dans
-`./sigma/regression_data` pour le produit donné. Les entrées sont parses selon leur
-`LogType` : `.evtx` via `input_windows_evtx::parse_evtx_bytes`, `.log` via le parser
-auditd, lignes JSON directes. Le logtype `Raw` n'est pas supporté.
+`./sigma/regression_data`. Les entrées sont parses selon leur `LogType` : `.evtx` via
+`input_windows_evtx::parse_evtx_bytes`, `.log` via le parser auditd, lignes JSON directes.
+Le logtype `Raw` est ignoré.
 
 ### Pipeline
 
-1. Charge toutes les règles Sigma depuis `./sigma`, filtre sur Windows
+1. Charge toutes les règles Sigma depuis `./sigma`
 2. Construit le `DetectionEngine` une seule fois
 3. Charge les entrées de régression depuis `./sigma/regression_data`
 4. Pour chaque entrée `info.yml` :
@@ -58,9 +57,8 @@ auditd, lignes JSON directes. Le logtype `Raw` n'est pas supporté.
 **Exemple :**
 
 ```bash
-sigmacatch-check                # filtre produit windows (défaut)
-sigmacatch-check --product windows
-sigmacatch-check --product linux --json
+sigmacatch-check
+sigmacatch-check --json
 ```
 
 ### Sortie JSON

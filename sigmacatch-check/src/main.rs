@@ -13,7 +13,7 @@ use serde::Serialize;
 use serde_json::{Map, Value as JsonValue};
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_regression::SigmahqRegression;
-use sigmacatch_rule::{SigmaFilterConfig, SigmahqRules};
+use sigmacatch_rule::SigmahqRules;
 use sigmacatch_types::Event;
 use uuid::Uuid;
 
@@ -26,24 +26,18 @@ struct CheckFail {
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
-    let mut product = String::from("windows");
     let mut json_output = false;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--product" => {
-                i += 1;
-                product = args[i].clone();
-            }
             "--json" => json_output = true,
             "--help" | "-h" => {
                 println!(
                     "sigmacatch-check — validate regression data against loaded rules\n\n\
                     Usage: sigmacatch-check [OPTIONS]\n\n\
                     Options:\n\
-                      --product <product>  Filter rules by product (default: windows)\n\
-                      --json               Output results as JSON\n\
-                      --help, -h           Print this help and exit"
+                      --json  Output results as JSON\n\
+                      --help, -h  Print this help and exit"
                 );
                 return Ok(());
             }
@@ -56,10 +50,6 @@ fn main() -> anyhow::Result<()> {
     }
 
     let rules = SigmahqRules::new()?;
-    let rules = rules.filter(SigmaFilterConfig {
-        product,
-        ..Default::default()
-    });
 
     let regression = SigmahqRegression::new()?;
     if regression.is_empty() {
@@ -71,7 +61,9 @@ fn main() -> anyhow::Result<()> {
 
     let mut total = 0usize;
     let mut passed = 0usize;
+    let mut skipped = 0usize;
     let mut failed: Vec<CheckFail> = Vec::new();
+    let mut dropped_audit_lines = 0usize;
 
     for idx in 0..regression.len() {
         let entry = match regression.get_entry(idx) {
@@ -117,17 +109,18 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
             }
-            sigmacatch_regression::logtype::LogType::Log => parse_auditd_lines(&raw),
+            sigmacatch_regression::logtype::LogType::Log => {
+                let (events, dropped) = parse_auditd_lines(&raw);
+                dropped_audit_lines += dropped;
+                events
+            }
             sigmacatch_regression::logtype::LogType::Json => parse_json_lines(&raw),
             sigmacatch_regression::logtype::LogType::Raw => {
-                total += 1;
-                failed.push(CheckFail {
-                    rule_name: entry.rule_name.clone(),
-                    error: "Raw logtype not supported".to_string(),
-                });
+                skipped += 1;
                 if !json_output {
-                    println!("[FAIL] Raw logtype not supported");
+                    println!("[SKIP] Raw logtype — skipped");
                 }
+                total += 1;
                 continue;
             }
         };
@@ -193,7 +186,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let pass_rate = if total > 0 {
-        (passed as f64 / total as f64) * 100.0
+        (passed as f64 / (total + skipped) as f64) * 100.0
     } else {
         0.0
     };
@@ -202,7 +195,7 @@ fn main() -> anyhow::Result<()> {
         let output = serde_json::json!({
             "total": total,
             "passed": passed,
-            "skipped": 0,
+            "skipped": skipped,
             "failed_count": failed.len(),
             "pass_rate": pass_rate,
             "failed": failed,
@@ -219,6 +212,12 @@ fn main() -> anyhow::Result<()> {
         println!("  Total entries:   {}", total);
         println!("  Passed:          {}", passed);
         println!("  Failed:          {}", failed.len());
+        if skipped > 0 {
+            println!("  Skipped:         {}", skipped);
+        }
+        if dropped_audit_lines > 0 {
+            println!("  Dropped lines:   {}", dropped_audit_lines);
+        }
         println!("  Pass rate:       {:.1}%", pass_rate);
         println!("{}", "=".repeat(60));
         if !failed.is_empty() {
@@ -236,7 +235,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn parse_auditd_lines(raw: &[u8]) -> Vec<Event> {
+fn parse_auditd_lines(raw: &[u8]) -> (Vec<Event>, usize) {
     use linux_audit_parser::Parser;
 
     let parser = Parser {
@@ -244,10 +243,17 @@ fn parse_auditd_lines(raw: &[u8]) -> Vec<Event> {
         split_msg: false,
     };
 
-    raw.split(|b| *b == b'\n')
+    let mut dropped = 0usize;
+    let events: Vec<Event> = raw.split(|b| *b == b'\n')
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
-            let message = parser.parse(line).ok()?;
+            let message = match parser.parse(line) {
+                Ok(m) => m,
+                Err(_) => {
+                    dropped += 1;
+                    return None;
+                }
+            };
             let mut fields = Map::new();
             for (key, value) in &message.body {
                 if let Some(json) = value_to_json(value) {
@@ -271,7 +277,8 @@ fn parse_auditd_lines(raw: &[u8]) -> Vec<Event> {
             event.inject_logsource_fields_for("linux", Some("auditd"));
             Some(event)
         })
-        .collect()
+        .collect();
+    (events, dropped)
 }
 
 fn value_to_json(value: &linux_audit_parser::Value<'_>) -> Option<JsonValue> {

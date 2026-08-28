@@ -42,7 +42,7 @@ sigmacatch/
     ├── sigmacatch-repo/          # wrapper grit-lib + SigmaRepo + opérations git + signing
     ├── sigmacatch-evtx-writer/   # Writer EVTX pur Rust
     ├── input-windows-evtx/       # Parser fichiers EVTX → Event
-    └── sigmacatch-check/         # Binaire standalone cross-platform : validation régression (--product/--json)
+    └── sigmacatch-check/         # Binaire standalone cross-platform : validation régression (--json)
 ```
 
 ## Collecteurs

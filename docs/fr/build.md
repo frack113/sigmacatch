@@ -88,7 +88,7 @@ Feature `tools`, désactivée par défaut et à combiner avec une feature de col
 `check-filter`, `list-rules`.
 
 La validation de régression (`check`) n'est plus une sous-commande : c'est le binaire
-standalone **`sigmacatch-check`** (`crates/sigmacatch-check`), cross-platform, qui
+standalone **`sigmacatch-check`** (`sigmacatch-check`), cross-platform, qui
 n'exige ni collector ni feature `tools` :
 
 ```bash

@@ -3101,7 +3101,6 @@ dependencies = [
  "sigmacatch-regression",
  "sigmacatch-rule",
  "sigmacatch-types",
- "tempfile",
  "uuid",
 ]
 
