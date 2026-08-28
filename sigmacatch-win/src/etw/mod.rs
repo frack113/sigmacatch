@@ -17,7 +17,7 @@
 //! Non-Windows → silent stub.
 
 use async_trait::async_trait;
-use sigmacatch_types::{Event, EventProducer};
+use sigmacatch_types::{Event, EventProducer, ProducerError};
 #[cfg(windows)]
 use std::collections::HashMap;
 #[cfg(windows)]
@@ -94,8 +94,10 @@ impl EventProducer for EventCollector {
         self: Box<Self>,
         tx: mpsc::Sender<Event>,
         stop: watch::Receiver<bool>,
-    ) -> anyhow::Result<()> {
-        Self::collect_events(&self, tx, stop).await
+    ) -> Result<(), ProducerError> {
+        Self::collect_events(&self, tx, stop)
+            .await
+            .map_err(|e| ProducerError::Collector(e.into()))
     }
 }
 
