@@ -12,7 +12,7 @@
 use std::path::Path;
 
 use async_trait::async_trait;
-use sigmacatch_types::{Event, EventProducer, ParseError, parse_winevt_xml_raw};
+use sigmacatch_types::{Event, EventProducer, ParseError, ProducerError, parse_winevt_xml_raw};
 
 /// Errors produced while reading EVTX files.
 #[derive(Debug, thiserror::Error)]
@@ -97,20 +97,25 @@ impl EventProducer for EventCollector {
         self: Box<Self>,
         tx: mpsc::Sender<Event>,
         stop: watch::Receiver<bool>,
-    ) -> anyhow::Result<()> {
+    ) -> std::result::Result<(), ProducerError> {
         for path in &self.files {
             if *stop.borrow() {
                 break;
             }
             let events = Self::load_evtx(path).map_err(|e| {
-                EvtxError::Parse(format!("Failed to load EVTX {}: {e}", path.display()))
+                ProducerError::Collector(Box::new(EvtxError::Parse(format!(
+                    "Failed to load EVTX {}: {e}",
+                    path.display()
+                ))))
             })?;
             for event in events {
                 if *stop.borrow() {
                     break;
                 }
                 tx.send(event).await.map_err(|_| {
-                    EvtxError::Parse("Channel send failed — receiver dropped".to_string())
+                    ProducerError::Collector(Box::new(EvtxError::Parse(
+                        "Channel send failed — receiver dropped".to_string(),
+                    )))
                 })?;
             }
         }
@@ -127,7 +132,7 @@ pub fn parse_evtx_file(path: &Path) -> Result<Vec<Event>> {
 
 /// Parse EVTX data from raw bytes into a vector of `Event` objects.
 ///
-/// Useful for loading EVTX regression data from memory (e.g., evtx_check binary).
+/// Useful for loading EVTX regression data from memory (e.g., sigmacatch-check binary).
 pub fn parse_evtx_bytes(data: &[u8]) -> Result<Vec<Event>> {
     let mut parser = evtx::EvtxParser::from_read_seek(std::io::Cursor::new(data)).map_err(|e| {
         EvtxError::Parse(format!("Failed to create EVTX parser from raw bytes: {e}"))
