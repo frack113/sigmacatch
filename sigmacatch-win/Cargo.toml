@@ -21,7 +21,7 @@ etw = [
     "dep:sha2",
     "dep:phf",
 ]
-tools = ["dep:serde", "dep:input-windows-evtx"]
+tools = ["dep:serde"]
 
 [[bin]]
 name = "sigmacatch-channel"
@@ -41,8 +41,6 @@ sigmacatch-regression = { path = "../crates/sigmacatch-regression" }
 sigmacatch-rule = { path = "../crates/sigmacatch-rule" }
 sigmacatch-repo = { path = "../crates/sigmacatch-repo" }
 sigmacatch-types = { path = "../crates/sigmacatch-types" }
-
-input-windows-evtx = { path = "../crates/input-windows-evtx", optional = true }
 
 async-trait = { version = "0.1", optional = true }
 hex = { version = "0.4", optional = true }
