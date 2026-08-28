@@ -898,6 +898,17 @@ impl From<Alert> for RegressionHeader {
 
 // ─── EventProducer ────────────────────────────────────────────────────────
 
+/// Errors raised by an [`EventProducer`] while collecting events.
+#[derive(Debug, thiserror::Error)]
+pub enum ProducerError {
+    /// A collection failure wrapping the underlying source error.
+    #[error(transparent)]
+    Collector(Box<dyn std::error::Error + Send + Sync>),
+    /// A collection failure described only by a message.
+    #[error("{0}")]
+    Message(String),
+}
+
 /// Trait for async event producers that send events into a channel.
 ///
 /// Implementors collect events from a source and send them into the provided
@@ -911,7 +922,7 @@ pub trait EventProducer: Send {
         self: Box<Self>,
         tx: mpsc::Sender<Event>,
         stop: tokio::sync::watch::Receiver<bool>,
-    ) -> anyhow::Result<()>;
+    ) -> Result<(), ProducerError>;
 }
 
 #[cfg(test)]
