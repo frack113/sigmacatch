@@ -17,9 +17,9 @@ mod attack;
 // Note: init_from_sigma_path was removed; use SigmahqRules::new() for production,
 // SigmahqRules::new_from_path() for tests with custom directories.
 
-use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use thiserror::Error;
 use uuid::Uuid;
 
 /// Rule loading filters. All fields are optional — `None` means no filtering.
@@ -75,20 +75,28 @@ pub struct SigmahqRules {
     stats: LoadStats,
 }
 
+/// Errors produced while loading Sigma rules from disk.
+#[derive(Debug, Error)]
+pub enum RulesError {
+    /// No `rules*` directory was found under the requested root.
+    #[error("No rules directories found in {0:?} — the repository may be empty or incomplete")]
+    NoRulesDirs(PathBuf),
+    /// A filesystem operation failed while traversing the repository.
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
 impl SigmahqRules {
     /// Load rules from the default `./sigma` directory.
-    pub fn new() -> Result<Self> {
+    pub fn new() -> Result<Self, RulesError> {
         Self::new_from_path(Path::new("./sigma"))
     }
 
     /// Load rules from an explicit sigma repository root.
-    pub fn new_from_path(sigma_path: &Path) -> Result<Self> {
+    pub fn new_from_path(sigma_path: &Path) -> Result<Self, RulesError> {
         let dirs = find_rules_dirs(sigma_path)?;
         if dirs.is_empty() {
-            anyhow::bail!(
-                "No rules directories found in {:?} — the repository may be empty or incomplete",
-                sigma_path
-            );
+            return Err(RulesError::NoRulesDirs(sigma_path.to_path_buf()));
         }
         let mut set = SigmahqRules::default();
         let mut seen_ids: HashSet<String> = HashSet::new();

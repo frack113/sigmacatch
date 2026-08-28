@@ -9,10 +9,10 @@ description = "Sigma rule management: loading, filtering, scanning, and AST inde
 license.workspace = true
 
 [dependencies]
-anyhow = "1.0"
 rsigma-parser = "0.21"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = { package = "yaml_serde", version = "0.10" }
+thiserror.workspace = true
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 
