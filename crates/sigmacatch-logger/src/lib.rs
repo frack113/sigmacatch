@@ -5,11 +5,12 @@
 //! - **stderr**: human-readable format (level + message), info level by default
 //! - **file**: structured format (module, file, line), configurable level
 
-use anyhow::{Context, Result};
 use sigmacatch_config::Config;
 use std::fs;
 use std::path::PathBuf;
+use thiserror::Error;
 use tracing_appender::non_blocking::WorkerGuard;
+use tracing_appender::rolling::InitError;
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt,
     util::SubscriberInitExt,
@@ -20,12 +21,30 @@ use tracing_subscriber::{
 /// suppressed at `warn` for that target only.
 const EVTX_NOISE_DIRECTIVE: &str = "evtx=warn";
 
+/// Errors raised while initialising the two logging layers.
+#[derive(Debug, Error)]
+pub enum LoggerError {
+    /// The destination log directory could not be created.
+    #[error("failed to create log directory {path}: {source}")]
+    CreateLogDir {
+        /// The directory that could not be created.
+        path: PathBuf,
+        /// The underlying filesystem error.
+        source: std::io::Error,
+    },
+    /// The rolling file appender could not be opened for writing.
+    #[error("failed to build rolling file appender: {0}")]
+    RollingAppender(#[from] InitError),
+}
+
 /// Initialise les deux couches de logging : stderr lisible + fichier structuré.
 /// When `verbose` is false, stderr only shows `error` level messages.
-pub fn init(config: &Config, verbose: bool) -> Result<WorkerGuard> {
+pub fn init(config: &Config, verbose: bool) -> Result<WorkerGuard, LoggerError> {
     let log_dir = PathBuf::from("logs");
-    fs::create_dir_all(&log_dir)
-        .with_context(|| format!("Failed to create log directory: {}", log_dir.display()))?;
+    fs::create_dir_all(&log_dir).map_err(|source| LoggerError::CreateLogDir {
+        path: log_dir.clone(),
+        source,
+    })?;
 
     let stderr_filter = if verbose {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
@@ -46,8 +65,7 @@ pub fn init(config: &Config, verbose: bool) -> Result<WorkerGuard> {
         .max_log_files(3)
         .filename_prefix("sigmacatch")
         .filename_suffix("log")
-        .build(&log_dir)
-        .expect("failed to build rolling file appender");
+        .build(&log_dir)?;
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
     let file_filter =
