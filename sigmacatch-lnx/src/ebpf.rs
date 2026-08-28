@@ -15,7 +15,7 @@ use aya::programs::TracePoint;
 use sigmacatch_ebpf_common::{
     DnsEvent, EVENT_DNS, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_NET, FileCreateEvent, NetEvent,
 };
-use sigmacatch_types::{Event, EventProducer};
+use sigmacatch_types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
 use tracing::info;
 
@@ -132,15 +132,19 @@ impl EventProducer for EventCollector {
         mut self: Box<Self>,
         tx: mpsc::Sender<Event>,
         stop: watch::Receiver<bool>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), ProducerError> {
         info!(
             "sysmon(ebpf) collector starting ({} tracepoints)",
             ATTACHMENTS.len()
         );
         let Some(data) = self._ebpf.map_mut("EVENTS") else {
-            bail!("EVENTS ring buffer disappeared after attach");
+            return Err(ProducerError::Message(
+                "EVENTS ring buffer disappeared after attach".to_string(),
+            ));
         };
-        let mut ring = RingBuf::try_from(data).context("mapping EVENTS ring buffer")?;
+        let mut ring = RingBuf::try_from(data).map_err(|e| {
+            ProducerError::Collector(anyhow::anyhow!("mapping EVENTS ring buffer: {e}").into())
+        })?;
 
         while !*stop.borrow() {
             tokio::time::sleep(std::time::Duration::from_millis(RING_POLL_MS)).await;

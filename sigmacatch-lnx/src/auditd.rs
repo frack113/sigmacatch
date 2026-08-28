@@ -20,7 +20,7 @@
 use async_trait::async_trait;
 use linux_audit_parser::{Parser, Value as AuditValue};
 use serde_json::{Map, Value as JsonValue};
-use sigmacatch_types::{Event, EventProducer};
+use sigmacatch_types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
 
 /// Default path of the audit log.
@@ -138,10 +138,12 @@ impl EventProducer for EventCollector {
         self: Box<Self>,
         tx: mpsc::Sender<Event>,
         stop: watch::Receiver<bool>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), ProducerError> {
         #[cfg(target_os = "linux")]
         {
-            tail_loop(&self.path, tx, stop).await
+            tail_loop(&self.path, tx, stop)
+                .await
+                .map_err(|e| ProducerError::Collector(e.into()))
         }
         #[cfg(not(target_os = "linux"))]
         {

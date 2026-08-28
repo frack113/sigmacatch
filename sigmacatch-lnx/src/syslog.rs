@@ -24,7 +24,7 @@
 use async_trait::async_trait;
 use regex::Regex;
 use serde_json::{Map, Value as JsonValue};
-use sigmacatch_types::{Event, EventProducer};
+use sigmacatch_types::{Event, EventProducer, ProducerError};
 use std::sync::OnceLock;
 use tokio::sync::{mpsc, watch};
 
@@ -256,7 +256,7 @@ impl EventProducer for EventCollector {
         self: Box<Self>,
         tx: mpsc::Sender<Event>,
         stop: watch::Receiver<bool>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), ProducerError> {
         #[cfg(target_os = "linux")]
         {
             let sources = match &self.path {
@@ -267,7 +267,7 @@ impl EventProducer for EventCollector {
                     .collect(),
             };
             if sources.is_empty() {
-                anyhow::bail!("no syslog source found");
+                return Err(ProducerError::Message("no syslog source found".to_string()));
             }
             let mut tasks = Vec::with_capacity(sources.len());
             for (path, kind) in sources {
@@ -278,15 +278,19 @@ impl EventProducer for EventCollector {
                 }));
             }
             drop(tx);
-            let mut result = Ok(());
+            let mut result: Result<(), ProducerError> = Ok(());
             for task in tasks {
-                match task
-                    .await
-                    .map_err(|e| anyhow::anyhow!("syslog tail task panicked: {e}"))
-                    .and_then(|r| r)
-                {
-                    Ok(()) => {}
-                    Err(e) if result.is_ok() => result = Err(e),
+                match task.await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) if result.is_ok() => {
+                        result = Err(ProducerError::Collector(e.into()));
+                    }
+                    Ok(Err(_)) => {}
+                    Err(e) if result.is_ok() => {
+                        result = Err(ProducerError::Collector(
+                            anyhow::anyhow!("syslog tail task panicked: {e}").into(),
+                        ));
+                    }
                     Err(_) => {}
                 }
             }

@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_regression::DataFormat;
 use sigmacatch_runner::{self, CollectorKind};
-use sigmacatch_types::{Event, EventProducer};
+use sigmacatch_types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
 
 #[cfg(feature = "sysmon")]
@@ -96,10 +96,12 @@ impl EventProducer for MultiCollector {
         self: Box<Self>,
         tx: mpsc::Sender<Event>,
         stop: watch::Receiver<bool>,
-    ) -> Result<()> {
+    ) -> Result<(), ProducerError> {
         let total = self.0.len();
         if total == 0 {
-            anyhow::bail!("no linux log source available");
+            return Err(ProducerError::Message(
+                "no linux log source available".to_string(),
+            ));
         }
         let mut handles = Vec::with_capacity(total);
         for (name, collector) in self.0 {
@@ -109,7 +111,7 @@ impl EventProducer for MultiCollector {
                 collector
                     .run(tx, stop)
                     .await
-                    .map_err(|e| anyhow::anyhow!("{name}: {e}"))
+                    .map_err(|e| ProducerError::Message(format!("{name}: {e}")))
             }));
         }
         let mut failures = Vec::new();
@@ -122,7 +124,9 @@ impl EventProducer for MultiCollector {
                 }
                 Err(e) => {
                     tracing::warn!("collector task panicked");
-                    failures.push(anyhow::anyhow!("collector task panicked: {e}"));
+                    failures.push(ProducerError::Message(format!(
+                        "collector task panicked: {e}"
+                    )));
                 }
             }
         }
@@ -292,9 +296,9 @@ mod tests {
             self: Box<Self>,
             tx: mpsc::Sender<Event>,
             stop: watch::Receiver<bool>,
-        ) -> Result<()> {
+        ) -> Result<(), ProducerError> {
             if self.fail {
-                anyhow::bail!("fake source gone");
+                return Err(ProducerError::Message("fake source gone".to_string()));
             }
             for _ in 0..self.events {
                 if *stop.borrow() {
