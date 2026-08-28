@@ -30,7 +30,7 @@ pub const DEFAULT_MAX_FAILED_CYCLES: u32 = 3;
 
 /// True when the rule's committed data file exists and is non-empty. We do
 /// not open the file — deep structural validation is deferred to
-/// `sigmacatch check`.
+/// `sigmacatch-check`.
 fn data_file_exists(dir: &Path, rule_id: &Uuid, format: DataFormat) -> bool {
     let ext = format.ext();
     let candidate = crate::long_path::long_path(&dir.join(format!("{rule_id}.{ext}")));
@@ -206,7 +206,7 @@ impl SigmahqRegression {
 
     /// Rule ids with committed regression data (skippable). We only check
     /// existence and non-empty — deep structural validation is left to
-    /// `sigmacatch check`.
+    /// `sigmacatch-check`.
     pub fn get_sigma_id(&self) -> Vec<Uuid> {
         self.entries
             .iter()
@@ -820,7 +820,7 @@ mod tests {
     }
 
     /// `get_sigma_id` trusts existence — it does not validate the blob
-    /// content. Broken data stays in the skip set until `sigmacatch check`
+    /// content. Broken data stays in the skip set until `sigmacatch-check`
     /// catches it.
     #[test]
     fn test_get_sigma_id_trusts_existence() {
