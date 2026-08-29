@@ -6,19 +6,16 @@
 //! Gated behind the `tools` feature. Dispatched from `main_linux.rs` before
 //! `runner::run()` is entered.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use sigmacatch_config::{self, Config};
-use sigmacatch_detection::DetectionEngine;
 use sigmacatch_regression::SigmahqRegression;
 use sigmacatch_repo::SigmaRepo;
 use sigmacatch_rule::{
     Level, MinLevel, MinStatus, SigmaFilterConfig, SigmaRuleExt, SigmahqRules, Status,
 };
 use uuid::Uuid;
-
-use crate::{auditd, syslog, sysmon_parse};
 
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
 
@@ -30,234 +27,10 @@ pub fn dispatch() -> Option<i32> {
         return None;
     }
     match args[1].as_str() {
-        "check" => Some(cmd_check(&args[2..])),
         "check-filter" => Some(cmd_check_filter(&args[2..])),
         "list-rules" => Some(cmd_list_rules(&args[2..])),
         _ => None,
     }
-}
-
-// ─── regression format detection ───────────────────────────────────────────────
-
-/// Detect the collector format from the first non-empty line of raw data.
-fn detect_format(raw: &[u8]) -> &'static str {
-    let Some(line) = raw.split(|b| *b == b'\n').find(|l| !l.is_empty()) else {
-        return "auditd";
-    };
-    match syslog::parse_line(line) {
-        Some(record) if record.program.eq_ignore_ascii_case("sysmon") => "sysmon",
-        Some(_) => "syslog",
-        None => "auditd",
-    }
-}
-
-// ─── check ────────────────────────────────────────────────────────────────────
-
-#[derive(serde::Serialize)]
-struct CheckFail {
-    rule_name: String,
-    error: String,
-}
-
-fn cmd_check(args: &[String]) -> i32 {
-    let mut json_output = false;
-    for arg in args {
-        match arg.as_str() {
-            "--json" => json_output = true,
-            other => {
-                eprintln!("Unknown argument: {other}");
-                return 1;
-            }
-        }
-    }
-
-    let rules = match SigmahqRules::new() {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Failed to load rules: {e}");
-            return 1;
-        }
-    };
-    let rules = rules.filter(SigmaFilterConfig {
-        product: "linux".to_string(),
-        ..Default::default()
-    });
-
-    let regression = match SigmahqRegression::new() {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Failed to load regression data: {e}");
-            return 1;
-        }
-    };
-    if regression.is_empty() {
-        eprintln!("No regression entries found — nothing to validate");
-        return 1;
-    }
-
-    let mut engine = match DetectionEngine::new(&rules) {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("Failed to build engine: {e}");
-            return 1;
-        }
-    };
-
-    let mut total = 0usize;
-    let mut passed = 0usize;
-    let mut failed: Vec<CheckFail> = Vec::new();
-
-    for i in 0..regression.len() {
-        let entry = match regression.get_entry(i) {
-            Some(e) => e,
-            None => {
-                total += 1;
-                if !json_output {
-                    println!("[FAIL] No entry");
-                }
-                continue;
-            }
-        };
-
-        let raw = match regression.get_raw_data(i) {
-            Some(r) => r,
-            None => {
-                total += 1;
-                failed.push(CheckFail {
-                    rule_name: entry.rule_name.clone(),
-                    error: "No raw data".to_string(),
-                });
-                if !json_output {
-                    println!("[FAIL] No raw data");
-                }
-                continue;
-            }
-        };
-
-        let events: Vec<sigmacatch_types::Event> = match detect_format(&raw) {
-            "sysmon" => raw
-                .split(|b| *b == b'\n')
-                .filter(|line| !line.is_empty())
-                .filter_map(|line| {
-                    let record = sysmon_parse::parse_line(line)?;
-                    sysmon_parse::record_to_event(line, &record)
-                })
-                .collect(),
-            "syslog" => raw
-                .split(|b| *b == b'\n')
-                .filter(|line| !line.is_empty())
-                .filter_map(|line| {
-                    let record = syslog::parse_line(line)?;
-                    Some(syslog::record_to_event(line, &record))
-                })
-                .collect(),
-            _ => raw
-                .split(|b| *b == b'\n')
-                .filter(|line| !line.is_empty())
-                .filter_map(|line| {
-                    let record = auditd::parse_line(line)?;
-                    Some(auditd::record_to_event(line, &record))
-                })
-                .collect(),
-        };
-
-        if events.is_empty() {
-            total += 1;
-            failed.push(CheckFail {
-                rule_name: entry.rule_name.clone(),
-                error: "EMPTY — no events produced from raw data".to_string(),
-            });
-            if !json_output {
-                println!("[FAIL] EMPTY — no events produced from raw data");
-            }
-            continue;
-        }
-        engine.put_events(events);
-        engine.process_events();
-        let alerts = engine.get_alerts();
-        let matched_ids: HashSet<Uuid> = alerts.iter().map(|a| a.rule_id).collect();
-
-        if !matched_ids.contains(&entry.rule_id) {
-            let matched: Vec<String> = matched_ids.iter().map(|s| s.to_string()).collect();
-            total += 1;
-            failed.push(CheckFail {
-                rule_name: entry.rule_name.clone(),
-                error: format!(
-                    "RULE NOT MATCHED — expected '{}' ({} alert(s), matched: {})",
-                    entry.rule_id,
-                    alerts.len(),
-                    matched.join(", ")
-                ),
-            });
-            if !json_output {
-                println!(
-                    "[FAIL] RULE NOT MATCHED — expected '{}' ({} alert(s), matched: {})",
-                    entry.rule_id,
-                    alerts.len(),
-                    matched.join(", ")
-                );
-            }
-            continue;
-        }
-
-        let rule_alert_count = alerts.iter().filter(|a| a.rule_id == entry.rule_id).count();
-        if rule_alert_count < 1 {
-            total += 1;
-            failed.push(CheckFail {
-                rule_name: entry.rule_name.clone(),
-                error: "MATCH COUNT MISMATCH — expected >= 1 (got 0)".to_string(),
-            });
-            if !json_output {
-                println!("[FAIL] MATCH COUNT MISMATCH — expected >= 1 (got 0)");
-            }
-            continue;
-        }
-
-        total += 1;
-        passed += 1;
-        if !json_output {
-            println!("[PASS] {} alert(s), rule matched", rule_alert_count);
-        }
-    }
-
-    let pass_rate = if total > 0 {
-        (passed as f64 / total as f64) * 100.0
-    } else {
-        0.0
-    };
-
-    if json_output {
-        let output = serde_json::json!({
-            "total": total,
-            "passed": passed,
-            "skipped": 0,
-            "failed_count": failed.len(),
-            "pass_rate": pass_rate,
-            "failed": failed,
-        });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&output)
-                .expect("serde_json Value serialization is infallible")
-        );
-    } else {
-        println!("\n{}", "=".repeat(60));
-        println!("  VALIDATION SUMMARY");
-        println!("{}", "=".repeat(60));
-        println!("  Total entries:   {}", total);
-        println!("  Passed:          {}", passed);
-        println!("  Failed:          {}", failed.len());
-        println!("  Pass rate:       {:.1}%", pass_rate);
-        println!("{}", "=".repeat(60));
-        if !failed.is_empty() {
-            println!("\nFailed rules:");
-            for f in &failed {
-                println!("  FAIL {} — {}", f.rule_name, f.error);
-            }
-        }
-    }
-
-    if !failed.is_empty() { 1 } else { 0 }
 }
 
 // ─── check-filter ─────────────────────────────────────────────────────────────

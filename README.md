@@ -73,7 +73,7 @@ regression:
 | `-v`, `--verbose` | Show info-level logs on stderr (default: errors only) |
 | `--help`, `-h` | Print help and exit |
 
-Diagnostics subcommands (`check`, `check-filter`, `list-rules`, `get-atomic`) are behind the `tools` feature — see [docs/en/cli.md](docs/en/cli.md).
+Diagnostics subcommands (`check-filter`, `list-rules`) are behind the `tools` feature; regression validation is the standalone cross-platform `sigmacatch-check` binary — see [docs/en/cli.md](docs/en/cli.md).
 
 ## Documentation
 
@@ -81,7 +81,7 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 
 ## Workspace
 
-The project is a cargo workspace of 12 packages (2 binary crates + 10 library crates), plus 1 excluded nightly crate (`sigmacatch-ebpf`):
+The project is a cargo workspace of 14 packages, plus 1 excluded nightly crate (`sigmacatch-ebpf`):
 
 | Crate | Purpose |
 |---|---|
@@ -98,7 +98,8 @@ The project is a cargo workspace of 12 packages (2 binary crates + 10 library cr
 | `sigmacatch-evtx-writer` | Pure Rust EVTX writer for ETW / record-id-less events |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource mapping tables (phf) |
 | `sigmacatch-repo` | grit-lib wrapper: `SigmaRepo`, GitHub fork detection, plumbing/porcelain git ops, SSH signing |
-| `input-windows-evtx` | Parse EVTX files into `Event` objects (used by `sigmacatch-channel check`) |
+| `input-windows-evtx` | Parse EVTX files into `Event` objects (used by `sigmacatch-check`) |
+| `sigmacatch-check` | Standalone cross-platform binary: regression validation (`--json`/`--ignore`) |
 
 ## Built with
 

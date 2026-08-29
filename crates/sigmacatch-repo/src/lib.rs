@@ -339,6 +339,10 @@ impl SigmaRepo {
         let mut valid: HashSet<Uuid> = HashSet::new();
         let mut broken: HashSet<Uuid> = HashSet::new();
         for (refname, oid) in branches {
+            let branch_name = refname
+                .strip_prefix("refs/remotes/origin/")
+                .unwrap_or(&refname);
+            let before = valid.len();
             let obj = odb.read(&oid).map_err(|e| {
                 RepoError::Grit(format!("Failed to read remote ref '{}': {}", refname, e))
             })?;
@@ -356,6 +360,11 @@ impl SigmaRepo {
                     collect_tree_rule_ids(&odb, entry.oid, &mut valid, &mut broken)?;
                 }
             }
+            let found = valid.len() - before;
+            info!(
+                "Found remote branch {}: {} regression rule(s)",
+                branch_name, found
+            );
         }
         // Broken data (e.g. empty EVTX) must not skip the rule: re-capture it.
         let ids: HashSet<Uuid> = valid.difference(&broken).copied().collect();

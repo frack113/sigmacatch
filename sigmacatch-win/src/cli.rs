@@ -6,11 +6,10 @@
 //! Gated behind the `tools` feature. Dispatched from `main_winevt.rs` before
 //! `runner::run()` is entered.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use sigmacatch_config::{self, Config, load_custom_channel_mapping};
-use sigmacatch_detection::DetectionEngine;
+use sigmacatch_config::{self, Config};
 use sigmacatch_regression::SigmahqRegression;
 use sigmacatch_repo::SigmaRepo;
 use sigmacatch_rule::{
@@ -18,10 +17,19 @@ use sigmacatch_rule::{
 };
 use uuid::Uuid;
 
-#[cfg(feature = "winevt")]
-use input_windows_evtx::parse_evtx_bytes;
-
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
+
+const TOOLS_HELP: &str = "\
+sigmacatch-channel — diagnostics tools (requires --features tools)
+
+USAGE:
+    sigmacatch-channel [FLAGS] [OPTIONS]
+
+FLAGS:
+    --check-filter   Run filter-dimension tests against ground truth
+    --list-rules     List all loaded rules with metadata
+    --help           Print this help and exit
+";
 
 /// Dispatch on argv[1]. `None` = no/unknown subcommand → caller runs the
 /// normal collection loop; `Some(code)` = subcommand handled → exit with code.
@@ -31,241 +39,59 @@ pub fn dispatch() -> Option<i32> {
         return None; // no subcommand → fall through to normal loop
     }
     match args[1].as_str() {
-        "check" => Some(cmd_check(&args[1..])),
-        "check-filter" => Some(cmd_check_filter(&args[1..])),
-        "check-channels" => Some(cmd_check_channels(&args[1..])),
-        "list-rules" => Some(cmd_list_rules(&args[1..])),
-        "get-atomic" => Some(cmd_get_atomic(&args[1..])),
+        "--help" | "-h" => {
+            print!("{TOOLS_HELP}");
+            Some(0)
+        }
+        "--check-filter" | "check-filter" => {
+            let rest = &args[2..];
+            if rest.is_empty() || (rest.len() == 1 && (rest[0] == "--help" || rest[0] == "-h")) {
+                print_check_filter_help();
+                Some(0)
+            } else {
+                Some(cmd_check_filter(rest))
+            }
+        }
+        "--list-rules" | "list-rules" => {
+            let rest = &args[2..];
+            if rest.is_empty() || (rest.len() == 1 && (rest[0] == "--help" || rest[0] == "-h")) {
+                print_list_rules_help();
+                Some(0)
+            } else {
+                Some(cmd_list_rules(rest))
+            }
+        }
         _ => None, // unknown subcommand → normal loop
     }
 }
 
-// ─── check ────────────────────────────────────────────────────────────────────
+fn print_check_filter_help() {
+    println!(
+        "\
+sigmacatch-channel check-filter — validate filter dimensions against ground truth
 
-#[derive(serde::Serialize)]
-struct CheckFail {
-    rule_name: String,
-    error: String,
+USAGE:
+    sigmacatch-channel check-filter [OPTIONS]
+
+OPTIONS:
+    --json    Output results as JSON instead of human-readable text
+"
+    );
 }
 
-fn cmd_check(args: &[String]) -> i32 {
-    let mut json_output = false;
-    for arg in args {
-        match arg.as_str() {
-            "--json" => json_output = true,
-            other => {
-                eprintln!("Unknown argument: {other}");
-                return 1;
-            }
-        }
-    }
+fn print_list_rules_help() {
+    println!(
+        "\
+sigmacatch-channel list-rules — list all loaded rules with metadata
 
-    let rules = match SigmahqRules::new() {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Failed to load rules: {e}");
-            return 1;
-        }
-    };
-    let rules = rules.filter(SigmaFilterConfig {
-        product: "windows".to_string(),
-        ..Default::default()
-    });
+USAGE:
+    sigmacatch-channel list-rules [OPTIONS]
 
-    let regression = match SigmahqRegression::new() {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Failed to load regression data: {e}");
-            return 1;
-        }
-    };
-    if regression.is_empty() {
-        eprintln!("No regression entries found — nothing to validate");
-        return 1;
-    }
-
-    let mut engine = match DetectionEngine::new(&rules) {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("Failed to build engine: {e}");
-            return 1;
-        }
-    };
-
-    let mut total = 0usize;
-    let mut passed = 0usize;
-    let mut skipped = 0usize;
-    let mut failed: Vec<CheckFail> = Vec::new();
-
-    for i in 0..regression.len() {
-        let entry = match regression.get_entry(i) {
-            Some(e) => e,
-            None => {
-                total += 1;
-                if !json_output {
-                    println!("[FAIL] No entry");
-                }
-                continue;
-            }
-        };
-
-        let raw = match regression.get_raw_data(i) {
-            Some(r) => r,
-            None => {
-                total += 1;
-                failed.push(CheckFail {
-                    rule_name: entry.rule_name.clone(),
-                    error: "No raw data".to_string(),
-                });
-                if !json_output {
-                    println!("[FAIL] No raw data");
-                }
-                continue;
-            }
-        };
-
-        if entry.logtype == sigmacatch_regression::logtype::LogType::Evtx {
-            #[cfg(feature = "winevt")]
-            {
-                let events = match parse_evtx_bytes(&raw) {
-                    Ok(ev) => ev,
-                    Err(e) => {
-                        total += 1;
-                        failed.push(CheckFail {
-                            rule_name: entry.rule_name.clone(),
-                            error: format!("Failed to load EVTX: {e}"),
-                        });
-                        if !json_output {
-                            println!("[FAIL] Failed to load EVTX: {e}");
-                        }
-                        continue;
-                    }
-                };
-                if events.is_empty() {
-                    total += 1;
-                    failed.push(CheckFail {
-                        rule_name: entry.rule_name.clone(),
-                        error: "EMPTY — evtx produced no events".to_string(),
-                    });
-                    if !json_output {
-                        println!("[FAIL] EMPTY — evtx produced no events");
-                    }
-                    continue;
-                }
-                engine.put_events(events);
-            }
-            #[cfg(not(feature = "winevt"))]
-            {
-                total += 1;
-                skipped += 1;
-                if !json_output {
-                    println!(
-                        "[SKIP] {name} (EVTX not available in this build)",
-                        name = entry.rule_name
-                    );
-                }
-                continue;
-            }
-        } else {
-            // The Windows binaries have no auditd/syslog collector: `.log`
-            // entries belong to `sigmacatch-linux check`.
-            total += 1;
-            skipped += 1;
-            if !json_output {
-                println!(
-                    "[SKIP] {} (.log data requires sigmacatch-linux)",
-                    entry.rule_name
-                );
-            }
-            continue;
-        }
-
-        engine.process_events();
-        let alerts = engine.get_alerts();
-        let matched_ids: HashSet<Uuid> = alerts.iter().map(|a| a.rule_id).collect();
-
-        if !matched_ids.contains(&entry.rule_id) {
-            let matched: Vec<String> = matched_ids.iter().map(|s| s.to_string()).collect();
-            total += 1;
-            failed.push(CheckFail {
-                rule_name: entry.rule_name.clone(),
-                error: format!(
-                    "RULE NOT MATCHED — expected '{}' ({} alert(s), matched: {})",
-                    entry.rule_id,
-                    alerts.len(),
-                    matched.join(", ")
-                ),
-            });
-            if !json_output {
-                println!(
-                    "[FAIL] RULE NOT MATCHED — expected '{}' ({} alert(s), matched: {})",
-                    entry.rule_id,
-                    alerts.len(),
-                    matched.join(", ")
-                );
-            }
-            continue;
-        }
-
-        let rule_alert_count = alerts.iter().filter(|a| a.rule_id == entry.rule_id).count();
-        if rule_alert_count < 1 {
-            total += 1;
-            failed.push(CheckFail {
-                rule_name: entry.rule_name.clone(),
-                error: "MATCH COUNT MISMATCH — expected >= 1 (got 0)".to_string(),
-            });
-            if !json_output {
-                println!("[FAIL] MATCH COUNT MISMATCH — expected >= 1 (got 0)");
-            }
-            continue;
-        }
-
-        total += 1;
-        passed += 1;
-        if !json_output {
-            println!("[PASS] {} alert(s), rule matched", rule_alert_count);
-        }
-    }
-
-    let pass_rate = if total > 0 {
-        (passed as f64 / total as f64) * 100.0
-    } else {
-        0.0
-    };
-
-    if json_output {
-        let output = serde_json::json!({
-            "total": total,
-            "passed": passed,
-            "skipped": skipped,
-            "failed_count": failed.len(),
-            "pass_rate": pass_rate,
-            "failed": failed,
-        });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&output)
-                .expect("serde_json Value serialization is infallible")
-        );
-    } else {
-        println!("\n{}", "=".repeat(60));
-        println!("  VALIDATION SUMMARY");
-        println!("{}", "=".repeat(60));
-        println!("  Total entries:   {}", total);
-        println!("  Passed:          {}", passed);
-        println!("  Skipped:         {}", skipped);
-        println!("  Failed:          {}", failed.len());
-        println!("  Pass rate:       {:.1}%", pass_rate);
-        println!("{}", "=".repeat(60));
-        if !failed.is_empty() {
-            println!("\nFailed rules:");
-            for f in &failed {
-                println!("  FAIL {} — {}", f.rule_name, f.error);
-            }
-        }
-    }
-
-    if !failed.is_empty() { 1 } else { 0 }
+OPTIONS:
+    --json       Output results as JSON instead of human-readable text
+    --coverage   Include coverage stats (rules with/without regression data)
+"
+    );
 }
 
 // ─── check-filter ─────────────────────────────────────────────────────────────
@@ -709,90 +535,6 @@ fn cmd_check_filter(args: &[String]) -> i32 {
     if !ok { 1 } else { 0 }
 }
 
-// ─── check-channels ───────────────────────────────────────────────────────────
-
-fn cmd_check_channels(args: &[String]) -> i32 {
-    let mut json_output = false;
-    for arg in args {
-        match arg.as_str() {
-            "--json" => json_output = true,
-            other => {
-                eprintln!("Unknown argument: {other}");
-                return 1;
-            }
-        }
-    }
-
-    let config = match Config::load(&PathBuf::from("config.yaml")) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Failed to load config.yaml: {e}");
-            return 1;
-        }
-    };
-
-    let rules = match SigmahqRules::new() {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Failed to load rules from ./sigma: {e}");
-            return 1;
-        }
-    };
-    let rules = rules.filter(config.filter.clone());
-
-    if rules.is_empty() {
-        eprintln!("0 rules loaded — adjust filter.* in config.yaml");
-        return 1;
-    }
-
-    let engine = match DetectionEngine::new(&rules) {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("Failed to build engine: {e}");
-            return 1;
-        }
-    };
-
-    let custom_map = load_custom_channel_mapping(PathBuf::from("custom_channels.yaml").as_path());
-    let cycle_channels = engine.resolve_channels(&custom_map);
-
-    if cycle_channels.is_empty() {
-        if json_output {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "total_rules": rules.len(),
-                    "channel_count": 0,
-                    "channels": Vec::<String>::new(),
-                }))
-                .expect("serde_json Value serialization is infallible")
-            );
-        } else {
-            println!("0 channels resolved — nothing to collect");
-        }
-        return 1;
-    }
-
-    if json_output {
-        let output = serde_json::json!({
-            "total_rules": rules.len(),
-            "channel_count": cycle_channels.len(),
-            "channels": cycle_channels,
-        });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&output)
-                .expect("serde_json Value serialization is infallible")
-        );
-    } else {
-        println!("Resolved {} channel(s):", cycle_channels.len());
-        for ch in &cycle_channels {
-            println!("  {ch}");
-        }
-    }
-    0
-}
-
 // ─── list-rules ───────────────────────────────────────────────────────────────
 
 #[derive(serde::Serialize)]
@@ -972,199 +714,6 @@ fn cmd_list_rules(args: &[String]) -> i32 {
                     "  {} rule(s) without regression data",
                     cov.rules_without_data.len()
                 );
-            }
-        }
-    }
-    0
-}
-
-// ─── get-atomic ───────────────────────────────────────────────────────────────
-
-const DEFAULT_OUTPUT: &str = "run_atomic.ps1";
-const SLEEP_SECONDS: u64 = 30;
-const TIMEOUT_SECONDS: u64 = 120;
-
-#[derive(serde::Serialize)]
-struct AtomicInfo {
-    rules_without_data: usize,
-    technique_count: usize,
-    techniques: Vec<String>,
-    rules_without_attack_tag: Vec<String>,
-}
-
-fn atomic_techniques(rule: &sigmacatch_rule::SigmaRule) -> Vec<String> {
-    rule.attack_techniques()
-        .into_iter()
-        .filter(|t| t.starts_with('t'))
-        .collect()
-}
-
-fn cmd_get_atomic(args: &[String]) -> i32 {
-    let mut output = PathBuf::from(DEFAULT_OUTPUT);
-    let mut get_prereqs = false;
-    let mut json_output = false;
-    let mut args_iter = args.iter();
-    while let Some(arg) = args_iter.next() {
-        match arg.as_str() {
-            "--output" => match args_iter.next() {
-                Some(path) => output = PathBuf::from(path),
-                None => {
-                    eprintln!("--output requires a path argument");
-                    return 1;
-                }
-            },
-            "--getprereqs" => {
-                get_prereqs = true;
-            }
-            "--json" => {
-                json_output = true;
-            }
-            "--help" | "-h" => {
-                println!(
-                    "get-atomic: generate run_atomic.ps for rules without regression data\n\n\
-                     Usage: get-atomic [--output <path>] [--getprereqs] [--json]\n\n\
-                     Options:\n\
-                      \x20 --output <path>    write the script to <path> (default: run_atomic.ps1)\n\
-                     \x20 --getprereqs       generate Invoke-AtomicTest with -GetPrereqs flag\n\
-                                            (downloads/installs prerequisites without running tests)\n\
-                     \x20 --json             output results as JSON instead of text"
-                );
-                return 0;
-            }
-            other => {
-                eprintln!("Unknown argument: {other}");
-                return 1;
-            }
-        }
-    }
-
-    let config = match Config::load(&PathBuf::from("config.yaml")) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Failed to load config.yaml: {e}");
-            return 1;
-        }
-    };
-    let sigma_path = Path::new(&config.git.sigma_repo_path);
-
-    let rules = match SigmahqRules::new_from_path(sigma_path) {
-        Ok(r) => r.filter(config.filter.clone()),
-        Err(e) => {
-            eprintln!("Failed to load rules from {sigma_path:?}: {e}");
-            return 1;
-        }
-    };
-    if rules.is_empty() {
-        eprintln!("0 rules loaded — adjust filter.* in config.yaml");
-        return 1;
-    }
-
-    let mut skip_set: BTreeSet<String> = BTreeSet::new();
-    match SigmahqRegression::new_from_path(&sigma_path.join("regression_data")) {
-        Ok(regression) => {
-            for id in regression.get_sigma_id() {
-                skip_set.insert(id.to_string());
-            }
-        }
-        Err(e) => eprintln!("Warning: failed to scan local regression_data: {e}"),
-    }
-    let mut sigma_repo = SigmaRepo::new();
-    sigma_repo.set_repo_path(sigma_path.to_path_buf());
-    match sigma_repo.pending_regression_rule_ids() {
-        Ok(ids) => {
-            for id in ids {
-                skip_set.insert(id.to_string());
-            }
-        }
-        Err(e) => eprintln!("Warning: failed to scan pending branches: {e}"),
-    }
-
-    let mut techniques: BTreeSet<String> = BTreeSet::new();
-    let mut rules_without_data = 0usize;
-    let mut rules_without_attack_tag: Vec<String> = Vec::new();
-    for rule in rules.rules() {
-        let id = rule.id.as_deref().unwrap_or("");
-        if skip_set.contains(id) {
-            continue;
-        }
-        rules_without_data += 1;
-        let techs = atomic_techniques(rule);
-        if techs.is_empty() {
-            rules_without_attack_tag.push(rule.title.clone());
-        } else {
-            techniques.extend(techs);
-        }
-    }
-
-    if rules_without_data == 0 {
-        eprintln!("No rules without regression data — nothing to generate");
-        return 1;
-    }
-    if techniques.is_empty() {
-        eprintln!(
-            "{} rule(s) without regression data have no attack.* technique tag",
-            rules_without_attack_tag.len()
-        );
-        return 1;
-    }
-
-    let mut script = String::new();
-    script.push_str("$ErrorActionPreference = \"Continue\"\n");
-    script.push_str("Import-Module Invoke-AtomicRedTeam\n");
-    script.push_str(&format!(
-        "# {rules_without_data} rule(s) without regression data — {} technique(s)\n",
-        techniques.len()
-    ));
-    script.push_str("Start-Sleep -Seconds 5\n");
-    for technique in &techniques {
-        if get_prereqs {
-            script.push_str(&format!(
-                "Invoke-AtomicTest {technique} -TimeoutSeconds {TIMEOUT_SECONDS} -GetPrereqs\n"
-            ));
-        } else {
-            script.push_str(&format!(
-                "Invoke-AtomicTest {technique} -TimeoutSeconds {TIMEOUT_SECONDS}\n"
-            ));
-            script.push_str(&format!("Start-Sleep -Seconds {SLEEP_SECONDS}\n"));
-        }
-    }
-
-    if let Err(e) = std::fs::write(&output, script) {
-        eprintln!("Failed to write {}: {e}", output.display());
-        return 1;
-    }
-
-    if json_output {
-        let info = AtomicInfo {
-            rules_without_data,
-            technique_count: techniques.len(),
-            techniques: techniques.into_iter().collect(),
-            rules_without_attack_tag,
-        };
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&info)
-                .expect("serde_json Value serialization is infallible")
-        );
-    } else {
-        let mode = if get_prereqs {
-            "get-prereqs"
-        } else {
-            "execute"
-        };
-        println!(
-            "Wrote {} [{}] ({rules_without_data} rules, {} techniques)",
-            output.display(),
-            mode,
-            techniques.len()
-        );
-        if !rules_without_attack_tag.is_empty() {
-            println!(
-                "\n{} rule(s) without attack.* tag (no Invoke-AtomicTest generated):",
-                rules_without_attack_tag.len()
-            );
-            for title in &rules_without_attack_tag {
-                println!("  - {title}");
             }
         }
     }

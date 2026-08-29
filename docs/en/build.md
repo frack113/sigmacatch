@@ -83,7 +83,17 @@ Applied profile:
 ## Diagnostic subcommands
 
 Feature `tools`, off by default and to be combined with a collector feature (see above).
-Two sets: on `sigmacatch-channel` (`check`, `check-filter`, `check-channels`, `list-rules`,
-`get-atomic`) and on `sigmacatch-linux` (`check`, `check-filter`, `list-rules`).
+On both `sigmacatch-channel` and `sigmacatch-linux`: `check-filter`, `list-rules`.
+
+Regression validation (`check`) is no longer a subcommand: it is the standalone
+**`sigmacatch-check`** binary (`sigmacatch-check`), cross-platform, which needs no
+collector and no `tools` feature:
+
+```bash
+# Linux
+cargo build --release -p sigmacatch-check
+# Windows
+cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-check
+```
 
 Details and sample output → [cli.md](cli.md).

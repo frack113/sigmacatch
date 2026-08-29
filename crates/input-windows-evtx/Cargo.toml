@@ -9,7 +9,6 @@ description = "Parse EVTX files into sigmacatch_types::Event objects"
 license.workspace = true
 
 [dependencies]
-anyhow = "1.0"  # EventProducer trait (sigmacatch-types) requires it
 thiserror.workspace = true
 async-trait = "0.1"
 evtx = "0.12"

@@ -1,38 +1,28 @@
-# CLI — Sous-commandes de diagnostic
+# CLI — Diagnostic et sous-commandes
 
-Les commandes de diagnostic sont des sous-commandes des binaires, derrière la feature `tools`
-(désactivée par défaut) :
+## `sigmacatch-check` — validation de la régression (cross-platform)
 
-| Binaire | Sous-commandes |
-|---|---|
-| `sigmacatch-channel` (Windows) | `check`, `check-filter`, `check-channels`, `list-rules`, `get-atomic` |
-| `sigmacatch-linux` (Linux) | `check`, `check-filter`, `list-rules` |
+`check` n'est plus une sous-commande des binaires de collecte : c'est un binaire
+standalone, **`sigmacatch-check`**, compilé pour Linux et Windows, sans collector ni
+feature `tools`. Il charge les règles Sigma et les données de régression, rejoue chaque
+event stocké dans le moteur de détection, et vérifie que la règle attendue matche encore.
 
-Une sous-commande inconnue ou absente → le binaire démarre sa boucle de collecte normale.
-Les sections ci-dessous documentent les sous-commandes Windows ; les équivalentes Linux
-(`check`, `check-filter`, `list-rules`) partagent la même logique avec le filtre produit
-`linux` et la validation `.log`.
+**Usage :**
 
-> **Prérequis commun :** chaque sous-commande charge `config.yaml` via `Config::load`, qui
-> exécute la validation **complète** (git.author/email/token compris) — pas seulement la
-> section `filter`. Sur une machine neuve avec le `config.yaml` par défaut, une
-> sous-commande diagnostic peut donc échouer sur une erreur git avant d'atteindre son
-> propre travail.
+```text
+sigmacatch-check [--json]
+```
 
-## check
+- `--json` — sortie en JSON au lieu du texte lisible.
 
-**Usage :** `sigmacatch-channel check [--json]` / `sigmacatch-linux check [--json]`
-
-**Fonction :** validation approfondie de toutes les données de régression dans `./sigma/regression_data`.
-
-**Variante Linux :** le `check` Linux auto-détecte le format des données de chaque entrée
-de régression depuis sa première ligne non vide : XML Sysmon-for-Linux (`sysmon`),
-syslog RFC3164 (`syslog`) ou records auditd (`auditd`). Il parse ensuite les events en
-conséquence avant évaluation.
+**Fonction :** validation approfondie de toutes les données de régression dans
+`./sigma/regression_data`. Les entrées sont parses selon leur `LogType` : `.evtx` via
+`input_windows_evtx::parse_evtx_bytes`, `.log` via le parser auditd, lignes JSON directes.
+Le logtype `Raw` est ignoré.
 
 ### Pipeline
 
-1. Charge toutes les règles Sigma depuis `./sigma`, filtre sur Windows
+1. Charge toutes les règles Sigma depuis `./sigma`
 2. Construit le `DetectionEngine` une seule fois
 3. Charge les entrées de régression depuis `./sigma/regression_data`
 4. Pour chaque entrée `info.yml` :
@@ -46,30 +36,29 @@ conséquence avant évaluation.
 ### Sortie
 
 ```text
-Found 3777 total rules
-  → 2872 windows rules after filtering
-
-Found 202 regression entry(ies)
-
-Engine ready — 2872 rule(s) loaded.
-
-Running validation...
-
-  [   1/202 ] win_security_explicit_credential_local_logon       ... [PASS] 1 alert(s), rule matched
-  [   2/202 ] win_security_susp_scheduled_task_delete_or_disable ... [PASS] 1 alert(s), rule matched
-  ...
-  [ 165/202 ] registry_event_add_local_hidden_user               ... [FAIL] RULE NOT MATCHED — expected '460479f3-...'
-  ...
+[PASS] 1 alert(s), rule matched
+[PASS] 1 alert(s), rule matched
+...
+[FAIL] EMPTY — no events produced from raw data
+[PASS] 1 alert(s), rule matched
+...
+[FAIL] RULE NOT MATCHED — expected '460479f3-80b7-42da-9c43-2cc1d54dbccd' (0 alert(s), matched: )
 
 ============================================================
   VALIDATION SUMMARY
 ============================================================
   Total entries:   202
-  Passed:          201
-  Skipped:         0
-  Failed:          1
-  Pass rate:       99.5%
+  Passed:          200
+  Failed:          2
+  Pass rate:       99.0%
 ============================================================
+```
+
+**Exemple :**
+
+```bash
+sigmacatch-check
+sigmacatch-check --json
 ```
 
 ### Sortie JSON
@@ -79,20 +68,43 @@ Running validation...
 ```json
 {
   "total": 202,
-  "passed": 201,
+  "passed": 200,
   "skipped": 0,
-  "failed_count": 1,
-  "pass_rate": 99.5,
+  "failed_count": 2,
+  "pass_rate": 99.0,
   "failed": [
     {
       "rule_name": "registry_event_add_local_hidden_user",
       "error": "RULE NOT MATCHED — expected '460479f3-...' (0 alert(s), matched: )"
+    },
+    {
+      "rule_name": "cisco_cli_dot1x_disabled",
+      "error": "EMPTY — no events produced from raw data"
     }
   ]
 }
 ```
 
 ---
+
+## Sous-commandes `tools` des binaires de collecte
+
+Les commandes ci-dessous restent des sous-commandes des binaires, derrière la feature
+`tools` (désactivée par défaut) :
+
+| Binaire | Sous-commandes |
+|---|---|
+| `sigmacatch-channel` (Windows) | `check-filter`, `list-rules` |
+| `sigmacatch-linux` (Linux) | `check-filter`, `list-rules` |
+
+Une sous-commande inconnue ou absente → le binaire démarre sa boucle de collecte normale.
+Les équivalentes Linux partagent la même logique avec le filtre produit `linux`.
+
+> **Prérequis commun :** chaque sous-commande charge `config.yaml` via `Config::load`, qui
+> exécute la validation **complète** (git.author/email/token compris) — pas seulement la
+> section `filter`. Sur une machine neuve avec le `config.yaml` par défaut, une
+> sous-commande diagnostic peut donc échouer sur une erreur git avant d'atteindre son
+> propre travail.
 
 ## check-filter
 
@@ -116,27 +128,6 @@ directement depuis les règles brutes — donc un `stats()` auto-cohérent mais 
 
 ```bash
 sigmacatch-channel check-filter
-```
-
----
-
-## check-channels
-
-**Usage :** `sigmacatch-channel check-channels [--json]`
-
-**Fonction :** résout et liste les channels Windows que le moteur collecterait.
-
-### Pipeline
-
-1. `Config::load("config.yaml")` (section filter)
-2. Charge les règles Sigma depuis `./sigma` + filtre config
-3. `DetectionEngine::new(&rules)` → `resolve_channels(&custom_map)` (incl. custom_channels.yaml)
-4. Affiche la liste des channels (exit 1 si aucun)
-
-### Exemple
-
-```bash
-sigmacatch-channel check-channels
 ```
 
 ---
@@ -166,55 +157,9 @@ sigmacatch-channel list-rules --json --coverage
 
 ---
 
-## get-atomic
-
-**Usage :** `sigmacatch-channel get-atomic [--output run_atomic.ps1] [--getprereqs] [--json]`
-
-**Fonction :** génère un script `run_atomic.ps1` qui enchaîne les commandes
-`Invoke-AtomicTest T1xxx.xxx` pour les techniques ATT&CK des règles **sans données de
-régression** selon le filtre config. Copiez le script sur la VM Windows et exécutez-le
-manuellement ; `sigmacatch-channel` (boucle continue) capte les événements générés et
-produit les données de régression.
-
-### Pipeline
-
-1. `Config::load("config.yaml")` (section filter + `git.sigma_repo_path`)
-2. Charge les règles Sigma depuis `./sigma` + filtre config
-3. Skip set = règles avec données de régression déjà valides (local `regression_data/`)
-   ∪ ids des branches remote `sigmacatch/*` en attente de merge
-4. Pour chaque règle restante : `rule.attack_techniques()` (extension trait
-    `SigmaRuleExt` de `sigmacatch-rule`)
-5. Dédupe + tri des techniques (BTreeSet) — une `Invoke-AtomicTest` par technique
-6. Écrit `run_atomic.ps1` (ou `--output <path>`) + rapport
-
-### Script généré
-
-```powershell
-$ErrorActionPreference = "Continue"
-Import-Module Invoke-AtomicRedTeam
-# 12 rule(s) without regression data — 7 technique(s)
-Start-Sleep -Seconds 5
-Invoke-AtomicTest T1055.001 -TimeoutSeconds 120
-Start-Sleep -Seconds 30
-Invoke-AtomicTest T1547.001 -TimeoutSeconds 120
-...
-```
-
-- `Start-Sleep 30` entre les tests → laisse sigmacatch-channel collecter les events
-- `-TimeoutSeconds 120` → évite qu'un test bloquant fige la chaîne
-- Les règles sans tag `attack.*` sont comptées et listées dans le rapport (pas
-  de `Invoke-AtomicTest` généré pour elles)
-
-### Limitations
-
-Pas de garantie de couverture : une règle avec une condition spécifique peut ne
-pas matcher l'event produit par le test ART. Les règles restées sans données sont
-re-listées au prochain run (le skip set n'exclut que ce qui est déjà généré).
-
-### Exemple
-
-```bash
-sigmacatch-channel get-atomic
-sigmacatch-channel get-atomic --output $env:TEMP\run_atomic.ps1
-sigmacatch-channel get-atomic --getprereqs --json
-```
+Les sous-commandes `get-atomic` et `check-channels` ont été retirées. `get-atomic` est
+remplacé par la liste des techniques manquantes produite par `list-rules --json --coverage`
+et la génération des données de régression ; les tests Atomic Red Team sont désormais
+orchestrés directement sur la VM (module `Invoke-AtomicRedTeam` dans `C:\AtomicRedTeam`)
+en ciblant les règles sans données. `check` est remplacé par le binaire standalone
+`sigmacatch-check` (voir plus haut).

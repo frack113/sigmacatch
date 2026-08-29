@@ -19,9 +19,8 @@ etw = [
     "dep:md5",
     "dep:sha1",
     "dep:sha2",
-    "dep:phf",
 ]
-tools = ["dep:serde", "dep:input-windows-evtx"]
+tools = ["dep:serde"]
 
 [[bin]]
 name = "sigmacatch-channel"
@@ -42,14 +41,11 @@ sigmacatch-rule = { path = "../crates/sigmacatch-rule" }
 sigmacatch-repo = { path = "../crates/sigmacatch-repo" }
 sigmacatch-types = { path = "../crates/sigmacatch-types" }
 
-input-windows-evtx = { path = "../crates/input-windows-evtx", optional = true }
-
 async-trait = { version = "0.1", optional = true }
 hex = { version = "0.4", optional = true }
 md5 = { version = "0.8", optional = true }
 sha1 = { version = "0.11", optional = true }
 sha2 = { version = "0.11", optional = true }
-phf = { version = "0.14", features = ["macros"], optional = true }
 
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "signal"] }
 tracing = "0.1"

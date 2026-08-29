@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-use anyhow::Result;
+use crate::RulesError;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
-pub(crate) fn find_rules_dirs(root: &Path) -> Result<Vec<PathBuf>> {
+pub(crate) fn find_rules_dirs(root: &Path) -> Result<Vec<PathBuf>, RulesError> {
     let mut dirs = Vec::new();
     let mut excluded = Vec::new();
     #[cfg(unix)]

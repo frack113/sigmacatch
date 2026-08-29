@@ -2,7 +2,7 @@
 
 ## Cargo workspace
 
-The project is a cargo workspace of 12 packages (2 binary crates + 10 libraries), plus 1 excluded nightly crate (`sigmacatch-ebpf`):
+The project is a cargo workspace of 14 packages, plus 1 excluded nightly crate (`sigmacatch-ebpf`):
 
 ```text
 sigmacatch/
@@ -15,8 +15,7 @@ sigmacatch/
 │       ├── channels.rs           # Winevt collector (EvtQueryW/EvtNext/EvtRender, multi-channel)
 │       ├── etw/                  # Direct ETW collector: providers.rs (18 providers), field_maps,
 │       │                         #   enrich, mapper, process_table, process_query, sysmon, paths, pe, filekey
-│       └── cli.rs                # Diagnostic subcommands (feature `tools`): check, check-filter,
-│                                 #   check-channels, list-rules, get-atomic
+│       └── cli.rs                # Diagnostic subcommands (feature `tools`): check-filter, list-rules
 ├── sigmacatch-lnx/               # Linux binary (lib + 1 bin)
 │   └── src/
 │       ├── lib.rs
@@ -24,7 +23,7 @@ sigmacatch/
 │       ├── auditd.rs             # Auditd collector (tail /var/log/audit/audit.log, event id grouping)
 │       ├── syslog.rs             # Builtin syslog collector (central /var/log/messages → /var/log/syslog + authpriv + cron files, RFC3164)
 │       ├── sysmon.rs             # Sysmon-for-Linux collector (`sysmon`-tagged syslog lines, winevt XML parsing)
-│       └── cli.rs                # Diagnostic subcommands (feature `tools`): check, check-filter, list-rules
+│       └── cli.rs                # Diagnostic subcommands (feature `tools`): check-filter, list-rules
 └── crates/
     ├── sigmacatch-ebpf/          # eBPF probes (excluded workspace, nightly, bpfel-unknown-none)
     │   └── src/main.rs           # 6 tracepoints: execve/exec/exit/connect/openat+exit/sendto+sendmsg
@@ -44,12 +43,16 @@ sigmacatch/
     ├── sigmacatch-types/         # Shared types: Event, Alert, RegressionHeader + XML parsing + logsource mapping tables
     ├── sigmacatch-repo/          # grit-lib wrapper + SigmaRepo + git operations + signing.rs + transport.rs
     ├── sigmacatch-evtx-writer/   # Pure Rust EVTX writer (ETW / record-id-less events — no EvtExportLog possible)
-    └── input-windows-evtx/       # EVTX file parser → Event (feature `tools` of the winevt binary)
+    ├── input-windows-evtx/       # EVTX file parser → Event
+    └── sigmacatch-check/         # Standalone cross-platform binary: regression check (--json)
 ```
 
 ## Collectors
 
-Three binaries are produced from two crates, each embedding a single collector (cargo features `winevt`/`etw` and `auditd`/`builtin`, `required-features` per binary):
+Six binaries are produced: five collector binaries from two crates (`sigmacatch-win` → 2,
+`sigmacatch-lnx` → 3), each embedding a selected set of collectors (cargo features `winevt`/`etw`
+and `auditd`/`builtin`/`sysmon`/`ebpf`, `required-features` per binary), plus the standalone
+cross-platform `sigmacatch-check`:
 
 | Binary | Crate | Description |
 |---|---|---|
@@ -58,6 +61,7 @@ Three binaries are produced from two crates, each embedding a single collector (
 | `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog}.rs` | auditd + builtin syslog only (no root needed) |
 | `sigmacatch-linux-sysmon` | `sigmacatch-lnx/src/{auditd,syslog,sysmon}.rs` | + legacy Sysmon-for-Linux XML tail |
 | `sigmacatch-linux-ebpf` | `sigmacatch-lnx/src/{auditd,syslog,ebpf}.rs` | + native eBPF probes (root or CAP_BPF+CAP_PERFMON required) |
+| `sigmacatch-check` | `sigmacatch-check/src/main.rs` | Cross-platform regression validation (EVTX + auditd + JSON); no collector, no `tools` feature |
 
 ### Direct ETW
 
@@ -109,15 +113,24 @@ sigmacatch-lnx ──┤   ├── sigmacatch-config      (Config, CliArgs)
                  │   ├── sigmacatch-regression  (SigmahqRegression: skip set + data generation)
                  │   ├── sigmacatch-types       (Event, Alert, RegressionHeader, Product, EventProducer, XML parsing)
                  │   └── sigmacatch-repo        (SigmaRepo, grit-lib wrapper)
-                 ├── [win tools] input-windows-evtx (parse EVTX → Event for `check`)
                  └── [tools] serde (JSON serialization of diagnostic output)
+
+sigmacatch-check ──┬── sigmacatch-detection   (DetectionEngine)
+                   ├── sigmacatch-rule        (SigmahqRules: load/filter)
+                   ├── sigmacatch-regression  (SigmahqRegression)
+                   ├── sigmacatch-types       (Event)
+                   ├── input-windows-evtx     (parse EVTX → Event)
+                   └── linux-audit-parser     (parse auditd records → Event)
 ```
 
 `sigmacatch-detection` depends on `sigmacatch-rule` + `sigmacatch-types` + `rsigma-eval`.
 The collectors live inside their binary crates and depend only on `sigmacatch-types`
 (shared types + logsource mapping tables). `input-windows-evtx` depends on
-`sigmacatch-types` + the `evtx` crate. The diagnostic subcommands (`cli.rs`) parse
-arguments manually and use `serde` for their JSON output (feature `tools`, off by default).
+`sigmacatch-types` + the `evtx` crate. `sigmacatch-check` (regression validation,
+cross-platform) assembles `detection` + `rule` + `regression` + `types` with
+`input-windows-evtx` (EVTX) and `linux-audit-parser` (auditd) according to each entry's
+`LogType`. The diagnostic subcommands (`cli.rs`) parse arguments manually and use `serde`
+for their JSON output (feature `tools`, off by default).
 
 ## Pipeline (continuous loop)
 

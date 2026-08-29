@@ -29,7 +29,7 @@
 use crate::syslog;
 use crate::sysmon_parse::{parse_line, record_to_event};
 use async_trait::async_trait;
-use sigmacatch_types::{Event, EventProducer};
+use sigmacatch_types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
 
 /// Poll interval of the tail loop (how often new bytes are read from the file).
@@ -91,14 +91,18 @@ impl EventProducer for EventCollector {
         self: Box<Self>,
         tx: mpsc::Sender<Event>,
         stop: watch::Receiver<bool>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), ProducerError> {
         #[cfg(target_os = "linux")]
         {
             let path = self.resolved_path();
             if !std::path::Path::new(&path).exists() {
-                anyhow::bail!("default syslog not found at {path}");
+                return Err(ProducerError::Message(format!(
+                    "default syslog not found at {path}"
+                )));
             }
-            tail_loop(&path, tx, stop).await
+            tail_loop(&path, tx, stop)
+                .await
+                .map_err(|e| ProducerError::Collector(e.into()))
         }
         #[cfg(not(target_os = "linux"))]
         {

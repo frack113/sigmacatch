@@ -40,3 +40,41 @@ license-files = [
 
 [sources]
 allow-git = []
+
+# Crate policy (duplicate / multiple-version policing).
+# Known duplicate crate versions exist in the dependency graph as transitive
+# legacy pins (e.g. windows 0.57 vs 0.62, thiserror 1 vs 2, ring -> getrandom
+# 0.2/0.3). Each is recorded below so that `bans` is a ratchet: new duplicates
+# must be added here consciously, while genuine downgrades/upgrades unify.
+[bans]
+multiple-versions = "deny"
+wildcards = "allow"
+highlight = "all"
+
+skip = [
+    # Keep the newest version of each duplicated transitive dep; the rest are
+    # pinned by third-party crates.
+    { name = "base64", version = "0.22.1" },
+    { name = "bitflags", version = "1.3.2" },
+    { name = "foldhash", version = "0.1.5" },
+    { name = "foldhash", version = "0.2.0" },
+    { name = "block-buffer", version = "0.10.4" },
+    { name = "cpufeatures", version = "0.2.17" },    { name = "crypto-common", version = "0.1.7" },
+    { name = "digest", version = "0.10.7" },
+    { name = "getrandom", version = "0.2.17" },
+    { name = "getrandom", version = "0.3.4" },
+    { name = "hashbrown", version = "0.15.5" },
+    { name = "num-derive", version = "0.3.3" },
+    { name = "r-efi", version = "5.3.0" },
+    { name = "sha2", version = "0.10.9" },
+    { name = "syn", version = "1.0.109" },
+    { name = "syn", version = "2.0.119" },
+    { name = "thiserror", version = "1.0.69" },
+    { name = "thiserror-impl", version = "1.0.69" },
+    { name = "windows", version = "0.57.0" },
+    { name = "windows-core", version = "0.57.0" },
+    { name = "windows-implement", version = "0.57.0" },
+    { name = "windows-interface", version = "0.57.0" },
+    { name = "windows-result", version = "0.1.2" },
+    { name = "zerocopy", version = "0.7.35" },
+]

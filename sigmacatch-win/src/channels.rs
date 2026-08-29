@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sigmacatch_types::{Event, EventProducer};
+use sigmacatch_types::{Event, EventProducer, ProducerError};
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio::task::JoinSet;
@@ -68,7 +68,7 @@ impl EventProducer for EventCollector {
         self: Box<Self>,
         tx: mpsc::Sender<Event>,
         stop: watch::Receiver<bool>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), ProducerError> {
         let tx = Arc::new(tx);
         let mut handles = JoinSet::new();
 
@@ -198,6 +198,8 @@ impl EventCollector {
                     // EvtNext this cycle (zero slots skipped above); EvtClose
                     // releases it exactly once and the slot is zeroed below so
                     // the batch-close loops cannot double-free.
+                    // SAFETY: `event_handle` is a valid event handle obtained from
+                    // EvtNext/EvtQuery and is closed exactly once here.
                     unsafe {
                         let _ = EvtClose(event_handle);
                     }

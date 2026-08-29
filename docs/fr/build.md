@@ -84,8 +84,18 @@ Profil appliqué :
 ## Sous-commandes de diagnostic
 
 Feature `tools`, désactivée par défaut et à combiner avec une feature de collecteur
-(voir plus haut). Deux jeux : sur `sigmacatch-channel` (`check`, `check-filter`,
-`check-channels`, `list-rules`, `get-atomic`) et sur `sigmacatch-linux` (`check`,
-`check-filter`, `list-rules`).
+(voir plus haut). Sur `sigmacatch-channel` comme sur `sigmacatch-linux` :
+`check-filter`, `list-rules`.
+
+La validation de régression (`check`) n'est plus une sous-commande : c'est le binaire
+standalone **`sigmacatch-check`** (`sigmacatch-check`), cross-platform, qui
+n'exige ni collector ni feature `tools` :
+
+```bash
+# Linux
+cargo build --release -p sigmacatch-check
+# Windows
+cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-check
+```
 
 Détails et exemples de sortie → [cli.md](cli.md).
