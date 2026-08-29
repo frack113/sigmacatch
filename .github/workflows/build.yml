@@ -30,10 +30,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
-        with:
-          targets: x86_64-pc-windows-msvc
       - run: rustup toolchain install nightly --component rust-src
-      - name: Install bpf-linker (static musl release)
+      - name: Install bpf-linker (static musl release / ebpf check)
         run: |
           curl -sL -o /tmp/bpf-linker.tar.zst \
             https://github.com/aya-rs/bpf-linker/releases/latest/download/bpf-linker-x86_64-unknown-linux-musl.tar.zst
@@ -43,30 +41,37 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # Supply-chain gates: advisories/licenses/bans/sources policy (deny.toml)
       # + unused-dependency detection.
-      - name: Install cargo-deny + cargo-machete + cargo-xwin
+      - name: Install cargo-deny + cargo-machete
         uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
         with:
-          tool: cargo-deny,cargo-machete,cargo-xwin
+          tool: cargo-deny,cargo-machete
       - run: cargo deny check
       - run: cargo machete
-      # Explicit --bin per flavour: a later superset-feature build would
-      # otherwise rebuild earlier-named bins (shared entry point) with the
-      # wider feature set and silently clobber them in the shared target dir.
-      - name: Build all 3 flavours
-        run: |
-          cargo build --release --locked -p sigmacatch-lnx --bin sigmacatch-linux --no-default-features --features auditd,builtin
-          cargo build --release --locked -p sigmacatch-lnx --bin sigmacatch-linux-sysmon --no-default-features --features auditd,builtin,sysmon
-          cargo build --release --locked -p sigmacatch-lnx --bin sigmacatch-linux-ebpf --no-default-features --features auditd,builtin,ebpf
+      # One real release build (base flavour) to exercise the release profile;
+      # the sysmon/ebpf flavours are validated with `cargo check` (compile-only)
+      # to keep CI fast. Explicit --bin per flavour: a later superset-feature
+      # build would otherwise rebuild earlier-named bins (shared entry point)
+      # with the wider feature set and silently clobber them in target dir.
+      - name: Build base (auditd + builtin syslog)
+        run: >
+          cargo build --release --locked -p sigmacatch-lnx --bin sigmacatch-linux
+          --no-default-features --features auditd,builtin
+      - name: Check sysmon (adds legacy tail)
+        run: >
+          cargo check --release --locked -p sigmacatch-lnx --bin sigmacatch-linux-sysmon
+          --no-default-features --features auditd,builtin,sysmon
+      - name: Check ebpf (eBPF native probes)
+        run: >
+          cargo check --release --locked -p sigmacatch-lnx --bin sigmacatch-linux-ebpf
+          --no-default-features --features auditd,builtin,ebpf
       - name: Isolated feature builds
         run: |
           cargo build --release --locked -p sigmacatch-lnx --no-default-features --features tools
       - name: Build sigmacatch-check (Linux)
         run: cargo build --release --locked -p sigmacatch-check
-      - name: Build sigmacatch-check (Windows x64)
-        run: cargo xwin build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-check
 
   windows:
-    name: Windows x64 (MSVC) — sigmacatch-channel + sigmacatch-etw
+    name: Windows x64 (MSVC) — sigmacatch-channel + sigmacatch-etw + check
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -82,3 +87,5 @@ jobs:
           cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win --no-default-features --features winevt
           cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win --no-default-features --features etw
           cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win --no-default-features --features tools
+      - name: Build sigmacatch-check (Windows x64)
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-check
