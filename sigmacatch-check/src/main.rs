@@ -575,16 +575,14 @@ mod tests {
                     continue;
                 }
             };
-            if rule.custom_attributes.get("regression_tests_path").is_none() {
-                missing_path += 1;
-                continue;
-            }
-            let rtp = rule
+            let Some(rtp) = rule
                 .custom_attributes
                 .get("regression_tests_path")
-                .unwrap()
-                .as_str()
-                .unwrap();
+                .and_then(|v| v.as_str())
+            else {
+                missing_path += 1;
+                continue;
+            };
             let expected = sigma_root.join(rtp);
             if *info_path != expected {
                 mismatched_path += 1;
@@ -594,8 +592,8 @@ mod tests {
         let entry_paths: HashSet<&Path> =
             regression.iter_entries().map(|(p, _, _)| p.as_path()).collect();
         for rule in rules.iter() {
-            if let Some(v) = rule.custom_attributes.get("regression_tests_path") {
-                if let Some(rtp) = v.as_str() {
+            if let Some(v) = rule.custom_attributes.get("regression_tests_path")
+                && let Some(rtp) = v.as_str() {
                     let full = sigma_root.join(rtp);
                     if !full.exists() {
                         mismatched_path += 1;
@@ -603,7 +601,6 @@ mod tests {
                         missing_path += 1;
                     }
                 }
-            }
         }
 
         // Entry's rule_id (cccc...) has no matching rule in SigmahqRules → missing_path=1.
@@ -665,8 +662,8 @@ mod tests {
         let entry_paths: HashSet<&Path> =
             regression.iter_entries().map(|(p, _, _)| p.as_path()).collect();
         for rule in rules.iter() {
-            if let Some(v) = rule.custom_attributes.get("regression_tests_path") {
-                if let Some(rtp) = v.as_str() {
+            if let Some(v) = rule.custom_attributes.get("regression_tests_path")
+                && let Some(rtp) = v.as_str() {
                     let full = sigma_root.join(rtp);
                     if !full.exists() {
                         mismatched_path += 1;
@@ -674,7 +671,6 @@ mod tests {
                         missing_path += 1;
                     }
                 }
-            }
         }
 
         // Direction 1: rule matches entry, but rtp (wrong_location) ≠ info_path (test) → mismatch.
@@ -718,16 +714,14 @@ mod tests {
                     continue;
                 }
             };
-            if rule.custom_attributes.get("regression_tests_path").is_none() {
-                missing_path += 1;
-                continue;
-            }
-            let rtp = rule
+            let Some(rtp) = rule
                 .custom_attributes
                 .get("regression_tests_path")
-                .unwrap()
-                .as_str()
-                .unwrap();
+                .and_then(|v| v.as_str())
+            else {
+                missing_path += 1;
+                continue;
+            };
             let expected = sigma_root.join(rtp);
             if *info_path != expected {
                 mismatched_path += 1;
@@ -737,8 +731,8 @@ mod tests {
         let entry_paths: HashSet<&Path> =
             regression.iter_entries().map(|(p, _, _)| p.as_path()).collect();
         for rule in rules.iter() {
-            if let Some(v) = rule.custom_attributes.get("regression_tests_path") {
-                if let Some(rtp) = v.as_str() {
+            if let Some(v) = rule.custom_attributes.get("regression_tests_path")
+                && let Some(rtp) = v.as_str() {
                     let full = sigma_root.join(rtp);
                     if !full.exists() {
                         mismatched_path += 1;
@@ -746,7 +740,6 @@ mod tests {
                         missing_path += 1;
                     }
                 }
-            }
         }
 
         // Direction 1: entry rule_id (bbbb...) doesn't match any loaded rule → missing_path=1.
