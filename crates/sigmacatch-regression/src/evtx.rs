@@ -76,6 +76,8 @@ fn write_evtx_winevt(_xml: &str, channel: &str, rid: u64, path: &Path) -> Result
         // BSTR-compatible wide strings alive for the call; flags select
         // channel-path source + overwrite semantics per the EvtExportLog
         // contract. No pointers retained by the API.
+        // SAFETY: `channel`, `query` and `path` are valid NUL-terminated HSTRINGs
+        // built above; `EvtExportLog` is a documented Windows API that writes to `path`.
         let result = unsafe {
             EvtExportLog(
                 None,

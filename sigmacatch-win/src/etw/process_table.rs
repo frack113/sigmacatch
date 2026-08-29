@@ -185,6 +185,8 @@ pub fn snapshot() -> ProcessTable {
     // SAFETY: `pids` is a live Vec of 16384 u32s and the byte count passed is
     // exactly `pids.len() * size_of::<u32>()`, so EnumProcesses cannot write
     // out of bounds; `&mut needed` is a valid initialized out-pointer.
+    // SAFETY: `pids` is a valid mutable slice and `needed` a valid out-param;
+    // `EnumProcesses` writes at most `pids.len() * size_of::<u32>()` bytes.
     if unsafe {
         EnumProcesses(
             pids.as_mut_ptr(),

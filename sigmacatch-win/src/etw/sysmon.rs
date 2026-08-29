@@ -88,6 +88,8 @@ pub fn read_machine_guid() -> Option<String> {
     // SAFETY: `subkey` and `value` are valid null-terminated UTF-16 buffers,
     // alive for the whole call. Passing no type/data out-params makes this a
     // size query only: the API writes nothing but the `u32` behind `&mut size`.
+    // SAFETY: `subkey`/`value` are valid NUL-terminated UTF-16 derived from OsString;
+    // `size` is a valid stack out-param. `RegGetValueW` is a documented Windows API.
     let rc = unsafe {
         RegGetValueW(
             HKEY_LOCAL_MACHINE,
@@ -109,6 +111,9 @@ pub fn read_machine_guid() -> Option<String> {
     // size query above. `buf` holds `(size + 1) / 2` u16s (>= `size` bytes),
     // and `actual` is initialized to `size`, so RegGetValueW cannot write
     // beyond the buffer; `&mut ty` is a valid out-pointer.
+    // SAFETY: `subkey`/`value` are valid NUL-terminated UTF-16 derived from OsString;
+    // `ty` and `buf` are valid stack out-references of the expected layout and `actual`
+    // is a valid out-param. `RegGetValueW` is a documented Windows API.
     let rc = unsafe {
         RegGetValueW(
             HKEY_LOCAL_MACHINE,

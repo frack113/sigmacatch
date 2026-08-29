@@ -50,6 +50,8 @@ fn setup_console() {
     // SAFETY: plain console API calls on the current thread; handles come from
     // GetStdHandle and are only passed to GetConsoleMode/SetConsoleMode; all
     // failures are ignored by design (best-effort UTF-8 enablement).
+    // SAFETY: console codepage/mode APIs are always safe to call; the handle from
+    // GetStdHandle is either valid or the subsequent calls no-op on error.
     unsafe {
         let _ = SetConsoleOutputCP(65001);
         if let Ok(handle) = GetStdHandle(STD_OUTPUT_HANDLE) {

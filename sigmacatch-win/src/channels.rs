@@ -198,6 +198,8 @@ impl EventCollector {
                     // EvtNext this cycle (zero slots skipped above); EvtClose
                     // releases it exactly once and the slot is zeroed below so
                     // the batch-close loops cannot double-free.
+                    // SAFETY: `event_handle` is a valid event handle obtained from
+                    // EvtNext/EvtQuery and is closed exactly once here.
                     unsafe {
                         let _ = EvtClose(event_handle);
                     }
