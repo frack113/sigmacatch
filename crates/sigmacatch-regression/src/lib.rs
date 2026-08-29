@@ -176,7 +176,9 @@ impl SigmahqRegression {
 
     /// Path where regression data was loaded from.
     pub fn path(&self) -> &Path {
-        self.output_path.as_deref().unwrap_or(Path::new("./sigma/regression_data"))
+        self.output_path
+            .as_deref()
+            .unwrap_or(Path::new("./sigma/regression_data"))
     }
 
     /// Number of loaded regression entries.

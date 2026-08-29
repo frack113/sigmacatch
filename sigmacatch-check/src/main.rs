@@ -64,10 +64,7 @@ fn main() -> anyhow::Result<()> {
     // Bidirectional regression_tests_path validation.
     // Direction 1: each entry → rule must exist and declare a matching path.
     // Direction 2: each rule with regression_tests_path → entry must exist.
-    let sigma_root = regression
-        .path()
-        .parent()
-        .unwrap_or(Path::new("./sigma"));
+    let sigma_root = regression.path().parent().unwrap_or(Path::new("./sigma"));
     let mut missing_path = 0usize;
     let mut mismatched_path = 0usize;
 
@@ -77,10 +74,7 @@ fn main() -> anyhow::Result<()> {
             None => {
                 missing_path += 1;
                 if !json_output {
-                    eprintln!(
-                        "[FAIL] Rule {} not found in loaded rules",
-                        entry.rule_id
-                    );
+                    eprintln!("[FAIL] Rule {} not found in loaded rules", entry.rule_id);
                 }
                 continue;
             }
@@ -125,8 +119,10 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Direction 2: rule → entry.
-    let entry_paths: HashSet<&Path> =
-        regression.iter_entries().map(|(p, _, _)| p.as_path()).collect();
+    let entry_paths: HashSet<&Path> = regression
+        .iter_entries()
+        .map(|(p, _, _)| p.as_path())
+        .collect();
     for rule in rules.iter() {
         let rtp = match rule.custom_attributes.get("regression_tests_path") {
             Some(v) => match v.as_str() {
@@ -372,14 +368,8 @@ fn main() -> anyhow::Result<()> {
         println!("{}", "=".repeat(60));
         if missing_path > 0 || mismatched_path > 0 {
             println!("\nRegression path issues:");
-            println!(
-                "  Missing paths:   {}",
-                missing_path
-            );
-            println!(
-                "  Mismatched:      {}",
-                mismatched_path
-            );
+            println!("  Missing paths:   {}", missing_path);
+            println!("  Mismatched:      {}", mismatched_path);
         }
         if !failed.is_empty() {
             println!("\nFailed rules:");
@@ -405,7 +395,8 @@ fn parse_auditd_lines(raw: &[u8]) -> (Vec<Event>, usize) {
     };
 
     let mut dropped = 0usize;
-    let events: Vec<Event> = raw.split(|b| *b == b'\n')
+    let events: Vec<Event> = raw
+        .split(|b| *b == b'\n')
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
             let message = match parser.parse(line) {
@@ -517,9 +508,9 @@ fn check_match_count(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use sigmacatch_regression::SigmahqRegression;
     use sigmacatch_rule::SigmahqRules;
+    use std::fs;
 
     fn write_file(path: &Path, content: &str) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -533,18 +524,12 @@ mod tests {
         fs::write(path, vec![0u8; 4096]).unwrap();
     }
 
-    const RULE_YML: &str =
-        "title: Test Rule\nid: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\nstatus: test\nlevel: low\nlogsource:\n  product: windows\n  service: sysmon\ndetection:\n  selection:\n    EventID: 1\n  condition: selection\n";
-    const RULE_WITH_PATH_YML: &str =
-        "title: Test Rule\nid: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\nstatus: test\nlevel: low\nlogsource:\n  product: windows\n  service: sysmon\nregression_tests_path: regression_data/rules/wrong_location/info.yml\ndetection:\n  selection:\n    EventID: 1\n  condition: selection\n";
-    const RULE_WITH_CORRECT_PATH_YML: &str =
-        "title: Test Rule\nid: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\nstatus: test\nlevel: low\nlogsource:\n  product: windows\n  service: sysmon\nregression_tests_path: regression_data/rules/test/info.yml\ndetection:\n  selection:\n    EventID: 1\n  condition: selection\n";
-    const INFO_YML_DIFF_ID: &str =
-        "id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb\ndescription: test\ndate: 2026-01-01\nauthor: test\nrule_metadata:\n  - id: cccccccc-cccc-4ccc-9ccc-cccccccccccc\n    title: Other Rule\nregression_tests_info:\n  - name: test\n    type: evtx\n    path: dummy.evtx\n";
-    const INFO_YML_SAME_ID: &str =
-        "id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\ndescription: test\ndate: 2026-01-01\nauthor: test\nrule_metadata:\n  - id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\n    title: Test Rule\nregression_tests_info:\n  - name: test\n    type: evtx\n    path: dummy.evtx\n";
-    const INFO_YML_DIFF_RULE: &str =
-        "id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb\ndescription: test\ndate: 2026-01-01\nauthor: test\nrule_metadata:\n  - id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb\n    title: Different Rule\nregression_tests_info:\n  - name: test\n    type: evtx\n    path: dummy.evtx\n";
+    const RULE_YML: &str = "title: Test Rule\nid: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\nstatus: test\nlevel: low\nlogsource:\n  product: windows\n  service: sysmon\ndetection:\n  selection:\n    EventID: 1\n  condition: selection\n";
+    const RULE_WITH_PATH_YML: &str = "title: Test Rule\nid: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\nstatus: test\nlevel: low\nlogsource:\n  product: windows\n  service: sysmon\nregression_tests_path: regression_data/rules/wrong_location/info.yml\ndetection:\n  selection:\n    EventID: 1\n  condition: selection\n";
+    const RULE_WITH_CORRECT_PATH_YML: &str = "title: Test Rule\nid: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\nstatus: test\nlevel: low\nlogsource:\n  product: windows\n  service: sysmon\nregression_tests_path: regression_data/rules/test/info.yml\ndetection:\n  selection:\n    EventID: 1\n  condition: selection\n";
+    const INFO_YML_DIFF_ID: &str = "id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb\ndescription: test\ndate: 2026-01-01\nauthor: test\nrule_metadata:\n  - id: cccccccc-cccc-4ccc-9ccc-cccccccccccc\n    title: Other Rule\nregression_tests_info:\n  - name: test\n    type: evtx\n    path: dummy.evtx\n";
+    const INFO_YML_SAME_ID: &str = "id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\ndescription: test\ndate: 2026-01-01\nauthor: test\nrule_metadata:\n  - id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\n    title: Test Rule\nregression_tests_info:\n  - name: test\n    type: evtx\n    path: dummy.evtx\n";
+    const INFO_YML_DIFF_RULE: &str = "id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb\ndescription: test\ndate: 2026-01-01\nauthor: test\nrule_metadata:\n  - id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb\n    title: Different Rule\nregression_tests_info:\n  - name: test\n    type: evtx\n    path: dummy.evtx\n";
 
     #[test]
     fn validates_missing_regression_tests_path() {
@@ -589,18 +574,21 @@ mod tests {
             }
         }
 
-        let entry_paths: HashSet<&Path> =
-            regression.iter_entries().map(|(p, _, _)| p.as_path()).collect();
+        let entry_paths: HashSet<&Path> = regression
+            .iter_entries()
+            .map(|(p, _, _)| p.as_path())
+            .collect();
         for rule in rules.iter() {
             if let Some(v) = rule.custom_attributes.get("regression_tests_path")
-                && let Some(rtp) = v.as_str() {
-                    let full = sigma_root.join(rtp);
-                    if !full.exists() {
-                        mismatched_path += 1;
-                    } else if !entry_paths.contains(full.as_path()) {
-                        missing_path += 1;
-                    }
+                && let Some(rtp) = v.as_str()
+            {
+                let full = sigma_root.join(rtp);
+                if !full.exists() {
+                    mismatched_path += 1;
+                } else if !entry_paths.contains(full.as_path()) {
+                    missing_path += 1;
                 }
+            }
         }
 
         // Entry's rule_id (cccc...) has no matching rule in SigmahqRules → missing_path=1.
@@ -659,18 +647,21 @@ mod tests {
             }
         }
 
-        let entry_paths: HashSet<&Path> =
-            regression.iter_entries().map(|(p, _, _)| p.as_path()).collect();
+        let entry_paths: HashSet<&Path> = regression
+            .iter_entries()
+            .map(|(p, _, _)| p.as_path())
+            .collect();
         for rule in rules.iter() {
             if let Some(v) = rule.custom_attributes.get("regression_tests_path")
-                && let Some(rtp) = v.as_str() {
-                    let full = sigma_root.join(rtp);
-                    if !full.exists() {
-                        mismatched_path += 1;
-                    } else if !entry_paths.contains(full.as_path()) {
-                        missing_path += 1;
-                    }
+                && let Some(rtp) = v.as_str()
+            {
+                let full = sigma_root.join(rtp);
+                if !full.exists() {
+                    mismatched_path += 1;
+                } else if !entry_paths.contains(full.as_path()) {
+                    missing_path += 1;
                 }
+            }
         }
 
         // Direction 1: rule matches entry, but rtp (wrong_location) ≠ info_path (test) → mismatch.
@@ -728,18 +719,21 @@ mod tests {
             }
         }
 
-        let entry_paths: HashSet<&Path> =
-            regression.iter_entries().map(|(p, _, _)| p.as_path()).collect();
+        let entry_paths: HashSet<&Path> = regression
+            .iter_entries()
+            .map(|(p, _, _)| p.as_path())
+            .collect();
         for rule in rules.iter() {
             if let Some(v) = rule.custom_attributes.get("regression_tests_path")
-                && let Some(rtp) = v.as_str() {
-                    let full = sigma_root.join(rtp);
-                    if !full.exists() {
-                        mismatched_path += 1;
-                    } else if !entry_paths.contains(full.as_path()) {
-                        missing_path += 1;
-                    }
+                && let Some(rtp) = v.as_str()
+            {
+                let full = sigma_root.join(rtp);
+                if !full.exists() {
+                    mismatched_path += 1;
+                } else if !entry_paths.contains(full.as_path()) {
+                    missing_path += 1;
                 }
+            }
         }
 
         // Direction 1: entry rule_id (bbbb...) doesn't match any loaded rule → missing_path=1.
@@ -755,8 +749,7 @@ mod tests {
         fs::remove_dir_all(&tmp).unwrap();
     }
 
-    const RULE_MATCH_YML: &str =
-        "title: Test Rule\nid: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\nstatus: test\nlevel: low\nlogsource:\n  product: windows\nregression_tests_path: regression_data/rules/test/info.yml\ndetection:\n  selection:\n    event_id: 1\n  condition: selection\n";
+    const RULE_MATCH_YML: &str = "title: Test Rule\nid: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\nstatus: test\nlevel: low\nlogsource:\n  product: windows\nregression_tests_path: regression_data/rules/test/info.yml\ndetection:\n  selection:\n    event_id: 1\n  condition: selection\n";
 
     /// Build a one-rule / one-entry scenario where the JSON data (and its
     /// auxiliary `.json`) holds a single event that matches the rule. `match_count`
@@ -831,10 +824,7 @@ mod tests {
         assert_eq!(hits, 1, "rule should produce exactly 1 hit");
 
         let verdict = check_match_count(0, &regression, hits);
-        assert!(
-            verdict.is_some(),
-            "match_count 2 vs 1 hit should fail"
-        );
+        assert!(verdict.is_some(), "match_count 2 vs 1 hit should fail");
         assert!(
             verdict.unwrap().contains("MATCH COUNT MISMATCH"),
             "error should report match count mismatch"
