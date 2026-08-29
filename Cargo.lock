@@ -3123,7 +3123,6 @@ dependencies = [
 name = "sigmacatch-detection"
 version = "0.5.1"
 dependencies = [
- "phf",
  "rsigma-eval",
  "serde",
  "serde_json",
