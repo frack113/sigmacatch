@@ -30,6 +30,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
       # Cache the install-action tool cache (cargo-deny / cargo-machete binaries).
       - uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
         with:
@@ -72,6 +74,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
       - name: Install nightly + bpf-linker (ebpf only)
         if: matrix.nightly
         run: |
@@ -109,6 +113,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
         with:
+          toolchain: stable
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win
