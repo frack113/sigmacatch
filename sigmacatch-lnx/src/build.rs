@@ -119,15 +119,11 @@ fn build_probes(crate_dir: &Path, _out_dir: &Path) -> Result<PathBuf, String> {
 
     let output = cmd.output().map_err(|e| format!("spawn cargo: {e}"))?;
     if !output.status.success() {
-        // Best-effort: a broken/unavailable nightly toolchain (e.g. a floating
-        // `nightly` whose rust-src no longer resolves for `bpfel-unknown-none`)
-        // must not hard-fail the whole binary build. Surface the failure via
-        // the placeholder path so the loader can fall back to syslog at runtime.
-        return Err(format!(
-            "ebpf subbuild failed\n--- stdout ---\n{}\n--- stderr ---\n{}",
+        panic!(
+            "SIGMACATCH EBPF SUBBUILD FAILED\n--- stdout ---\n{}\n--- stderr ---\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
-        ));
+        );
     }
     let artifact = crate_dir.join(PROBE_ARTIFACT);
     if !artifact.is_file() {
