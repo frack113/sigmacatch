@@ -279,6 +279,155 @@ pub static CHANNEL_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_m
     "sigmacatch/etw-unmapped" => "etw",
 };
 
+// ─── LogSource mapping tables (source of truth) ───────────────────────────
+// Centralized here per project contract: every logsource phf mapping table
+// lives in sigmacatch-types (single source of truth). Migrated from
+// sigmacatch-detection::channel_resolver and sigmacatch-win::etw::mapper.
+
+/// Service → Windows event channels. Covers every `service:` seen in
+/// Windows Sigma rules; the sysmon category routing is implied by the
+/// `windows` pipeline instead of being duplicated here.
+pub static SERVICE_CHANNELS: phf::Map<&'static str, &'static [&'static str]> = phf::phf_map! {
+    "application" => &["Application"],
+    "application-experience" => &[
+        "Microsoft-Windows-Application-Experience/Program-Telemetry",
+        "Microsoft-Windows-Application-Experience/Program-Compatibility-Assistant",
+    ],
+    "applocker" => &[
+        "Microsoft-Windows-AppLocker/EXE and DLL",
+        "Microsoft-Windows-AppLocker/MSI and Script",
+        "Microsoft-Windows-AppLocker/Packaged app-Deployment",
+        "Microsoft-Windows-AppLocker/Packaged app-Execution",
+    ],
+    "appmodel-runtime" => &["Microsoft-Windows-AppModel-Runtime/Admin"],
+    "appxdeployment-server" => &["Microsoft-Windows-AppXDeploymentServer/Operational"],
+    "appxpackaging-om" => &["Microsoft-Windows-AppxPackaging/Operational"],
+    "bitlocker" => &["Microsoft-Windows-BitLocker/BitLocker Management"],
+    "bits-client" => &["Microsoft-Windows-Bits-Client/Operational"],
+    "capi2" => &["Microsoft-Windows-CAPI2/Operational"],
+    "certificateservicesclient-lifecycle-system" => &[
+        "Microsoft-Windows-CertificateServicesClient-Lifecycle-System/Operational",
+    ],
+    "codeintegrity-operational" => &["Microsoft-Windows-CodeIntegrity/Operational"],
+    "dhcp" => &["Microsoft-Windows-DHCP-Server/Operational"],
+    "diagnosis-scripted" => &["Microsoft-Windows-Diagnosis-Scripted/Operational"],
+    "dns-client" => &["Microsoft-Windows-DNS Client Events/Operational"],
+    "dns-server" => &["DNS Server"],
+    "dns-server-analytic" => &["Microsoft-Windows-DNS-Server/Analytical"],
+    "dns-server-audit" => &["Microsoft-Windows-DNS-Server/Audit"],
+    "driver-framework" => &["Microsoft-Windows-DriverFrameworks-UserMode/Operational"],
+    "firewall-as" => &[
+        "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall",
+    ],
+    "hyper-v-worker" => &["Microsoft-Windows-Hyper-V-Worker"],
+    "iis-configuration" => &["Microsoft-IIS-Configuration/Operational"],
+    "kernel-event-tracing" => &["Microsoft-Windows-Kernel-EventTracing"],
+    "kernel-shimengine" => &[
+        "Microsoft-Windows-Kernel-ShimEngine/Operational",
+        "Microsoft-Windows-Kernel-ShimEngine/Diagnostic",
+    ],
+    "ldap" => &["Microsoft-Windows-LDAP-Client/Debug"],
+    "lsa-server" => &["Microsoft-Windows-LSA/Operational"],
+    "msexchange-management" => &["MSExchange Management"],
+    "ntfs" => &["Microsoft-Windows-Ntfs/Operational"],
+    "ntlm" => &["Microsoft-Windows-NTLM/Operational"],
+    "openssh" => &["OpenSSH/Operational"],
+    "powershell" => &[
+        "Microsoft-Windows-PowerShell/Operational",
+        "PowerShellCore/Operational",
+    ],
+    "powershell-classic" => &["Windows PowerShell"],
+    "printservice-admin" => &["Microsoft-Windows-PrintService/Admin"],
+    "printservice-operational" => &["Microsoft-Windows-PrintService/Operational"],
+    "security" => &["Security"],
+    "security-mitigations" => &[
+        "Microsoft-Windows-Security-Mitigations/Kernel Mode",
+        "Microsoft-Windows-Security-Mitigations/User Mode",
+    ],
+    "sense" => &["Microsoft-Windows-SENSE/Operational"],
+    "servicebus-client" => &[
+        "Microsoft-ServiceBus-Client/Operational",
+        "Microsoft-ServiceBus-Client/Admin",
+    ],
+    "shell-core" => &["Microsoft-Windows-Shell-Core/Operational"],
+    "smbclient-security" => &["Microsoft-Windows-SmbClient/Security"],
+    "sysmon" => &["Microsoft-Windows-Sysmon/Operational"],
+    "system" => &["System"],
+    "taskscheduler" => &["Microsoft-Windows-TaskScheduler/Operational"],
+    "terminalservices-localsessionmanager" => &[
+        "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational",
+    ],
+    "vhdmp" => &["Microsoft-Windows-VHDMP/Operational"],
+    "windefend" => &["Microsoft-Windows-Windows Defender/Operational"],
+    "wmi" => &["Microsoft-Windows-WMI-Activity/Operational"],
+};
+
+/// Category → Windows event channels for categories the `windows` pipeline
+/// does not route (no EventID mapping). Sysmon categories are intentionally
+/// absent — the pipeline rewrites them to `service: sysmon`.
+pub static CATEGORY_CHANNELS: phf::Map<&'static str, &'static [&'static str]> = phf::phf_map! {
+    "ps_classic_provider_start" => &["Windows PowerShell"],
+    "ps_classic_script" => &["Windows PowerShell"],
+    "ps_classic_start" => &["Windows PowerShell"],
+    "ps_module" => &[
+        "Microsoft-Windows-PowerShell/Operational",
+        "PowerShellCore/Operational",
+    ],
+    "ps_script" => &[
+        "Microsoft-Windows-PowerShell/Operational",
+        "PowerShellCore/Operational",
+    ],
+};
+
+/// ETW provider name → Windows event channel, used to route generic
+/// (non-Sysmon) events. Extension point for covering more Winevt channels
+/// via ETW — adding a provider only requires a matching entry here.
+pub static PROVIDER_NAME_TO_CHANNEL: phf::Map<&'static str, &'static str> = phf::phf_map! {
+    "Microsoft-Windows-Security-Auditing" => "Security",
+    "Microsoft-Windows-Windows Defender" => "Microsoft-Windows-Windows Defender/Operational",
+    "Microsoft-Windows-Windows Firewall With Advanced Security" => "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall",
+    "NTLM Security Protocol" => "Microsoft-Windows-NTLM/Operational",
+    "Microsoft-Windows-SMBClient" => "Microsoft-Windows-SmbClient/Security",
+    "Local Security Authority (LSA)" => "Microsoft-Windows-LSA/Operational",
+    "Microsoft-Windows-Bits-Client" => "Microsoft-Windows-Bits-Client/Operational",
+    "Microsoft-Windows-CAPI2" => "Microsoft-Windows-CAPI2/Operational",
+    "Microsoft-Windows-CodeIntegrity" => "Microsoft-Windows-CodeIntegrity/Operational",
+    "Microsoft-Windows-DNS-Client" => "Microsoft-Windows-DNS Client Events/Operational",
+    "Microsoft-Windows-PowerShell" => "Microsoft-Windows-PowerShell/Operational",
+    "Microsoft-Windows-WMI-Activity" => "Microsoft-Windows-WMI-Activity/Operational",
+    "Service Control Manager" => "System",
+    "Microsoft-Windows-TaskScheduler" => "Microsoft-Windows-TaskScheduler/Operational",
+    "OpenSSH" => "OpenSSH/Operational",
+    "Microsoft-Windows-SENSE" => "Microsoft-Windows-SENSE/Operational",
+    "Microsoft-Windows-Shell-Core" => "Microsoft-Windows-Shell-Core/Operational",
+    "Microsoft-Windows-TerminalServices-LocalSessionManager" => "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational",
+    "Microsoft-Windows-DriverFrameworks-UserMode" => "Microsoft-Windows-DriverFrameworks-UserMode/Operational",
+    "Microsoft-Windows-Hyper-V-Worker" => "Microsoft-Windows-Hyper-V-Worker",
+    "Microsoft-Windows-Ntfs" => "Microsoft-Windows-Ntfs/Operational",
+    "Microsoft-Windows-LDAP-Client" => "Microsoft-Windows-LDAP-Client/Debug",
+    "Microsoft-Windows-Diagnosis-Scripted" => "Microsoft-Windows-Diagnosis-Scripted/Operational",
+    "Microsoft-Windows-PrintService" => "Microsoft-Windows-PrintService/Operational",
+    "Microsoft-Windows-DHCP-Server" => "Microsoft-Windows-DHCP-Server/Operational",
+    "Microsoft-Windows-Kernel-EventTracing" => "Microsoft-Windows-Kernel-EventTracing",
+    "Microsoft-Windows-Kernel-ShimEngine" => "Microsoft-Windows-Kernel-ShimEngine/Operational",
+    "Microsoft-Windows-AppModel-Runtime" => "Microsoft-Windows-AppModel-Runtime/Admin",
+    "Microsoft-Windows-AppXDeploymentServer" => "Microsoft-Windows-AppXDeploymentServer/Operational",
+    "Microsoft-Windows-AppxPackagingOM" => "Microsoft-Windows-AppxPackaging/Operational",
+    "Microsoft-Windows-Application-Experience" => "Microsoft-Windows-Application-Experience/Program-Telemetry",
+    "Microsoft-Windows-BitLocker" => "Microsoft-Windows-BitLocker/BitLocker Management",
+    "Microsoft-Windows-CertificateServicesClient-Lifecycle-System" => "Microsoft-Windows-CertificateServicesClient-Lifecycle-System/Operational",
+    "Microsoft-Windows-IIS-Configuration" => "Microsoft-IIS-Configuration/Operational",
+    "Microsoft-ServiceBus-Client" => "Microsoft-ServiceBus-Client/Operational",
+    "Microsoft-Windows-VHDMP" => "Microsoft-Windows-VHDMP/Operational",
+    "Microsoft-Windows-Security-Mitigations" => "Microsoft-Windows-Security-Mitigations/User Mode",
+    "Microsoft-Windows-DNS-Server" => "DNS Server",
+    "Microsoft-Windows-DNS-Server-Analytical" => "Microsoft-Windows-DNS-Server/Analytical",
+    "Microsoft-Windows-DNS-Server-Audit" => "Microsoft-Windows-DNS-Server/Audit",
+    "Microsoft-Windows-AppLocker" => "Microsoft-Windows-AppLocker/EXE and DLL",
+    "MSExchange Management" => "MSExchange Management",
+    "Windows PowerShell" => "Windows PowerShell",
+};
+
 /// Channel:EventID → Sigma category.
 static CHANNEL_EVENT_TO_CATEGORY: phf::Map<&'static str, &'static str> = phf::phf_map! {
     "Microsoft-Windows-Sysmon/Operational:1" => "process_creation",

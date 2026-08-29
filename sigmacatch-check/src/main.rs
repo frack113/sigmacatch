@@ -306,7 +306,10 @@ fn main() -> anyhow::Result<()> {
                 error: msg,
             });
             if !json_output {
-                println!("[FAIL] {}", failed.last().unwrap().error);
+                println!(
+                    "[FAIL] {}",
+                    failed.last().expect("failed entry just pushed").error
+                );
             }
             continue;
         }

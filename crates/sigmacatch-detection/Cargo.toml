@@ -9,7 +9,6 @@ description = "Thin wrapper around rsigma-eval for loading pipelines and rules, 
 license.workspace = true
 
 [dependencies]
-phf = { version = "0.14", features = ["macros"] }
 rsigma-eval = "0.21"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
