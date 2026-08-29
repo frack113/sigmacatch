@@ -27,19 +27,14 @@ jobs:
         with:
           toolchain: stable
       - run: rustup toolchain install nightly --component rust-src
-      - name: Cache bpf-linker
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.tool_cache }}/bpf-linker
-          key: bpf-linker-0.11.0
       - name: Install bpf-linker (static musl release)
+        # Re-download (pinned v0.11.0) instead of caching: this is a release
+        # workflow, and actions/cache here trips zizmor's cache-poisoning audit.
         run: |
-          if [ ! -x "${{ runner.tool_cache }}/bpf-linker/bpf-linker" ]; then
-            curl -sL -o /tmp/bpf-linker.tar.zst \
-              "https://github.com/aya-rs/bpf-linker/releases/download/v0.11.0/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
-            mkdir -p "${{ runner.tool_cache }}/bpf-linker"
-            tar --zstd -xf /tmp/bpf-linker.tar.zst -C "${{ runner.tool_cache }}/bpf-linker"
-          fi
+          curl -sL -o /tmp/bpf-linker.tar.zst \
+            "https://github.com/aya-rs/bpf-linker/releases/download/v0.11.0/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
+          mkdir -p "${{ runner.tool_cache }}/bpf-linker"
+          tar --zstd -xf /tmp/bpf-linker.tar.zst -C "${{ runner.tool_cache }}/bpf-linker"
           echo "${{ runner.tool_cache }}/bpf-linker" >> "$GITHUB_PATH"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         # Release workflow publishes artifacts from cached build state; disable
