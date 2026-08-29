@@ -174,6 +174,11 @@ impl SigmahqRegression {
         &self.author
     }
 
+    /// Path where regression data was loaded from.
+    pub fn path(&self) -> &Path {
+        self.output_path.as_deref().unwrap_or(Path::new("./sigma/regression_data"))
+    }
+
     /// Number of loaded regression entries.
     pub fn len(&self) -> usize {
         self.entries.len()
@@ -199,9 +204,20 @@ impl SigmahqRegression {
         self.entries.iter().map(|(_, _, entry)| entry)
     }
 
+    /// Iterate full `(info.yml path, parsed info, entry)` triples.
+    pub fn iter_entries(&self) -> impl Iterator<Item = (&PathBuf, &InfoYml, &RegressionEntry)> {
+        self.entries.iter().map(|(p, i, e)| (p, i, e))
+    }
+
     /// Entry at load order `index`.
     pub fn get_entry(&self, index: usize) -> Option<&RegressionEntry> {
         self.entries.get(index).map(|(_, _, entry)| entry)
+    }
+
+    /// Parsed `info.yml` for entry `index` — used by `sigmacatch-check` to read
+    /// the expected `match_count` declared in `regression_tests_info`.
+    pub fn get_info(&self, index: usize) -> Option<&InfoYml> {
+        self.entries.get(index).map(|(_, info, _)| info)
     }
 
     /// Rule ids with committed regression data (skippable). We only check
