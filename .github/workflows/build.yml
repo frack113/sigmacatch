@@ -105,8 +105,24 @@ jobs:
           fi
 
   windows:
-    name: Windows x64 (MSVC) — channel + etw + check
+    name: Windows — ${{ matrix.flavor }}
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each flavour on its own Windows runner + target dir so the
+          # sequential recompiles (full / per-feature / check) run in parallel.
+          - flavor: channel+etw
+            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win
+          - flavor: winevt
+            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win --no-default-features --features winevt
+          - flavor: etw
+            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win --no-default-features --features etw
+          - flavor: tools
+            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win --no-default-features --features tools
+          - flavor: check
+            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-check
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -116,11 +132,4 @@ jobs:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win
-      - name: Isolated feature builds (one collector per binary)
-        run: |
-          cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win --no-default-features --features winevt
-          cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win --no-default-features --features etw
-          cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win --no-default-features --features tools
-      - name: Build sigmacatch-check (Windows x64)
-        run: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-check
+      - run: ${{ matrix.command }}
