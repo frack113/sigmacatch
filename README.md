@@ -99,7 +99,7 @@ The project is a cargo workspace of 14 packages, plus 1 excluded nightly crate (
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource mapping tables (phf) |
 | `sigmacatch-repo` | grit-lib wrapper: `SigmaRepo`, GitHub fork detection, plumbing/porcelain git ops, SSH signing |
 | `input-windows-evtx` | Parse EVTX files into `Event` objects (used by `sigmacatch-check`) |
-| `sigmacatch-check` | Standalone cross-platform binary: regression validation (`--product`/`--json`) |
+| `sigmacatch-check` | Standalone cross-platform binary: regression validation (`--json`/`--ignore`) |
 
 ## Built with
 
