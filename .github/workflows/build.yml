@@ -22,62 +22,92 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  linux:
-    name: Linux — 3 flavours
+  supply-chain:
+    name: Supply-chain gates
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
-      - run: rustup toolchain install nightly --component rust-src
-      - name: Install bpf-linker (static musl release / ebpf check)
-        run: |
-          curl -sL -o /tmp/bpf-linker.tar.zst \
-            https://github.com/aya-rs/bpf-linker/releases/latest/download/bpf-linker-x86_64-unknown-linux-musl.tar.zst
-          mkdir -p "$HOME/.local/bin"
-          tar --zstd -xf /tmp/bpf-linker.tar.zst -C "$HOME/.local/bin"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      # Supply-chain gates: advisories/licenses/bans/sources policy (deny.toml)
-      # + unused-dependency detection.
-      - name: Install cargo-deny + cargo-machete
-        uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+      # Cache the install-action tool cache (cargo-deny / cargo-machete binaries).
+      - uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
         with:
           tool: cargo-deny,cargo-machete
       - run: cargo deny check
       - run: cargo machete
-      # One real release build (base flavour) to exercise the release profile;
-      # the sysmon/ebpf flavours are validated with `cargo check` (compile-only)
-      # to keep CI fast. Explicit --bin per flavour: a later superset-feature
-      # build would otherwise rebuild earlier-named bins (shared entry point)
-      # with the wider feature set and silently clobber them in target dir.
-      - name: Build base (auditd + builtin syslog)
-        run: >
-          cargo build --release --locked -p sigmacatch-lnx --bin sigmacatch-linux
-          --no-default-features --features auditd,builtin
-      - name: Check sysmon (adds legacy tail)
-        run: >
-          cargo check --release --locked -p sigmacatch-lnx --bin sigmacatch-linux-sysmon
-          --no-default-features --features auditd,builtin,sysmon
-      - name: Check ebpf (eBPF native probes)
-        run: >
-          cargo check --release --locked -p sigmacatch-lnx --bin sigmacatch-linux-ebpf
-          --no-default-features --features auditd,builtin,ebpf
-      - name: Isolated feature builds
+
+  linux:
+    name: Linux — ${{ matrix.flavor }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each flavour runs on its own runner + target dir, so a superset
+          # feature build can no longer clobber an earlier-named bin in a
+          # shared target dir (the reason the old job built them sequentially).
+          - flavor: base
+            bin: sigmacatch-linux
+            features: auditd,builtin
+            mode: build
+            nightly: false
+          - flavor: sysmon
+            bin: sigmacatch-linux-sysmon
+            features: auditd,builtin,sysmon
+            mode: check
+            nightly: false
+          - flavor: ebpf
+            bin: sigmacatch-linux-ebpf
+            features: auditd,builtin,ebpf
+            mode: check
+            nightly: true
+          - flavor: tools
+            bin: ""
+            features: tools
+            mode: build
+            nightly: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+      - name: Install nightly + bpf-linker (ebpf only)
+        if: matrix.nightly
         run: |
-          cargo build --release --locked -p sigmacatch-lnx --no-default-features --features tools
-      - name: Build sigmacatch-check (Linux)
-        run: cargo build --release --locked -p sigmacatch-check
+          rustup toolchain install nightly --component rust-src
+          if [ ! -x "${{ runner.tool_cache }}/bpf-linker/bpf-linker" ]; then
+            curl -sL -o /tmp/bpf-linker.tar.zst \
+              "https://github.com/aya-rs/bpf-linker/releases/download/v0.11.0/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
+            mkdir -p "${{ runner.tool_cache }}/bpf-linker"
+            tar --zstd -xf /tmp/bpf-linker.tar.zst -C "${{ runner.tool_cache }}/bpf-linker"
+          fi
+          echo "${{ runner.tool_cache }}/bpf-linker" >> "$GITHUB_PATH"
+      - name: Cache bpf-linker
+        if: matrix.nightly
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.tool_cache }}/bpf-linker
+          key: bpf-linker-0.11.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Build / check flavour
+        run: |
+          if [ -n "${{ matrix.bin }}" ]; then
+            cargo ${{ matrix.mode }} --release --locked -p sigmacatch-lnx \
+              --bin ${{ matrix.bin }} --no-default-features --features ${{ matrix.features }}
+          else
+            cargo ${{ matrix.mode }} --release --locked -p sigmacatch-lnx \
+              --no-default-features --features ${{ matrix.features }}
+          fi
 
   windows:
-    name: Windows x64 (MSVC) — sigmacatch-channel + sigmacatch-etw + check
+    name: Windows x64 (MSVC) — channel + etw + check
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
         with:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
