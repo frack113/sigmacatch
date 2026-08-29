@@ -56,6 +56,8 @@ skip = [
     # pinned by third-party crates.
     { name = "base64", version = "0.22.1" },
     { name = "bitflags", version = "1.3.2" },
+    { name = "foldhash", version = "0.1.5" },
+    { name = "foldhash", version = "0.2.0" },
     { name = "block-buffer", version = "0.10.4" },
     { name = "cpufeatures", version = "0.2.17" },    { name = "crypto-common", version = "0.1.7" },
     { name = "digest", version = "0.10.7" },

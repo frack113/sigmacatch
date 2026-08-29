@@ -3290,7 +3290,6 @@ dependencies = [
  "ferrisetw",
  "hex",
  "md5",
- "phf",
  "serde",
  "serde_json",
  "sha1",

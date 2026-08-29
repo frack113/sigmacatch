@@ -33,6 +33,10 @@ jobs:
           tar --zstd -xf /tmp/bpf-linker.tar.zst -C "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        # Release workflow publishes artifacts from cached build state; disable
+        # cache restore/save to avoid cache-poisoning (zizmor cache-poisoning).
+        with:
+          lookup-only: true
       # Explicit --bin per flavour: prevents a superset-feature build from
       # rebuilding earlier-named bins with the wider features (shared target).
       - name: Build base (auditd + builtin syslog)

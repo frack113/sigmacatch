@@ -19,7 +19,6 @@ etw = [
     "dep:md5",
     "dep:sha1",
     "dep:sha2",
-    "dep:phf",
 ]
 tools = ["dep:serde"]
 
@@ -47,7 +46,6 @@ hex = { version = "0.4", optional = true }
 md5 = { version = "0.8", optional = true }
 sha1 = { version = "0.11", optional = true }
 sha2 = { version = "0.11", optional = true }
-phf = { version = "0.14", features = ["macros"], optional = true }
 
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "signal"] }
 tracing = "0.1"
