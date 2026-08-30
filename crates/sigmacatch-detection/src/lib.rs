@@ -101,6 +101,7 @@ impl DetectionEngine {
                 name: "lnx_field",
                 source,
             })?;
+
         let mut engine =
             Self::create_engine(&win_logsource, &win_field, &lnx_logsource, &lnx_field)?;
 

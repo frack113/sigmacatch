@@ -289,6 +289,56 @@ transformations:
         category: pipe_created
         product: windows
 
+  # EventID 4103: ps_module (module logging)
+  - id: win_ps_module
+    type: add_condition
+    conditions:
+      Event.System.EventID: 4103
+    rule_conditions:
+      - type: logsource
+        category: ps_module
+        product: windows
+
+  # EventID 4104: ps_script (script block logging)
+  - id: win_ps_script
+    type: add_condition
+    conditions:
+      Event.System.EventID: 4104
+    rule_conditions:
+      - type: logsource
+        category: ps_script
+        product: windows
+
+  # EventID 400: ps_classic_start (classic PowerShell startup)
+  - id: win_ps_classic_start
+    type: add_condition
+    conditions:
+      Event.System.EventID: 400
+    rule_conditions:
+      - type: logsource
+        category: ps_classic_start
+        product: windows
+
+  # EventID 600: ps_classic_provider_start (classic PowerShell provider)
+  - id: win_ps_classic_provider_start
+    type: add_condition
+    conditions:
+      Event.System.EventID: 600
+    rule_conditions:
+      - type: logsource
+        category: ps_classic_provider_start
+        product: windows
+
+  # EventID 800: ps_classic_script (classic PowerShell script block)
+  - id: win_ps_classic_script
+    type: add_condition
+    conditions:
+      Event.System.EventID: 800
+    rule_conditions:
+      - type: logsource
+        category: ps_classic_script
+        product: windows
+
   # Rewrite the logsource service for every category routed above so embedders
   # derive the Windows event channel from the post-pipeline logsource (#437)
   # instead of duplicating the category → service mapping in the resolver.
@@ -488,4 +538,39 @@ transformations:
     rule_conditions:
       - type: logsource
         category: pipe_created
+        product: windows
+  - id: win_route_ps_module
+    type: change_logsource
+    service: powershell
+    rule_conditions:
+      - type: logsource
+        category: ps_module
+        product: windows
+  - id: win_route_ps_script
+    type: change_logsource
+    service: powershell
+    rule_conditions:
+      - type: logsource
+        category: ps_script
+        product: windows
+  - id: win_route_ps_classic_start
+    type: change_logsource
+    service: powershell-classic
+    rule_conditions:
+      - type: logsource
+        category: ps_classic_start
+        product: windows
+  - id: win_route_ps_classic_provider_start
+    type: change_logsource
+    service: powershell-classic
+    rule_conditions:
+      - type: logsource
+        category: ps_classic_provider_start
+        product: windows
+  - id: win_route_ps_classic_script
+    type: change_logsource
+    service: powershell-classic
+    rule_conditions:
+      - type: logsource
+        category: ps_classic_script
         product: windows

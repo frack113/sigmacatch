@@ -67,17 +67,17 @@ pub fn synthetic_channel_for_sysmon_eid(sysmon_eid: u16) -> &'static str {
 /// When an ETW record has no Sysmon EventID equivalent (`map_to_sysmon_id`
 /// returns `None`), the record's real EventID is kept and the event is routed to
 /// the channel this table maps its provider to. The channel keys must match the
-/// `CHANNEL_TO_SERVICE` / `PROVIDER_NAME_TO_CHANNEL` tables in `sigmacatch-types`
+/// `CHANNEL_TO_SERVICE` / `ETW_PROVIDER_TO_CHANNEL` tables in `sigmacatch-types`
 /// (single source of truth) so `inject_logsource_fields` derives the correct
 /// `service`/`category`. This is the extension point for covering more Winevt
 /// channels via ETW — adding a provider to `PROVIDERS` only requires a matching
-/// entry in `sigmacatch_types::PROVIDER_NAME_TO_CHANNEL` (no EventID enumeration
+/// entry in `sigmacatch_types::ETW_PROVIDER_TO_CHANNEL` (no EventID enumeration
 /// needed).
 /// Route an ETW provider to its Windows event channel for generic (non-Sysmon)
 /// events, keeping the record's real EventID. Returns `None` when the provider
 /// is unknown — the caller then routes to the dedicated unmapped channel.
 pub fn channel_for_provider(provider_name: &str) -> Option<&'static str> {
-    sigmacatch_types::PROVIDER_NAME_TO_CHANNEL
+    sigmacatch_types::ETW_PROVIDER_TO_CHANNEL
         .get(provider_name)
         .copied()
 }
@@ -290,7 +290,7 @@ mod tests {
     fn test_provider_channel_keys_match_service_table() {
         // Every generic channel must be a key in sigmacatch-types'
         // CHANNEL_TO_SERVICE so inject_logsource_fields derives the service.
-        for channel in sigmacatch_types::PROVIDER_NAME_TO_CHANNEL.values() {
+        for channel in sigmacatch_types::ETW_PROVIDER_TO_CHANNEL.values() {
             assert!(
                 sigmacatch_types::CHANNEL_TO_SERVICE.get(channel).is_some(),
                 "channel '{channel}' is not in CHANNEL_TO_SERVICE"
