@@ -68,6 +68,31 @@ provider→channel par table de mapping, EventID réel conservé [beta]. Pour le
 génériques, les champs `EventData` sont fournis par des field maps par provider (fidelité
 variable). Sur non-Windows, les collecteurs Winevt/ETW sont des stubs no-op.
 
+**Résolution de logsource en deux temps (provider → channel → service)** :
+`inject_logsource_fields_for` cherche d'abord le service par channel (`CHANNEL_TO_SERVICE`),
+puis, à défaut, résout le provider via `ETW_PROVIDER_TO_CHANNEL` (source unique de vérité
+dans `sigmacatch-types`) avant de retomber sur `CHANNEL_TO_SERVICE`. Les providers
+Sysmon-masquerade sans channel Winevt réel sont routés vers des channels synthétiques
+`sigmacatch/etw-*` (produits par `mapper::unmapped_channel_for_masquerade`)
+qui résolvent au service `etw` : l'event garde un vrai logsource au lieu d'être évalué
+fail-open contre toutes les règles.
+
+### Logsource Windows et catégories PowerShell
+
+Les règles Windows sont contraintes par la pipeline `1_win_logsource.yml`
+(`add_condition` sur les EventID + `change_logsource` vers le service) : les catégories
+PowerShell sont bornées à leurs EventID — `ps_module` (4103), `ps_script` (4104) vers
+`service: powershell` ; `ps_classic_start` (400), `ps_classic_provider_start` (600) et
+`ps_classic_script` (800) vers `service: powershell-classic`. Sans champ `category` injecté
+sur l'event, le `LogSourceExtractor` d'rsigma évalue chaque event fail-open contre toutes
+les règles.
+
+Les events PowerShell classique (400/600/800 …) émettent des `<Data>` **sans** attribut
+`Name` : le parseur les expose sous des clés positionnelles (`Data0`, `Data1`, …), et
+`inject_logsource_fields_for` surface le contenu `EventData` sous le champ Sigma générique
+`Data` pour que `Data|contains` fonctionne (rsigma n'a pas de mapping de champ dédié
+`powershell_classic`).
+
 ### Les collecteurs Linux
 
 Chacun gardé par sa source ; aucune source disponible → bail :

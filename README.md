@@ -10,7 +10,7 @@ Sigmacatch captures real OS events, matches them against [SigmaHQ](https://githu
 | Platform | Collector | Binary | Status |
 |---|---|---|---|
 | Windows | Windows Event Log API (`winevt`) | `sigmacatch-channel` | working |
-| Windows | Direct ETW (`ferrisetw`) | `sigmacatch-etw` | POC |
+| Windows | Direct ETW (`ferrisetw`) | `sigmacatch-etw` | beta |
 | Linux | auditd + builtin syslog (default, no root needed) | `sigmacatch-linux` | need user return |
 | Linux | + legacy Sysmon-for-Linux XML tail | `sigmacatch-linux-sysmon` | need user return |
 | Linux | + native eBPF probes (process/network/file/DNS) | `sigmacatch-linux-ebpf` | need user return |
