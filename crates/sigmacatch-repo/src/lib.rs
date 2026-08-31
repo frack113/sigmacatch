@@ -1282,7 +1282,7 @@ mod tests {
         let result = repo.upload_rule_batches(
             vec![
                 (rule_a, vec![good.to_string()]),
-                (rule_b, vec![bad.clone()]),
+                (rule_b, vec![bad]),
             ],
             &|| false,
         );

@@ -397,25 +397,21 @@ fn parse_auditd_lines(raw: &[u8]) -> (Vec<Event>, usize) {
                     return None;
                 }
             };
-            let mut fields = Map::new();
+            let mut flat = Map::new();
             for (key, value) in &message.body {
                 if let Some(json) = value_to_json(value) {
-                    fields.insert(key.to_string(), json);
+                    flat.insert(key.to_string(), json);
                 }
-            }
-            let json_raw = serde_json::json!({
-                "stamp": { "timestamp": message.id.timestamp, "sequence": message.id.sequence },
-                "type": message.ty.to_string(),
-                "fields": fields,
-            });
-            let mut flat = Map::new();
-            for (key, value) in &fields {
-                flat.insert(key.clone(), value.clone());
             }
             flat.insert("type".into(), JsonValue::String(message.ty.to_string()));
             flat.insert("provider".into(), JsonValue::String("auditd".into()));
             flat.insert("product".into(), JsonValue::String("linux".into()));
             flat.insert("service".into(), JsonValue::String("auditd".into()));
+            let json_raw = serde_json::json!({
+                "stamp": { "timestamp": message.id.timestamp, "sequence": message.id.sequence },
+                "type": message.ty.to_string(),
+                "fields": flat.clone(),
+            });
             let mut event = Event::new(json_raw, JsonValue::Object(flat), line.to_vec());
             event.inject_logsource_fields_for("linux", Some("auditd"));
             Some(event)

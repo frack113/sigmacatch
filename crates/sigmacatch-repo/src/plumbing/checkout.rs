@@ -36,7 +36,7 @@ pub(crate) fn checkout_main_branch(git_dir: &Path, work_tree: &Path) -> Result<(
             ))
         })?
     } else {
-        head_ref.clone()
+        head_ref
     };
 
     let head_oid = ObjectId::from_hex(&oid_str)

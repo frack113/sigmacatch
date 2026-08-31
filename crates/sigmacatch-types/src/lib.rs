@@ -1946,7 +1946,7 @@ mod tests {
             severity: "medium".to_string(),
             event_json_raw: event.event_json_raw.clone(),
             event_json: event.event_json.clone(),
-            event_raw: event.event_raw.clone(),
+            event_raw: event.event_raw,
             is_etw: false,
         };
 
