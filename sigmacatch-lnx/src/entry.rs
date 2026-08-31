@@ -142,14 +142,15 @@ struct LinuxCollector;
 
 /// Whether the eBPF sysmon input is planned for this run: compiled in and
 /// usable privileges-wise. Loader failure later still falls back.
-#[cfg(feature = "ebpf")]
 fn ebpf_planned() -> bool {
-    crate::ebpf::has_required_privileges()
-}
-
-#[cfg(not(feature = "ebpf"))]
-fn ebpf_planned() -> bool {
-    false
+    #[cfg(feature = "ebpf")]
+    {
+        crate::ebpf::has_required_privileges()
+    }
+    #[cfg(not(feature = "ebpf"))]
+    {
+        false
+    }
 }
 
 impl CollectorKind for LinuxCollector {

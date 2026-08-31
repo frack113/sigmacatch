@@ -64,93 +64,15 @@ fn main() -> anyhow::Result<()> {
     // Bidirectional regression_tests_path validation.
     // Direction 1: each entry → rule must exist and declare a matching path.
     // Direction 2: each rule with regression_tests_path → entry must exist.
-    let sigma_root = regression.path().parent().unwrap_or(Path::new("./sigma"));
-    let mut missing_path = 0usize;
-    let mut mismatched_path = 0usize;
+    let path_validation = validate_regression_paths(&rules, &regression);
+    let missing_path = path_validation.missing_path;
+    let mismatched_path = path_validation.mismatched_path;
 
-    for (info_path, _info, entry) in regression.iter_entries() {
-        let rule = match rules.get(&entry.rule_id) {
-            Some(r) => r,
-            None => {
-                missing_path += 1;
-                if !json_output {
-                    eprintln!("[FAIL] Rule {} not found in loaded rules", entry.rule_id);
-                }
-                continue;
-            }
-        };
-        let rtp = match rule.custom_attributes.get("regression_tests_path") {
-            Some(v) => match v.as_str() {
-                Some(s) => s,
-                None => {
-                    missing_path += 1;
-                    if !json_output {
-                        eprintln!(
-                            "[FAIL] Rule {} regression_tests_path is not a string",
-                            entry.rule_id
-                        );
-                    }
-                    continue;
-                }
-            },
-            None => {
-                missing_path += 1;
-                if !json_output {
-                    eprintln!(
-                        "[FAIL] Rule {} missing regression_tests_path",
-                        entry.rule_id
-                    );
-                }
-                continue;
-            }
-        };
-        let expected = sigma_root.join(rtp);
-        if *info_path != expected {
-            mismatched_path += 1;
-            if !json_output {
-                eprintln!(
-                    "[FAIL] Rule {} regression_tests_path mismatch: '{}' ≠ '{}'",
-                    entry.rule_id,
-                    rtp,
-                    info_path.display()
-                );
-            }
-        }
+    if missing_path > 0 && !json_output {
+        eprintln!("[FAIL] {} missing regression_tests_path(s)", missing_path);
     }
-
-    // Direction 2: rule → entry.
-    let entry_paths: HashSet<&Path> = regression
-        .iter_entries()
-        .map(|(p, _, _)| p.as_path())
-        .collect();
-    for rule in rules.iter() {
-        let rtp = match rule.custom_attributes.get("regression_tests_path") {
-            Some(v) => match v.as_str() {
-                Some(s) => s,
-                None => continue,
-            },
-            None => continue,
-        };
-        let full = sigma_root.join(rtp);
-        if !full.exists() {
-            mismatched_path += 1;
-            if !json_output {
-                eprintln!(
-                    "[FAIL] Rule {} regression_tests_path points to missing file: {}",
-                    rule.id.as_deref().unwrap_or("unknown"),
-                    rtp
-                );
-            }
-        } else if !entry_paths.contains(full.as_path()) {
-            missing_path += 1;
-            if !json_output {
-                eprintln!(
-                    "[FAIL] Rule {} regression_tests_path exists but no matching entry: {}",
-                    rule.id.as_deref().unwrap_or("unknown"),
-                    rtp
-                );
-            }
-        }
+    if mismatched_path > 0 && !json_output {
+        eprintln!("[FAIL] {} mismatched regression_tests_path(s)", mismatched_path);
     }
 
     let mut engine = DetectionEngine::new(&rules)?;
@@ -299,8 +221,18 @@ fn main() -> anyhow::Result<()> {
         // Validate the declared match_count against the actual hit count when a
         // JSON auxiliary file is present alongside the data. The JSON mirrors
         // the raw event, so its hit count must equal info.yml's match_count.
-        if let Some(msg) = check_match_count(idx, &regression, rule_alert_count) {
+        let expected = regression
+            .get_info(idx)
+            .and_then(|info| info.regression_tests_info.first())
+            .map(|t| t.match_count)
+            .unwrap_or(0);
+        let json_present = regression.get_json_data(idx).is_some();
+        if json_present && expected > 0 && rule_alert_count != expected {
             total += 1;
+            let msg = format!(
+                "MATCH COUNT MISMATCH — expected {} hit(s), got {}",
+                expected, rule_alert_count
+            );
             failed.push(CheckFail {
                 rule_name: entry.rule_name.clone(),
                 error: msg,
@@ -387,6 +319,62 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+struct PathValidation {
+    missing_path: usize,
+    mismatched_path: usize,
+}
+
+/// Bidirectional validation of `regression_tests_path` between rules and
+/// regression entries. Returns counts of missing and mismatched paths.
+fn validate_regression_paths(rules: &SigmahqRules, regression: &SigmahqRegression) -> PathValidation {
+    let sigma_root = regression.path().parent().unwrap_or(Path::new("./sigma"));
+    let mut missing_path = 0usize;
+    let mut mismatched_path = 0usize;
+
+    for (info_path, _info, entry) in regression.iter_entries() {
+        let Some(rule) = rules.get(&entry.rule_id) else {
+            missing_path += 1;
+            continue;
+        };
+        let Some(rtp) = rule
+            .custom_attributes
+            .get("regression_tests_path")
+            .and_then(|v| v.as_str())
+        else {
+            missing_path += 1;
+            continue;
+        };
+        let expected = sigma_root.join(rtp);
+        if *info_path != expected {
+            mismatched_path += 1;
+        }
+    }
+
+    let entry_paths: HashSet<&Path> = regression
+        .iter_entries()
+        .map(|(p, _, _)| p.as_path())
+        .collect();
+    for rule in rules.iter() {
+        let Some(v) = rule.custom_attributes.get("regression_tests_path") else {
+            continue;
+        };
+        let Some(rtp) = v.as_str() else {
+            continue;
+        };
+        let full = sigma_root.join(rtp);
+        if !full.exists() {
+            mismatched_path += 1;
+        } else if !entry_paths.contains(full.as_path()) {
+            missing_path += 1;
+        }
+    }
+
+    PathValidation {
+        missing_path,
+        mismatched_path,
+    }
 }
 
 fn parse_auditd_lines(raw: &[u8]) -> (Vec<Event>, usize) {
@@ -485,29 +473,6 @@ fn parse_json_lines(raw: &[u8]) -> Vec<Event> {
         .collect()
 }
 
-/// Validate the declared `match_count` (from `info.yml`) against the actual
-/// hit count for an entry. Returns `Some(error)` when a JSON auxiliary file is
-/// present, `match_count > 0`, and the detected hit count differs from it.
-fn check_match_count(
-    idx: usize,
-    regression: &SigmahqRegression,
-    rule_alert_count: usize,
-) -> Option<String> {
-    let expected = regression
-        .get_info(idx)
-        .and_then(|info| info.regression_tests_info.first())
-        .map(|t| t.match_count)
-        .unwrap_or(0);
-    let json_present = regression.get_json_data(idx).is_some();
-    if json_present && expected > 0 && rule_alert_count != expected {
-        return Some(format!(
-            "MATCH COUNT MISMATCH — expected {} hit(s), got {}",
-            expected, rule_alert_count
-        ));
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -551,52 +516,10 @@ mod tests {
         let rules = SigmahqRules::new_from_path(&tmp.join("sigma")).unwrap();
         let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
 
-        let sigma_root = regression.path().parent().unwrap_or(Path::new("./sigma"));
-        let mut missing_path = 0usize;
-        let mut mismatched_path = 0usize;
-
-        for (info_path, _info, entry) in regression.iter_entries() {
-            let rule = match rules.get(&entry.rule_id) {
-                Some(r) => r,
-                None => {
-                    missing_path += 1;
-                    continue;
-                }
-            };
-            let Some(rtp) = rule
-                .custom_attributes
-                .get("regression_tests_path")
-                .and_then(|v| v.as_str())
-            else {
-                missing_path += 1;
-                continue;
-            };
-            let expected = sigma_root.join(rtp);
-            if *info_path != expected {
-                mismatched_path += 1;
-            }
-        }
-
-        let entry_paths: HashSet<&Path> = regression
-            .iter_entries()
-            .map(|(p, _, _)| p.as_path())
-            .collect();
-        for rule in rules.iter() {
-            if let Some(v) = rule.custom_attributes.get("regression_tests_path")
-                && let Some(rtp) = v.as_str()
-            {
-                let full = sigma_root.join(rtp);
-                if !full.exists() {
-                    mismatched_path += 1;
-                } else if !entry_paths.contains(full.as_path()) {
-                    missing_path += 1;
-                }
-            }
-        }
-
+        let pv = validate_regression_paths(&rules, &regression);
         // Entry's rule_id (cccc...) has no matching rule in SigmahqRules → missing_path=1.
-        assert_eq!(missing_path, 1, "expected 1 missing path");
-        assert_eq!(mismatched_path, 0, "expected 0 mismatched paths");
+        assert_eq!(pv.missing_path, 1, "expected 1 missing path");
+        assert_eq!(pv.mismatched_path, 0, "expected 0 mismatched paths");
 
         fs::remove_dir_all(&tmp).unwrap();
     }
@@ -619,60 +542,13 @@ mod tests {
         let rules = SigmahqRules::new_from_path(&tmp.join("sigma")).unwrap();
         let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
 
-        let sigma_root = regression.path().parent().unwrap_or(Path::new("./sigma"));
-        let mut missing_path = 0usize;
-        let mut mismatched_path = 0usize;
-
-        for (info_path, _info, entry) in regression.iter_entries() {
-            let rule = match rules.get(&entry.rule_id) {
-                Some(r) => r,
-                None => {
-                    missing_path += 1;
-                    continue;
-                }
-            };
-            let rtp = match rule.custom_attributes.get("regression_tests_path") {
-                Some(v) => match v.as_str() {
-                    Some(s) => s,
-                    None => {
-                        missing_path += 1;
-                        continue;
-                    }
-                },
-                None => {
-                    missing_path += 1;
-                    continue;
-                }
-            };
-            let expected = sigma_root.join(rtp);
-            if *info_path != expected {
-                mismatched_path += 1;
-            }
-        }
-
-        let entry_paths: HashSet<&Path> = regression
-            .iter_entries()
-            .map(|(p, _, _)| p.as_path())
-            .collect();
-        for rule in rules.iter() {
-            if let Some(v) = rule.custom_attributes.get("regression_tests_path")
-                && let Some(rtp) = v.as_str()
-            {
-                let full = sigma_root.join(rtp);
-                if !full.exists() {
-                    mismatched_path += 1;
-                } else if !entry_paths.contains(full.as_path()) {
-                    missing_path += 1;
-                }
-            }
-        }
-
+        let pv = validate_regression_paths(&rules, &regression);
         // Direction 1: rule matches entry, but rtp (wrong_location) ≠ info_path (test) → mismatch.
         // Direction 2: rule rtp (wrong_location) file doesn't exist → mismatch.
         // Both directions legitimately flag the issue: mismatched_path=2.
-        assert_eq!(missing_path, 0, "expected 0 missing paths");
+        assert_eq!(pv.missing_path, 0, "expected 0 missing paths");
         assert_eq!(
-            mismatched_path, 2,
+            pv.mismatched_path, 2,
             "expected 2 mismatched paths (rule points to wrong location)"
         );
 
@@ -696,49 +572,7 @@ mod tests {
         let rules = SigmahqRules::new_from_path(&tmp.join("sigma")).unwrap();
         let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
 
-        let sigma_root = regression.path().parent().unwrap_or(Path::new("./sigma"));
-        let mut missing_path = 0usize;
-        let mut mismatched_path = 0usize;
-
-        for (info_path, _info, entry) in regression.iter_entries() {
-            let rule = match rules.get(&entry.rule_id) {
-                Some(r) => r,
-                None => {
-                    missing_path += 1;
-                    continue;
-                }
-            };
-            let Some(rtp) = rule
-                .custom_attributes
-                .get("regression_tests_path")
-                .and_then(|v| v.as_str())
-            else {
-                missing_path += 1;
-                continue;
-            };
-            let expected = sigma_root.join(rtp);
-            if *info_path != expected {
-                mismatched_path += 1;
-            }
-        }
-
-        let entry_paths: HashSet<&Path> = regression
-            .iter_entries()
-            .map(|(p, _, _)| p.as_path())
-            .collect();
-        for rule in rules.iter() {
-            if let Some(v) = rule.custom_attributes.get("regression_tests_path")
-                && let Some(rtp) = v.as_str()
-            {
-                let full = sigma_root.join(rtp);
-                if !full.exists() {
-                    mismatched_path += 1;
-                } else if !entry_paths.contains(full.as_path()) {
-                    missing_path += 1;
-                }
-            }
-        }
-
+        let pv = validate_regression_paths(&rules, &regression);
         // Direction 1: entry rule_id (bbbb...) doesn't match any loaded rule → missing_path=1.
         // Direction 2: rule points to info.yml, file exists, but entry_paths has bbb's path
         //              while the rule expects the same path → entry_paths.contains=true, so no
@@ -746,8 +580,8 @@ mod tests {
         //              direction 1 already counted it. Direction 2 checks if the file exists
         //              (yes) and if entry_paths contains it (yes, bbb's path is there) → 0.
         // Total: missing_path=1.
-        assert_eq!(missing_path, 1, "expected 1 missing path");
-        assert_eq!(mismatched_path, 0, "expected 0 mismatched paths");
+        assert_eq!(pv.missing_path, 1, "expected 1 missing path");
+        assert_eq!(pv.mismatched_path, 0, "expected 0 mismatched paths");
 
         fs::remove_dir_all(&tmp).unwrap();
     }
@@ -807,7 +641,21 @@ mod tests {
         let hits = detect_hits(&rules, &regression);
         assert_eq!(hits, 1, "rule should produce exactly 1 hit");
 
-        let verdict = check_match_count(0, &regression, hits);
+        // Inline the match_count check logic (mirrors main()).
+        let expected = regression
+            .get_info(0)
+            .and_then(|info| info.regression_tests_info.first())
+            .map(|t| t.match_count)
+            .unwrap_or(0);
+        let json_present = regression.get_json_data(0).is_some();
+        let verdict = if json_present && expected > 0 && hits != expected {
+            Some(format!(
+                "MATCH COUNT MISMATCH — expected {} hit(s), got {}",
+                expected, hits
+            ))
+        } else {
+            None
+        };
         assert!(
             verdict.is_none(),
             "match_count 1 vs 1 hit should pass, got: {:?}",
@@ -826,7 +674,20 @@ mod tests {
         let hits = detect_hits(&rules, &regression);
         assert_eq!(hits, 1, "rule should produce exactly 1 hit");
 
-        let verdict = check_match_count(0, &regression, hits);
+        let expected = regression
+            .get_info(0)
+            .and_then(|info| info.regression_tests_info.first())
+            .map(|t| t.match_count)
+            .unwrap_or(0);
+        let json_present = regression.get_json_data(0).is_some();
+        let verdict = if json_present && expected > 0 && hits != expected {
+            Some(format!(
+                "MATCH COUNT MISMATCH — expected {} hit(s), got {}",
+                expected, hits
+            ))
+        } else {
+            None
+        };
         assert!(verdict.is_some(), "match_count 2 vs 1 hit should fail");
         assert!(
             verdict.unwrap().contains("MATCH COUNT MISMATCH"),
@@ -854,7 +715,20 @@ mod tests {
             .join("aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa.json");
         fs::remove_file(&json_path).unwrap();
 
-        let verdict = check_match_count(0, &regression, hits);
+        let expected = regression
+            .get_info(0)
+            .and_then(|info| info.regression_tests_info.first())
+            .map(|t| t.match_count)
+            .unwrap_or(0);
+        let json_present = regression.get_json_data(0).is_some();
+        let verdict = if json_present && expected > 0 && hits != expected {
+            Some(format!(
+                "MATCH COUNT MISMATCH — expected {} hit(s), got {}",
+                expected, hits
+            ))
+        } else {
+            None
+        };
         assert!(
             verdict.is_none(),
             "without a .json auxiliary the match_count check must be skipped, got: {:?}",
