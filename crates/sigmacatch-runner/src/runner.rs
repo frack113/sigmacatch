@@ -23,7 +23,7 @@ pub trait CollectorKind {
     fn name(&self) -> &'static str;
 
     /// Short description of the collection mode (startup log).
-    fn mode(&self) -> &'static str;
+    fn mode(&self) -> String;
 
     /// Channels to collect, or `None` when the collector does not need channel
     /// resolution (ETW). `Some(empty)` means nothing to collect (early exit).

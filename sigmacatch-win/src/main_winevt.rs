@@ -19,8 +19,8 @@ impl CollectorKind for WinevtCollector {
         "sigmacatch-channel"
     }
 
-    fn mode(&self) -> &'static str {
-        "winevt multi-channel"
+    fn mode(&self) -> String {
+        "winevt multi-channel".to_string()
     }
 
     fn channels(
