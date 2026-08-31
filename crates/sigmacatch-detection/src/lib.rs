@@ -625,7 +625,11 @@ detection:
         let test_sigma = dir.path().join("sigma");
         let test_rules = test_sigma.join("rules-threat-hunting/windows/process_access");
         fs::create_dir_all(&test_rules).unwrap();
-        fs::copy(&rule_path, test_rules.join("proc_access_win_susp_potential_shellcode_injection.yml")).unwrap();
+        fs::copy(
+            &rule_path,
+            test_rules.join("proc_access_win_susp_potential_shellcode_injection.yml"),
+        )
+        .unwrap();
 
         let rules = SigmahqRules::new_from_path(&test_sigma).unwrap();
         let mut engine = DetectionEngine::new(&rules).unwrap();
@@ -677,7 +681,11 @@ detection:
         let test_sigma = dir.path().join("sigma");
         let test_rules = test_sigma.join("rules/windows/process_creation");
         fs::create_dir_all(&test_rules).unwrap();
-        fs::copy(&rule_path, test_rules.join("proc_creation_win_susp_elevated_system_shell_uncommon_parent.yml")).unwrap();
+        fs::copy(
+            &rule_path,
+            test_rules.join("proc_creation_win_susp_elevated_system_shell_uncommon_parent.yml"),
+        )
+        .unwrap();
 
         let rules = SigmahqRules::new_from_path(&test_sigma).unwrap();
         let mut engine = DetectionEngine::new(&rules).unwrap();
@@ -724,9 +732,8 @@ detection:
             .join("..")
             .join("..")
             .join("sigma");
-        let rule_path = sigma_dir.join(
-            "rules/windows/registry/registry_event/registry_event_add_local_hidden_user.yml",
-        );
+        let rule_path = sigma_dir
+            .join("rules/windows/registry/registry_event/registry_event_add_local_hidden_user.yml");
         if !rule_path.exists() {
             return;
         }
@@ -734,7 +741,11 @@ detection:
         let test_sigma = dir.path().join("sigma");
         let test_rules = test_sigma.join("rules/windows/registry/registry_event");
         fs::create_dir_all(&test_rules).unwrap();
-        fs::copy(&rule_path, test_rules.join("registry_event_add_local_hidden_user.yml")).unwrap();
+        fs::copy(
+            &rule_path,
+            test_rules.join("registry_event_add_local_hidden_user.yml"),
+        )
+        .unwrap();
 
         let rules = SigmahqRules::new_from_path(&test_sigma).unwrap();
         let mut engine = DetectionEngine::new(&rules).unwrap();
@@ -776,9 +787,8 @@ detection:
             .join("..")
             .join("..")
             .join("sigma");
-        let rule_path = sigma_dir.join(
-            "rules/windows/registry/registry_event/registry_event_add_local_hidden_user.yml",
-        );
+        let rule_path = sigma_dir
+            .join("rules/windows/registry/registry_event/registry_event_add_local_hidden_user.yml");
         if !rule_path.exists() {
             return;
         }
@@ -786,7 +796,11 @@ detection:
         let test_sigma = dir.path().join("sigma");
         let test_rules = test_sigma.join("rules/windows/registry/registry_event");
         fs::create_dir_all(&test_rules).unwrap();
-        fs::copy(&rule_path, test_rules.join("registry_event_add_local_hidden_user.yml")).unwrap();
+        fs::copy(
+            &rule_path,
+            test_rules.join("registry_event_add_local_hidden_user.yml"),
+        )
+        .unwrap();
 
         let rules = SigmahqRules::new_from_path(&test_sigma).unwrap();
         let engine = DetectionEngine::new(&rules).unwrap();
@@ -814,7 +828,10 @@ detection:
         event.inject_logsource_fields();
 
         if let Some(explanation) = engine.explain_rule(&rule_id, &event) {
-            eprintln!("EXPLAIN: {}", serde_json::to_string_pretty(&explanation).unwrap());
+            eprintln!(
+                "EXPLAIN: {}",
+                serde_json::to_string_pretty(&explanation).unwrap()
+            );
         } else {
             eprintln!("EXPLAIN: no explanation available (rule not found in engine)");
         }
@@ -831,9 +848,8 @@ detection:
             .join("..")
             .join("..")
             .join("sigma");
-        let rule_path = sigma_dir.join(
-            "rules/windows/registry/registry_event/registry_event_add_local_hidden_user.yml",
-        );
+        let rule_path = sigma_dir
+            .join("rules/windows/registry/registry_event/registry_event_add_local_hidden_user.yml");
         if !rule_path.exists() {
             return;
         }
@@ -841,7 +857,11 @@ detection:
         let test_sigma = dir.path().join("sigma");
         let test_rules = test_sigma.join("rules/windows/registry/registry_event");
         fs::create_dir_all(&test_rules).unwrap();
-        fs::copy(&rule_path, test_rules.join("registry_event_add_local_hidden_user.yml")).unwrap();
+        fs::copy(
+            &rule_path,
+            test_rules.join("registry_event_add_local_hidden_user.yml"),
+        )
+        .unwrap();
 
         let rules = SigmahqRules::new_from_path(&test_sigma).unwrap();
 
@@ -892,17 +912,16 @@ detection:
     /// Debug: test registry rule WITH bloom but WITHOUT logsource pruning.
     #[test]
     fn debug_registry_without_logsource_pruning() {
+        use rsigma_eval::Engine;
         use rsigma_eval::event::JsonEvent;
         use rsigma_eval::pipeline::parse_pipeline;
-        use rsigma_eval::Engine;
 
         let sigma_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..")
             .join("sigma");
-        let rule_path = sigma_dir.join(
-            "rules/windows/registry/registry_event/registry_event_add_local_hidden_user.yml",
-        );
+        let rule_path = sigma_dir
+            .join("rules/windows/registry/registry_event/registry_event_add_local_hidden_user.yml");
         if !rule_path.exists() {
             return;
         }
@@ -910,7 +929,11 @@ detection:
         let test_sigma = dir.path().join("sigma");
         let test_rules = test_sigma.join("rules/windows/registry/registry_event");
         fs::create_dir_all(&test_rules).unwrap();
-        fs::copy(&rule_path, test_rules.join("registry_event_add_local_hidden_user.yml")).unwrap();
+        fs::copy(
+            &rule_path,
+            test_rules.join("registry_event_add_local_hidden_user.yml"),
+        )
+        .unwrap();
 
         let rules = SigmahqRules::new_from_path(&test_sigma).unwrap();
 

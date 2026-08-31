@@ -1564,7 +1564,12 @@ mod tests {
         // category stays unset (fail-open) so parent `registry_event` rules and
         // both add/delete subcategory rules remain reachable. EventType does
         // not change the injected (absent) category.
-        for event_type in [Some("CreateKey"), Some("DeleteKey"), Some("DeleteValue"), None] {
+        for event_type in [
+            Some("CreateKey"),
+            Some("DeleteKey"),
+            Some("DeleteValue"),
+            None,
+        ] {
             let json = mk(event_type);
             let mut event = Event::new(json.clone(), json, Vec::new());
             event.inject_logsource_fields();
