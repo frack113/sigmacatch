@@ -324,5 +324,3 @@ transformations:
       - type: logsource
         service: windefend
         product: windows
-
-
