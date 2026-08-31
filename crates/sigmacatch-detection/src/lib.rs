@@ -551,6 +551,412 @@ detection:
         assert_eq!(engine.get_alerts().len(), 1);
     }
 
+    /// Regression: WMI rule `win_wmi_persistence` with `filter_scmevent` must
+    /// exclude SCM Event Provider events. Before the fix, the pipeline mapped
+    /// `Provider` → `Event.System.Provider.#attributes.Name` (the WMI-Activity
+    /// provider) instead of `Event.UserData.Operation_EssStarted.Provider` (the
+    /// SCM filter field), so `filter_scmevent` never fired — false positive.
+    #[test]
+    fn test_wmi_filter_scmevent_excludes_scm_event() {
+        let sigma_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("sigma");
+        let wmi_rule_path = sigma_dir.join("rules/windows/builtin/wmi/win_wmi_persistence.yml");
+        if !wmi_rule_path.exists() {
+            return; // sigma submodule not cloned — skip
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let test_sigma = dir.path().join("sigma");
+        let test_rules = test_sigma.join("rules/windows/builtin/wmi");
+        fs::create_dir_all(&test_rules).unwrap();
+        fs::copy(&wmi_rule_path, test_rules.join("win_wmi_persistence.yml")).unwrap();
+
+        let rules = SigmahqRules::new_from_path(&test_sigma).unwrap();
+        let mut engine = DetectionEngine::new(&rules).unwrap();
+
+        // SCM Event Provider event that should be excluded by filter_scmevent.
+        let event_json = serde_json::json!({
+            "Event": {
+                "System": {
+                    "Provider": { "#attributes": { "Name": "Microsoft-Windows-WMI-Activity" } },
+                    "EventID": 5859,
+                    "Channel": "Microsoft-Windows-WMI-Activity/Operational"
+                },
+                "UserData": {
+                    "Operation_EssStarted": {
+                        "Provider": "SCM Event Provider",
+                        "Query": "select * from MSFT_SCMEventLogEvent",
+                        "User": "S-1-5-32-544",
+                        "PossibleCause": "Permanent"
+                    }
+                }
+            },
+            "product": "windows",
+            "service": "wmi"
+        });
+        let mut event = Event::new(event_json.clone(), event_json, Vec::new());
+        event.inject_logsource_fields();
+        engine.put_events(vec![event]);
+        engine.process_events();
+        let alerts = engine.get_alerts();
+        assert_eq!(
+            alerts.len(),
+            0,
+            "SCM Event Provider event must be excluded by filter_scmevent"
+        );
+    }
+
+    /// Regression: shellcode injection rule must match Sysmon EventID 10 with
+    /// GrantedAccess=0x1f3fff and CallTrace containing 'UNKNOWN'.
+    #[test]
+    fn test_shellcode_injection_matches_calltrace_unknown() {
+        let sigma_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("sigma");
+        let rule_path = sigma_dir.join(
+            "rules-threat-hunting/windows/process_access/proc_access_win_susp_potential_shellcode_injection.yml",
+        );
+        if !rule_path.exists() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let test_sigma = dir.path().join("sigma");
+        let test_rules = test_sigma.join("rules-threat-hunting/windows/process_access");
+        fs::create_dir_all(&test_rules).unwrap();
+        fs::copy(&rule_path, test_rules.join("proc_access_win_susp_potential_shellcode_injection.yml")).unwrap();
+
+        let rules = SigmahqRules::new_from_path(&test_sigma).unwrap();
+        let mut engine = DetectionEngine::new(&rules).unwrap();
+
+        let event_json = serde_json::json!({
+            "Event": {
+                "System": {
+                    "Provider": { "#attributes": { "Name": "Microsoft-Windows-Sysmon" } },
+                    "EventID": 10,
+                    "Channel": "Microsoft-Windows-Sysmon/Operational"
+                },
+                "EventData": {
+                    "SourceImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                    "TargetImage": "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                    "GrantedAccess": "0x1f3fff",
+                    "CallTrace": "C:\\WINDOWS\\SYSTEM32\\ntdll.dll+160844|UNKNOWN(00007FF8E480D033)"
+                }
+            },
+            "product": "windows",
+            "category": "process_access"
+        });
+        let mut event = Event::new(event_json.clone(), event_json, Vec::new());
+        event.inject_logsource_fields();
+        engine.put_events(vec![event]);
+        engine.process_events();
+        let alerts = engine.get_alerts();
+        assert_eq!(
+            alerts.len(),
+            1,
+            "shellcode injection rule must match CallTrace with UNKNOWN"
+        );
+    }
+
+    /// Regression: elevated system shell rule must match Sysmon EventID 1 with
+    /// User containing 'AUTORI' and LogonId 0x3e7.
+    #[test]
+    fn test_elevated_system_shell_matches_user_autori() {
+        let sigma_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("sigma");
+        let rule_path = sigma_dir.join(
+            "rules/windows/process_creation/proc_creation_win_susp_elevated_system_shell_uncommon_parent.yml",
+        );
+        if !rule_path.exists() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let test_sigma = dir.path().join("sigma");
+        let test_rules = test_sigma.join("rules/windows/process_creation");
+        fs::create_dir_all(&test_rules).unwrap();
+        fs::copy(&rule_path, test_rules.join("proc_creation_win_susp_elevated_system_shell_uncommon_parent.yml")).unwrap();
+
+        let rules = SigmahqRules::new_from_path(&test_sigma).unwrap();
+        let mut engine = DetectionEngine::new(&rules).unwrap();
+
+        let event_json = serde_json::json!({
+            "Event": {
+                "System": {
+                    "Provider": { "#attributes": { "Name": "Microsoft-Windows-Sysmon" } },
+                    "EventID": 1,
+                    "Channel": "Microsoft-Windows-Sysmon/Operational"
+                },
+                "EventData": {
+                    "Image": "C:\\Windows\\SysWOW64\\cmd.exe",
+                    "OriginalFileName": "Cmd.Exe",
+                    "CommandLine": "cmd.exe",
+                    "CurrentDirectory": "C:\\WINDOWS\\system32\\",
+                    "User": "AUTORITE NT\\Système",
+                    "LogonId": "0x3e7",
+                    "ParentImage": "C:\\Windows\\DOBOsAEp.exe",
+                    "ParentCommandLine": "C:\\WINDOWS\\DOBOsAEp.exe"
+                }
+            },
+            "product": "windows",
+            "category": "process_creation"
+        });
+        let mut event = Event::new(event_json.clone(), event_json, Vec::new());
+        event.inject_logsource_fields();
+        engine.put_events(vec![event]);
+        engine.process_events();
+        let alerts = engine.get_alerts();
+        assert_eq!(
+            alerts.len(),
+            1,
+            "elevated system shell rule must match User with AUTORI"
+        );
+    }
+
+    /// Regression: registry_event_add_local_hidden_user rule must match
+    /// Sysmon EventID 13 with TargetObject containing SAM path and Image
+    /// ending with lsass.exe.
+    #[test]
+    fn test_registry_hidden_user_matches() {
+        let sigma_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("sigma");
+        let rule_path = sigma_dir.join(
+            "rules/windows/registry/registry_event/registry_event_add_local_hidden_user.yml",
+        );
+        if !rule_path.exists() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let test_sigma = dir.path().join("sigma");
+        let test_rules = test_sigma.join("rules/windows/registry/registry_event");
+        fs::create_dir_all(&test_rules).unwrap();
+        fs::copy(&rule_path, test_rules.join("registry_event_add_local_hidden_user.yml")).unwrap();
+
+        let rules = SigmahqRules::new_from_path(&test_sigma).unwrap();
+        let mut engine = DetectionEngine::new(&rules).unwrap();
+
+        let event_json = serde_json::json!({
+            "Event": {
+                "System": {
+                    "Provider": { "#attributes": { "Name": "Microsoft-Windows-Sysmon" } },
+                    "EventID": 13,
+                    "Channel": "Microsoft-Windows-Sysmon/Operational"
+                },
+                "EventData": {
+                    "RuleName": "Hidden Local Account Created",
+                    "EventType": "SetValue",
+                    "Image": "C:\\Windows\\system32\\lsass.exe",
+                    "TargetObject": "HKLM\\SAM\\SAM\\Domains\\Account\\Users\\Names\\hideme0007$\\(Default)",
+                    "Details": "Binary Data"
+                }
+            },
+            "product": "windows",
+            "category": "registry_event"
+        });
+        let mut event = Event::new(event_json.clone(), event_json, Vec::new());
+        event.inject_logsource_fields();
+        engine.put_events(vec![event]);
+        engine.process_events();
+        let alerts = engine.get_alerts();
+        assert_eq!(
+            alerts.len(),
+            1,
+            "registry hidden user rule must match Sysmon EventID 13 with SAM path"
+        );
+    }
+
+    /// Debug: explain why the registry hidden user rule does or doesn't match.
+    #[test]
+    fn debug_registry_hidden_user_explain() {
+        let sigma_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("sigma");
+        let rule_path = sigma_dir.join(
+            "rules/windows/registry/registry_event/registry_event_add_local_hidden_user.yml",
+        );
+        if !rule_path.exists() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let test_sigma = dir.path().join("sigma");
+        let test_rules = test_sigma.join("rules/windows/registry/registry_event");
+        fs::create_dir_all(&test_rules).unwrap();
+        fs::copy(&rule_path, test_rules.join("registry_event_add_local_hidden_user.yml")).unwrap();
+
+        let rules = SigmahqRules::new_from_path(&test_sigma).unwrap();
+        let engine = DetectionEngine::new(&rules).unwrap();
+
+        let rule_id = Uuid::parse_str("460479f3-80b7-42da-9c43-2cc1d54dbccd").unwrap();
+        let event_json = serde_json::json!({
+            "Event": {
+                "System": {
+                    "Provider": { "#attributes": { "Name": "Microsoft-Windows-Sysmon" } },
+                    "EventID": 13,
+                    "Channel": "Microsoft-Windows-Sysmon/Operational"
+                },
+                "EventData": {
+                    "RuleName": "Hidden Local Account Created",
+                    "EventType": "SetValue",
+                    "Image": "C:\\Windows\\system32\\lsass.exe",
+                    "TargetObject": "HKLM\\SAM\\SAM\\Domains\\Account\\Users\\Names\\hideme0007$\\(Default)",
+                    "Details": "Binary Data"
+                }
+            },
+            "product": "windows",
+            "category": "registry_event"
+        });
+        let mut event = Event::new(event_json.clone(), event_json, Vec::new());
+        event.inject_logsource_fields();
+
+        if let Some(explanation) = engine.explain_rule(&rule_id, &event) {
+            eprintln!("EXPLAIN: {}", serde_json::to_string_pretty(&explanation).unwrap());
+        } else {
+            eprintln!("EXPLAIN: no explanation available (rule not found in engine)");
+        }
+    }
+
+    /// Debug: test registry rule WITHOUT bloom filter to isolate the issue.
+    #[test]
+    fn debug_registry_without_bloom() {
+        use rsigma_eval::event::JsonEvent;
+        use rsigma_eval::pipeline::parse_pipeline;
+        use rsigma_eval::{Engine, LogSourceExtractor};
+
+        let sigma_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("sigma");
+        let rule_path = sigma_dir.join(
+            "rules/windows/registry/registry_event/registry_event_add_local_hidden_user.yml",
+        );
+        if !rule_path.exists() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let test_sigma = dir.path().join("sigma");
+        let test_rules = test_sigma.join("rules/windows/registry/registry_event");
+        fs::create_dir_all(&test_rules).unwrap();
+        fs::copy(&rule_path, test_rules.join("registry_event_add_local_hidden_user.yml")).unwrap();
+
+        let rules = SigmahqRules::new_from_path(&test_sigma).unwrap();
+
+        // Build engine WITHOUT bloom filter
+        let win_logsource = parse_pipeline(WIN_LOGSOURCE_PIPELINE).unwrap();
+        let win_field = parse_pipeline(WIN_FIELD_PIPELINE).unwrap();
+        let lnx_logsource = parse_pipeline(LNX_LOGSOURCE_PIPELINE).unwrap();
+        let lnx_field = parse_pipeline(LNX_FIELD_PIPELINE).unwrap();
+        let mut engine = Engine::new();
+        engine.set_include_event(true);
+        engine.set_bloom_prefilter(false); // DISABLE bloom
+        engine.set_logsource_extractor(Some(LogSourceExtractor::new()));
+        engine.add_pipeline(win_logsource);
+        engine.add_pipeline(win_field);
+        engine.add_pipeline(lnx_logsource);
+        engine.add_pipeline(lnx_field);
+        let _errors = engine.add_rules(rules.rules());
+
+        let event_json = serde_json::json!({
+            "Event": {
+                "System": {
+                    "Provider": { "#attributes": { "Name": "Microsoft-Windows-Sysmon" } },
+                    "EventID": 13,
+                    "Channel": "Microsoft-Windows-Sysmon/Operational"
+                },
+                "EventData": {
+                    "RuleName": "Hidden Local Account Created",
+                    "EventType": "SetValue",
+                    "Image": "C:\\Windows\\system32\\lsass.exe",
+                    "TargetObject": "HKLM\\SAM\\SAM\\Domains\\Account\\Users\\Names\\hideme0007$\\(Default)",
+                    "Details": "Binary Data"
+                }
+            },
+            "product": "windows",
+            "category": "registry_event"
+        });
+        let mut event = Event::new(event_json.clone(), event_json, Vec::new());
+        event.inject_logsource_fields();
+        let json_event = JsonEvent::borrow(&event.event_json);
+        let matches = engine.evaluate(&json_event);
+        eprintln!("Matches without bloom: {}", matches.len());
+        for m in &matches {
+            eprintln!("  Rule: {:?}", m.header.rule_id);
+        }
+        assert_eq!(matches.len(), 1, "must match without bloom filter");
+    }
+
+    /// Debug: test registry rule WITH bloom but WITHOUT logsource pruning.
+    #[test]
+    fn debug_registry_without_logsource_pruning() {
+        use rsigma_eval::event::JsonEvent;
+        use rsigma_eval::pipeline::parse_pipeline;
+        use rsigma_eval::Engine;
+
+        let sigma_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("sigma");
+        let rule_path = sigma_dir.join(
+            "rules/windows/registry/registry_event/registry_event_add_local_hidden_user.yml",
+        );
+        if !rule_path.exists() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let test_sigma = dir.path().join("sigma");
+        let test_rules = test_sigma.join("rules/windows/registry/registry_event");
+        fs::create_dir_all(&test_rules).unwrap();
+        fs::copy(&rule_path, test_rules.join("registry_event_add_local_hidden_user.yml")).unwrap();
+
+        let rules = SigmahqRules::new_from_path(&test_sigma).unwrap();
+
+        let win_logsource = parse_pipeline(WIN_LOGSOURCE_PIPELINE).unwrap();
+        let win_field = parse_pipeline(WIN_FIELD_PIPELINE).unwrap();
+        let lnx_logsource = parse_pipeline(LNX_LOGSOURCE_PIPELINE).unwrap();
+        let lnx_field = parse_pipeline(LNX_FIELD_PIPELINE).unwrap();
+        let mut engine = Engine::new();
+        engine.set_include_event(true);
+        engine.set_bloom_prefilter(true); // bloom ON
+        engine.set_logsource_extractor(None); // DISABLE logsource pruning
+        engine.add_pipeline(win_logsource);
+        engine.add_pipeline(win_field);
+        engine.add_pipeline(lnx_logsource);
+        engine.add_pipeline(lnx_field);
+        let _errors = engine.add_rules(rules.rules());
+
+        let event_json = serde_json::json!({
+            "Event": {
+                "System": {
+                    "Provider": { "#attributes": { "Name": "Microsoft-Windows-Sysmon" } },
+                    "EventID": 13,
+                    "Channel": "Microsoft-Windows-Sysmon/Operational"
+                },
+                "EventData": {
+                    "RuleName": "Hidden Local Account Created",
+                    "EventType": "SetValue",
+                    "Image": "C:\\Windows\\system32\\lsass.exe",
+                    "TargetObject": "HKLM\\SAM\\SAM\\Domains\\Account\\Users\\Names\\hideme0007$\\(Default)",
+                    "Details": "Binary Data"
+                }
+            },
+            "product": "windows",
+            "category": "registry_event"
+        });
+        let mut event = Event::new(event_json.clone(), event_json, Vec::new());
+        event.inject_logsource_fields();
+        let json_event = JsonEvent::borrow(&event.event_json);
+        let matches = engine.evaluate(&json_event);
+        eprintln!("Matches without logsource pruning: {}", matches.len());
+        for m in &matches {
+            eprintln!("  Rule: {:?}", m.header.rule_id);
+        }
+        assert_eq!(matches.len(), 1, "must match without logsource pruning");
+    }
+
     fn channels_for(logsource: &str) -> Vec<String> {
         let dir = tempfile::tempdir().unwrap();
         let sigma_dir = dir.path().join("sigma");
