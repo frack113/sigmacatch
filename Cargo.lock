@@ -1599,7 +1599,7 @@ dependencies = [
 
 [[package]]
 name = "input-windows-evtx"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "async-trait",
  "evtx",
@@ -3091,7 +3091,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sigmacatch-check"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "anyhow",
  "input-windows-evtx",
@@ -3107,7 +3107,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-config"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "serde",
  "sigmacatch-repo",
@@ -3121,7 +3121,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-detection"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "rsigma-eval",
  "serde",
@@ -3136,14 +3136,14 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-ebpf-common"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "bytemuck",
 ]
 
 [[package]]
 name = "sigmacatch-evtx-writer"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "chrono",
  "crc32fast",
@@ -3156,7 +3156,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-lnx"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3184,7 +3184,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-logger"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "sigmacatch-config",
  "thiserror 2.0.20",
@@ -3194,7 +3194,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-regression"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "chrono",
  "input-windows-evtx",
@@ -3212,7 +3212,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-repo"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3236,7 +3236,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-rule"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "dunce",
  "rsigma-parser",
@@ -3250,7 +3250,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-runner"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3269,7 +3269,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-types"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "async-trait",
  "phf",
@@ -3283,7 +3283,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-win"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "anyhow",
  "async-trait",

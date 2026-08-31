@@ -102,12 +102,33 @@ impl Event {
 
     /// EventID extracted from the parsed JSON.
     fn event_id(&self) -> u32 {
-        self.event_json
+        let raw = self
+            .event_json
             .get("Event")
             .and_then(|v| v.get("System"))
-            .and_then(|v| v.get("EventID"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32
+            .and_then(|v| v.get("EventID"));
+        match raw {
+            Some(Value::Number(n)) => n.as_u64().unwrap_or(0) as u32,
+            Some(Value::String(s)) => s.parse::<u64>().ok().unwrap_or(0) as u32,
+            // Winevt XML encodes `<EventID Qualifiers="..">400</EventID>` as an
+            // object with a `#text` member, e.g. `{"#attributes": {...}, "#text": "400"}`.
+            // Also handles `{"EventID": {"#text": "400"}}` and `{"EventID": 400}`.
+            Some(Value::Object(o)) => {
+                if let Some(event_id) = o.get("EventID") {
+                    match event_id {
+                        Value::Number(n) => n.as_u64().unwrap_or(0) as u32,
+                        Value::String(s) => s.parse::<u64>().ok().unwrap_or(0) as u32,
+                        Value::Object(o) => {
+                            o.get("#text").and_then(|t| t.as_u64()).unwrap_or(0) as u32
+                        }
+                        _ => 0,
+                    }
+                } else {
+                    0
+                }
+            }
+            _ => 0,
+        }
     }
 
     /// Provider extracted from the parsed JSON (System.Provider.Name).
@@ -172,8 +193,12 @@ impl Event {
                 .get(channel.as_str())
                 .map(|s| s.to_string())
                 .or_else(|| {
-                    PROVIDER_TO_SERVICE
+                    // Provider → channel → service (two-step resolution).
+                    // Kernel ETW providers map to synthetic channels that
+                    // resolve to `etw` via CHANNEL_TO_SERVICE.
+                    ETW_PROVIDER_TO_CHANNEL
                         .get(provider.as_str())
+                        .and_then(|ch| CHANNEL_TO_SERVICE.get(ch))
                         .map(|s| s.to_string())
                 })
         });
@@ -191,18 +216,98 @@ impl Event {
                 }
             })
             .or_else(|| category_exclusive_sentinel(&channel))
-            .map(str::to_string);
+            .map(str::to_string)
+            // The Sysmon registry subcategories (registry_add / registry_set /
+            // registry_rename / registry_delete) are children of the Sigma
+            // `registry_event` category. rsigma-eval prunes rules by exact
+            // category match, so injecting a subcategory would drop the parent
+            // `registry_event` rules (the majority of SigmaHQ) while injecting
+            // the parent would drop the subcategory rules. Sysmon EID 12/13/14
+            // are exclusively registry, so leaving `category` unset (fail-open)
+            // keeps both parent- and subcategory-typed rules reachable; the
+            // `service: sysmon` + `product: windows` pruning still applies.
+            .filter(|c| !is_registry_subcategory(c));
+
+        // Classic PowerShell categories (ps_classic_start / ps_classic_script) are
+        // detected by Sigma rules via the generic `Data` field, but rsigma has no
+        // dedicated powershell_classic field mapping and would resolve `Data` to a
+        // literal (missing) JSON path. Surface the EventData content under `Data`
+        // so `Data|contains` matching works.
+        let ps_data: Option<String> = match &category {
+            Some(c) if c == "ps_classic_start" || c == "ps_classic_script" => {
+                eventdata_to_string(&self.event_json)
+            }
+            _ => None,
+        };
 
         if let Value::Object(ref mut map) = self.event_json {
             map.insert("product".into(), Value::String(product.into()));
             if let Some(s) = service {
                 map.insert("service".into(), Value::String(s));
             }
-            if let Some(c) = category {
-                map.insert("category".into(), Value::String(c));
+            if let Some(c) = &category {
+                map.insert("category".into(), Value::String(c.clone()));
+            }
+            if let Some(data_str) = ps_data {
+                map.insert("Data".into(), Value::String(data_str));
             }
         }
     }
+}
+
+/// Flatten the `Event.EventData` values into a single string so the generic
+/// Sigma `Data` field can be matched against classic PowerShell event content
+/// (e.g. the `HostApplication` command line for `ps_classic_start`).
+fn eventdata_to_string(event_json: &Value) -> Option<String> {
+    let event = event_json.get("Event")?;
+    let eventdata = event.get("EventData")?;
+    let map = eventdata.as_object()?;
+    let mut parts: Vec<String> = Vec::new();
+    for v in map.values() {
+        let s = match v {
+            Value::Number(n) => n.to_string(),
+            Value::Bool(b) => b.to_string(),
+            Value::String(s) => s.as_str().to_string(),
+            Value::Array(arr) => arr
+                .iter()
+                .filter_map(|val| match val {
+                    Value::String(s) => Some(s.as_str().to_string()),
+                    _ => None,
+                })
+                .collect::<Vec<String>>()
+                .join(","),
+            Value::Object(_) => "object".to_string(),
+            Value::Null => "null".to_string(),
+        };
+        parts.push(s);
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n"))
+    }
+}
+
+/// Whether the event's `EventData.EventType` marks a Sysmon registry deletion
+/// (DeleteKey or DeleteValue), refining EventID 12 to the `registry_delete`
+/// Sigma category instead of `registry_add`.
+fn is_registry_delete_event_type(event_json: &Value) -> bool {
+    matches!(
+        event_json
+            .pointer("/Event/EventData/EventType")
+            .and_then(Value::as_str),
+        Some("DeleteKey") | Some("DeleteValue")
+    )
+}
+
+/// True when `c` is a Sysmon registry subcategory that must rely on the
+/// fail-open `registry_event` category (rsigma-eval cannot match the parent
+/// `registry_event` against a child subcategory value).
+fn is_registry_subcategory(c: &str) -> bool {
+    matches!(
+        c,
+        "registry_add" | "registry_set" | "registry_rename" | "registry_delete"
+    )
 }
 
 // ─── LogSource mapping tables ───────────────────────────────────────────────
@@ -380,9 +485,11 @@ pub static CATEGORY_CHANNELS: phf::Map<&'static str, &'static [&'static str]> = 
 };
 
 /// ETW provider name → Windows event channel, used to route generic
-/// (non-Sysmon) events. Extension point for covering more Winevt channels
-/// via ETW — adding a provider only requires a matching entry here.
-pub static PROVIDER_NAME_TO_CHANNEL: phf::Map<&'static str, &'static str> = phf::phf_map! {
+/// (non-Sysmon) events. Kernel providers (process, network, file, registry)
+/// map to synthetic channels so the two-step resolution (provider→channel→service)
+/// works uniformly — the synthetic channels are not subscribable but give
+/// `inject_logsource_fields` a real service via the `etw` fallback.
+pub static ETW_PROVIDER_TO_CHANNEL: phf::Map<&'static str, &'static str> = phf::phf_map! {
     "Microsoft-Windows-Security-Auditing" => "Security",
     "Microsoft-Windows-Windows Defender" => "Microsoft-Windows-Windows Defender/Operational",
     "Microsoft-Windows-Windows Firewall With Advanced Security" => "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall",
@@ -426,6 +533,9 @@ pub static PROVIDER_NAME_TO_CHANNEL: phf::Map<&'static str, &'static str> = phf:
     "Microsoft-Windows-AppLocker" => "Microsoft-Windows-AppLocker/EXE and DLL",
     "MSExchange Management" => "MSExchange Management",
     "Windows PowerShell" => "Windows PowerShell",
+    // Sysmon provider — falls back from unknown channels (e.g. ForwardedEvents)
+    // to the real Sysmon channel so inject_logsource_fields derives service=sysmon.
+    "Microsoft-Windows-Sysmon" => "Microsoft-Windows-Sysmon/Operational",
 };
 
 /// Channel:EventID → Sigma category.
@@ -468,6 +578,11 @@ static CHANNEL_EVENT_TO_CATEGORY: phf::Map<&'static str, &'static str> = phf::ph
     "Microsoft-Windows-PowerShell/Operational:4104" => "ps_script",
     "PowerShellCore/Operational:4103" => "ps_module",
     "PowerShellCore/Operational:4104" => "ps_script",
+    "Microsoft-Windows-WMI-Activity/Operational:5857" => "wmi_event",
+    "Microsoft-Windows-WMI-Activity/Operational:5858" => "wmi_event",
+    "Microsoft-Windows-WMI-Activity/Operational:5859" => "wmi_event",
+    "Microsoft-Windows-WMI-Activity/Operational:5860" => "wmi_event",
+    "Microsoft-Windows-WMI-Activity/Operational:5861" => "wmi_event",
 };
 
 /// Sub-category overrides (higher specificity than CHANNEL_EVENT_TO_CATEGORY).
@@ -475,23 +590,6 @@ static CHANNEL_EVENT_TO_SUBCATEGORY: phf::Map<&'static str, &'static str> = phf:
     "Microsoft-Windows-Sysmon/Operational:12" => "registry_add",
     "Microsoft-Windows-Sysmon/Operational:13" => "registry_set",
     "Microsoft-Windows-Sysmon/Operational:14" => "registry_rename",
-};
-
-/// Provider → Sigma service fallback (when channel lookup fails).
-static PROVIDER_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_map! {
-    "Microsoft-Windows-Sysmon" => "sysmon",
-    "Microsoft-Windows-Security-Auditing" => "security",
-    "Microsoft-Windows-PowerShell" => "powershell",
-    "Microsoft-Windows-Windows Defender" => "windefend",
-    "Service Control Manager" => "system",
-    "Microsoft-Windows-Kernel-Process" => "process",
-    "Microsoft-Windows-Kernel-Network" => "network",
-    "Microsoft-Windows-Kernel-File" => "file",
-    "Microsoft-Windows-Kernel-Registry" => "registry",
-    "Microsoft-Windows-DNS-Client" => "dns",
-    "Microsoft-Windows-SmbClient" => "smbclient",
-    "Microsoft-Windows-WMI-Activity" => "wmi",
-    "Microsoft-Windows-TaskScheduler" => "taskscheduler",
 };
 
 /// Resolve category from channel + event_id (subcategory overrides take precedence).
@@ -523,18 +621,6 @@ fn category_exclusive_sentinel(channel: &str) -> Option<&'static str> {
         | "Windows PowerShell" => Some("ps_other"),
         _ => None,
     }
-}
-
-/// Whether the event's `EventData.EventType` marks a Sysmon registry deletion
-/// (DeleteKey or DeleteValue), refining EventID 12 to the `registry_delete`
-/// Sigma category instead of `registry_add`.
-fn is_registry_delete_event_type(event_json: &Value) -> bool {
-    matches!(
-        event_json
-            .pointer("/Event/EventData/EventType")
-            .and_then(Value::as_str),
-        Some("DeleteKey") | Some("DeleteValue")
-    )
 }
 
 // ─── XML parsing ────────────────────────────────────────────────────────────
@@ -885,19 +971,28 @@ fn node_to_value_raw(node: Node, _is_root: bool) -> Value {
 
 fn handle_event_data(node: Node) -> Value {
     let mut map = Map::new();
+    let mut unnamed_idx: usize = 0;
     for child in node.children() {
         if child.is_element() && child.tag_name().name() == "Data" {
-            let name = child.attribute("Name").unwrap_or("");
-            if !name.is_empty() {
-                // Strip spaces from key names so field paths like
-                // `Event.EventData.SourceName` resolve without quoted notation.
-                let key: String = name.chars().filter(|c| *c != ' ').collect();
-                let value = child
-                    .text()
-                    .map(|t| t.trim().to_string())
-                    .unwrap_or_default();
-                map.insert(key, Value::String(value));
-            }
+            let name = child.attribute("Name").unwrap_or("").to_string();
+            let value = child
+                .text()
+                .map(|t| t.trim().to_string())
+                .unwrap_or_default();
+            // Classic PowerShell events (EventID 400/600, …) emit <Data>
+            // elements *without* a Name attribute. Surface them under positional
+            // keys (`Data0`, `Data1`, …) so their content (e.g. the
+            // `HostApplication` line inside Event 400) is reachable for
+            // `Data|contains` matching. Named <Data> keeps its name (spaces
+            // stripped) so paths like `Event.EventData.SourceName` still resolve.
+            let key: String = if name.is_empty() {
+                let k = format!("Data{unnamed_idx}");
+                unnamed_idx += 1;
+                k
+            } else {
+                name.chars().filter(|c| *c != ' ').collect()
+            };
+            map.insert(key, Value::String(value));
         }
     }
     Value::Object(map)
@@ -915,16 +1010,26 @@ fn handle_event_data_raw(node: Node) -> Value {
         map.insert("#attributes".into(), Value::Object(attr_map));
     }
 
+    let mut unnamed_idx: usize = 0;
     for child in node.children() {
         if child.is_element() && child.tag_name().name() == "Data" {
-            let name = child.attribute("Name").unwrap_or("");
+            let name = child.attribute("Name").unwrap_or("").to_string();
+            // Preserve original key names (with spaces) for regression data.
+            // Unnamed <Data> (classic PowerShell) gets a positional key.
             if !name.is_empty() {
-                // Preserve original key names (with spaces) for regression data.
                 let value = child
                     .text()
                     .map(|t| t.trim().to_string())
                     .unwrap_or_default();
-                map.insert(name.to_string(), normalize_eventdata_value(name, &value));
+                map.insert(name.to_string(), normalize_eventdata_value(&name, &value));
+            } else {
+                let value = child
+                    .text()
+                    .map(|t| t.trim().to_string())
+                    .unwrap_or_default();
+                let k = format!("Data{unnamed_idx}");
+                unnamed_idx += 1;
+                map.insert(k.clone(), normalize_eventdata_value(&k, &value));
             }
         }
     }
@@ -1430,11 +1535,10 @@ mod tests {
         event.inject_logsource_fields();
 
         assert_eq!(event.event_json["service"].as_str().unwrap(), "sysmon");
-        // EID 13 → registry_set (subcategory override, not registry_event)
-        assert_eq!(
-            event.event_json["category"].as_str().unwrap(),
-            "registry_set"
-        );
+        // EID 13 → registry_set is a subcategory of registry_event; rsigma-eval
+        // prunes by exact category, so it stays unset (fail-open) to keep both
+        // `registry_event` and `registry_set` rules reachable.
+        assert!(event.event_json.get("category").is_none());
     }
 
     #[test]
@@ -1456,41 +1560,24 @@ mod tests {
             })
         };
 
-        // CreateKey → registry_add
-        let json = mk(Some("CreateKey"));
-        let mut event = Event::new(json.clone(), json, Vec::new());
-        event.inject_logsource_fields();
-        assert_eq!(
-            event.event_json["category"].as_str().unwrap(),
-            "registry_add"
-        );
-
-        // DeleteKey → registry_delete
-        let json = mk(Some("DeleteKey"));
-        let mut event = Event::new(json.clone(), json, Vec::new());
-        event.inject_logsource_fields();
-        assert_eq!(
-            event.event_json["category"].as_str().unwrap(),
-            "registry_delete"
-        );
-
-        // DeleteValue → registry_delete
-        let json = mk(Some("DeleteValue"));
-        let mut event = Event::new(json.clone(), json, Vec::new());
-        event.inject_logsource_fields();
-        assert_eq!(
-            event.event_json["category"].as_str().unwrap(),
-            "registry_delete"
-        );
-
-        // Missing EventType → fall back to registry_add
-        let json = mk(None);
-        let mut event = Event::new(json.clone(), json, Vec::new());
-        event.inject_logsource_fields();
-        assert_eq!(
-            event.event_json["category"].as_str().unwrap(),
-            "registry_add"
-        );
+        // EID 12 is a registry subcategory (registry_add / registry_delete);
+        // category stays unset (fail-open) so parent `registry_event` rules and
+        // both add/delete subcategory rules remain reachable. EventType does
+        // not change the injected (absent) category.
+        for event_type in [
+            Some("CreateKey"),
+            Some("DeleteKey"),
+            Some("DeleteValue"),
+            None,
+        ] {
+            let json = mk(event_type);
+            let mut event = Event::new(json.clone(), json, Vec::new());
+            event.inject_logsource_fields();
+            assert!(
+                event.event_json.get("category").is_none(),
+                "EID 12 registry event must not inject a subcategory"
+            );
+        }
 
         // Non-registry events keep their own category
         let json = serde_json::json!({

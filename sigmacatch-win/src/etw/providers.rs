@@ -12,7 +12,7 @@
 /// An ETW provider to enable, with its subscription keywords and level.
 pub struct EtwProvider {
     /// Provider name, used as `Provider@Name` in the synthesized XML — feeds
-    /// the `PROVIDER_TO_SERVICE` mapping in `sigmacatch-types`.
+    /// the `ETW_PROVIDER_TO_CHANNEL` mapping in `sigmacatch-types`.
     pub name: &'static str,
     /// Provider GUID in canonical UUID form (`8-4-4-4-12`, hex).
     pub guid: &'static str,

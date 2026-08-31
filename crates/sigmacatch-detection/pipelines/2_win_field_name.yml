@@ -3,6 +3,28 @@ name: flatten_winevt
 priority: 2
 
 transformations:
+  # ─── WMI-Activity-specific field name mapping (MUST precede windows_fields) ───
+  # WMI-Activity/Operational EID 5858 (ClientFailure) uses UserData.Operation_ClientFailure
+  # instead of EventData. Map Operation to the correct nested path.
+  # EID 5859/5861 (filter registration / filter-to-consumer binding) stores
+  # Provider, Query, User, PossibleCause under UserData.Operation_EssStarted.
+  # filter_scmevent in SigmaHQ rules checks these fields — they must resolve
+  # to the correct nested path or the filter never fires (false positive).
+  # This block MUST come before windows_fields so the more-specific WMI mapping
+  # rewrites Provider/Query/User/PossibleCause before the general mapping does.
+  - id: wmi_activity_fields
+    type: field_name_mapping
+    mapping:
+      Operation: Event.UserData.Operation_ClientFailure.Operation
+      Provider: Event.UserData.Operation_EssStarted.Provider
+      Query: Event.UserData.Operation_EssStarted.Query
+      User: Event.UserData.Operation_EssStarted.User
+      PossibleCause: Event.UserData.Operation_EssStarted.PossibleCause
+    rule_conditions:
+      - type: logsource
+        service: wmi
+        product: windows
+
   # System fields
   - id: windows_fields
     type: field_name_mapping
@@ -301,16 +323,4 @@ transformations:
     rule_conditions:
       - type: logsource
         service: windefend
-        product: windows
-
-  # ─── WMI-Activity-specific field name mapping ───
-  # WMI-Activity/Operational EID 5858 (ClientFailure) uses UserData.Operation_ClientFailure
-  # instead of EventData. Map Operation to the correct nested path.
-  - id: wmi_activity_fields
-    type: field_name_mapping
-    mapping:
-      Operation: Event.UserData.Operation_ClientFailure.Operation
-    rule_conditions:
-      - type: logsource
-        service: wmi
         product: windows
