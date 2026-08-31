@@ -411,21 +411,20 @@ fn parse_etw_property(
         if let Ok(s) = parser.try_parse::<String>(name) {
             return (!s.is_empty()).then_some(s);
         }
+        macro_rules! try_numeric {
+            ($ty:ty) => {
+                if let Ok(n) = parser.try_parse::<$ty>(name) {
+                    return Some(n.to_string());
+                }
+            };
+        }
         if let Ok(ip) = parser.try_parse::<std::net::IpAddr>(name) {
             return Some(ip.to_string());
         }
-        if let Ok(n) = parser.try_parse::<u8>(name) {
-            return Some(n.to_string());
-        }
-        if let Ok(n) = parser.try_parse::<u16>(name) {
-            return Some(n.to_string());
-        }
-        if let Ok(n) = parser.try_parse::<u32>(name) {
-            return Some(n.to_string());
-        }
-        if let Ok(n) = parser.try_parse::<u64>(name) {
-            return Some(n.to_string());
-        }
+        try_numeric!(u8);
+        try_numeric!(u16);
+        try_numeric!(u32);
+        try_numeric!(u64);
         if let Ok(b) = parser.try_parse::<bool>(name) {
             return Some(b.to_string());
         }

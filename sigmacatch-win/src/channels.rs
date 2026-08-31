@@ -112,6 +112,26 @@ impl EventCollector {
         }
     }
 
+    /// Close unprocessed event handles remaining in the batch after index `skip`.
+    #[cfg(windows)]
+    fn close_remaining_handles(event_handles: &mut [isize], events_fetched: u32, skip: usize) {
+        for handle in event_handles
+            .iter_mut()
+            .take(events_fetched as usize)
+            .skip(skip)
+        {
+            if *handle != 0 {
+                // SAFETY: non-zero entries are live EVT_HANDLEs from EvtNext
+                // this cycle, not yet closed nor zeroed; each is closed
+                // exactly once here.
+                unsafe {
+                    let _ = EvtClose(EVT_HANDLE(*handle));
+                }
+                *handle = 0;
+            }
+        }
+    }
+
     /// Continuous event collection from a single channel using Winevt API.
     ///
     /// Polls the channel in a loop, using XPath `*[System[EventRecordID > {last}]]`
@@ -138,8 +158,8 @@ impl EventCollector {
         let mut last_log = std::time::Instant::now();
         let mut last_idle_log = std::time::Instant::now();
 
+        let channel_wide = str_to_wide(channel);
         while !*stop.borrow() {
-            let channel_wide = str_to_wide(channel);
             let query_wide = if last_record_id == 0 {
                 str_to_wide("*")
             } else {
@@ -161,7 +181,7 @@ impl EventCollector {
                 }
             };
 
-            let mut event_handles: Vec<isize> = vec![0; 32];
+            let mut event_handles: [isize; 32] = [0; 32];
             let mut total_sent: usize = 0;
             let mut cycle_fetched: usize = 0;
             loop {
@@ -195,11 +215,9 @@ impl EventCollector {
                     let event_handle = EVT_HANDLE(handle_value);
                     let render_result = Self::render_event(event_handle);
                     // SAFETY: `event_handle` is a live EVT_HANDLE returned by
-                    // EvtNext this cycle (zero slots skipped above); EvtClose
-                    // releases it exactly once and the slot is zeroed below so
-                    // the batch-close loops cannot double-free.
-                    // SAFETY: `event_handle` is a valid event handle obtained from
-                    // EvtNext/EvtQuery and is closed exactly once here.
+                    // EvtNext this cycle; EvtClose releases it exactly once and
+                    // the slot is zeroed below so the batch-close loops cannot
+                    // double-free.
                     unsafe {
                         let _ = EvtClose(event_handle);
                     }
@@ -215,21 +233,7 @@ impl EventCollector {
                         }
                         if tx.blocking_send(event).is_err() {
                             // Receiver dropped — close remaining handles and exit
-                            for handle in event_handles
-                                .iter_mut()
-                                .take(events_fetched as usize)
-                                .skip(i + 1)
-                            {
-                                if *handle != 0 {
-                                    // SAFETY: non-zero entries are live EVT_HANDLEs
-                                    // from EvtNext this cycle, not yet closed nor
-                                    // zeroed; each is closed exactly once here.
-                                    unsafe {
-                                        let _ = EvtClose(EVT_HANDLE(*handle));
-                                    }
-                                    *handle = 0;
-                                }
-                            }
+                            Self::close_remaining_handles(&mut event_handles, events_fetched, i + 1);
                             // SAFETY: `query_handle` came from EvtQuery and has
                             // no other closer on this path.
                             unsafe {
@@ -241,20 +245,7 @@ impl EventCollector {
                         if total_sent >= MAX_EVENTS {
                             // Zero out unprocessed handles in the current batch to
                             // avoid leaking Winevt handles on break.
-                            for handle in event_handles
-                                .iter_mut()
-                                .take(events_fetched as usize)
-                                .skip(i + 1)
-                            {
-                                if *handle != 0 {
-                                    // SAFETY: same invariant as above — live
-                                    // EvtNext handles closed exactly once.
-                                    unsafe {
-                                        let _ = EvtClose(EVT_HANDLE(*handle));
-                                    }
-                                    *handle = 0;
-                                }
-                            }
+                            Self::close_remaining_handles(&mut event_handles, events_fetched, i + 1);
                             tracing::warn!(
                                 "Channel '{channel}' reached MAX_EVENTS ({MAX_EVENTS}), stopping initial drain"
                             );
