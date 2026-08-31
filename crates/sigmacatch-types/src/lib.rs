@@ -216,7 +216,17 @@ impl Event {
                 }
             })
             .or_else(|| category_exclusive_sentinel(&channel))
-            .map(str::to_string);
+            .map(str::to_string)
+            // The Sysmon registry subcategories (registry_add / registry_set /
+            // registry_rename / registry_delete) are children of the Sigma
+            // `registry_event` category. rsigma-eval prunes rules by exact
+            // category match, so injecting a subcategory would drop the parent
+            // `registry_event` rules (the majority of SigmaHQ) while injecting
+            // the parent would drop the subcategory rules. Sysmon EID 12/13/14
+            // are exclusively registry, so leaving `category` unset (fail-open)
+            // keeps both parent- and subcategory-typed rules reachable; the
+            // `service: sysmon` + `product: windows` pruning still applies.
+            .filter(|c| !is_registry_subcategory(c));
 
         // Classic PowerShell categories (ps_classic_start / ps_classic_script) are
         // detected by Sigma rules via the generic `Data` field, but rsigma has no
@@ -287,6 +297,16 @@ fn is_registry_delete_event_type(event_json: &Value) -> bool {
             .pointer("/Event/EventData/EventType")
             .and_then(Value::as_str),
         Some("DeleteKey") | Some("DeleteValue")
+    )
+}
+
+/// True when `c` is a Sysmon registry subcategory that must rely on the
+/// fail-open `registry_event` category (rsigma-eval cannot match the parent
+/// `registry_event` against a child subcategory value).
+fn is_registry_subcategory(c: &str) -> bool {
+    matches!(
+        c,
+        "registry_add" | "registry_set" | "registry_rename" | "registry_delete"
     )
 }
 
@@ -558,6 +578,11 @@ static CHANNEL_EVENT_TO_CATEGORY: phf::Map<&'static str, &'static str> = phf::ph
     "Microsoft-Windows-PowerShell/Operational:4104" => "ps_script",
     "PowerShellCore/Operational:4103" => "ps_module",
     "PowerShellCore/Operational:4104" => "ps_script",
+    "Microsoft-Windows-WMI-Activity/Operational:5857" => "wmi_event",
+    "Microsoft-Windows-WMI-Activity/Operational:5858" => "wmi_event",
+    "Microsoft-Windows-WMI-Activity/Operational:5859" => "wmi_event",
+    "Microsoft-Windows-WMI-Activity/Operational:5860" => "wmi_event",
+    "Microsoft-Windows-WMI-Activity/Operational:5861" => "wmi_event",
 };
 
 /// Sub-category overrides (higher specificity than CHANNEL_EVENT_TO_CATEGORY).
@@ -1510,11 +1535,10 @@ mod tests {
         event.inject_logsource_fields();
 
         assert_eq!(event.event_json["service"].as_str().unwrap(), "sysmon");
-        // EID 13 → registry_set (subcategory override, not registry_event)
-        assert_eq!(
-            event.event_json["category"].as_str().unwrap(),
-            "registry_set"
-        );
+        // EID 13 → registry_set is a subcategory of registry_event; rsigma-eval
+        // prunes by exact category, so it stays unset (fail-open) to keep both
+        // `registry_event` and `registry_set` rules reachable.
+        assert!(event.event_json.get("category").is_none());
     }
 
     #[test]
@@ -1536,41 +1560,19 @@ mod tests {
             })
         };
 
-        // CreateKey → registry_add
-        let json = mk(Some("CreateKey"));
-        let mut event = Event::new(json.clone(), json, Vec::new());
-        event.inject_logsource_fields();
-        assert_eq!(
-            event.event_json["category"].as_str().unwrap(),
-            "registry_add"
-        );
-
-        // DeleteKey → registry_delete
-        let json = mk(Some("DeleteKey"));
-        let mut event = Event::new(json.clone(), json, Vec::new());
-        event.inject_logsource_fields();
-        assert_eq!(
-            event.event_json["category"].as_str().unwrap(),
-            "registry_delete"
-        );
-
-        // DeleteValue → registry_delete
-        let json = mk(Some("DeleteValue"));
-        let mut event = Event::new(json.clone(), json, Vec::new());
-        event.inject_logsource_fields();
-        assert_eq!(
-            event.event_json["category"].as_str().unwrap(),
-            "registry_delete"
-        );
-
-        // Missing EventType → fall back to registry_add
-        let json = mk(None);
-        let mut event = Event::new(json.clone(), json, Vec::new());
-        event.inject_logsource_fields();
-        assert_eq!(
-            event.event_json["category"].as_str().unwrap(),
-            "registry_add"
-        );
+        // EID 12 is a registry subcategory (registry_add / registry_delete);
+        // category stays unset (fail-open) so parent `registry_event` rules and
+        // both add/delete subcategory rules remain reachable. EventType does
+        // not change the injected (absent) category.
+        for event_type in [Some("CreateKey"), Some("DeleteKey"), Some("DeleteValue"), None] {
+            let json = mk(event_type);
+            let mut event = Event::new(json.clone(), json, Vec::new());
+            event.inject_logsource_fields();
+            assert!(
+                event.event_json.get("category").is_none(),
+                "EID 12 registry event must not inject a subcategory"
+            );
+        }
 
         // Non-registry events keep their own category
         let json = serde_json::json!({
