@@ -15,7 +15,7 @@ sigmacatch/
 │       ├── channels.rs           # Winevt collector (EvtQueryW/EvtNext/EvtRender, multi-channel)
 │       ├── etw/                  # Direct ETW collector: providers.rs (18 providers), field_maps,
 │       │                         #   enrich, mapper, process_table, process_query, sysmon, paths, pe, filekey
-│       └── cli.rs                # Diagnostic subcommands (feature `tools`): check-filter, list-rules
+│       └── cli.rs                # Diagnostic subcommands: check-filter, list-rules
 ├── sigmacatch-lnx/               # Linux binaries (lib + 3 bins, feature-gated)
 │   └── src/
 │       ├── lib.rs                # Module gates: auditd, builtin (syslog), sysmon (tail), ebpf
@@ -29,7 +29,7 @@ sigmacatch/
 │       ├── sysmon_parse.rs       # Sysmon XML parsing (always compiled, shared by tail + eBPF)
 │       ├── ebpf.rs               # eBPF loader + dispatch (feature `ebpf`, privileges required)
 │       ├── ebpf_event.rs         # eBPF → Sysmon XML synthesis + tests
-│       └── cli.rs                # Diagnostic subcommands (feature `tools`): check-filter, list-rules
+│       └── cli.rs                # Diagnostic subcommands: check-filter, list-rules
 ├── sigmacatch-check/             # Standalone cross-platform binary: regression check (--json, --ignore)
 └── crates/
     ├── sigmacatch-ebpf/          # eBPF probes (excluded workspace, nightly, bpfel-unknown-none)
@@ -67,7 +67,7 @@ cross-platform `sigmacatch-check`:
 | `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog}.rs` | auditd + builtin syslog only (no root needed) |
 | `sigmacatch-linux-sysmon` | `sigmacatch-lnx/src/{auditd,syslog,sysmon}.rs` | + legacy Sysmon-for-Linux XML tail |
 | `sigmacatch-linux-ebpf` | `sigmacatch-lnx/src/{auditd,syslog,ebpf}.rs` | + native eBPF probes (root or CAP_BPF+CAP_PERFMON required) |
-| `sigmacatch-check` | `sigmacatch-check/src/main.rs` | Cross-platform regression validation (EVTX + auditd + JSON); no collector, no `tools` feature |
+| `sigmacatch-check` | `sigmacatch-check/src/main.rs` | Cross-platform regression validation (EVTX + auditd + JSON); no collector |
 
 ### Direct ETW
 
@@ -148,7 +148,7 @@ sigmacatch-lnx ──┤   ├── sigmacatch-config      (Config, CliArgs)
                  │   ├── sigmacatch-regression  (SigmahqRegression: skip set + data generation)
                  │   ├── sigmacatch-types       (Event, Alert, RegressionHeader, Product, EventProducer, XML parsing)
                  │   └── sigmacatch-repo        (SigmaRepo, grit-lib wrapper)
-                 └── [tools] serde (JSON serialization of diagnostic output)
+                 └── serde (JSON serialization of diagnostic output)
 
 sigmacatch-check ──┬── sigmacatch-detection   (DetectionEngine)
                    ├── sigmacatch-rule        (SigmahqRules: load/filter)
@@ -165,7 +165,7 @@ The collectors live inside their binary crates and depend only on `sigmacatch-ty
 cross-platform) assembles `detection` + `rule` + `regression` + `types` with
 `input-windows-evtx` (EVTX) and `linux-audit-parser` (auditd) according to each entry's
 `LogType`. The diagnostic subcommands (`cli.rs`) parse arguments manually and use `serde`
-for their JSON output (feature `tools`, off by default).
+for their JSON output (always compiled).
 
 ## Pipeline (continuous loop)
 

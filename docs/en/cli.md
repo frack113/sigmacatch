@@ -3,8 +3,8 @@
 ## `sigmacatch-check` — regression validation (cross-platform)
 
 `check` is no longer a subcommand of the collector binaries: it is a standalone
-**`sigmacatch-check`** binary, built for Linux and Windows, without a collector or the
-`tools` feature. It loads the Sigma rules and regression data, replays each stored event
+**`sigmacatch-check`** binary, built for Linux and Windows, without a collector. It
+loads the Sigma rules and regression data, replays each stored event
 through the detection engine, and verifies that the expected rule still matches.
 
 **Usage:**
@@ -100,9 +100,10 @@ sigmacatch-check --json --ignore
 
 ---
 
-## `tools` subcommands of the collector binaries
+## Diagnostic subcommands of the collector binaries
 
-The commands below remain subcommands of the binaries, behind the `tools` feature (off by default):
+The commands below are subcommands of the binaries, **always compiled** (the `tools`
+feature has been removed):
 
 | Binary | Subcommands |
 |---|---|

@@ -3,8 +3,8 @@
 ## `sigmacatch-check` — validation de la régression (cross-platform)
 
 `check` n'est plus une sous-commande des binaires de collecte : c'est un binaire
-standalone, **`sigmacatch-check`**, compilé pour Linux et Windows, sans collector ni
-feature `tools`. Il charge les règles Sigma et les données de régression, rejoue chaque
+standalone, **`sigmacatch-check`**, compilé pour Linux et Windows, sans collector. Il
+charge les règles Sigma et les données de régression, rejoue chaque
 event stocké dans le moteur de détection, et vérifie que la règle attendue matche encore.
 
 **Usage :**
@@ -101,10 +101,10 @@ sigmacatch-check --json --ignore
 
 ---
 
-## Sous-commandes `tools` des binaires de collecte
+## Sous-commandes de diagnostic des binaires de collecte
 
-Les commandes ci-dessous restent des sous-commandes des binaires, derrière la feature
-`tools` (désactivée par défaut) :
+Les commandes ci-dessous sont des sous-commandes des binaires, **toujours compilées**
+(la feature `tools` a été supprimée) :
 
 | Binaire | Sous-commandes |
 |---|---|

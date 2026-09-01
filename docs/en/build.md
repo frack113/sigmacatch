@@ -52,19 +52,16 @@ cargo build --release --bin sigmacatch-channel --no-default-features --features 
 
 # ETW only
 cargo build --release --bin sigmacatch-etw --no-default-features --features etw
-
-# One collector + the diagnostic subcommands
-cargo build --release --bin sigmacatch-channel --no-default-features --features winevt,tools
 ```
 
-> The `tools` feature alone produces no binary: each `[[bin]]` target requires its collector
+> The diagnostic subcommands (`check-filter`, `list-rules`) are always compiled into the
+> binary — no extra feature is required. Each `[[bin]]` target requires its collector
 > feature (`winevt` or `etw`) via `required-features`.
 
 Linux equivalent isolated builds:
 
 ```bash
 cargo build --release -p sigmacatch-lnx --no-default-features --features auditd,builtin
-cargo build --release -p sigmacatch-lnx --no-default-features --features auditd,builtin,tools
 ```
 
 ## Windows cross-compilation (from Linux)
@@ -90,12 +87,13 @@ Applied profile:
 
 ## Diagnostic subcommands
 
-Feature `tools`, off by default and to be combined with a collector feature (see above).
-On both `sigmacatch-channel` and `sigmacatch-linux`: `check-filter`, `list-rules`.
+The `check-filter` and `list-rules` subcommands are **always compiled** into both
+`sigmacatch-channel` and `sigmacatch-linux` — no dedicated cargo feature is required
+(the `tools` feature has been removed).
 
 Regression validation (`check`) is no longer a subcommand: it is the standalone
 **`sigmacatch-check`** binary (`sigmacatch-check`), cross-platform, which needs no
-collector and no `tools` feature:
+collector and no extra feature:
 
 ```bash
 # Linux

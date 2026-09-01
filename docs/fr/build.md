@@ -54,19 +54,16 @@ cargo build --release --bin sigmacatch-channel --no-default-features --features 
 
 # ETW uniquement
 cargo build --release --bin sigmacatch-etw --no-default-features --features etw
-
-# Un collecteur + les sous-commandes de diagnostic
-cargo build --release --bin sigmacatch-channel --no-default-features --features winevt,tools
 ```
 
-> La feature `tools` seule ne produit aucun binaire : chaque cible `[[bin]]` exige sa
-> feature de collecteur (`winevt` ou `etw`) via `required-features`.
+> Les sous-commandes de diagnostic (`check-filter`, `list-rules`) sont toujours compilées
+> dans le binaire — aucune feature supplémentaire n'est requise. Chaque cible `[[bin]]`
+> exige sa feature de collecteur (`winevt` ou `etw`) via `required-features`.
 
 Variantes isolées équivalentes côté Linux :
 
 ```bash
 cargo build --release -p sigmacatch-lnx --no-default-features --features auditd,builtin
-cargo build --release -p sigmacatch-lnx --no-default-features --features auditd,builtin,tools
 ```
 
 ## Compilation croisée Windows (depuis Linux)
@@ -92,13 +89,13 @@ Profil appliqué :
 
 ## Sous-commandes de diagnostic
 
-Feature `tools`, désactivée par défaut et à combiner avec une feature de collecteur
-(voir plus haut). Sur `sigmacatch-channel` comme sur `sigmacatch-linux` :
-`check-filter`, `list-rules`.
+Les sous-commandes `check-filter` et `list-rules` sont **toujours compilées** dans
+`sigmacatch-channel` comme dans `sigmacatch-linux` — plus aucune feature cargo dédiée
+n'est requise (la feature `tools` a été supprimée).
 
 La validation de régression (`check`) n'est plus une sous-commande : c'est le binaire
 standalone **`sigmacatch-check`** (`sigmacatch-check`), cross-platform, qui
-n'exige ni collector ni feature `tools` :
+n'exige ni collector ni feature supplémentaire :
 
 ```bash
 # Linux
