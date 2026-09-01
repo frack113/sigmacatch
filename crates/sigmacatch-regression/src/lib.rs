@@ -222,6 +222,11 @@ impl SigmahqRegression {
         self.entries.get(index).map(|(_, info, _)| info)
     }
 
+    /// Path to the `info.yml` file for entry `index`.
+    pub fn get_info_path(&self, index: usize) -> Option<&Path> {
+        self.entries.get(index).map(|(path, _, _)| path.as_path())
+    }
+
     /// Rule ids with committed regression data (skippable). We only check
     /// existence and non-empty — deep structural validation is left to
     /// `sigmacatch-check`.
@@ -471,10 +476,11 @@ impl RegressionData {
             if self.add_json_output {
                 let raw_json_path =
                     crate::long_path::long_path(&rule_dir.join(format!("{rule_id}.json")));
-                let raw_json =
+                let mut raw_json =
                     serde_json::to_string_pretty(&alert.event_json_raw).map_err(|e| {
                         RegressionError::Invalid(format!("failed to serialize raw event json: {e}"))
                     })?;
+                raw_json.push('\n');
                 std::fs::write(&raw_json_path, raw_json)?;
                 written.push(raw_json_path);
             }
@@ -1005,8 +1011,14 @@ mod tests {
 
         let rule_dir = base.join("rules").join(rule_id.to_string());
         let json_path = rule_dir.join(format!("{rule_id}.json"));
+        let raw_bytes = std::fs::read(&json_path).unwrap();
+        assert_eq!(
+            raw_bytes.last(),
+            Some(&b'\n'),
+            "JSON file must end with trailing newline"
+        );
         let json: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+            serde_json::from_slice(&raw_bytes).unwrap();
         assert_eq!(json["Event"]["System"]["EventRecordID"], 7);
         assert_eq!(
             json["Event"]["EventData"]["CommandLine"],

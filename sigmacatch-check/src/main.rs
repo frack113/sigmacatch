@@ -29,11 +29,13 @@ fn main() -> anyhow::Result<()> {
 
     let mut json_output = false;
     let mut ignore_invalid = false;
+    let mut fix = false;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--json" => json_output = true,
             "--ignore" => ignore_invalid = true,
+            "--fix" => fix = true,
             "--help" | "-h" => {
                 println!(
                     "sigmacatch-check — validate regression data against loaded rules\n\n\
@@ -41,6 +43,7 @@ fn main() -> anyhow::Result<()> {
                     Options:\n\
                       --json      Output results as JSON\n\
                       --ignore    Skip invalid entries without counting them\n\
+                      --fix       Fix missing trailing newlines in JSON files\n\
                       --help, -h  Print this help and exit"
                 );
                 return Ok(());
@@ -51,6 +54,11 @@ fn main() -> anyhow::Result<()> {
             }
         }
         i += 1;
+    }
+
+    if fix {
+        fix_json_newlines();
+        return Ok(());
     }
 
     let rules = SigmahqRules::new()?;
@@ -105,6 +113,23 @@ fn main() -> anyhow::Result<()> {
                 continue;
             }
         };
+
+        // Validate auxiliary JSON file: must exist (if any), be valid JSON, and end with \n.
+        let json_err = regression
+            .get_info(idx)
+            .and_then(|info| info.rule_metadata.first().map(|m| m.id))
+            .and_then(|rule_id| validate_json_auxiliary(idx, &rule_id, &regression));
+        if let Some(json_err) = json_err {
+            total += 1;
+            failed.push(CheckFail {
+                rule_name: entry.rule_name.clone(),
+                error: json_err,
+            });
+            if !json_output {
+                println!("[FAIL] JSON — {}", entry.rule_name);
+            }
+            continue;
+        }
 
         let raw = match regression.get_raw_data(idx) {
             Some(r) => r,
@@ -507,6 +532,113 @@ fn parse_json_lines(raw: &[u8]) -> Vec<Event> {
         .collect()
 }
 
+fn validate_json_auxiliary(
+    idx: usize,
+    rule_id: &Uuid,
+    regression: &SigmahqRegression,
+) -> Option<String> {
+    let info_path = regression.get_info_path(idx)?;
+    let json_path = info_path.parent()?.join(format!("{rule_id}.json"));
+    if !json_path.exists() {
+        return None;
+    }
+    let bytes = match std::fs::read(&json_path) {
+        Ok(b) => b,
+        Err(e) => return Some(format!("cannot read {}: {e}", json_path.display())),
+    };
+    if bytes.is_empty() {
+        return Some(format!("empty file: {}", json_path.display()));
+    }
+    if bytes.last() != Some(&b'\n') {
+        return Some(format!(
+            "missing trailing newline in {}",
+            json_path.display()
+        ));
+    }
+    if bytes.len() >= 2 && bytes[bytes.len() - 2] == b'\n' {
+        return Some(format!(
+            "multiple trailing newlines in {}",
+            json_path.display()
+        ));
+    }
+    if let Err(e) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+        return Some(format!("invalid JSON in {}: {e}", json_path.display()));
+    }
+    None
+}
+
+fn fix_json_newlines() {
+    let regression = match SigmahqRegression::new() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Failed to load regression data: {e}");
+            std::process::exit(1);
+        }
+    };
+    let root = regression.path();
+    if !root.exists() {
+        eprintln!("Regression data directory not found: {}", root.display());
+        std::process::exit(1);
+    }
+
+    let mut fixed = 0usize;
+    let mut total = 0usize;
+
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("  [ERROR] Cannot read directory {}: {e}", dir.display());
+                continue;
+            }
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "json") {
+                total += 1;
+                let bytes = match std::fs::read(&path) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("  [ERROR] Cannot read {}: {e}", path.display());
+                        continue;
+                    }
+                };
+                if bytes.is_empty() {
+                    continue;
+                }
+                let needs_fix = if bytes.last() != Some(&b'\n') {
+                    Some("missing trailing newline")
+                } else if bytes.len() >= 2 && bytes[bytes.len() - 2] == b'\n' {
+                    Some("multiple trailing newlines")
+                } else {
+                    None
+                };
+                if let Some(reason) = needs_fix {
+                    let mut trimmed = bytes;
+                    while trimmed.last() == Some(&b'\n') {
+                        trimmed.pop();
+                    }
+                    trimmed.push(b'\n');
+                    match std::fs::write(&path, &trimmed) {
+                        Ok(()) => {
+                            fixed += 1;
+                            println!("[FIX] {} ({reason})", path.display());
+                        }
+                        Err(e) => {
+                            eprintln!("  [ERROR] Cannot write {}: {e}", path.display());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    println!("\nScanned {total} JSON file(s), fixed {fixed} missing trailing newline(s).");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -768,6 +900,62 @@ mod tests {
             "without a .json auxiliary the match_count check must be skipped, got: {:?}",
             verdict
         );
+
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn fix_json_adds_missing_newline_and_leaves_valid_files_untouched() {
+        let tmp = std::env::temp_dir().join("sigmacatch-check-test-fix-json");
+        let _ = fs::remove_dir_all(&tmp);
+
+        let reg_dir = tmp.join("sigma").join("regression_data");
+        let json_dir = reg_dir.join("rules").join("test");
+        fs::create_dir_all(&json_dir).unwrap();
+
+        let no_nl_path = json_dir.join("aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa.json");
+        let has_nl_path = json_dir.join("bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb.json");
+        let multi_nl_path = json_dir.join("cccccccc-cccc-4ccc-9ccc-cccccccccccc.json");
+        fs::write(&no_nl_path, b"{\"k\":\"v\"}").unwrap();
+        fs::write(&has_nl_path, b"{\"k\":\"v\"}\n").unwrap();
+        fs::write(&multi_nl_path, b"{\"k\":\"v\"}\n\n\n").unwrap();
+
+        let expected = b"{\"k\":\"v\"}\n".to_vec();
+
+        let mut stack = vec![reg_dir.clone()];
+        let mut fixed = 0usize;
+        while let Some(dir) = stack.pop() {
+            for entry in fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "json") {
+                    let bytes = fs::read(&path).unwrap();
+                    let needs_fix = if bytes.is_empty() {
+                        false
+                    } else if bytes.last() != Some(&b'\n') {
+                        true
+                    } else if bytes.len() >= 2 && bytes[bytes.len() - 2] == b'\n' {
+                        true
+                    } else {
+                        false
+                    };
+                    if needs_fix {
+                        let mut trimmed = bytes;
+                        while trimmed.last() == Some(&b'\n') {
+                            trimmed.pop();
+                        }
+                        trimmed.push(b'\n');
+                        fs::write(&path, &trimmed).unwrap();
+                        fixed += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(fixed, 2, "two files should be fixed (no-newline + multi-newline)");
+        assert_eq!(fs::read(&no_nl_path).unwrap(), expected);
+        assert_eq!(fs::read(&has_nl_path).unwrap(), expected);
+        assert_eq!(fs::read(&multi_nl_path).unwrap(), expected);
 
         fs::remove_dir_all(&tmp).unwrap();
     }
