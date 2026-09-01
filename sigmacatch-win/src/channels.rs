@@ -115,6 +115,7 @@ impl EventCollector {
     /// Close unprocessed event handles remaining in the batch after index `skip`.
     #[cfg(windows)]
     fn close_remaining_handles(event_handles: &mut [isize], events_fetched: u32, skip: usize) {
+        use windows::Win32::System::EventLog::{EVT_HANDLE, EvtClose};
         for handle in event_handles
             .iter_mut()
             .take(events_fetched as usize)
@@ -233,17 +234,25 @@ impl EventCollector {
                         }
                         match tx.try_send(event) {
                             Ok(()) => {}
-                            Err(tokio::sync::mpsc::TrySendError::Full(e)) => {
+                            Err(tokio::sync::mpsc::error::TrySendError::Full(e)) => {
                                 if tx.blocking_send(e).is_err() {
-                                    Self::close_remaining_handles(&mut event_handles, events_fetched, i + 1);
+                                    Self::close_remaining_handles(
+                                        &mut event_handles,
+                                        events_fetched,
+                                        i + 1,
+                                    );
                                     unsafe {
                                         let _ = EvtClose(query_handle);
                                     }
                                     return;
                                 }
                             }
-                            Err(tokio::sync::mpsc::TrySendError::Disconnected(_)) => {
-                                Self::close_remaining_handles(&mut event_handles, events_fetched, i + 1);
+                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                Self::close_remaining_handles(
+                                    &mut event_handles,
+                                    events_fetched,
+                                    i + 1,
+                                );
                                 unsafe {
                                     let _ = EvtClose(query_handle);
                                 }
@@ -254,7 +263,11 @@ impl EventCollector {
                         if total_sent >= MAX_EVENTS {
                             // Zero out unprocessed handles in the current batch to
                             // avoid leaking Winevt handles on break.
-                            Self::close_remaining_handles(&mut event_handles, events_fetched, i + 1);
+                            Self::close_remaining_handles(
+                                &mut event_handles,
+                                events_fetched,
+                                i + 1,
+                            );
                             tracing::warn!(
                                 "Channel '{channel}' reached MAX_EVENTS ({MAX_EVENTS}), stopping initial drain"
                             );

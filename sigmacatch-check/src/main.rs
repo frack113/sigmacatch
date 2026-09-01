@@ -72,7 +72,10 @@ fn main() -> anyhow::Result<()> {
         eprintln!("[FAIL] {} missing regression_tests_path(s)", missing_path);
     }
     if mismatched_path > 0 && !json_output {
-        eprintln!("[FAIL] {} mismatched regression_tests_path(s)", mismatched_path);
+        eprintln!(
+            "[FAIL] {} mismatched regression_tests_path(s)",
+            mismatched_path
+        );
     }
 
     let mut engine = DetectionEngine::new(&rules)?;

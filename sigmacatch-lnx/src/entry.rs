@@ -235,17 +235,32 @@ mod tests {
 
     #[test]
     fn test_mode_for() {
-        assert_eq!(mode_for(true, true, false), "linux auditd+syslog".to_string());
+        assert_eq!(
+            mode_for(true, true, false),
+            "linux auditd+syslog".to_string()
+        );
         assert_eq!(mode_for(true, false, false), "linux auditd".to_string());
         assert_eq!(mode_for(false, true, false), "linux syslog".to_string());
-        assert_eq!(mode_for(false, false, false), "linux (no source)".to_string());
+        assert_eq!(
+            mode_for(false, false, false),
+            "linux (no source)".to_string()
+        );
         assert_eq!(
             mode_for(true, true, true),
             "linux auditd+syslog+sysmon(ebpf)".to_string()
         );
-        assert_eq!(mode_for(true, false, true), "linux auditd+sysmon(ebpf)".to_string());
-        assert_eq!(mode_for(false, true, true), "linux syslog+sysmon(ebpf)".to_string());
-        assert_eq!(mode_for(false, false, true), "linux sysmon(ebpf)".to_string());
+        assert_eq!(
+            mode_for(true, false, true),
+            "linux auditd+sysmon(ebpf)".to_string()
+        );
+        assert_eq!(
+            mode_for(false, true, true),
+            "linux syslog+sysmon(ebpf)".to_string()
+        );
+        assert_eq!(
+            mode_for(false, false, true),
+            "linux sysmon(ebpf)".to_string()
+        );
     }
 
     #[test]
