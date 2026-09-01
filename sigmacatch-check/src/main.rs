@@ -618,6 +618,7 @@ fn fix_json_newlines() {
 
     let mut fixed = 0usize;
     let mut total = 0usize;
+    let mut yml_fixed = 0usize;
 
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -667,11 +668,36 @@ fn fix_json_newlines() {
                         }
                     }
                 }
+            } else if path.file_name().is_some_and(|n| n == "info.yml") {
+                let original = match std::fs::read_to_string(&path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("  [ERROR] Cannot read {}: {e}", path.display());
+                        continue;
+                    }
+                };
+                match sigmacatch_regression::info::InfoYml::load(&path) {
+                    Ok(info) => {
+                        let canonical = info.canonical_yaml();
+                        let original_trimmed = original.trim_end_matches('\n');
+                        if original_trimmed != canonical.trim_end() {
+                            if std::fs::write(&path, &canonical).is_ok() {
+                                yml_fixed += 1;
+                                println!("[FIX] {} (indentation)", path.display());
+                            } else {
+                                eprintln!("  [ERROR] Cannot write {}", path.display());
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("  [ERROR] Cannot parse {}: {e}", path.display());
+                    }
+                }
             }
         }
     }
 
-    println!("\nScanned {total} JSON file(s), fixed {fixed} missing trailing newline(s).");
+    println!("\nScanned {total} JSON file(s), fixed {fixed} newline(s), {yml_fixed} YAML indentation(s).");
 }
 
 #[cfg(test)]
