@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::path::Path;
 use uuid::Uuid;
 
@@ -46,6 +47,8 @@ pub struct RegressionTestInfo {
     pub provider: String,
     #[serde(default)]
     pub match_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipelines: Option<Vec<String>>,
     pub path: String,
 }
 
@@ -92,6 +95,7 @@ impl InfoYml {
                 test_type: test_config.test_type.clone(),
                 provider: test_config.provider.clone(),
                 match_count: event_count,
+                pipelines: None,
                 path: sigma_data_path.to_string(),
             }],
         }
@@ -99,10 +103,36 @@ impl InfoYml {
 
     pub fn save(&self, path: &Path) -> crate::Result<()> {
         let path = crate::long_path::long_path(path);
-        let file = std::fs::File::create(&path)?;
-        serde_yaml::to_writer(file, self)
+        let yaml = serde_yaml::to_string(self)
+            .map_err(|e| crate::RegressionError::Yaml(e.to_string()))?;
+        let yaml = Self::to_sigma_indent(&yaml);
+        let mut file = std::fs::File::create(&path)?;
+        file.write_all(yaml.as_bytes())
             .map_err(|e| crate::RegressionError::Yaml(e.to_string()))?;
         Ok(())
+    }
+
+    /// Convert yaml_serde output (0-indent list style) to the 4-space SigmaHQ style.
+    fn to_sigma_indent(yaml: &str) -> String {
+        yaml.lines()
+            .map(|line| {
+                let trimmed = line.trim_start();
+                let spaces = line.len() - trimmed.len();
+                if spaces == 0 {
+                    if trimmed.starts_with("- ") {
+                        return format!("    {trimmed}");
+                    }
+                    return line.to_string();
+                }
+                let new_spaces = match spaces {
+                    2 => 6,
+                    n if n >= 4 => n + 4,
+                    _ => spaces,
+                };
+                format!("{}{}", " ".repeat(new_spaces), trimmed)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     pub fn load(path: &Path) -> crate::Result<Self> {
