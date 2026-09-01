@@ -5,7 +5,7 @@
 
 mod evtx;
 mod format;
-mod info;
+pub mod info;
 /// SigmaHQ `logtype` metadata helpers for `info.yml`.
 pub mod logtype;
 mod long_path;

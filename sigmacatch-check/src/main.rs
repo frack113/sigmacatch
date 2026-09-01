@@ -131,6 +131,19 @@ fn main() -> anyhow::Result<()> {
             continue;
         }
 
+        // Validate info.yml indentation matches SigmaHQ 4-space style.
+        if let Some(indent_err) = validate_yaml_indentation(idx, &regression) {
+            total += 1;
+            failed.push(CheckFail {
+                rule_name: entry.rule_name.clone(),
+                error: indent_err,
+            });
+            if !json_output {
+                println!("[FAIL] YAML indentation — {}", entry.rule_name);
+            }
+            continue;
+        }
+
         let raw = match regression.get_raw_data(idx) {
             Some(r) => r,
             None => {
@@ -563,6 +576,28 @@ fn validate_json_auxiliary(
     }
     if let Err(e) = serde_json::from_slice::<serde_json::Value>(&bytes) {
         return Some(format!("invalid JSON in {}: {e}", json_path.display()));
+    }
+    None
+}
+
+fn validate_yaml_indentation(idx: usize, regression: &SigmahqRegression) -> Option<String> {
+    let info_path = regression.get_info_path(idx)?.to_path_buf();
+    let mut raw = match std::fs::read_to_string(&info_path) {
+        Ok(s) => s,
+        Err(e) => return Some(format!("cannot read {}: {e}", info_path.display())),
+    };
+    raw = raw.strip_prefix('\u{feff}').map(|s| s.to_string()).unwrap_or(raw);
+    let raw_trimmed = raw.trim_end_matches('\n');
+
+    let info = regression.get_info(idx)?;
+    let canonical_full = info.canonical_yaml();
+    let canonical = canonical_full.trim_end();
+
+    if raw_trimmed != canonical {
+        return Some(format!(
+            "info.yml indentation not SigmaHQ 4-space style: {}",
+            info_path.display()
+        ));
     }
     None
 }
