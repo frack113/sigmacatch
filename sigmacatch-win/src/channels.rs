@@ -136,7 +136,7 @@ impl EventCollector {
     ///
     /// Polls the channel in a loop, using XPath `*[System[EventRecordID > {last}]]`
     /// to fetch only new events. Events are sent through `tx` as they arrive.
-    /// Returns when `stop` is set, `tx.blocking_send()` fails (receiver dropped),
+    /// Returns when `stop` is set, `tx.try_send()` fails (receiver dropped),
     /// or an unrecoverable error occurs.
     #[cfg(windows)]
     fn collect_continuous(channel: &str, tx: &mpsc::Sender<Event>, stop: &watch::Receiver<bool>) {
@@ -231,15 +231,24 @@ impl EventCollector {
                         {
                             last_record_id = rid;
                         }
-                        if tx.blocking_send(event).is_err() {
-                            // Receiver dropped — close remaining handles and exit
-                            Self::close_remaining_handles(&mut event_handles, events_fetched, i + 1);
-                            // SAFETY: `query_handle` came from EvtQuery and has
-                            // no other closer on this path.
-                            unsafe {
-                                let _ = EvtClose(query_handle);
+                        match tx.try_send(event) {
+                            Ok(()) => {}
+                            Err(tokio::sync::mpsc::TrySendError::Full(e)) => {
+                                if tx.blocking_send(e).is_err() {
+                                    Self::close_remaining_handles(&mut event_handles, events_fetched, i + 1);
+                                    unsafe {
+                                        let _ = EvtClose(query_handle);
+                                    }
+                                    return;
+                                }
                             }
-                            return;
+                            Err(tokio::sync::mpsc::TrySendError::Disconnected(_)) => {
+                                Self::close_remaining_handles(&mut event_handles, events_fetched, i + 1);
+                                unsafe {
+                                    let _ = EvtClose(query_handle);
+                                }
+                                return;
+                            }
                         }
                         total_sent += 1;
                         if total_sent >= MAX_EVENTS {

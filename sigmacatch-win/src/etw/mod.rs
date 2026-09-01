@@ -250,9 +250,18 @@ fn handle_event(
     };
     event.is_etw = true;
     event.inject_logsource_fields();
-    if tx.blocking_send(event).is_err() {
-        warn!("ETW receiver dropped — stopping trace");
-        let _ = ferrisetw::trace::stop_trace_by_name(SESSION);
+    match tx.try_send(event) {
+        Ok(()) => {}
+        Err(tokio::sync::mpsc::TrySendError::Full(e)) => {
+            if tx.blocking_send(e).is_err() {
+                warn!("ETW receiver dropped — stopping trace");
+                let _ = ferrisetw::trace::stop_trace_by_name(SESSION);
+            }
+        }
+        Err(tokio::sync::mpsc::TrySendError::Disconnected(_)) => {
+            warn!("ETW receiver dropped — stopping trace");
+            let _ = ferrisetw::trace::stop_trace_by_name(SESSION);
+        }
     }
 }
 
