@@ -436,10 +436,17 @@ fn parse_etw_property(
 /// Escape a string for a Winevt XML text/attribute value.
 #[cfg(windows)]
 fn escape_xml(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 pub(crate) const FILETIME_TO_UNIX_EPOCH_100NS: i64 = 116_444_736_000_000_000;

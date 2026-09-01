@@ -40,12 +40,15 @@ pub enum ProviderKind {
 #[derive(Debug, Clone)]
 pub struct FieldMapping {
     etw_to_sigma: HashMap<&'static str, &'static str>,
+    keys: Vec<&'static str>,
 }
 
 impl FieldMapping {
     pub fn new(sigma_to_etw: &[(&'static str, &'static str)]) -> Self {
+        let keys: Vec<&'static str> = sigma_to_etw.iter().map(|&(_, e)| e).collect();
         Self {
             etw_to_sigma: sigma_to_etw.iter().map(|(s, e)| (*e, *s)).collect(),
+            keys,
         }
     }
 
@@ -54,8 +57,10 @@ impl FieldMapping {
     /// the Security channel). The argument list is the set of ETW property
     /// names to parse and forward.
     pub fn identity(names: &[&'static str]) -> Self {
+        let keys = names.to_vec();
         Self {
             etw_to_sigma: names.iter().map(|n| (*n, *n)).collect(),
+            keys,
         }
     }
 
@@ -64,8 +69,8 @@ impl FieldMapping {
     }
 
     /// The ETW-side field names, for parsing only the mapped subset.
-    pub fn etw_names(&self) -> Vec<&'static str> {
-        self.etw_to_sigma.keys().copied().collect()
+    pub fn etw_names(&self) -> &[&'static str] {
+        &self.keys
     }
 }
 
