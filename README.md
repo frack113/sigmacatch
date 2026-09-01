@@ -73,7 +73,7 @@ regression:
 | `-v`, `--verbose` | Show info-level logs on stderr (default: errors only) |
 | `--help`, `-h` | Print help and exit |
 
-Diagnostics subcommands (`check-filter`, `list-rules`) are behind the `tools` feature; regression validation is the standalone cross-platform `sigmacatch-check` binary — see [docs/en/cli.md](docs/en/cli.md).
+Diagnostics subcommands (`check-filter`, `list-rules`) are always compiled into the collector binaries; regression validation is the standalone cross-platform `sigmacatch-check` binary — see [docs/en/cli.md](docs/en/cli.md).
 
 ## Documentation
 

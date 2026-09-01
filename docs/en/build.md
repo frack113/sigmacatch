@@ -15,12 +15,20 @@ cargo build --release -p sigmacatch-lnx
 cargo clippy -- -W warnings
 ```
 
-Produces `sigmacatch-linux`. Running in parallel: the **auditd** collector when
-`/var/log/audit/audit.log` exists, the **builtin syslog** collectors (every existing file
-among central `/var/log/messages`, `/var/log/syslog`; authpriv `/var/log/secure`,
-`/var/log/auth.log`; cron `/var/log/cron`, `/var/log/cron.log`) and the **Sysmon-for-Linux**
-collector on the central syslog. Bail at startup if no source is found. Full specification of
-the three collectors: [architecture.md](architecture.md).
+Produces `sigmacatch-linux` (default features `auditd` + `builtin`). It runs, in parallel,
+the **auditd** collector when `/var/log/audit/audit.log` exists and the **builtin syslog**
+collectors (every existing file among central `/var/log/messages`, `/var/log/syslog`;
+authpriv `/var/log/secure`, `/var/log/auth.log`; cron `/var/log/cron`, `/var/log/cron.log`).
+No Sysmon source: the `-sysmon` and `-ebpf` flavour binaries add it (see below). Bail at
+startup if no source is found. Full specification of the three collectors:
+[architecture.md](architecture.md).
+
+The two extended Linux flavours additionally embed a Sysmon source, selected by cargo feature:
+
+```bash
+cargo build --release -p sigmacatch-lnx --no-default-features --features auditd,builtin,sysmon  # sigmacatch-linux-sysmon
+cargo build --release -p sigmacatch-lnx --no-default-features --features auditd,builtin,ebpf   # sigmacatch-linux-ebpf (root/CAP_BPF+CAP_PERFMON required)
+```
 
 On Linux/macOS the Windows collectors are no-op stubs — the pipeline still runs end-to-end
 for testing (`cargo build -p sigmacatch-win`).
@@ -44,19 +52,16 @@ cargo build --release --bin sigmacatch-channel --no-default-features --features 
 
 # ETW only
 cargo build --release --bin sigmacatch-etw --no-default-features --features etw
-
-# One collector + the diagnostic subcommands
-cargo build --release --bin sigmacatch-channel --no-default-features --features winevt,tools
 ```
 
-> The `tools` feature alone produces no binary: each `[[bin]]` target requires its collector
+> The diagnostic subcommands (`check-filter`, `list-rules`) are always compiled into the
+> binary — no extra feature is required. Each `[[bin]]` target requires its collector
 > feature (`winevt` or `etw`) via `required-features`.
 
 Linux equivalent isolated builds:
 
 ```bash
 cargo build --release -p sigmacatch-lnx --no-default-features --features auditd,builtin
-cargo build --release -p sigmacatch-lnx --no-default-features --features auditd,builtin,tools
 ```
 
 ## Windows cross-compilation (from Linux)
@@ -82,12 +87,13 @@ Applied profile:
 
 ## Diagnostic subcommands
 
-Feature `tools`, off by default and to be combined with a collector feature (see above).
-On both `sigmacatch-channel` and `sigmacatch-linux`: `check-filter`, `list-rules`.
+The `check-filter` and `list-rules` subcommands are **always compiled** into both
+`sigmacatch-channel` and `sigmacatch-linux` — no dedicated cargo feature is required
+(the `tools` feature has been removed).
 
 Regression validation (`check`) is no longer a subcommand: it is the standalone
 **`sigmacatch-check`** binary (`sigmacatch-check`), cross-platform, which needs no
-collector and no `tools` feature:
+collector and no extra feature:
 
 ```bash
 # Linux

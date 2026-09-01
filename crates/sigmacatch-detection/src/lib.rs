@@ -374,16 +374,8 @@ detection:
         let rules = SigmahqRules::default();
         let mut engine = DetectionEngine::new(&rules).unwrap();
         engine.put_events(vec![
-            Event::new(
-                serde_json::json!({}).clone(),
-                serde_json::json!({}),
-                Vec::new(),
-            ),
-            Event::new(
-                serde_json::json!({}).clone(),
-                serde_json::json!({}),
-                Vec::new(),
-            ),
+            Event::new(serde_json::json!({}), serde_json::json!({}), Vec::new()),
+            Event::new(serde_json::json!({}), serde_json::json!({}), Vec::new()),
         ]);
 
         engine.process_events();
@@ -535,7 +527,7 @@ detection:
                 },
                 "foo": "bar"
             });
-            let mut event = Event::new(json.clone(), json.clone(), Vec::new());
+            let mut event = Event::new(json.clone(), json, Vec::new());
             event.inject_logsource_fields();
             event
         };

@@ -24,17 +24,21 @@ fn auditd_available() -> bool {
     std::path::Path::new(auditd::DEFAULT_LOG_PATH).is_file()
 }
 
-fn mode_for(auditd_ok: bool, syslog_ok: bool, ebpf_planned: bool) -> &'static str {
-    match (auditd_ok, syslog_ok, ebpf_planned) {
-        (true, true, true) => "linux auditd+syslog+sysmon(ebpf)",
-        (true, false, true) => "linux auditd+sysmon(ebpf)",
-        (false, true, true) => "linux syslog+sysmon(ebpf)",
-        (false, false, true) => "linux sysmon(ebpf)",
-        (true, true, false) => "linux auditd+syslog",
-        (true, false, false) => "linux auditd",
-        (false, true, false) => "linux syslog",
-        (false, false, false) => "linux (no source)",
+fn mode_for(auditd_ok: bool, syslog_ok: bool, ebpf_planned: bool) -> String {
+    if !auditd_ok && !syslog_ok && !ebpf_planned {
+        return "linux (no source)".to_string();
     }
+    let mut parts: Vec<&'static str> = Vec::new();
+    if auditd_ok {
+        parts.push("auditd");
+    }
+    if syslog_ok {
+        parts.push("syslog");
+    }
+    if ebpf_planned {
+        parts.push("sysmon(ebpf)");
+    }
+    format!("linux {}", parts.join("+"))
 }
 
 /// Sysmon source for this binary flavour, if any:
@@ -142,14 +146,15 @@ struct LinuxCollector;
 
 /// Whether the eBPF sysmon input is planned for this run: compiled in and
 /// usable privileges-wise. Loader failure later still falls back.
-#[cfg(feature = "ebpf")]
 fn ebpf_planned() -> bool {
-    crate::ebpf::has_required_privileges()
-}
-
-#[cfg(not(feature = "ebpf"))]
-fn ebpf_planned() -> bool {
-    false
+    #[cfg(feature = "ebpf")]
+    {
+        crate::ebpf::has_required_privileges()
+    }
+    #[cfg(not(feature = "ebpf"))]
+    {
+        false
+    }
 }
 
 impl CollectorKind for LinuxCollector {
@@ -157,7 +162,7 @@ impl CollectorKind for LinuxCollector {
         "sigmacatch-linux"
     }
 
-    fn mode(&self) -> &'static str {
+    fn mode(&self) -> String {
         mode_for(
             auditd_available(),
             syslog::default_log_exists(),
@@ -185,7 +190,6 @@ impl CollectorKind for LinuxCollector {
     }
 }
 
-#[cfg(feature = "tools")]
 #[path = "cli.rs"]
 mod cli;
 
@@ -194,7 +198,6 @@ mod cli;
 pub async fn run() -> Result<()> {
     // Diagnostics first: the tools subcommands must work on machines with no
     // local log source; only the collection loop requires one.
-    #[cfg(feature = "tools")]
     if let Some(code) = cli::dispatch() {
         std::process::exit(code);
     }
@@ -230,17 +233,32 @@ mod tests {
 
     #[test]
     fn test_mode_for() {
-        assert_eq!(mode_for(true, true, false), "linux auditd+syslog");
-        assert_eq!(mode_for(true, false, false), "linux auditd");
-        assert_eq!(mode_for(false, true, false), "linux syslog");
-        assert_eq!(mode_for(false, false, false), "linux (no source)");
+        assert_eq!(
+            mode_for(true, true, false),
+            "linux auditd+syslog".to_string()
+        );
+        assert_eq!(mode_for(true, false, false), "linux auditd".to_string());
+        assert_eq!(mode_for(false, true, false), "linux syslog".to_string());
+        assert_eq!(
+            mode_for(false, false, false),
+            "linux (no source)".to_string()
+        );
         assert_eq!(
             mode_for(true, true, true),
-            "linux auditd+syslog+sysmon(ebpf)"
+            "linux auditd+syslog+sysmon(ebpf)".to_string()
         );
-        assert_eq!(mode_for(true, false, true), "linux auditd+sysmon(ebpf)");
-        assert_eq!(mode_for(false, true, true), "linux syslog+sysmon(ebpf)");
-        assert_eq!(mode_for(false, false, true), "linux sysmon(ebpf)");
+        assert_eq!(
+            mode_for(true, false, true),
+            "linux auditd+sysmon(ebpf)".to_string()
+        );
+        assert_eq!(
+            mode_for(false, true, true),
+            "linux syslog+sysmon(ebpf)".to_string()
+        );
+        assert_eq!(
+            mode_for(false, false, true),
+            "linux sysmon(ebpf)".to_string()
+        );
     }
 
     #[test]

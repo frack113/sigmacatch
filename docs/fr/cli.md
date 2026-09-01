@@ -3,17 +3,20 @@
 ## `sigmacatch-check` — validation de la régression (cross-platform)
 
 `check` n'est plus une sous-commande des binaires de collecte : c'est un binaire
-standalone, **`sigmacatch-check`**, compilé pour Linux et Windows, sans collector ni
-feature `tools`. Il charge les règles Sigma et les données de régression, rejoue chaque
+standalone, **`sigmacatch-check`**, compilé pour Linux et Windows, sans collector. Il
+charge les règles Sigma et les données de régression, rejoue chaque
 event stocké dans le moteur de détection, et vérifie que la règle attendue matche encore.
 
 **Usage :**
 
 ```text
-sigmacatch-check [--json]
+sigmacatch-check [--json] [--ignore]
 ```
 
 - `--json` — sortie en JSON au lieu du texte lisible.
+- `--ignore` — saute les entrées invalides (entrée/données brutes absentes, events vides)
+  sans les compter comme échecs.
+- `--help`, `-h` — affiche l'usage et sort.
 
 **Fonction :** validation approfondie de toutes les données de régression dans
 `./sigma/regression_data`. Les entrées sont parses selon leur `LogType` : `.evtx` via
@@ -25,13 +28,17 @@ Le logtype `Raw` est ignoré.
 1. Charge toutes les règles Sigma depuis `./sigma`
 2. Construit le `DetectionEngine` une seule fois
 3. Charge les entrées de régression depuis `./sigma/regression_data`
-4. Pour chaque entrée `info.yml` :
+4. Validation **bidirectionnelle** du `regression_tests_path` entre règles et entrées :
+   chaque entrée doit correspondre à une règle déclarant ce chemin, et chaque chemin déclaré
+   doit pointer vers une entrée existante (chemins manquants / incohérents comptés).
+5. Pour chaque entrée `info.yml` :
    - Valide l'existence + non-vide (pas de vérification structurelle profonde à ce stade)
    - Charge le `.evtx` / `.log` brut, parse les events
    - Évalue les events contre la règle
    - Valide : la règle DOIT matcher (test de détection positive)
-5. Rapport pass/fail par règle + résumé (exit 1 en cas d'échec de détection)
-6. Exit 0 si succès (toutes les règles passent ou sont ignorées)
+   - Quand un `.json` auxiliaire est présent, valide le `match_count` déclaré contre le
+     nombre réel de hits (incohérence de match_count = échec)
+6. Rapport pass/fail par règle + résumé (exit 1 en cas d'échec de détection ou de chemin)
 
 ### Sortie
 
@@ -54,11 +61,15 @@ Le logtype `Raw` est ignoré.
 ============================================================
 ```
 
+Le résumé affiche aussi, quand non nuls : `Missing paths`, `Mismatched`, `Ignored`,
+`Skipped` et `Dropped lines`. Un résumé en échec sort avec exit 1 (échecs de détection
+**ou** chemins manquants/incohérents).
+
 **Exemple :**
 
 ```bash
 sigmacatch-check
-sigmacatch-check --json
+sigmacatch-check --json --ignore
 ```
 
 ### Sortie JSON
@@ -70,6 +81,9 @@ sigmacatch-check --json
   "total": 202,
   "passed": 200,
   "skipped": 0,
+  "ignored": 0,
+  "missing_path": 0,
+  "mismatched_path": 0,
   "failed_count": 2,
   "pass_rate": 99.0,
   "failed": [
@@ -87,10 +101,10 @@ sigmacatch-check --json
 
 ---
 
-## Sous-commandes `tools` des binaires de collecte
+## Sous-commandes de diagnostic des binaires de collecte
 
-Les commandes ci-dessous restent des sous-commandes des binaires, derrière la feature
-`tools` (désactivée par défaut) :
+Les commandes ci-dessous sont des sous-commandes des binaires, **toujours compilées**
+(la feature `tools` a été supprimée) :
 
 | Binaire | Sous-commandes |
 |---|---|

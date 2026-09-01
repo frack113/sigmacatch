@@ -157,7 +157,7 @@ impl EventBuilder {
                 guid,
                 image,
                 cmdline,
-                user: user.clone(),
+                user,
             },
         );
         to_event(xml)

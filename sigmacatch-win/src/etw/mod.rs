@@ -250,9 +250,18 @@ fn handle_event(
     };
     event.is_etw = true;
     event.inject_logsource_fields();
-    if tx.blocking_send(event).is_err() {
-        warn!("ETW receiver dropped — stopping trace");
-        let _ = ferrisetw::trace::stop_trace_by_name(SESSION);
+    match tx.try_send(event) {
+        Ok(()) => {}
+        Err(tokio::sync::mpsc::error::TrySendError::Full(e)) => {
+            if tx.blocking_send(e).is_err() {
+                warn!("ETW receiver dropped — stopping trace");
+                let _ = ferrisetw::trace::stop_trace_by_name(SESSION);
+            }
+        }
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+            warn!("ETW receiver dropped — stopping trace");
+            let _ = ferrisetw::trace::stop_trace_by_name(SESSION);
+        }
     }
 }
 
@@ -411,21 +420,20 @@ fn parse_etw_property(
         if let Ok(s) = parser.try_parse::<String>(name) {
             return (!s.is_empty()).then_some(s);
         }
+        macro_rules! try_numeric {
+            ($ty:ty) => {
+                if let Ok(n) = parser.try_parse::<$ty>(name) {
+                    return Some(n.to_string());
+                }
+            };
+        }
         if let Ok(ip) = parser.try_parse::<std::net::IpAddr>(name) {
             return Some(ip.to_string());
         }
-        if let Ok(n) = parser.try_parse::<u8>(name) {
-            return Some(n.to_string());
-        }
-        if let Ok(n) = parser.try_parse::<u16>(name) {
-            return Some(n.to_string());
-        }
-        if let Ok(n) = parser.try_parse::<u32>(name) {
-            return Some(n.to_string());
-        }
-        if let Ok(n) = parser.try_parse::<u64>(name) {
-            return Some(n.to_string());
-        }
+        try_numeric!(u8);
+        try_numeric!(u16);
+        try_numeric!(u32);
+        try_numeric!(u64);
         if let Ok(b) = parser.try_parse::<bool>(name) {
             return Some(b.to_string());
         }
@@ -437,10 +445,17 @@ fn parse_etw_property(
 /// Escape a string for a Winevt XML text/attribute value.
 #[cfg(windows)]
 fn escape_xml(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 pub(crate) const FILETIME_TO_UNIX_EPOCH_100NS: i64 = 116_444_736_000_000_000;

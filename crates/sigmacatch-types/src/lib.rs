@@ -184,26 +184,26 @@ impl Event {
     /// statically: `service` is passed explicitly and the channel/provider
     /// tables are only consulted when no service is given.
     pub fn inject_logsource_fields_for(&mut self, product: &str, service: Option<&str>) {
-        let channel = self.channel().to_string();
-        let provider = self.provider().to_string();
+        let channel = self.channel();
+        let provider = self.provider();
         let event_id = self.event_id();
 
         let service = service.map(str::to_string).or_else(|| {
             CHANNEL_TO_SERVICE
-                .get(channel.as_str())
+                .get(channel)
                 .map(|s| s.to_string())
                 .or_else(|| {
                     // Provider → channel → service (two-step resolution).
                     // Kernel ETW providers map to synthetic channels that
                     // resolve to `etw` via CHANNEL_TO_SERVICE.
                     ETW_PROVIDER_TO_CHANNEL
-                        .get(provider.as_str())
+                        .get(provider)
                         .and_then(|ch| CHANNEL_TO_SERVICE.get(ch))
                         .map(|s| s.to_string())
                 })
         });
 
-        let category = get_category(&channel, event_id)
+        let category = get_category(channel, event_id)
             .map(|c| {
                 // Sysmon EventID 12 is both registry add (CreateKey) and
                 // delete (DeleteKey/DeleteValue); the subcategory table holds
@@ -215,7 +215,7 @@ impl Event {
                     c
                 }
             })
-            .or_else(|| category_exclusive_sentinel(&channel))
+            .or_else(|| category_exclusive_sentinel(channel))
             .map(str::to_string)
             // The Sysmon registry subcategories (registry_add / registry_set /
             // registry_rename / registry_delete) are children of the Sigma
@@ -1946,7 +1946,7 @@ mod tests {
             severity: "medium".to_string(),
             event_json_raw: event.event_json_raw.clone(),
             event_json: event.event_json.clone(),
-            event_raw: event.event_raw.clone(),
+            event_raw: event.event_raw,
             is_etw: false,
         };
 

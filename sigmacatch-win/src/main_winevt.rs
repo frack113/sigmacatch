@@ -19,8 +19,8 @@ impl CollectorKind for WinevtCollector {
         "sigmacatch-channel"
     }
 
-    fn mode(&self) -> &'static str {
-        "winevt multi-channel"
+    fn mode(&self) -> String {
+        "winevt multi-channel".to_string()
     }
 
     fn channels(
@@ -36,12 +36,10 @@ impl CollectorKind for WinevtCollector {
     }
 }
 
-#[cfg(feature = "tools")]
 mod cli;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    #[cfg(feature = "tools")]
     if let Some(code) = cli::dispatch() {
         std::process::exit(code);
     }

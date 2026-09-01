@@ -3,17 +3,20 @@
 ## `sigmacatch-check` — regression validation (cross-platform)
 
 `check` is no longer a subcommand of the collector binaries: it is a standalone
-**`sigmacatch-check`** binary, built for Linux and Windows, without a collector or the
-`tools` feature. It loads the Sigma rules and regression data, replays each stored event
+**`sigmacatch-check`** binary, built for Linux and Windows, without a collector. It
+loads the Sigma rules and regression data, replays each stored event
 through the detection engine, and verifies that the expected rule still matches.
 
 **Usage:**
 
 ```text
-sigmacatch-check [--json]
+sigmacatch-check [--json] [--ignore]
 ```
 
 - `--json` — outputs JSON instead of human-readable text.
+- `--ignore` — skip invalid entries (missing entry/raw data, empty events) without counting
+  them as failures.
+- `--help`, `-h` — print usage and exit.
 
 **Purpose:** deep validation of all regression data in `./sigma/regression_data`. Entries are
 parsed according to their `LogType`: `.evtx` via `input_windows_evtx::parse_evtx_bytes`,
@@ -24,13 +27,17 @@ parsed according to their `LogType`: `.evtx` via `input_windows_evtx::parse_evtx
 1. Loads all Sigma rules from `./sigma`
 2. Builds the `DetectionEngine` once
 3. Loads regression entries from `./sigma/regression_data`
-4. For each `info.yml` entry:
+4. Bidirectional `regression_tests_path` validation between rules and entries:
+   every entry's rule must declare a matching `regression_tests_path`, and every declared
+   path must point to an existing entry (missing / mismatched paths are counted).
+5. For each `info.yml` entry:
    - Validates file existence + non-empty (no deep structure check at this stage)
    - Loads the raw `.evtx` / `.log`, parses events
    - Evaluates events against the rule
    - Validates: the rule MUST match (positive detection test)
-5. Reports pass/fail per rule + summary (exit 1 if any detection failure)
-6. Exit 0 on success (all rules pass or are skipped)
+   - When a `.json` auxiliary is present, validates the declared `match_count` against the
+     real hit count (match count mismatch is a failure)
+6. Reports pass/fail per rule + summary (exit 1 on any detection or path failure)
 
 ### Output
 
@@ -53,11 +60,15 @@ parsed according to their `LogType`: `.evtx` via `input_windows_evtx::parse_evtx
 ============================================================
 ```
 
+The summary also reports, when non-zero: `Missing paths`, `Mismatched`, `Ignored`,
+`Skipped` and `Dropped lines`. A failing summary exits 1 (detection failures **or** any
+missing/mismatched path).
+
 **Example:**
 
 ```bash
 sigmacatch-check
-sigmacatch-check --json
+sigmacatch-check --json --ignore
 ```
 
 ### JSON output
@@ -69,6 +80,9 @@ sigmacatch-check --json
   "total": 202,
   "passed": 200,
   "skipped": 0,
+  "ignored": 0,
+  "missing_path": 0,
+  "mismatched_path": 0,
   "failed_count": 2,
   "pass_rate": 99.0,
   "failed": [
@@ -86,9 +100,10 @@ sigmacatch-check --json
 
 ---
 
-## `tools` subcommands of the collector binaries
+## Diagnostic subcommands of the collector binaries
 
-The commands below remain subcommands of the binaries, behind the `tools` feature (off by default):
+The commands below are subcommands of the binaries, **always compiled** (the `tools`
+feature has been removed):
 
 | Binary | Subcommands |
 |---|---|

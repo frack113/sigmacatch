@@ -19,8 +19,8 @@ impl CollectorKind for EtwCollector {
         "sigmacatch-etw"
     }
 
-    fn mode(&self) -> &'static str {
-        "ETW direct"
+    fn mode(&self) -> String {
+        "ETW direct".to_string()
     }
 
     fn channels(

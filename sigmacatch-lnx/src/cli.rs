@@ -3,7 +3,7 @@
 
 //! CLI subcommands for the `sigmacatch-linux` binary.
 //!
-//! Gated behind the `tools` feature. Dispatched from `main_linux.rs` before
+//! Always compiled. Dispatched from the shared `entry.rs` before
 //! `runner::run()` is entered.
 
 use std::collections::BTreeSet;

@@ -15,7 +15,6 @@ auditd = ["dep:async-trait", "dep:linux-audit-parser"]
 builtin = ["dep:async-trait", "dep:regex"]
 sysmon = ["dep:async-trait"]
 ebpf = ["dep:async-trait", "dep:aya", "dep:sigmacatch-ebpf-common", "dep:sha2"]
-tools = ["dep:serde"]
 
 # Three release flavours share this main; cargo features select the sysmon
 # source per binary. Build each with --no-default-features --features <set>.
@@ -67,7 +66,7 @@ serde_json = "1.0"
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 
-serde = { version = "1", features = ["derive"], optional = true }
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3.27"

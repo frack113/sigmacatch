@@ -360,7 +360,7 @@ impl SigmahqRegression {
                     .map(|p| p.to_path_buf())
             })
             .and_then(|p| p.to_str().map(|s| s.to_string()))
-            .map(|s| s.to_string().replace('\\', "/"));
+            .map(|s| s.replace('\\', "/"));
 
         let tests_path = format!("{}/info.yml", rel_dir.replace('\\', "/"));
         if let Some(ref rule_yaml_path) = alert.rule_path {
@@ -746,7 +746,7 @@ mod tests {
             severity: "critical".to_string(),
             event_json_raw: event.event_json_raw.clone(),
             event_json: event.event_json.clone(),
-            event_raw: event.event_raw.clone(),
+            event_raw: event.event_raw,
             is_etw: true,
         }
     }

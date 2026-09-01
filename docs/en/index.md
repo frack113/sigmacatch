@@ -7,7 +7,7 @@ against [SigmaHQ](https://github.com/SigmaHQ/sigma) rules and outputs structured
 regression data ready for SigmaHQ PRs.
 
 The project is a cargo workspace of 14 packages, plus 1 excluded nightly crate (`sigmacatch-ebpf`);
-the full tree and each crate's role are detailed in [architecture.md](en/architecture.md).
+the full tree and each crate's role are detailed in [architecture.md](architecture.md).
 
 ## Quick start
 
@@ -15,9 +15,9 @@ the full tree and each crate's role are detailed in [architecture.md](en/archite
 cargo build --release
 ./target/release/sigmacatch-channel       # Winevt (Windows)
 ./target/release/sigmacatch-etw           # ETW direct (Windows)
-./target/release/sigmacatch-linux         # auditd + syslog builtin (Linux, pas de root)
+./target/release/sigmacatch-linux         # auditd + syslog builtin (Linux, no root)
 ./target/release/sigmacatch-linux-sysmon  # + tail Sysmon-for-Linux (Linux)
-./target/release/sigmacatch-linux-ebpf    # + probes eBPF native (Linux, root requis)
+./target/release/sigmacatch-linux-ebpf    # + native eBPF probes (Linux, root required)
 cargo build --release -p sigmacatch-check # Cross-platform regression validation (Linux & Windows)
 ```
 
@@ -26,14 +26,14 @@ cargo build --release -p sigmacatch-check # Cross-platform regression validation
 A built version of this documentation is published to GitHub Pages:
 **https://frack113.github.io/sigmacatch/**
 
-| | English | Français |
+| | Français | English |
 |---|---|---|
-| Architecture | [EN](en/architecture.md) | [FR](fr/architecture.md) |
-| Build | [EN](en/build.md) | [FR](fr/build.md) |
-| CLI | [EN](en/cli.md) | [FR](fr/cli.md) |
-| Git | [EN](en/git.md) | [FR](fr/git.md) |
-| Output format | [EN](en/output-format.md) | [FR](fr/output-format.md) |
-| Regression data format | [EN](en/regression-data-format.md) | [FR](fr/regression-data-format.md) |
+| Architecture | [FR](../fr/architecture.md) | [EN](architecture.md) |
+| Build | [FR](../fr/build.md) | [EN](build.md) |
+| CLI | [FR](../fr/cli.md) | [EN](cli.md) |
+| Git | [FR](../fr/git.md) | [EN](git.md) |
+| Output format | [FR](../fr/output-format.md) | [EN](output-format.md) |
+| Regression data format | [FR](../fr/regression-data-format.md) | [EN](regression-data-format.md) |
 
 ## License
 
