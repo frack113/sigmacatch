@@ -19,14 +19,18 @@ sigmacatch/
 ├── sigmacatch-lnx/               # Binaires Linux (lib + 3 bins, feature-gated)
 │   └── src/
 │       ├── lib.rs                # Module gates : auditd, builtin (syslog), sysmon (tail), ebpf
-│       ├── main_linux.rs         # Shared entry point : `make_sysmon_collector()` par flavour
+│       ├── entry.rs              # Pipeline Linux partagé `LinuxCollector` + `run()`
+│       ├── main_base.rs          # bin `sigmacatch-linux` (wrapper fin sur entry::run)
+│       ├── main_sysmon.rs        # bin `sigmacatch-linux-sysmon` (wrapper fin, + tail sysmon)
+│       ├── main_ebpf.rs          # bin `sigmacatch-linux-ebpf` (wrapper fin, + eBPF natif)
 │       ├── auditd.rs             # Collecteur auditd (tail /var/log/audit/audit.log, groupement par event id)
 │       ├── syslog.rs             # Collecteur syslog builtin (central /var/log/messages → authpriv + cron, RFC3164)
 │       ├── sysmon.rs             # Collecteur Sysmon-for-Linux (tail syslog, feature `sysmon`)
 │       ├── sysmon_parse.rs       # Parsing Sysmon XML (toujours compilé, partagé par tail + eBPF)
 │       ├── ebpf.rs               # Loader eBPF + dispatch (feature `ebpf`, privileges requis)
-│       ├── ebpf_event.rs         # Synthèse XML eBPF → format Sysmon + tests (50 unit tests)
+│       ├── ebpf_event.rs         # Synthèse XML eBPF → format Sysmon + tests
 │       └── cli.rs                # Sous-commandes de diagnostic (feature `tools`)
+├── sigmacatch-check/             # Binaire standalone cross-platform : validation régression (--json, --ignore)
 └── crates/
     ├── sigmacatch-ebpf/          # eBPF probes (exclue workspace, nightly, bpfel-unknown-none)
     │   └── src/main.rs           # 6 tracepoints : execve/exec/exit/connect/openat+exit/sendto+sendmsg
@@ -41,8 +45,7 @@ sigmacatch/
     ├── sigmacatch-types/         # Types partagés : Event, Alert, RegressionHeader + parsing XML + logsource tables
     ├── sigmacatch-repo/          # wrapper grit-lib + SigmaRepo + opérations git + signing
     ├── sigmacatch-evtx-writer/   # Writer EVTX pur Rust
-    ├── input-windows-evtx/       # Parser fichiers EVTX → Event
-    └── sigmacatch-check/         # Binaire standalone cross-platform : validation régression (--json)
+    └── input-windows-evtx/       # Parser fichiers EVTX → Event
 ```
 
 ## Collecteurs
@@ -112,9 +115,11 @@ Les deux binaires sysmon ajoutent un collecteur supplémentaire :
   process_create, EID 3 network_connect, EID 5 process_terminate, EID 11 file_create et
   l'extension DNS (EID 22) : events rendus en XML Sysmon identique au chemin syslog puis
   injectés via le même pipeline (`inject_logsource_fields_for`). Prérequis runtime :
-  root ou CAP_BPF+CAP_PERFMON (refus de démarrer sinon) + kernel avec BTF. Le hachage
-  SHA256 des images est calculé userspace avec cache (chemin,mtime). En all-features,
-  fallback automatique sur le tail syslog si les probes ne se chargent pas.
+  root ou CAP_BPF+CAP_PERFMON (refus de démarrer sinon — `entry.rs` bail) + kernel avec BTF. Le hachage
+  SHA256 des images est calculé userspace avec cache (chemin,mtime). Un échec de chargement
+  des probes au runtime avertit (`warn!`) et continue **sans** source sysmon dans la saveur
+  `-ebpf` ; seul un build all-features (`ebpf` + `sysmon`) retombe sur le tail
+  Sysmon-for-Linux.
 - **Sysmon-for-Linux tail (feature `sysmon`, `sigmacatch-linux-sysmon`)** — lignes du
   syslog central taggées `sysmon` dont le corps est XML winevt (`parse_winevt_xml`/`_raw`)
   → logsource `product:linux, service:sysmon` via le channel `Linux-Sysmon/Operational`.
@@ -122,7 +127,11 @@ Les deux binaires sysmon ajoutent un collecteur supplémentaire :
 
 Format de régression : `DataFormat::Log`.
 
-Chaque binaire définit son propre `CollectorKind` dans son `main_*.rs` (`name()`/`mode()`/`channels()`/`build()`/`regression_format()`) et l'injecte dans `sigmacatch_runner::run()`. Le format de régression est choisi par `regression_format()` : `DataFormat::Evtx` pour les deux bins Windows, `DataFormat::Log` pour les trois bins Linux.
+Chaque binaire Windows définit son propre `CollectorKind` dans son `main_*.rs`
+(`name()`/`mode()`/`channels()`/`build()`/`regression_format()`) ; les trois binaires Linux
+partagent un unique `LinuxCollector` défini dans `entry.rs`. Le format de régression est
+choisi par `regression_format()` : `DataFormat::Evtx` pour les deux bins Windows,
+`DataFormat::Log` pour les trois bins Linux.
 
 ## Graphe de dépendances
 

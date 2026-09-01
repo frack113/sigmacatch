@@ -15,12 +15,21 @@ cargo build --release -p sigmacatch-lnx
 cargo clippy -- -W warnings
 ```
 
-Produit `sigmacatch-linux`. Tournent en parallèle : le collecteur **auditd** si
-`/var/log/audit/audit.log` existe, les collecteurs **syslog builtin** (chaque fichier
-existant parmi central `/var/log/messages`, `/var/log/syslog` ; authpriv `/var/log/secure`,
-`/var/log/auth.log` ; cron `/var/log/cron`, `/var/log/cron.log`) et le collecteur
-**Sysmon-for-Linux** sur le syslog central. Bail au démarrage si aucune source. Spécification
-complète des trois collecteurs : [architecture.md](architecture.md).
+Produit `sigmacatch-linux` (features par défaut `auditd` + `builtin`). Tournent en
+parallèle : le collecteur **auditd** si `/var/log/audit/audit.log` existe et les collecteurs
+**syslog builtin** (chaque fichier existant parmi central `/var/log/messages`,
+`/var/log/syslog` ; authpriv `/var/log/secure`, `/var/log/auth.log` ; cron `/var/log/cron`,
+`/var/log/cron.log`). Aucune source sysmon : les binaires `-sysmon` et `-ebpf` l'ajoutent
+(voir plus bas). Bail au démarrage si aucune source. Spécification complète des trois
+collecteurs : [architecture.md](architecture.md).
+
+Les deux saveurs Linux étendues embarquent en plus une source Sysmon, choisie par feature
+cargo :
+
+```bash
+cargo build --release -p sigmacatch-lnx --no-default-features --features auditd,builtin,sysmon  # sigmacatch-linux-sysmon
+cargo build --release -p sigmacatch-lnx --no-default-features --features auditd,builtin,ebpf   # sigmacatch-linux-ebpf (root/CAP_BPF+CAP_PERFMON requis)
+```
 
 Sur Linux/macOS les collecteurs Windows sont des stubs no-op — le pipeline tourne de bout
 en bout pour tests (`cargo build -p sigmacatch-win`).

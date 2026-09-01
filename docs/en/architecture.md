@@ -16,14 +16,21 @@ sigmacatch/
 │       ├── etw/                  # Direct ETW collector: providers.rs (18 providers), field_maps,
 │       │                         #   enrich, mapper, process_table, process_query, sysmon, paths, pe, filekey
 │       └── cli.rs                # Diagnostic subcommands (feature `tools`): check-filter, list-rules
-├── sigmacatch-lnx/               # Linux binary (lib + 1 bin)
+├── sigmacatch-lnx/               # Linux binaries (lib + 3 bins, feature-gated)
 │   └── src/
-│       ├── lib.rs
-│       ├── main_linux.rs         # bin `sigmacatch-linux`: runs auditd, syslog and sysmon collectors in parallel (per-source availability guard)
+│       ├── lib.rs                # Module gates: auditd, builtin (syslog), sysmon (tail), ebpf
+│       ├── entry.rs              # Shared Linux pipeline `LinuxCollector` + `run()`
+│       ├── main_base.rs          # bin `sigmacatch-linux` (thin wrapper over entry::run)
+│       ├── main_sysmon.rs        # bin `sigmacatch-linux-sysmon` (thin wrapper, + sysmon tail)
+│       ├── main_ebpf.rs          # bin `sigmacatch-linux-ebpf` (thin wrapper, + native eBPF)
 │       ├── auditd.rs             # Auditd collector (tail /var/log/audit/audit.log, event id grouping)
 │       ├── syslog.rs             # Builtin syslog collector (central /var/log/messages → /var/log/syslog + authpriv + cron files, RFC3164)
-│       ├── sysmon.rs             # Sysmon-for-Linux collector (`sysmon`-tagged syslog lines, winevt XML parsing)
+│       ├── sysmon.rs             # Sysmon-for-Linux collector (`sysmon`-tagged syslog lines, feature `sysmon`)
+│       ├── sysmon_parse.rs       # Sysmon XML parsing (always compiled, shared by tail + eBPF)
+│       ├── ebpf.rs               # eBPF loader + dispatch (feature `ebpf`, privileges required)
+│       ├── ebpf_event.rs         # eBPF → Sysmon XML synthesis + tests
 │       └── cli.rs                # Diagnostic subcommands (feature `tools`): check-filter, list-rules
+├── sigmacatch-check/             # Standalone cross-platform binary: regression check (--json, --ignore)
 └── crates/
     ├── sigmacatch-ebpf/          # eBPF probes (excluded workspace, nightly, bpfel-unknown-none)
     │   └── src/main.rs           # 6 tracepoints: execve/exec/exit/connect/openat+exit/sendto+sendmsg
@@ -43,8 +50,7 @@ sigmacatch/
     ├── sigmacatch-types/         # Shared types: Event, Alert, RegressionHeader + XML parsing + logsource mapping tables
     ├── sigmacatch-repo/          # grit-lib wrapper + SigmaRepo + git operations + signing.rs + transport.rs
     ├── sigmacatch-evtx-writer/   # Pure Rust EVTX writer (ETW / record-id-less events — no EvtExportLog possible)
-    ├── input-windows-evtx/       # EVTX file parser → Event
-    └── sigmacatch-check/         # Standalone cross-platform binary: regression check (--json)
+    └── input-windows-evtx/       # EVTX file parser → Event
 ```
 
 ## Collectors
@@ -113,9 +119,11 @@ The two sysmon binaries add an additional collector:
   process_create, EID 3 network_connect, EID 5 process_terminate, EID 11 file_create and
   DNS extension (EID 22): events rendered as Sysmon XML identical to the syslog path then
   injected via the same pipeline (`inject_logsource_fields_for`). Runtime requirements:
-  root or CAP_BPF+CAP_PERFMON (refuses to start otherwise) + kernel with BTF. SHA256
-  hashing of images is calculated userspace with cache (path,mtime). In all-features,
-  automatic fallback to syslog tail if probes fail to load.
+  root or CAP_BPF+CAP_PERFMON (refuses to start otherwise — `entry.rs` bails) + kernel with
+  BTF. SHA256 hashing of images is calculated userspace with cache (path,mtime). A failed
+  probe load at runtime warns and continues **without** any sysmon source in the `-ebpf`
+  flavour; only an all-features build (`ebpf` + `sysmon`) falls back to the Sysmon-for-Linux
+  syslog tail.
 - **Sysmon-for-Linux tail (feature `sysmon`, `sigmacatch-linux-sysmon`)** — central syslog
   lines tagged `sysmon` whose body is winevt XML (`parse_winevt_xml`/`_raw`) → logsource
   `product:linux, service:sysmon` via channel `Linux-Sysmon/Operational`. Read-only, no
@@ -123,7 +131,11 @@ The two sysmon binaries add an additional collector:
 
 Regression format: `DataFormat::Log`.
 
-Each binary defines its own `CollectorKind` in its `main_*.rs` (`name()`/`mode()`/`channels()`/`build()`/`regression_format()`) and injects it into `sigmacatch_runner::run()`. The regression format comes from `regression_format()`: `DataFormat::Evtx` for both Windows binaries, `DataFormat::Log` for all three Linux binaries.
+Each Windows binary defines its own `CollectorKind` in its `main_*.rs`
+(`name()`/`mode()`/`channels()`/`build()`/`regression_format()`); the three Linux binaries
+share a single `LinuxCollector` defined in `entry.rs`. The regression format comes from
+`regression_format()`: `DataFormat::Evtx` for both Windows binaries, `DataFormat::Log` for
+all three Linux binaries.
 
 ## Crate dependency graph
 
