@@ -57,7 +57,7 @@ async-trait = { version = "0.1", optional = true }
 linux-audit-parser = { version = "0.2", optional = true }
 regex = { version = "1", optional = true }
 aya = { version = "0.14", optional = true }
-sha2 = { version = "0.10", optional = true }
+sha2 = { version = "0.11", optional = true }
 
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "signal"] }
 tracing = "0.1"
