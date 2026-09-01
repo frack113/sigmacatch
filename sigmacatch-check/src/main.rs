@@ -64,7 +64,7 @@ fn main() -> anyhow::Result<()> {
     // Bidirectional regression_tests_path validation.
     // Direction 1: each entry → rule must exist and declare a matching path.
     // Direction 2: each rule with regression_tests_path → entry must exist.
-    let path_validation = validate_regression_paths(&rules, &regression);
+    let path_validation = validate_regression_paths(&rules, &regression, json_output);
     let missing_path = path_validation.missing_path;
     let mismatched_path = path_validation.mismatched_path;
 
@@ -328,7 +328,11 @@ struct PathValidation {
 
 /// Bidirectional validation of `regression_tests_path` between rules and
 /// regression entries. Returns counts of missing and mismatched paths.
-fn validate_regression_paths(rules: &SigmahqRules, regression: &SigmahqRegression) -> PathValidation {
+fn validate_regression_paths(
+    rules: &SigmahqRules,
+    regression: &SigmahqRegression,
+    json_output: bool,
+) -> PathValidation {
     let sigma_root = regression.path().parent().unwrap_or(Path::new("./sigma"));
     let mut missing_path = 0usize;
     let mut mismatched_path = 0usize;
@@ -336,6 +340,9 @@ fn validate_regression_paths(rules: &SigmahqRules, regression: &SigmahqRegressio
     for (info_path, _info, entry) in regression.iter_entries() {
         let Some(rule) = rules.get(&entry.rule_id) else {
             missing_path += 1;
+            if !json_output {
+                eprintln!("[FAIL] Rule {} not found in loaded rules", entry.rule_id);
+            }
             continue;
         };
         let Some(rtp) = rule
@@ -344,11 +351,25 @@ fn validate_regression_paths(rules: &SigmahqRules, regression: &SigmahqRegressio
             .and_then(|v| v.as_str())
         else {
             missing_path += 1;
+            if !json_output {
+                eprintln!(
+                    "[FAIL] Rule {} missing or non-string regression_tests_path",
+                    entry.rule_id
+                );
+            }
             continue;
         };
         let expected = sigma_root.join(rtp);
         if *info_path != expected {
             mismatched_path += 1;
+            if !json_output {
+                eprintln!(
+                    "[FAIL] Rule {} regression_tests_path mismatch: '{}' ≠ '{}'",
+                    entry.rule_id,
+                    rtp,
+                    info_path.display()
+                );
+            }
         }
     }
 
@@ -366,8 +387,22 @@ fn validate_regression_paths(rules: &SigmahqRules, regression: &SigmahqRegressio
         let full = sigma_root.join(rtp);
         if !full.exists() {
             mismatched_path += 1;
+            if !json_output {
+                eprintln!(
+                    "[FAIL] Rule {} regression_tests_path points to missing file: {}",
+                    rule.id.as_deref().unwrap_or("unknown"),
+                    rtp
+                );
+            }
         } else if !entry_paths.contains(full.as_path()) {
             missing_path += 1;
+            if !json_output {
+                eprintln!(
+                    "[FAIL] Rule {} regression_tests_path exists but no matching entry: {}",
+                    rule.id.as_deref().unwrap_or("unknown"),
+                    rtp
+                );
+            }
         }
     }
 
@@ -403,15 +438,15 @@ fn parse_auditd_lines(raw: &[u8]) -> (Vec<Event>, usize) {
                     flat.insert(key.to_string(), json);
                 }
             }
-            flat.insert("type".into(), JsonValue::String(message.ty.to_string()));
-            flat.insert("provider".into(), JsonValue::String("auditd".into()));
-            flat.insert("product".into(), JsonValue::String("linux".into()));
-            flat.insert("service".into(), JsonValue::String("auditd".into()));
             let json_raw = serde_json::json!({
                 "stamp": { "timestamp": message.id.timestamp, "sequence": message.id.sequence },
                 "type": message.ty.to_string(),
                 "fields": flat.clone(),
             });
+            flat.insert("type".into(), JsonValue::String(message.ty.to_string()));
+            flat.insert("provider".into(), JsonValue::String("auditd".into()));
+            flat.insert("product".into(), JsonValue::String("linux".into()));
+            flat.insert("service".into(), JsonValue::String("auditd".into()));
             let mut event = Event::new(json_raw, JsonValue::Object(flat), line.to_vec());
             event.inject_logsource_fields_for("linux", Some("auditd"));
             Some(event)
@@ -512,7 +547,7 @@ mod tests {
         let rules = SigmahqRules::new_from_path(&tmp.join("sigma")).unwrap();
         let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
 
-        let pv = validate_regression_paths(&rules, &regression);
+        let pv = validate_regression_paths(&rules, &regression, false);
         // Entry's rule_id (cccc...) has no matching rule in SigmahqRules → missing_path=1.
         assert_eq!(pv.missing_path, 1, "expected 1 missing path");
         assert_eq!(pv.mismatched_path, 0, "expected 0 mismatched paths");
@@ -538,7 +573,7 @@ mod tests {
         let rules = SigmahqRules::new_from_path(&tmp.join("sigma")).unwrap();
         let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
 
-        let pv = validate_regression_paths(&rules, &regression);
+        let pv = validate_regression_paths(&rules, &regression, false);
         // Direction 1: rule matches entry, but rtp (wrong_location) ≠ info_path (test) → mismatch.
         // Direction 2: rule rtp (wrong_location) file doesn't exist → mismatch.
         // Both directions legitimately flag the issue: mismatched_path=2.
@@ -568,7 +603,7 @@ mod tests {
         let rules = SigmahqRules::new_from_path(&tmp.join("sigma")).unwrap();
         let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
 
-        let pv = validate_regression_paths(&rules, &regression);
+        let pv = validate_regression_paths(&rules, &regression, false);
         // Direction 1: entry rule_id (bbbb...) doesn't match any loaded rule → missing_path=1.
         // Direction 2: rule points to info.yml, file exists, but entry_paths has bbb's path
         //              while the rule expects the same path → entry_paths.contains=true, so no
