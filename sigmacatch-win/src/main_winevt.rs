@@ -36,12 +36,10 @@ impl CollectorKind for WinevtCollector {
     }
 }
 
-#[cfg(feature = "tools")]
 mod cli;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    #[cfg(feature = "tools")]
     if let Some(code) = cli::dispatch() {
         std::process::exit(code);
     }

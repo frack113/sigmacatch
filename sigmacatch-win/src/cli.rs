@@ -3,8 +3,8 @@
 
 //! CLI subcommands for the main `sigmacatch-channel` binary.
 //!
-//! Gated behind the `tools` feature. Dispatched from `main_winevt.rs` before
-//! `runner::run()` is entered.
+//! Always compiled into the `sigmacatch-channel` binary. Dispatched from
+//! `main_winevt.rs` before `runner::run()` is entered.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -20,7 +20,7 @@ use uuid::Uuid;
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
 
 const TOOLS_HELP: &str = "\
-sigmacatch-channel — diagnostics tools (requires --features tools)
+sigmacatch-channel — diagnostics tools
 
 USAGE:
     sigmacatch-channel [FLAGS] [OPTIONS]

@@ -190,7 +190,6 @@ impl CollectorKind for LinuxCollector {
     }
 }
 
-#[cfg(feature = "tools")]
 #[path = "cli.rs"]
 mod cli;
 
@@ -199,7 +198,6 @@ mod cli;
 pub async fn run() -> Result<()> {
     // Diagnostics first: the tools subcommands must work on machines with no
     // local log source; only the collection loop requires one.
-    #[cfg(feature = "tools")]
     if let Some(code) = cli::dispatch() {
         std::process::exit(code);
     }
