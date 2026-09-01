@@ -19,18 +19,6 @@ use uuid::Uuid;
 
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
 
-const TOOLS_HELP: &str = "\
-sigmacatch-channel — diagnostics tools
-
-USAGE:
-    sigmacatch-channel [FLAGS] [OPTIONS]
-
-FLAGS:
-    --check-filter   Run filter-dimension tests against ground truth
-    --list-rules     List all loaded rules with metadata
-    --help           Print this help and exit
-";
-
 /// Dispatch on argv[1]. `None` = no/unknown subcommand → caller runs the
 /// normal collection loop; `Some(code)` = subcommand handled → exit with code.
 pub fn dispatch() -> Option<i32> {
@@ -39,10 +27,6 @@ pub fn dispatch() -> Option<i32> {
         return None; // no subcommand → fall through to normal loop
     }
     match args[1].as_str() {
-        "--help" | "-h" => {
-            print!("{TOOLS_HELP}");
-            Some(0)
-        }
         "--check-filter" | "check-filter" => {
             let rest = &args[2..];
             if rest.is_empty() || (rest.len() == 1 && (rest[0] == "--help" || rest[0] == "-h")) {
