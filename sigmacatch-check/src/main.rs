@@ -343,6 +343,7 @@ fn main() -> anyhow::Result<()> {
             "failed_count": failed.len(),
             "pass_rate": pass_rate,
             "failed": failed,
+            "warning_count": warnings.len(),
             "warnings": warnings,
         });
         println!(
@@ -371,6 +372,9 @@ fn main() -> anyhow::Result<()> {
         }
         if dropped_audit_lines > 0 {
             println!("  Dropped lines:   {}", dropped_audit_lines);
+        }
+        if !warnings.is_empty() {
+            println!("  Warnings:        {}", warnings.len());
         }
         println!("  Pass rate:       {:.1}%", pass_rate);
         println!("{}", "=".repeat(60));
