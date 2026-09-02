@@ -1017,8 +1017,7 @@ mod tests {
             Some(&b'\n'),
             "JSON file must end with trailing newline"
         );
-        let json: serde_json::Value =
-            serde_json::from_slice(&raw_bytes).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&raw_bytes).unwrap();
         assert_eq!(json["Event"]["System"]["EventRecordID"], 7);
         assert_eq!(
             json["Event"]["EventData"]["CommandLine"],

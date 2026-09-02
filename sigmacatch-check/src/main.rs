@@ -599,7 +599,10 @@ fn validate_yaml_indentation(idx: usize, regression: &SigmahqRegression) -> Opti
         Ok(s) => s,
         Err(e) => return Some(format!("cannot read {}: {e}", info_path.display())),
     };
-    raw = raw.strip_prefix('\u{feff}').map(|s| s.to_string()).unwrap_or(raw);
+    raw = raw
+        .strip_prefix('\u{feff}')
+        .map(|s| s.to_string())
+        .unwrap_or(raw);
 
     // Re-parse from disk so the comparison is against the current file, not a
     // possibly stale in-memory copy.
@@ -707,7 +710,11 @@ fn reindent_yaml(raw: &str, canonical: &str) -> String {
             .unwrap_or(0);
         if is_list {
             // Dash at the canonical indent, content aligned two columns after.
-            out.push(format!("{}- {}", " ".repeat(indent), t.trim_start_matches('-').trim_start()));
+            out.push(format!(
+                "{}- {}",
+                " ".repeat(indent),
+                t.trim_start_matches('-').trim_start()
+            ));
         } else {
             out.push(format!("{}{}", " ".repeat(indent), t));
         }
@@ -746,7 +753,10 @@ fn fix_json_newlines(regression: &SigmahqRegression) -> anyhow::Result<()> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+            let fname = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
             if path.is_dir() {
                 continue;
             }
@@ -828,7 +838,9 @@ fn fix_json_newlines(regression: &SigmahqRegression) -> anyhow::Result<()> {
         }
     }
 
-    println!("\nScanned {total} JSON file(s), fixed {fixed} newline(s), {yml_fixed} YAML indentation(s).");
+    println!(
+        "\nScanned {total} JSON file(s), fixed {fixed} newline(s), {yml_fixed} YAML indentation(s)."
+    );
     Ok(())
 }
 
@@ -1158,8 +1170,8 @@ mod tests {
         assert_eq!(validate_json_auxiliary(0, rule_id, &regression), None);
 
         fs::write(&good, b"{\"k\":\"v\"}").unwrap();
-        let err = validate_json_auxiliary(0, rule_id, &regression)
-            .expect("missing newline should fail");
+        let err =
+            validate_json_auxiliary(0, rule_id, &regression).expect("missing newline should fail");
         assert!(err.contains("missing trailing newline"), "got: {err}");
 
         fs::write(&good, b"{\"k\":\"v\"}\n\n\n").unwrap();
@@ -1168,8 +1180,8 @@ mod tests {
         assert!(err.contains("multiple trailing newlines"), "got: {err}");
 
         fs::write(&good, b"{\"k\":\"v\"\n").unwrap();
-        let err = validate_json_auxiliary(0, rule_id, &regression)
-            .expect("invalid JSON should fail");
+        let err =
+            validate_json_auxiliary(0, rule_id, &regression).expect("invalid JSON should fail");
         assert!(err.contains("invalid JSON"), "got: {err}");
 
         fs::remove_dir_all(&tmp).unwrap();
@@ -1211,8 +1223,17 @@ mod tests {
         let raw = "# top comment\nid: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\nrule_metadata:\n- id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb\n  title: R\n";
         let canonical = "id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\nrule_metadata:\n    - id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb\n      title: R\n";
         let out = reindent_yaml(raw, canonical);
-        assert!(out.starts_with("# top comment\n"), "comment preserved, got: {out}");
-        assert!(out.contains("    - id: bbbbbbbb-"), "list re-indented, got: {out}");
-        assert!(out.contains("      title: R"), "content re-indented, got: {out}");
+        assert!(
+            out.starts_with("# top comment\n"),
+            "comment preserved, got: {out}"
+        );
+        assert!(
+            out.contains("    - id: bbbbbbbb-"),
+            "list re-indented, got: {out}"
+        );
+        assert!(
+            out.contains("      title: R"),
+            "content re-indented, got: {out}"
+        );
     }
 }

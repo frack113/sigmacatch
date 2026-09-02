@@ -156,8 +156,8 @@ impl InfoYml {
 
     /// Return the canonical 4-space-indented YAML representation.
     pub fn canonical_yaml(&self) -> crate::Result<String> {
-        let yaml = serde_yaml::to_string(self)
-            .map_err(|e| crate::RegressionError::Yaml(e.to_string()))?;
+        let yaml =
+            serde_yaml::to_string(self).map_err(|e| crate::RegressionError::Yaml(e.to_string()))?;
         Ok(Self::to_sigma_indent(&yaml))
     }
 
