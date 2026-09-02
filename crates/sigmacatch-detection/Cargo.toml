@@ -19,7 +19,7 @@ sigmacatch-types = { path = "../sigmacatch-types" }
 sigmacatch-rule = { path = "../sigmacatch-rule" }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = "3.27"
 
 # Quality contract (quality.md Q2.1): inherit workspace lint tiers.
 [lints]

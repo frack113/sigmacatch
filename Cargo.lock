@@ -127,9 +127,9 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.18.0"
+version = "1.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce2b2dcc879c3bae0d371e77c99f2238400ef24ec001394befa67b6e543add9e"
+checksum = "b281d307588d634de920874890732659e2e7672f72b5e10e81badc1a8a83621e"
 dependencies = [
  "aws-lc-sys",
  "zeroize",
@@ -137,9 +137,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.44.0"
+version = "0.45.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f09fae7be8bb3174e05c6afdb34199e6dc0c7c04ba9fa237b1967adfbde27483"
+checksum = "9bff6c3b54fad79a2e60b8102caf565819711497c1f5f092f49508e2f5c31b27"
 dependencies = [
  "cc",
  "cmake",
@@ -1569,9 +1569,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.14.0"
+version = "2.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9"
+checksum = "07aa2048142242915a31d35844fb311e0e53fcca590c3a0a40dcf1b841fa09eb"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
@@ -1599,7 +1599,7 @@ dependencies = [
 
 [[package]]
 name = "input-windows-evtx"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "async-trait",
  "evtx",
@@ -1878,9 +1878,9 @@ dependencies = [
 
 [[package]]
 name = "mio"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30d65c71f1ce40ab09135ce117d742b9f8a19ff91a41a8b57ed50bc2de59c427"
+checksum = "4b18443e9c262bfe8fa82f51666e2642c53393f7e5c27b3e1aeab922cff5b9d8"
 dependencies = [
  "libc",
  "wasi",
@@ -2907,13 +2907,13 @@ dependencies = [
 
 [[package]]
 name = "scroll_derive"
-version = "0.13.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed76efe62313ab6610570951494bdaa81568026e0318eaa55f167de70eeea67d"
+checksum = "e1a36a382ed65dbcc0ab47fd5e9a94112417ccd34560a392ef3b7b0f0ec39148"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -3091,7 +3091,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sigmacatch-check"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "input-windows-evtx",
@@ -3107,7 +3107,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-config"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "serde",
  "sigmacatch-repo",
@@ -3121,7 +3121,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-detection"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "rsigma-eval",
  "serde",
@@ -3136,14 +3136,14 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-ebpf-common"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "bytemuck",
 ]
 
 [[package]]
 name = "sigmacatch-evtx-writer"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "chrono",
  "crc32fast",
@@ -3156,7 +3156,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-lnx"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3185,7 +3185,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-logger"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "sigmacatch-config",
  "thiserror 2.0.20",
@@ -3195,7 +3195,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-regression"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "chrono",
  "input-windows-evtx",
@@ -3213,7 +3213,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-repo"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3237,7 +3237,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-rule"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "dunce",
  "rsigma-parser",
@@ -3251,7 +3251,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-runner"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3270,7 +3270,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-types"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "async-trait",
  "phf",
@@ -3284,7 +3284,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-win"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3400,9 +3400,9 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"
-version = "1.15.2"
+version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
+checksum = "b9be42f50aa861c555654aa3a37f52f4b1074bacf4e48fe0ef7fa584e80f1f0f"
 
 [[package]]
 name = "socket2"
@@ -3531,9 +3531,9 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "subfeature"
-version = "1.29.0"
+version = "1.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8789ac6b95c93b04102b7d30c297d7cb71b140139daaa4dc190cf5d1de0213b8"
+checksum = "9296a3b24ecf24344529f28003c7498c73ab8784fdfe8c951c96a1d65771dde9"
 dependencies = [
  "memchr",
  "regex",
@@ -3920,18 +3920,18 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-iter"
-version = "1.29.0"
+version = "1.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d3bd5c9821bacab907511ede9a21837b2a2be02ee8143ba145780f8d2a638bc"
+checksum = "1c6acf658d1ba96525af6f04d7283efeb996a031b248e44fe288ce3543c11e7b"
 dependencies = [
  "tree-sitter",
 ]
 
 [[package]]
 name = "tree-sitter-language"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
+checksum = "ca0d1bf6fdd806e43ae5198f82f527056d359def39e54e67a0f478ac09dac081"
 
 [[package]]
 name = "tree-sitter-yaml"
@@ -4476,9 +4476,9 @@ dependencies = [
 
 [[package]]
 name = "yamlpatch"
-version = "1.29.0"
+version = "1.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45ee9380e1d493eeb5ceb2cc026f595fc99901f7763edad124134b0446adbcaa"
+checksum = "ff296a7f97d4c6c05e3f847b79865a6c2349ca367ac24793db857b6dccdbef01"
 dependencies = [
  "indexmap",
  "line-index",
@@ -4491,9 +4491,9 @@ dependencies = [
 
 [[package]]
 name = "yamlpath"
-version = "1.29.0"
+version = "1.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df6cc1b09a8b90e81e3bdd695ffd6583269fd3f9897c863342167aafd448b6f0"
+checksum = "5c9eb43a54917712f1d8edae097d9ceb16631c37245718a5e10f46f2403ded49"
 dependencies = [
  "line-index",
  "self_cell",
