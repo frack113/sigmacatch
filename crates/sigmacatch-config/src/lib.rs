@@ -261,6 +261,8 @@ impl Config {
     /// fall back to defaults. Never creates the file and skips git validation
     /// (dry-run performs no git operations and must not require author/email),
     /// so the `./sigma` rules can be validated with zero on-disk modification.
+    /// `--contrib` is intentionally not applied: dry-run never pushes, so there
+    /// is no fork target to enable.
     pub fn load_for_dry_run(path: &PathBuf, cli: &CliArgs) -> Result<Self> {
         let mut config = if path.exists() {
             let yaml = std::fs::read_to_string(path)?;
@@ -275,6 +277,7 @@ impl Config {
             config.git.offline = Some(true);
         }
         config.normalize_git();
+        config.filter.normalize();
         Ok(config)
     }
 
@@ -529,7 +532,8 @@ FLAGS:
     -o, --offline      Skip all git operations (use on-disk files as-is, no commit/push)
     -r, --max-runs <N> Exit after N collection cycles (0 = unlimited)
     -v, --verbose      Enable verbose logging (info level on stderr)
-    -n, --dry-run      Validate rules from ./sigma without writing regression data
+    -n, --dry-run      Read-only check: load ./sigma rules and build the engine,
+                       no regression data written, no git/network operation
     --help             Print this help and exit
 
 OPTIONS:
@@ -891,6 +895,49 @@ mod tests {
         assert!(
             !config.git.needs_network(),
             "normalized offline config must not need the network"
+        );
+    }
+
+    /// Dry-run without `config.yaml` must fall back to defaults and succeed even
+    /// though the default author is the placeholder that `validate()` rejects —
+    /// this pins the deliberate omission of `config.validate()`.
+    #[test]
+    fn test_load_for_dry_run_missing_file_uses_defaults_without_validation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let config = Config::load_for_dry_run(&path, &CliArgs::default()).unwrap();
+        assert!(!path.exists(), "dry-run must never create config.yaml");
+        assert_eq!(
+            config.git.author, "sigmacatch",
+            "default placeholder author must be tolerated (validate() is skipped)"
+        );
+    }
+
+    /// `--author` / `--offline` overrides apply in dry-run exactly like
+    /// `load_with_cli`, minus `--contrib` and validation: a placeholder author
+    /// in the file must not abort the run.
+    #[test]
+    fn test_load_for_dry_run_applies_cli_overrides_without_validation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "git:").unwrap();
+            writeln!(file, "  author: sigmacatch").unwrap();
+            writeln!(file, "  contrib: true").unwrap();
+        }
+        let cli = CliArgs {
+            author: Some("cli-user".to_string()),
+            offline: true,
+            contrib: true,
+            ..CliArgs::default()
+        };
+        let config = Config::load_for_dry_run(&path, &cli).unwrap();
+        assert_eq!(config.git.author.as_str(), "cli-user");
+        assert!(config.git.is_offline(), "CLI --offline must enable offline");
+        assert!(
+            !config.git.is_contrib(),
+            "offline must normalize contrib to false"
         );
     }
 }
