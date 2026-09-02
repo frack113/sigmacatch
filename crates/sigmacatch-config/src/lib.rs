@@ -257,6 +257,27 @@ impl Config {
         Ok(config)
     }
 
+    /// Load config for `--dry-run`: read `config.yaml` if present, otherwise
+    /// fall back to defaults. Never creates the file and skips git validation
+    /// (dry-run performs no git operations and must not require author/email),
+    /// so the `./sigma` rules can be validated with zero on-disk modification.
+    pub fn load_for_dry_run(path: &PathBuf, cli: &CliArgs) -> Result<Self> {
+        let mut config = if path.exists() {
+            let yaml = std::fs::read_to_string(path)?;
+            serde_yaml::from_str::<Self>(&yaml).map_err(|e| ConfigError::Format(e.to_string()))?
+        } else {
+            Self::default()
+        };
+        if let Some(author) = &cli.author {
+            config.git.author.clone_from(author);
+        }
+        if cli.offline {
+            config.git.offline = Some(true);
+        }
+        config.normalize_git();
+        Ok(config)
+    }
+
     /// Fully offline mode wins over contrib: force `contrib = false` so a run
     /// with `offline: true` can never attempt a network push. Emitted on stderr
     /// (not `tracing`) because this runs before the logger subscriber exists.
@@ -491,6 +512,9 @@ pub struct CliArgs {
     pub verbose: bool,
     /// Maximum number of collection cycles before auto-exit (0 = unlimited).
     pub max_runs: Option<u32>,
+    /// `-n/--dry-run`: validate the loaded rules from `./sigma` without
+    /// writing any regression data or performing any git operation.
+    pub dry_run: bool,
 }
 
 const HELP: &str = "\
@@ -505,6 +529,7 @@ FLAGS:
     -o, --offline      Skip all git operations (use on-disk files as-is, no commit/push)
     -r, --max-runs <N> Exit after N collection cycles (0 = unlimited)
     -v, --verbose      Enable verbose logging (info level on stderr)
+    -n, --dry-run      Validate rules from ./sigma without writing regression data
     --help             Print this help and exit
 
 OPTIONS:
@@ -531,6 +556,7 @@ fn parse_args_from(args: &[String]) -> CliArgs {
     let mut contrib = false;
     let mut verbose = false;
     let mut max_runs: Option<u32> = None;
+    let mut dry_run = false;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -565,6 +591,7 @@ fn parse_args_from(args: &[String]) -> CliArgs {
                 }
             }
             "-v" | "--verbose" => verbose = true,
+            "-n" | "--dry-run" => dry_run = true,
             unknown => {
                 eprintln!("Error: unknown flag `{}`", unknown);
                 std::process::exit(1);
@@ -579,6 +606,7 @@ fn parse_args_from(args: &[String]) -> CliArgs {
         contrib,
         verbose,
         max_runs,
+        dry_run,
     }
 }
 
@@ -620,9 +648,17 @@ mod cli_tests {
         assert!(parsed.verbose);
         assert_eq!(parsed.author.as_deref(), Some("bob"));
         assert_eq!(parsed.max_runs, None);
+        assert!(!parsed.dry_run);
+    }
+
+    #[test]
+    fn test_parse_dry_run() {
+        let parsed = parse_args_from(&args(&["--dry-run"]));
+        assert!(parsed.dry_run);
+        let parsed = parse_args_from(&args(&["-n"]));
+        assert!(parsed.dry_run);
     }
 }
-
 /// Load custom channel mappings from a YAML file.
 /// Returns an empty HashMap if the file does not exist or cannot be parsed.
 pub fn load_custom_channel_mapping(

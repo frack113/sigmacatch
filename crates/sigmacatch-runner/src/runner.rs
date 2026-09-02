@@ -79,7 +79,13 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     let cli = parse_args();
 
     let config_path = PathBuf::from("config.yaml");
-    let mut config = Config::load_with_cli(&config_path, &cli)?;
+    let mut config = if cli.dry_run {
+        // Dry-run never creates config.yaml and skips git validation — only the
+        // `./sigma` rules need to load, so no on-disk state is required.
+        Config::load_for_dry_run(&config_path, &cli)?
+    } else {
+        Config::load_with_cli(&config_path, &cli)?
+    };
 
     if cli.all_rules {
         info!("All-rules mode enabled — skip set will be empty");
@@ -102,6 +108,11 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
         config.git.author,
         config.git.email
     );
+
+    if cli.dry_run {
+        return run_dry(&mut config);
+    }
+
     let branch_name = format!("sigmacatch/{}", chrono::Local::now().format("%Y%m%d"));
     info!("Branch name: {branch_name}");
     let push_branch = branch_name.clone();
@@ -402,6 +413,40 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     }
 
     info!("{} finished", kind.name());
+    Ok(())
+}
+
+/// -n/--dry-run: validate that the rules under `./sigma` load and that the
+/// detection engine builds, without writing any regression data or performing
+/// any git/network operation. Intended for Sigma workflows that only need a
+/// read-only sanity check of the on-disk rule set.
+fn run_dry(config: &mut Config) -> Result<()> {
+    info!("Dry-run mode enabled — validating rules from ./sigma without writing data");
+
+    let rules = SigmahqRules::new()?;
+    config.filter.normalize();
+    let rules = rules.filter(config.filter.clone());
+    let stats = rules.stats();
+
+    if stats.rules_loaded == 0 {
+        anyhow::bail!(
+            "0 rules loaded — the filter config (product={}, min_status={:?}, min_level={:?}, author={:?}) is too restrictive.",
+            config.filter.product,
+            config.filter.min_status,
+            config.filter.min_level,
+            config.filter.author,
+        );
+    }
+
+    DetectionEngine::new(&rules)?;
+    info!(
+        "Dry-run OK — {} rules loaded, {} filtered by product, {} by status, {} by level, {} by author",
+        stats.rules_loaded,
+        stats.rules_filtered_product,
+        stats.rules_filtered_status,
+        stats.rules_filtered_level,
+        stats.rules_filtered_author,
+    );
     Ok(())
 }
 
