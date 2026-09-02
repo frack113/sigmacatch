@@ -3162,6 +3162,7 @@ dependencies = [
  "async-trait",
  "aya",
  "chrono",
+ "hex",
  "linux-audit-parser",
  "regex",
  "rsigma-eval",
