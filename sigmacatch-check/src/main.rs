@@ -87,6 +87,24 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Upstream SigmaHQ ships rules with non-v4 ids; we generate v4, so this
+    // only warns and never fails.
+    let mut warnings: Vec<String> = Vec::new();
+    for entry in regression.entries() {
+        if entry.rule_id.get_version_num() != 4 {
+            let msg = format!(
+                "{} rule id {} is not a UUID v4 (version {})",
+                entry.rule_name,
+                entry.rule_id,
+                entry.rule_id.get_version_num()
+            );
+            if !json_output {
+                eprintln!("[WARN] {msg}");
+            }
+            warnings.push(msg);
+        }
+    }
+
     let mut engine = DetectionEngine::new(&rules)?;
 
     let mut total = 0usize;
@@ -325,6 +343,7 @@ fn main() -> anyhow::Result<()> {
             "failed_count": failed.len(),
             "pass_rate": pass_rate,
             "failed": failed,
+            "warnings": warnings,
         });
         println!(
             "{}",
