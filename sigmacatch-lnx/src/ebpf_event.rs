@@ -381,10 +381,19 @@ impl EventBuilder {
 /// permission, I/O error). Oversized images are hashed anyway — execs are
 /// rare enough that the cost is acceptable and sysmon does not cap either.
 fn compute_sha256(path: &Path) -> Option<String> {
+    use std::io::Read;
+
     let mut file = fs::File::open(path).ok()?;
     let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher).ok()?;
-    Some(format!("{:x}", hasher.finalize()))
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = file.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Some(hex::encode(hasher.finalize()))
 }
 
 #[allow(clippy::too_many_arguments)]

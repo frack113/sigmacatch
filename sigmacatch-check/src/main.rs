@@ -8,7 +8,7 @@
 //! Works on both Linux and Windows — no platform-specific collectors required.
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::{Map, Value as JsonValue};
@@ -29,11 +29,13 @@ fn main() -> anyhow::Result<()> {
 
     let mut json_output = false;
     let mut ignore_invalid = false;
+    let mut fix = false;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--json" => json_output = true,
             "--ignore" => ignore_invalid = true,
+            "--fix" => fix = true,
             "--help" | "-h" => {
                 println!(
                     "sigmacatch-check — validate regression data against loaded rules\n\n\
@@ -41,6 +43,7 @@ fn main() -> anyhow::Result<()> {
                     Options:\n\
                       --json      Output results as JSON\n\
                       --ignore    Skip invalid entries without counting them\n\
+                      --fix       Normalize JSON trailing newlines and info.yml indentation
                       --help, -h  Print this help and exit"
                 );
                 return Ok(());
@@ -51,6 +54,12 @@ fn main() -> anyhow::Result<()> {
             }
         }
         i += 1;
+    }
+
+    if fix {
+        let regression = SigmahqRegression::new()?;
+        fix_json_newlines(&regression)?;
+        return Ok(());
     }
 
     let rules = SigmahqRules::new()?;
@@ -105,6 +114,48 @@ fn main() -> anyhow::Result<()> {
                 continue;
             }
         };
+
+        // Validate auxiliary JSON files for every declared rule: must exist
+        // (if any), be valid JSON, and end with exactly one \n.
+        let mut json_err = None;
+        match regression.get_info(idx) {
+            Some(info) if info.rule_metadata.is_empty() => {
+                json_err = Some("rule_metadata is empty".to_string());
+            }
+            Some(info) => {
+                for m in &info.rule_metadata {
+                    if let Some(err) = validate_json_auxiliary(idx, &m.id, &regression) {
+                        json_err = Some(err);
+                        break;
+                    }
+                }
+            }
+            None => {}
+        }
+        if let Some(json_err) = json_err {
+            total += 1;
+            failed.push(CheckFail {
+                rule_name: entry.rule_name.clone(),
+                error: json_err,
+            });
+            if !json_output {
+                println!("[FAIL] JSON — {}", entry.rule_name);
+            }
+            continue;
+        }
+
+        // Validate info.yml indentation matches SigmaHQ 4-space style.
+        if let Some(indent_err) = validate_yaml_indentation(idx, &regression) {
+            total += 1;
+            failed.push(CheckFail {
+                rule_name: entry.rule_name.clone(),
+                error: indent_err,
+            });
+            if !json_output {
+                println!("[FAIL] YAML indentation — {}", entry.rule_name);
+            }
+            continue;
+        }
 
         let raw = match regression.get_raw_data(idx) {
             Some(r) => r,
@@ -507,6 +558,292 @@ fn parse_json_lines(raw: &[u8]) -> Vec<Event> {
         .collect()
 }
 
+fn validate_json_auxiliary(
+    idx: usize,
+    rule_id: &Uuid,
+    regression: &SigmahqRegression,
+) -> Option<String> {
+    let info_path = regression.get_info_path(idx)?;
+    let json_path = info_path.parent()?.join(format!("{rule_id}.json"));
+    if !json_path.exists() {
+        return None;
+    }
+    let bytes = match std::fs::read(&json_path) {
+        Ok(b) => b,
+        Err(e) => return Some(format!("cannot read {}: {e}", json_path.display())),
+    };
+    if bytes.is_empty() {
+        return Some(format!("empty file: {}", json_path.display()));
+    }
+    if bytes.last() != Some(&b'\n') {
+        return Some(format!(
+            "missing trailing newline in {}",
+            json_path.display()
+        ));
+    }
+    if bytes.len() >= 2 && bytes[bytes.len() - 2] == b'\n' {
+        return Some(format!(
+            "multiple trailing newlines in {}",
+            json_path.display()
+        ));
+    }
+    if let Err(e) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+        return Some(format!("invalid JSON in {}: {e}", json_path.display()));
+    }
+    None
+}
+
+fn validate_yaml_indentation(idx: usize, regression: &SigmahqRegression) -> Option<String> {
+    let info_path = regression.get_info_path(idx)?.to_path_buf();
+    let mut raw = match std::fs::read_to_string(&info_path) {
+        Ok(s) => s,
+        Err(e) => return Some(format!("cannot read {}: {e}", info_path.display())),
+    };
+    raw = raw
+        .strip_prefix('\u{feff}')
+        .map(|s| s.to_string())
+        .unwrap_or(raw);
+
+    // Re-parse from disk so the comparison is against the current file, not a
+    // possibly stale in-memory copy.
+    let info = match sigmacatch_regression::info::InfoYml::load(&info_path) {
+        Ok(i) => i,
+        Err(e) => return Some(format!("cannot parse {}: {e}", info_path.display())),
+    };
+    let canonical = match info.canonical_yaml() {
+        Ok(c) => c,
+        Err(e) => return Some(format!("cannot canonicalize {}: {e}", info_path.display())),
+    };
+
+    for (template, indent) in yaml_lines(&raw) {
+        match canonical_indent(&canonical, &template) {
+            Some(expected) if expected != indent => {
+                return Some(format!(
+                    "info.yml indentation not SigmaHQ 4-space style: {} ({:?})",
+                    info_path.display(),
+                    template
+                ));
+            }
+            None => {
+                return Some(format!(
+                    "info.yml key not expected: {} ({:?})",
+                    info_path.display(),
+                    template
+                ));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Compact structural key of a YAML line, ignoring indent and value:
+/// `(key, is_list_item)` from e.g. `    - id: x` → `("id", true)`.
+fn yaml_template(line: &str) -> Option<(String, bool)> {
+    let t = line.trim_start();
+    if t.is_empty() || t.starts_with('#') {
+        return None;
+    }
+    let is_list = t.starts_with('-') && (t.starts_with("- ") || t.len() == 1);
+    let body = if is_list {
+        t.trim_start_matches('-').trim_start()
+    } else {
+        t
+    };
+    let key = body.split(':').next().unwrap_or("").trim();
+    if key.is_empty() {
+        return None;
+    }
+    Some((key.to_string(), is_list))
+}
+
+/// `(template, indent)` pairs of a YAML document (comments/blank lines excluded).
+fn yaml_lines(content: &str) -> Vec<((String, bool), usize)> {
+    content
+        .lines()
+        .filter_map(|l| {
+            let indent = l.len() - l.trim_start().len();
+            yaml_template(l).map(|t| (t, indent))
+        })
+        .collect()
+}
+
+/// Canonical indent for a template in the canonical document.
+fn canonical_indent(canonical: &str, template: &(String, bool)) -> Option<usize> {
+    yaml_lines(canonical)
+        .into_iter()
+        .find(|(t, _)| t == template)
+        .map(|(_, i)| i)
+}
+
+/// Whether any significant line's indent differs from canonical, requiring a fix.
+fn needs_reindent(raw: &str, canonical: &str) -> bool {
+    let canonical_lines = yaml_lines(canonical);
+    yaml_lines(raw).into_iter().any(|(template, indent)| {
+        canonical_lines
+            .iter()
+            .find(|(t, _)| *t == template)
+            .map(|(_, i)| i != &indent)
+            .unwrap_or(true)
+    })
+}
+
+/// Re-indent a YAML document to canonical 4-space SigmaHQ style while
+/// preserving `#` comment lines, blank lines, and values verbatim.
+fn reindent_yaml(raw: &str, canonical: &str) -> String {
+    let canonical_lines = yaml_lines(canonical);
+    let mut out = Vec::new();
+    for line in raw.lines() {
+        let t = line.trim_start();
+        if t.is_empty() || t.starts_with('#') {
+            out.push(line.to_string());
+            continue;
+        }
+        let Some((key, is_list)) = yaml_template(line) else {
+            out.push(line.to_string());
+            continue;
+        };
+        let indent = canonical_lines
+            .iter()
+            .find(|(t2, _)| *t2 == (key.clone(), is_list))
+            .map(|(_, i)| *i)
+            .unwrap_or(0);
+        if is_list {
+            // Dash at the canonical indent, content aligned two columns after.
+            out.push(format!(
+                "{}- {}",
+                " ".repeat(indent),
+                t.trim_start_matches('-').trim_start()
+            ));
+        } else {
+            out.push(format!("{}{}", " ".repeat(indent), t));
+        }
+    }
+    out.join("\n")
+}
+
+fn fix_json_newlines(regression: &SigmahqRegression) -> anyhow::Result<()> {
+    let root = regression.path().to_path_buf();
+    if !root.exists() {
+        anyhow::bail!("Regression data directory not found: {}", root.display());
+    }
+
+    let mut fixed = 0usize;
+    let mut total = 0usize;
+    let mut yml_fixed = 0usize;
+
+    // Only touch files that belong to known regression entries; unrelated
+    // .json artifacts are left alone.
+    let mut dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for idx in 0..regression.len() {
+        if let Some(info_path) = regression.get_info_path(idx)
+            && let Some(parent) = info_path.parent()
+        {
+            dirs.insert(parent.to_path_buf());
+        }
+    }
+
+    for dir in dirs {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("  [ERROR] Cannot read directory {}: {e}", dir.display());
+                continue;
+            }
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let fname = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            if path.is_dir() {
+                continue;
+            }
+            let is_json = path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"));
+            let is_info_yml = fname.eq_ignore_ascii_case("info.yml");
+            if is_json {
+                total += 1;
+                let bytes = match std::fs::read(&path) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("  [ERROR] Cannot read {}: {e}", path.display());
+                        continue;
+                    }
+                };
+                if bytes.is_empty() {
+                    continue;
+                }
+                let needs_fix = if bytes.last() != Some(&b'\n') {
+                    Some("missing trailing newline")
+                } else if bytes.len() >= 2 && bytes[bytes.len() - 2] == b'\n' {
+                    Some("multiple trailing newlines")
+                } else {
+                    None
+                };
+                if let Some(reason) = needs_fix {
+                    let mut trimmed = bytes;
+                    while trimmed.last() == Some(&b'\n') {
+                        trimmed.pop();
+                    }
+                    trimmed.push(b'\n');
+                    match std::fs::write(&path, &trimmed) {
+                        Ok(()) => {
+                            fixed += 1;
+                            println!("[FIX] {} ({reason})", path.display());
+                        }
+                        Err(e) => {
+                            eprintln!("  [ERROR] Cannot write {}: {e}", path.display());
+                        }
+                    }
+                }
+            } else if is_info_yml {
+                let original = match std::fs::read_to_string(&path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("  [ERROR] Cannot read {}: {e}", path.display());
+                        continue;
+                    }
+                };
+                match sigmacatch_regression::info::InfoYml::load(&path) {
+                    Ok(info) => match info.canonical_yaml() {
+                        Ok(canonical) => {
+                            let original_trimmed = original.trim_end_matches('\n');
+                            if needs_reindent(original_trimmed, &canonical) {
+                                let rewritten = reindent_yaml(&original, &canonical);
+                                let mut content = rewritten;
+                                content.push('\n');
+                                match std::fs::write(&path, content) {
+                                    Ok(()) => {
+                                        yml_fixed += 1;
+                                        println!("[FIX] {} (indentation)", path.display());
+                                    }
+                                    Err(e) => {
+                                        eprintln!("  [ERROR] Cannot write {}: {e}", path.display());
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("  [ERROR] Cannot canonicalize {}: {e}", path.display());
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("  [ERROR] Cannot parse {}: {e}", path.display());
+                    }
+                }
+            }
+        }
+    }
+
+    println!(
+        "\nScanned {total} JSON file(s), fixed {fixed} newline(s), {yml_fixed} YAML indentation(s)."
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -770,5 +1107,133 @@ mod tests {
         );
 
         fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn fix_json_adds_missing_newline_and_leaves_valid_files_untouched() {
+        let tmp = std::env::temp_dir().join("sigmacatch-check-test-fix-json");
+        let _ = fs::remove_dir_all(&tmp);
+
+        let reg_dir = tmp.join("sigma").join("regression_data");
+        let json_dir = reg_dir.join("rules").join("test");
+        fs::create_dir_all(&json_dir).unwrap();
+
+        // One info.yml so the dir is a known regression entry dir.
+        write_file(
+            &json_dir.join("info.yml"),
+            "id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\ndescription: test\ndate: 2026-01-01\nauthor: test\nrule_metadata:\n  - id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\n    title: Test Rule\nregression_tests_info:\n  - name: test\n    type: json\n    path: dummy.json\n",
+        );
+        write_evtx(&json_dir, "aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa");
+
+        let no_nl_path = json_dir.join("aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa.json");
+        let has_nl_path = json_dir.join("bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb.json");
+        let multi_nl_path = json_dir.join("cccccccc-cccc-4ccc-9ccc-cccccccccccc.json");
+        let unrelated_path = json_dir.join("unrelated.json");
+        fs::write(&no_nl_path, b"{\"k\":\"v\"}").unwrap();
+        fs::write(&has_nl_path, b"{\"k\":\"v\"}\n").unwrap();
+        fs::write(&multi_nl_path, b"{\"k\":\"v\"}\n\n\n").unwrap();
+        fs::write(&unrelated_path, b"{\"k\":\"v\"}").unwrap();
+
+        let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
+        fix_json_newlines(&regression).unwrap();
+
+        let expected = b"{\"k\":\"v\"}\n".to_vec();
+        assert_eq!(fs::read(&no_nl_path).unwrap(), expected);
+        assert_eq!(fs::read(&has_nl_path).unwrap(), expected);
+        assert_eq!(fs::read(&multi_nl_path).unwrap(), expected);
+        // Unrelated file within a known entry dir is still a JSON file whose
+        // trailing newline is normalized (only files outside known dirs are skipped).
+        assert_eq!(fs::read(&unrelated_path).unwrap(), expected);
+
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn validate_json_auxiliary_rejects_bad_json() {
+        let tmp = std::env::temp_dir().join("sigmacatch-check-test-json-aux");
+        let _ = fs::remove_dir_all(&tmp);
+
+        let reg_dir = tmp.join("sigma").join("regression_data");
+        let json_dir = reg_dir.join("rules").join("test");
+        fs::create_dir_all(&json_dir).unwrap();
+        write_file(
+            &json_dir.join("info.yml"),
+            "id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\ndescription: test\ndate: 2026-01-01\nauthor: test\nrule_metadata:\n  - id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\n    title: Test Rule\nregression_tests_info:\n  - name: test\n    type: json\n    path: x.json\n",
+        );
+        let rule_id = &"aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa"
+            .parse::<Uuid>()
+            .unwrap();
+        let good = json_dir.join(format!("{rule_id}.json"));
+        fs::write(&good, b"{\"k\":\"v\"}\n").unwrap();
+        let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
+
+        assert_eq!(validate_json_auxiliary(0, rule_id, &regression), None);
+
+        fs::write(&good, b"{\"k\":\"v\"}").unwrap();
+        let err =
+            validate_json_auxiliary(0, rule_id, &regression).expect("missing newline should fail");
+        assert!(err.contains("missing trailing newline"), "got: {err}");
+
+        fs::write(&good, b"{\"k\":\"v\"}\n\n\n").unwrap();
+        let err = validate_json_auxiliary(0, rule_id, &regression)
+            .expect("multiple newlines should fail");
+        assert!(err.contains("multiple trailing newlines"), "got: {err}");
+
+        fs::write(&good, b"{\"k\":\"v\"\n").unwrap();
+        let err =
+            validate_json_auxiliary(0, rule_id, &regression).expect("invalid JSON should fail");
+        assert!(err.contains("invalid JSON"), "got: {err}");
+
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn validate_yaml_indentation_accepts_comments_and_rejects_bad_indent() {
+        let tmp = std::env::temp_dir().join("sigmacatch-check-test-yaml-indent");
+        let _ = fs::remove_dir_all(&tmp);
+
+        let reg_dir = tmp.join("sigma").join("regression_data");
+        let json_dir = reg_dir.join("rules").join("test");
+        fs::create_dir_all(&json_dir).unwrap();
+        let path = json_dir.join("info.yml");
+
+        // Proper 4-space SigmaHQ style plus comment lines: must pass.
+        let commented = "id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa  # info id\ndescription: test\ndate: 2026-01-01\nauthor: test\nrule_metadata:\n    - id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa  # must match rule\n      title: Test Rule\nregression_tests_info:\n    - name: test\n      type: json\n      path: x.json\n";
+        fs::write(&path, commented).unwrap();
+        let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
+        assert_eq!(
+            validate_yaml_indentation(0, &regression),
+            None,
+            "4-space indent with comments must pass"
+        );
+
+        // 2-space / 0-indent style (serde default): must fail.
+        let bad = "id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\ndescription: test\ndate: 2026-01-01\nauthor: test\nrule_metadata:\n- id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\n  title: Test Rule\nregression_tests_info:\n- name: test\n  type: json\n  path: x.json\n";
+        fs::write(&path, bad).unwrap();
+        let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
+        let err = validate_yaml_indentation(0, &regression)
+            .expect("non-conformant indentation should fail");
+        assert!(err.contains("indentation"), "got: {err}");
+
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn reindent_yaml_preserves_comments() {
+        let raw = "# top comment\nid: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\nrule_metadata:\n- id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb\n  title: R\n";
+        let canonical = "id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\nrule_metadata:\n    - id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb\n      title: R\n";
+        let out = reindent_yaml(raw, canonical);
+        assert!(
+            out.starts_with("# top comment\n"),
+            "comment preserved, got: {out}"
+        );
+        assert!(
+            out.contains("    - id: bbbbbbbb-"),
+            "list re-indented, got: {out}"
+        );
+        assert!(
+            out.contains("      title: R"),
+            "content re-indented, got: {out}"
+        );
     }
 }

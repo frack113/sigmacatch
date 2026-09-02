@@ -14,7 +14,7 @@ default = ["auditd", "builtin"]
 auditd = ["dep:async-trait", "dep:linux-audit-parser"]
 builtin = ["dep:async-trait", "dep:regex"]
 sysmon = ["dep:async-trait"]
-ebpf = ["dep:async-trait", "dep:aya", "dep:sigmacatch-ebpf-common", "dep:sha2"]
+ebpf = ["dep:async-trait", "dep:aya", "dep:sigmacatch-ebpf-common", "dep:sha2", "dep:hex"]
 
 # Three release flavours share this main; cargo features select the sysmon
 # source per binary. Build each with --no-default-features --features <set>.
@@ -58,6 +58,7 @@ linux-audit-parser = { version = "0.2", optional = true }
 regex = { version = "1", optional = true }
 aya = { version = "0.14", optional = true }
 sha2 = { version = "0.11", optional = true }
+hex = { version = "0.4", optional = true }
 
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "signal"] }
 tracing = "0.1"
