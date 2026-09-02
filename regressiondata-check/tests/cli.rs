@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Integration tests for the `sigmacatch-check` CLI binary.
+//! Integration tests for the `regressiondata-check` CLI binary.
 
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-const BIN: &str = env!("CARGO_BIN_EXE_sigmacatch-check");
+const BIN: &str = env!("CARGO_BIN_EXE_regressiondata-check");
 
 const INFO_YML: &str = "id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\ndescription: test\ndate: 2026-01-01\nauthor: test\nrule_metadata:\n    - id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\n      title: Test Rule\nregression_tests_info:\n    - name: test\n      type: json\n      path: dummy.json\n";
 
@@ -15,7 +15,7 @@ fn run(args: &[&str]) -> Output {
     Command::new(BIN)
         .args(args)
         .output()
-        .expect("spawn sigmacatch-check")
+        .expect("spawn regressiondata-check")
 }
 
 fn make_sigma_root(dir: &std::path::Path) -> PathBuf {
@@ -50,7 +50,7 @@ fn help_lists_path_option() {
 
 #[test]
 fn path_option_loads_regression_from_given_root() {
-    let tmp = std::env::temp_dir().join("sigmacatch-check-cli-pathload");
+    let tmp = std::env::temp_dir().join("regressiondata-check-cli-pathload");
     let _ = fs::remove_dir_all(&tmp);
     let sigma = make_sigma_root(&tmp);
 
@@ -79,7 +79,7 @@ fn path_option_missing_value_flag_rejected() {
 
 #[test]
 fn fix_with_path_normalizes_files_in_given_root() {
-    let tmp = std::env::temp_dir().join("sigmacatch-check-cli-fixpath");
+    let tmp = std::env::temp_dir().join("regressiondata-check-cli-fixpath");
     let _ = fs::remove_dir_all(&tmp);
     let sigma = make_sigma_root(&tmp);
     let json_dir = sigma.join("regression_data").join("rules").join("fixture");

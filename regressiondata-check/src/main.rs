@@ -24,9 +24,9 @@ struct CheckFail {
     error: String,
 }
 
-const HELP: &str = "sigmacatch-check — validate regression data against loaded rules\n\
+const HELP: &str = "regressiondata-check — validate regression data against loaded rules\n\
     \n\
-    Usage: sigmacatch-check [OPTIONS]\n\
+    Usage: regressiondata-check [OPTIONS]\n\
     \n\
     Options:\n\
       --json        Output results as JSON\n\
@@ -912,7 +912,7 @@ mod tests {
 
     #[test]
     fn validates_missing_regression_tests_path() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-missing-path");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-missing-path");
         let _ = fs::remove_dir_all(&tmp);
 
         let rules_dir = tmp.join("sigma").join("rules");
@@ -937,7 +937,7 @@ mod tests {
 
     #[test]
     fn validates_mismatched_regression_tests_path() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-mismatch");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-mismatch");
         let _ = fs::remove_dir_all(&tmp);
 
         let rules_dir = tmp.join("sigma").join("rules");
@@ -968,7 +968,7 @@ mod tests {
 
     #[test]
     fn validates_orphaned_rule_regression_tests_path() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-orphan");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-orphan");
         let _ = fs::remove_dir_all(&tmp);
 
         let rules_dir = tmp.join("sigma").join("rules");
@@ -1045,7 +1045,7 @@ mod tests {
 
     #[test]
     fn validates_match_count_ok_when_json_present() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-mc-ok");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-mc-ok");
         let _ = fs::remove_dir_all(&tmp);
 
         let (rules, regression) = setup_match_count(&tmp, 1);
@@ -1078,7 +1078,7 @@ mod tests {
 
     #[test]
     fn validates_match_count_mismatch_detected() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-mc-mismatch");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-mc-mismatch");
         let _ = fs::remove_dir_all(&tmp);
 
         let (rules, regression) = setup_match_count(&tmp, 2);
@@ -1110,7 +1110,7 @@ mod tests {
 
     #[test]
     fn validates_match_count_skipped_when_json_absent() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-mc-nojson");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-mc-nojson");
         let _ = fs::remove_dir_all(&tmp);
 
         let (rules, regression) = setup_match_count(&tmp, 2);
@@ -1151,7 +1151,7 @@ mod tests {
 
     #[test]
     fn fix_json_adds_missing_newline_and_leaves_valid_files_untouched() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-fix-json");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-fix-json");
         let _ = fs::remove_dir_all(&tmp);
 
         let reg_dir = tmp.join("sigma").join("regression_data");
@@ -1190,7 +1190,7 @@ mod tests {
 
     #[test]
     fn validate_json_auxiliary_rejects_bad_json() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-json-aux");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-json-aux");
         let _ = fs::remove_dir_all(&tmp);
 
         let reg_dir = tmp.join("sigma").join("regression_data");
@@ -1229,7 +1229,7 @@ mod tests {
 
     #[test]
     fn validate_yaml_indentation_accepts_comments_and_rejects_bad_indent() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-yaml-indent");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-yaml-indent");
         let _ = fs::remove_dir_all(&tmp);
 
         let reg_dir = tmp.join("sigma").join("regression_data");
@@ -1279,7 +1279,7 @@ mod tests {
 
     #[test]
     fn path_option_contract_regression_parent_is_sigma_root() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-path-option");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-path-option");
         let _ = fs::remove_dir_all(&tmp);
 
         let sigma = tmp.join("sigma");

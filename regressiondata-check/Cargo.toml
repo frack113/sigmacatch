@@ -2,14 +2,14 @@
 # SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 [package]
-name = "sigmacatch-check"
+name = "regressiondata-check"
 version.workspace = true
 edition.workspace = true
 description = "Cross-platform regression validation tool"
 license.workspace = true
 
 [[bin]]
-name = "sigmacatch-check"
+name = "regressiondata-check"
 path = "src/main.rs"
 
 [dependencies]

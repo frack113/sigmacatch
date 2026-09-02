@@ -108,7 +108,7 @@ impl DataFormat {
         }
     }
 
-    /// Cheap structural validation used by `sigmacatch-check`: stat + magic or
+    /// Cheap structural validation used by `regressiondata-check`: stat + magic or
     /// prefix check, no full parse. Deep validation happens once, at write
     /// time (re-parse for EVTX). Broken data returns `false` so the rule is
     /// reported as failed in the check output.
