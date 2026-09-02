@@ -8,7 +8,7 @@ use std::io::Write;
 use std::path::Path;
 use uuid::Uuid;
 
-/// Deserialize a rule id. Hard-fails on unparseable values only; warns but
+/// Deserialize a rule id. Hard-fails on unparsable values only; warns but
 /// accepts ids that are not UUID v4 or not in lowercase canonical 8-4-4-4-12
 /// form — upstream SigmaHQ ships such ids and the regression workflow must
 /// not drop their entries.
@@ -301,7 +301,7 @@ rule_metadata:
     }
 
     #[test]
-    fn load_rejects_unparseable_rule_id() {
+    fn load_rejects_unparsable_rule_id() {
         let content = r#"
 id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
 description: N/A
