@@ -24,28 +24,45 @@ struct CheckFail {
     error: String,
 }
 
+const HELP: &str = "sigmacatch-check — validate regression data against loaded rules\n\
+    \n\
+    Usage: sigmacatch-check [OPTIONS]\n\
+    \n\
+    Options:\n\
+      --json        Output results as JSON\n\
+      --ignore      Skip invalid entries without counting them\n\
+      --fix         Normalize JSON trailing newlines and info.yml indentation\n\
+      --path <DIR>  Root of the sigma repository (default: ./sigma)\n\
+      --help, -h    Print this help and exit";
+
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     let mut json_output = false;
     let mut ignore_invalid = false;
     let mut fix = false;
+    let mut sigma_path = PathBuf::from("./sigma");
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--json" => json_output = true,
             "--ignore" => ignore_invalid = true,
             "--fix" => fix = true,
+            "--path" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Missing value for --path\n\n{HELP}");
+                    std::process::exit(1);
+                }
+                i += 1;
+                let value = args[i].as_str();
+                if value.is_empty() || value.starts_with('-') {
+                    eprintln!("Invalid value for --path: expected a directory path\n\n{HELP}");
+                    std::process::exit(1);
+                }
+                sigma_path = PathBuf::from(value);
+            }
             "--help" | "-h" => {
-                println!(
-                    "sigmacatch-check — validate regression data against loaded rules\n\n\
-                    Usage: sigmacatch-check [OPTIONS]\n\n\
-                    Options:\n\
-                      --json      Output results as JSON\n\
-                      --ignore    Skip invalid entries without counting them\n\
-                      --fix       Normalize JSON trailing newlines and info.yml indentation
-                      --help, -h  Print this help and exit"
-                );
+                println!("{HELP}");
                 return Ok(());
             }
             other => {
@@ -57,14 +74,14 @@ fn main() -> anyhow::Result<()> {
     }
 
     if fix {
-        let regression = SigmahqRegression::new()?;
+        let regression = SigmahqRegression::new_from_path(&sigma_path.join("regression_data"))?;
         fix_json_newlines(&regression)?;
         return Ok(());
     }
 
-    let rules = SigmahqRules::new()?;
+    let rules = SigmahqRules::new_from_path(&sigma_path)?;
 
-    let regression = SigmahqRegression::new()?;
+    let regression = SigmahqRegression::new_from_path(&sigma_path.join("regression_data"))?;
     if regression.is_empty() {
         eprintln!("No regression entries found — nothing to validate");
         std::process::exit(1);
@@ -1258,5 +1275,34 @@ mod tests {
             out.contains("      title: R"),
             "content re-indented, got: {out}"
         );
+    }
+
+    #[test]
+    fn path_option_contract_regression_parent_is_sigma_root() {
+        let tmp = std::env::temp_dir().join("sigmacatch-check-test-path-option");
+        let _ = fs::remove_dir_all(&tmp);
+
+        let sigma = tmp.join("sigma");
+        let reg_dir = sigma.join("regression_data");
+        let info_dir = reg_dir.join("rules").join("test");
+        fs::create_dir_all(sigma.join("rules")).unwrap();
+        fs::create_dir_all(&info_dir).unwrap();
+        write_file(
+            &info_dir.join("info.yml"),
+            "id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\ndescription: test\ndate: 2026-01-01\nauthor: test\nrule_metadata:\n  - id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\n    title: Test Rule\nregression_tests_info:\n  - name: test\n    type: evtx\n    path: dummy.evtx\n",
+        );
+
+        let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
+        let parent = regression
+            .path()
+            .parent()
+            .expect("regression path must have a parent");
+        assert_eq!(
+            parent,
+            sigma.as_path(),
+            "path().parent() must be the sigma root for validate_regression_paths auto-adaptation"
+        );
+
+        fs::remove_dir_all(&tmp).unwrap();
     }
 }
