@@ -30,7 +30,7 @@ sigmacatch/
 │       ├── ebpf.rs               # Loader eBPF + dispatch (feature `ebpf`, privileges requis)
 │       ├── ebpf_event.rs         # Synthèse XML eBPF → format Sysmon + tests
 │       └── cli.rs                # Sous-commandes de diagnostic
-├── sigmacatch-check/             # Binaire standalone cross-platform : validation régression (--json, --ignore)
+├── sigmacatch-check/             # Binaire standalone cross-platform : validation régression (--json, --ignore, --fix, --path)
 └── crates/
     ├── sigmacatch-ebpf/          # eBPF probes (exclue workspace, nightly, bpfel-unknown-none)
     │   └── src/main.rs           # 6 tracepoints : execve/exec/exit/connect/openat+exit/sendto+sendmsg
