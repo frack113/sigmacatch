@@ -18,6 +18,8 @@ windows_output/
 _bmad/
 _bmad-output/
 AGENTS.md
+.agents/
+.opencode/
 
 # tooling (local use only — not for commit)
 tools/vm/
