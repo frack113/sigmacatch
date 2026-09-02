@@ -92,14 +92,14 @@ The `check-filter` and `list-rules` subcommands are **always compiled** into bot
 (the `tools` feature has been removed).
 
 Regression validation (`check`) is no longer a subcommand: it is the standalone
-**`sigmacatch-check`** binary (`sigmacatch-check`), cross-platform, which needs no
+**`regressiondata-check`** binary (`regressiondata-check`), cross-platform, which needs no
 collector and no extra feature:
 
 ```bash
 # Linux
-cargo build --release -p sigmacatch-check
+cargo build --release -p regressiondata-check
 # Windows
-cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-check
+cargo xwin build --release --target x86_64-pc-windows-msvc -p regressiondata-check
 ```
 
 Details and sample output → [cli.md](cli.md).

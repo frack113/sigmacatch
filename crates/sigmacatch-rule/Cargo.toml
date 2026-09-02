@@ -20,7 +20,7 @@ uuid = { version = "1", features = ["v4"] }
 dunce = "1.0"
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = "3.27"
 serde_yaml = { package = "yaml_serde", version = "0.10" }
 
 # Quality contract (quality.md Q2.1): inherit workspace lint tiers.

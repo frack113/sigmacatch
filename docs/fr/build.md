@@ -94,14 +94,14 @@ Les sous-commandes `check-filter` et `list-rules` sont **toujours compilées** d
 n'est requise (la feature `tools` a été supprimée).
 
 La validation de régression (`check`) n'est plus une sous-commande : c'est le binaire
-standalone **`sigmacatch-check`** (`sigmacatch-check`), cross-platform, qui
+standalone **`regressiondata-check`** (`regressiondata-check`), cross-platform, qui
 n'exige ni collector ni feature supplémentaire :
 
 ```bash
 # Linux
-cargo build --release -p sigmacatch-check
+cargo build --release -p regressiondata-check
 # Windows
-cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-check
+cargo xwin build --release --target x86_64-pc-windows-msvc -p regressiondata-check
 ```
 
 Détails et exemples de sortie → [cli.md](cli.md).

@@ -114,8 +114,8 @@ jobs:
             command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win --no-default-features --features winevt
           - flavor: etw
             command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win --no-default-features --features etw
-          - flavor: check
-            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-check
+          - flavor: regressiondata-check
+            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p regressiondata-check
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -18,7 +18,7 @@ cargo build --release
 ./target/release/sigmacatch-linux         # auditd + syslog builtin (Linux, no root)
 ./target/release/sigmacatch-linux-sysmon  # + tail Sysmon-for-Linux (Linux)
 ./target/release/sigmacatch-linux-ebpf    # + native eBPF probes (Linux, root required)
-cargo build --release -p sigmacatch-check # Cross-platform regression validation (Linux & Windows)
+cargo build --release -p regressiondata-check # Cross-platform regression validation (Linux & Windows)
 ```
 
 ## Documentation

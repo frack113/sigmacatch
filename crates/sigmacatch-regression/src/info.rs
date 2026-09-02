@@ -8,9 +8,11 @@ use std::io::Write;
 use std::path::Path;
 use uuid::Uuid;
 
-/// Deserialize a rule id enforcing the documented contract: canonical
-/// lowercase 8-4-4-4-12 form, UUID version 4.
-fn deserialize_lowercase_v4<'de, D>(d: D) -> Result<Uuid, D::Error>
+/// Deserialize a rule id. Hard-fails on unparsable values only; warns but
+/// accepts ids that are not UUID v4 or not in lowercase canonical 8-4-4-4-12
+/// form — upstream SigmaHQ ships such ids and the regression workflow must
+/// not drop their entries.
+fn deserialize_rule_id<'de, D>(d: D) -> Result<Uuid, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -19,15 +21,15 @@ where
         serde::de::Error::custom(format!("rule_metadata[0].id is not a valid UUID: {e}"))
     })?;
     if u.get_version_num() != 4 {
-        return Err(serde::de::Error::custom(format!(
-            "rule_metadata[0].id '{s}' must be a UUID v4 (got version {})",
+        tracing::warn!(
+            "rule_metadata[0].id '{s}' is not a UUID v4 (got version {}), accepted",
             u.get_version_num()
-        )));
+        );
     }
     if s != u.hyphenated().to_string() {
-        return Err(serde::de::Error::custom(format!(
-            "rule_metadata[0].id '{s}' must be in lowercase canonical 8-4-4-4-12 form"
-        )));
+        tracing::warn!(
+            "rule_metadata[0].id '{s}' is not in lowercase canonical 8-4-4-4-12 form, accepted"
+        );
     }
     Ok(u)
 }
@@ -35,8 +37,8 @@ where
 /// Reference to the Sigma rule under test.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleMetadata {
-    /// Rule UUID (v4, lowercase canonical).
-    #[serde(deserialize_with = "deserialize_lowercase_v4")]
+    /// Rule UUID (v4 lowercase canonical expected; other forms warn).
+    #[serde(deserialize_with = "deserialize_rule_id")]
     pub id: Uuid,
     /// Human-readable rule title.
     pub title: String,
@@ -258,7 +260,7 @@ rule_metadata:
     }
 
     #[test]
-    fn load_rejects_uppercase_rule_id() {
+    fn load_accepts_uppercase_rule_id() {
         let content = r#"
 id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
 description: N/A
@@ -272,12 +274,15 @@ rule_metadata:
         let path = tmp.path().join("info.yml");
         std::fs::write(&path, content).unwrap();
 
-        let err = InfoYml::load(&path).unwrap_err().to_string();
-        assert!(err.contains("lowercase canonical"), "got: {err}");
+        let info = InfoYml::load(&path).unwrap();
+        assert_eq!(
+            info.rule_metadata[0].id.hyphenated().to_string(),
+            "d059842b-6b9d-4ed1-b5c3-5b89143c6ede"
+        );
     }
 
     #[test]
-    fn load_rejects_non_v4_rule_id() {
+    fn load_accepts_non_v4_rule_id() {
         let content = r#"
 id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
 description: N/A
@@ -291,8 +296,27 @@ rule_metadata:
         let path = tmp.path().join("info.yml");
         std::fs::write(&path, content).unwrap();
 
+        let info = InfoYml::load(&path).unwrap();
+        assert!(info.rule_metadata[0].id.is_nil());
+    }
+
+    #[test]
+    fn load_rejects_unparsable_rule_id() {
+        let content = r#"
+id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+description: N/A
+date: 2024-01-15
+author: sigmacatch
+rule_metadata:
+  - id: not-a-uuid
+    title: Broken Id
+"#;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("info.yml");
+        std::fs::write(&path, content).unwrap();
+
         let err = InfoYml::load(&path).unwrap_err().to_string();
-        assert!(err.contains("UUID v4"), "got: {err}");
+        assert!(err.contains("not a valid UUID"), "got: {err}");
     }
 
     #[test]

@@ -17,7 +17,7 @@ members = [
     "crates/sigmacatch-rule",
     "crates/sigmacatch-repo",
     "crates/sigmacatch-ebpf-common",
-    "sigmacatch-check",
+    "regressiondata-check",
 ]
 
 # Nightly-only bpf-el crate: built separately (see crates/sigmacatch-ebpf/Cargo.toml
@@ -27,7 +27,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.5.2"
+version = "0.5.3"
 edition = "2024"
 license = "MIT"
 

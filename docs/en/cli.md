@@ -1,32 +1,35 @@
 # CLI — Diagnostic and tooling
 
-## `sigmacatch-check` — regression validation (cross-platform)
+## `regressiondata-check` — regression validation (cross-platform)
 
 `check` is no longer a subcommand of the collector binaries: it is a standalone
-**`sigmacatch-check`** binary, built for Linux and Windows, without a collector. It
+**`regressiondata-check`** binary, built for Linux and Windows, without a collector. It
 loads the Sigma rules and regression data, replays each stored event
 through the detection engine, and verifies that the expected rule still matches.
 
 **Usage:**
 
 ```text
-sigmacatch-check [--json] [--ignore]
+regressiondata-check [--json] [--ignore] [--fix] [--path <DIR>]
 ```
 
 - `--json` — outputs JSON instead of human-readable text.
 - `--ignore` — skip invalid entries (missing entry/raw data, empty events) without counting
   them as failures.
+- `--fix` — normalize JSON trailing newlines and `info.yml` indentation.
+- `--path <DIR>` — root of the sigma repository (default: `./sigma`).
 - `--help`, `-h` — print usage and exit.
 
-**Purpose:** deep validation of all regression data in `./sigma/regression_data`. Entries are
+**Purpose:** deep validation of all regression data in the sigma root's
+`regression_data/` (`./sigma/regression_data` by default). Entries are
 parsed according to their `LogType`: `.evtx` via `input_windows_evtx::parse_evtx_bytes`,
 `.log` via the auditd parser, straight JSON lines. The `Raw` logtype is skipped.
 
 ### Pipeline
 
-1. Loads all Sigma rules from `./sigma`
+1. Loads all Sigma rules from the sigma root (`./sigma` by default, `--path <DIR>` to override)
 2. Builds the `DetectionEngine` once
-3. Loads regression entries from `./sigma/regression_data`
+3. Loads regression entries from `<DIR>/regression_data`
 4. Bidirectional `regression_tests_path` validation between rules and entries:
    every entry's rule must declare a matching `regression_tests_path`, and every declared
    path must point to an existing entry (missing / mismatched paths are counted).
@@ -67,8 +70,11 @@ missing/mismatched path).
 **Example:**
 
 ```bash
-sigmacatch-check
-sigmacatch-check --json --ignore
+regressiondata-check
+regressiondata-check --json --ignore
+# from the root of a sigma repository checkout (e.g. CI/CD on SigmaHQ/sigma):
+regressiondata-check --path .
+regressiondata-check --fix --path .
 ```
 
 ### JSON output
@@ -169,4 +175,4 @@ The `get-atomic` and `check-channels` subcommands have been removed. `get-atomic
 replaced by the list of missing techniques produced by `list-rules --json --coverage` and
 the generation of regression data; Atomic Red Team tests are now orchestrated directly on
 the VM (module `Invoke-AtomicRedTeam` in `C:\AtomicRedTeam`) targeting the rules without
-data. `check` is replaced by the standalone `sigmacatch-check` binary (see above).
+data. `check` is replaced by the standalone `regressiondata-check` binary (see above).

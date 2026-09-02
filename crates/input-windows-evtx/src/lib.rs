@@ -132,7 +132,7 @@ pub fn parse_evtx_file(path: &Path) -> Result<Vec<Event>> {
 
 /// Parse EVTX data from raw bytes into a vector of `Event` objects.
 ///
-/// Useful for loading EVTX regression data from memory (e.g., sigmacatch-check binary).
+/// Useful for loading EVTX regression data from memory (e.g., regressiondata-check binary).
 pub fn parse_evtx_bytes(data: &[u8]) -> Result<Vec<Event>> {
     let mut parser = evtx::EvtxParser::from_read_seek(std::io::Cursor::new(data)).map_err(|e| {
         EvtxError::Parse(format!("Failed to create EVTX parser from raw bytes: {e}"))

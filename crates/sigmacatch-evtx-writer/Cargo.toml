@@ -11,13 +11,13 @@ description = "Minimal pure-Rust EVTX writer (single-record, direct BinXML) for 
 [dependencies]
 thiserror.workspace = true
 chrono = "0.4"
-crc32fast = "1.4"
+crc32fast = "1.5"
 roxmltree = "0.21"
 
 [dev-dependencies]
 evtx = "0.12"
 input-windows-evtx = { path = "../input-windows-evtx" }
-tempfile = "3"
+tempfile = "3.27"
 
 # Quality contract (quality.md Q2.1): inherit workspace lint tiers.
 [lints]

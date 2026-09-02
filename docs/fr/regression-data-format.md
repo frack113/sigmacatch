@@ -176,7 +176,7 @@ Pour qu'un `info.yml` soit valide :
 
 1. Le fichier doit être en UTF-8 (BOM autorisé)
 2. Le champ `rule_metadata` doit être une séquence non vide
-3. `rule_metadata[0].id` doit être un UUID v4 valide au format `8-4-4-4-12` (hexadécimal minuscule)
+3. `rule_metadata[0].id` doit être un UUID parseable ; une erreur dure est levée uniquement sur les valeurs non parseables. Les ids non v4 ou non canoniques minuscules (`8-4-4-4-12`) sont acceptés avec un avertissement — l'amont SigmaHQ en publie et leurs entrées de régression ne doivent pas être abandonnées
 4. Le `id` au root du YAML (instance ID) est ignoré pour la validation du rule_id
 
 ### Validation du nommage

@@ -175,7 +175,7 @@ For an `info.yml` to be valid:
 
 1. The file must be UTF-8 (BOM allowed)
 2. The `rule_metadata` field must be a non-empty sequence
-3. `rule_metadata[0].id` must be a valid UUID v4 in `8-4-4-4-12` format (lowercase hex)
+3. `rule_metadata[0].id` must be a parseable UUID; a hard error is raised only on unparsable values. Non-v4 or non-lowercase-canonical (`8-4-4-4-12`) ids are accepted with a warning — upstream SigmaHQ ships such ids and their regression entries must not be dropped
 4. The root `id` in the YAML (instance ID) is ignored for rule_id validation
 
 ### Naming validation

@@ -24,28 +24,45 @@ struct CheckFail {
     error: String,
 }
 
+const HELP: &str = "regressiondata-check — validate regression data against loaded rules\n\
+    \n\
+    Usage: regressiondata-check [OPTIONS]\n\
+    \n\
+    Options:\n\
+      --json        Output results as JSON\n\
+      --ignore      Skip invalid entries without counting them\n\
+      --fix         Normalize JSON trailing newlines and info.yml indentation\n\
+      --path <DIR>  Root of the sigma repository (default: ./sigma)\n\
+      --help, -h    Print this help and exit";
+
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     let mut json_output = false;
     let mut ignore_invalid = false;
     let mut fix = false;
+    let mut sigma_path = PathBuf::from("./sigma");
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--json" => json_output = true,
             "--ignore" => ignore_invalid = true,
             "--fix" => fix = true,
+            "--path" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Missing value for --path\n\n{HELP}");
+                    std::process::exit(1);
+                }
+                i += 1;
+                let value = args[i].as_str();
+                if value.is_empty() || value.starts_with('-') {
+                    eprintln!("Invalid value for --path: expected a directory path\n\n{HELP}");
+                    std::process::exit(1);
+                }
+                sigma_path = PathBuf::from(value);
+            }
             "--help" | "-h" => {
-                println!(
-                    "sigmacatch-check — validate regression data against loaded rules\n\n\
-                    Usage: sigmacatch-check [OPTIONS]\n\n\
-                    Options:\n\
-                      --json      Output results as JSON\n\
-                      --ignore    Skip invalid entries without counting them\n\
-                      --fix       Normalize JSON trailing newlines and info.yml indentation
-                      --help, -h  Print this help and exit"
-                );
+                println!("{HELP}");
                 return Ok(());
             }
             other => {
@@ -57,14 +74,14 @@ fn main() -> anyhow::Result<()> {
     }
 
     if fix {
-        let regression = SigmahqRegression::new()?;
+        let regression = SigmahqRegression::new_from_path(&sigma_path.join("regression_data"))?;
         fix_json_newlines(&regression)?;
         return Ok(());
     }
 
-    let rules = SigmahqRules::new()?;
+    let rules = SigmahqRules::new_from_path(&sigma_path)?;
 
-    let regression = SigmahqRegression::new()?;
+    let regression = SigmahqRegression::new_from_path(&sigma_path.join("regression_data"))?;
     if regression.is_empty() {
         eprintln!("No regression entries found — nothing to validate");
         std::process::exit(1);
@@ -85,6 +102,24 @@ fn main() -> anyhow::Result<()> {
             "[FAIL] {} mismatched regression_tests_path(s)",
             mismatched_path
         );
+    }
+
+    // Upstream SigmaHQ ships rules with non-v4 ids; we generate v4, so this
+    // only warns and never fails.
+    let mut warnings: Vec<String> = Vec::new();
+    for entry in regression.entries() {
+        if entry.rule_id.get_version_num() != 4 {
+            let msg = format!(
+                "{} rule id {} is not a UUID v4 (version {})",
+                entry.rule_name,
+                entry.rule_id,
+                entry.rule_id.get_version_num()
+            );
+            if !json_output {
+                eprintln!("[WARN] {msg}");
+            }
+            warnings.push(msg);
+        }
     }
 
     let mut engine = DetectionEngine::new(&rules)?;
@@ -325,6 +360,8 @@ fn main() -> anyhow::Result<()> {
             "failed_count": failed.len(),
             "pass_rate": pass_rate,
             "failed": failed,
+            "warning_count": warnings.len(),
+            "warnings": warnings,
         });
         println!(
             "{}",
@@ -352,6 +389,9 @@ fn main() -> anyhow::Result<()> {
         }
         if dropped_audit_lines > 0 {
             println!("  Dropped lines:   {}", dropped_audit_lines);
+        }
+        if !warnings.is_empty() {
+            println!("  Warnings:        {}", warnings.len());
         }
         println!("  Pass rate:       {:.1}%", pass_rate);
         println!("{}", "=".repeat(60));
@@ -872,7 +912,7 @@ mod tests {
 
     #[test]
     fn validates_missing_regression_tests_path() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-missing-path");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-missing-path");
         let _ = fs::remove_dir_all(&tmp);
 
         let rules_dir = tmp.join("sigma").join("rules");
@@ -897,7 +937,7 @@ mod tests {
 
     #[test]
     fn validates_mismatched_regression_tests_path() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-mismatch");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-mismatch");
         let _ = fs::remove_dir_all(&tmp);
 
         let rules_dir = tmp.join("sigma").join("rules");
@@ -928,7 +968,7 @@ mod tests {
 
     #[test]
     fn validates_orphaned_rule_regression_tests_path() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-orphan");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-orphan");
         let _ = fs::remove_dir_all(&tmp);
 
         let rules_dir = tmp.join("sigma").join("rules");
@@ -1005,7 +1045,7 @@ mod tests {
 
     #[test]
     fn validates_match_count_ok_when_json_present() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-mc-ok");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-mc-ok");
         let _ = fs::remove_dir_all(&tmp);
 
         let (rules, regression) = setup_match_count(&tmp, 1);
@@ -1038,7 +1078,7 @@ mod tests {
 
     #[test]
     fn validates_match_count_mismatch_detected() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-mc-mismatch");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-mc-mismatch");
         let _ = fs::remove_dir_all(&tmp);
 
         let (rules, regression) = setup_match_count(&tmp, 2);
@@ -1070,7 +1110,7 @@ mod tests {
 
     #[test]
     fn validates_match_count_skipped_when_json_absent() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-mc-nojson");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-mc-nojson");
         let _ = fs::remove_dir_all(&tmp);
 
         let (rules, regression) = setup_match_count(&tmp, 2);
@@ -1111,7 +1151,7 @@ mod tests {
 
     #[test]
     fn fix_json_adds_missing_newline_and_leaves_valid_files_untouched() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-fix-json");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-fix-json");
         let _ = fs::remove_dir_all(&tmp);
 
         let reg_dir = tmp.join("sigma").join("regression_data");
@@ -1150,7 +1190,7 @@ mod tests {
 
     #[test]
     fn validate_json_auxiliary_rejects_bad_json() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-json-aux");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-json-aux");
         let _ = fs::remove_dir_all(&tmp);
 
         let reg_dir = tmp.join("sigma").join("regression_data");
@@ -1189,7 +1229,7 @@ mod tests {
 
     #[test]
     fn validate_yaml_indentation_accepts_comments_and_rejects_bad_indent() {
-        let tmp = std::env::temp_dir().join("sigmacatch-check-test-yaml-indent");
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-yaml-indent");
         let _ = fs::remove_dir_all(&tmp);
 
         let reg_dir = tmp.join("sigma").join("regression_data");
@@ -1235,5 +1275,34 @@ mod tests {
             out.contains("      title: R"),
             "content re-indented, got: {out}"
         );
+    }
+
+    #[test]
+    fn path_option_contract_regression_parent_is_sigma_root() {
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-path-option");
+        let _ = fs::remove_dir_all(&tmp);
+
+        let sigma = tmp.join("sigma");
+        let reg_dir = sigma.join("regression_data");
+        let info_dir = reg_dir.join("rules").join("test");
+        fs::create_dir_all(sigma.join("rules")).unwrap();
+        fs::create_dir_all(&info_dir).unwrap();
+        write_file(
+            &info_dir.join("info.yml"),
+            "id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\ndescription: test\ndate: 2026-01-01\nauthor: test\nrule_metadata:\n  - id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\n    title: Test Rule\nregression_tests_info:\n  - name: test\n    type: evtx\n    path: dummy.evtx\n",
+        );
+
+        let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
+        let parent = regression
+            .path()
+            .parent()
+            .expect("regression path must have a parent");
+        assert_eq!(
+            parent,
+            sigma.as_path(),
+            "path().parent() must be the sigma root for validate_regression_paths auto-adaptation"
+        );
+
+        fs::remove_dir_all(&tmp).unwrap();
     }
 }

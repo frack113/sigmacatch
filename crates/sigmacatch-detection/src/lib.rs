@@ -235,7 +235,7 @@ impl DetectionEngine {
         self.stats.clone()
     }
 
-    /// Per-field match explanation for diagnostics (`sigmacatch-check` deep mode).
+    /// Per-field match explanation for diagnostics (`regressiondata-check` deep mode).
     pub fn explain_rule(&self, rule_id: &Uuid, event: &Event) -> Option<serde_json::Value> {
         let rule_id_str = rule_id.to_string();
         let compiled = self

@@ -1,33 +1,36 @@
 # CLI — Diagnostic et sous-commandes
 
-## `sigmacatch-check` — validation de la régression (cross-platform)
+## `regressiondata-check` — validation de la régression (cross-platform)
 
 `check` n'est plus une sous-commande des binaires de collecte : c'est un binaire
-standalone, **`sigmacatch-check`**, compilé pour Linux et Windows, sans collector. Il
+standalone, **`regressiondata-check`**, compilé pour Linux et Windows, sans collector. Il
 charge les règles Sigma et les données de régression, rejoue chaque
 event stocké dans le moteur de détection, et vérifie que la règle attendue matche encore.
 
 **Usage :**
 
 ```text
-sigmacatch-check [--json] [--ignore]
+regressiondata-check [--json] [--ignore] [--fix] [--path <DIR>]
 ```
 
 - `--json` — sortie en JSON au lieu du texte lisible.
 - `--ignore` — saute les entrées invalides (entrée/données brutes absentes, events vides)
   sans les compter comme échecs.
+- `--fix` — normalise les fins de ligne JSON et l'indentation `info.yml`.
+- `--path <DIR>` — racine du repo sigma (défaut : `./sigma`).
 - `--help`, `-h` — affiche l'usage et sort.
 
-**Fonction :** validation approfondie de toutes les données de régression dans
-`./sigma/regression_data`. Les entrées sont parses selon leur `LogType` : `.evtx` via
+**Fonction :** validation approfondie de toutes les données de régression dans le
+`regression_data/` de la racine sigma (`./sigma/regression_data` par défaut). Les
+entrées sont parses selon leur `LogType` : `.evtx` via
 `input_windows_evtx::parse_evtx_bytes`, `.log` via le parser auditd, lignes JSON directes.
 Le logtype `Raw` est ignoré.
 
 ### Pipeline
 
-1. Charge toutes les règles Sigma depuis `./sigma`
+1. Charge toutes les règles Sigma depuis la racine sigma (`./sigma` par défaut, `--path <DIR>` pour surcharger)
 2. Construit le `DetectionEngine` une seule fois
-3. Charge les entrées de régression depuis `./sigma/regression_data`
+3. Charge les entrées de régression depuis `<DIR>/regression_data`
 4. Validation **bidirectionnelle** du `regression_tests_path` entre règles et entrées :
    chaque entrée doit correspondre à une règle déclarant ce chemin, et chaque chemin déclaré
    doit pointer vers une entrée existante (chemins manquants / incohérents comptés).
@@ -68,8 +71,11 @@ Le résumé affiche aussi, quand non nuls : `Missing paths`, `Mismatched`, `Igno
 **Exemple :**
 
 ```bash
-sigmacatch-check
-sigmacatch-check --json --ignore
+regressiondata-check
+regressiondata-check --json --ignore
+# depuis la racine d'un checkout du repo sigma (ex. CI/CD sur SigmaHQ/sigma) :
+regressiondata-check --path .
+regressiondata-check --fix --path .
 ```
 
 ### Sortie JSON
@@ -176,4 +182,4 @@ remplacé par la liste des techniques manquantes produite par `list-rules --json
 et la génération des données de régression ; les tests Atomic Red Team sont désormais
 orchestrés directement sur la VM (module `Invoke-AtomicRedTeam` dans `C:\AtomicRedTeam`)
 en ciblant les règles sans données. `check` est remplacé par le binaire standalone
-`sigmacatch-check` (voir plus haut).
+`regressiondata-check` (voir plus haut).
