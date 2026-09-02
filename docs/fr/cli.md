@@ -1,16 +1,16 @@
 # CLI — Diagnostic et sous-commandes
 
-## `sigmacatch-check` — validation de la régression (cross-platform)
+## `regressiondata-check` — validation de la régression (cross-platform)
 
 `check` n'est plus une sous-commande des binaires de collecte : c'est un binaire
-standalone, **`sigmacatch-check`**, compilé pour Linux et Windows, sans collector. Il
+standalone, **`regressiondata-check`**, compilé pour Linux et Windows, sans collector. Il
 charge les règles Sigma et les données de régression, rejoue chaque
 event stocké dans le moteur de détection, et vérifie que la règle attendue matche encore.
 
 **Usage :**
 
 ```text
-sigmacatch-check [--json] [--ignore] [--fix] [--path <DIR>]
+regressiondata-check [--json] [--ignore] [--fix] [--path <DIR>]
 ```
 
 - `--json` — sortie en JSON au lieu du texte lisible.
@@ -71,11 +71,11 @@ Le résumé affiche aussi, quand non nuls : `Missing paths`, `Mismatched`, `Igno
 **Exemple :**
 
 ```bash
-sigmacatch-check
-sigmacatch-check --json --ignore
+regressiondata-check
+regressiondata-check --json --ignore
 # depuis la racine d'un checkout du repo sigma (ex. CI/CD sur SigmaHQ/sigma) :
-sigmacatch-check --path .
-sigmacatch-check --fix --path .
+regressiondata-check --path .
+regressiondata-check --fix --path .
 ```
 
 ### Sortie JSON
@@ -182,4 +182,4 @@ remplacé par la liste des techniques manquantes produite par `list-rules --json
 et la génération des données de régression ; les tests Atomic Red Team sont désormais
 orchestrés directement sur la VM (module `Invoke-AtomicRedTeam` dans `C:\AtomicRedTeam`)
 en ciblant les règles sans données. `check` est remplacé par le binaire standalone
-`sigmacatch-check` (voir plus haut).
+`regressiondata-check` (voir plus haut).

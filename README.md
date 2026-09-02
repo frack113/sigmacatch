@@ -73,7 +73,7 @@ regression:
 | `-v`, `--verbose` | Show info-level logs on stderr (default: errors only) |
 | `--help`, `-h` | Print help and exit |
 
-Diagnostics subcommands (`check-filter`, `list-rules`) are always compiled into the collector binaries; regression validation is the standalone cross-platform `sigmacatch-check` binary — see [docs/en/cli.md](docs/en/cli.md).
+Diagnostics subcommands (`check-filter`, `list-rules`) are always compiled into the collector binaries; regression validation is the standalone cross-platform `regressiondata-check` binary — see [docs/en/cli.md](docs/en/cli.md).
 
 ## Documentation
 
@@ -98,8 +98,8 @@ The project is a cargo workspace of 14 packages, plus 1 excluded nightly crate (
 | `sigmacatch-evtx-writer` | Pure Rust EVTX writer for ETW / record-id-less events |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource mapping tables (phf) |
 | `sigmacatch-repo` | grit-lib wrapper: `SigmaRepo`, GitHub fork detection, plumbing/porcelain git ops, SSH signing |
-| `input-windows-evtx` | Parse EVTX files into `Event` objects (used by `sigmacatch-check`) |
-| `sigmacatch-check` | Standalone cross-platform binary: regression validation (`--json`/`--ignore`) |
+| `input-windows-evtx` | Parse EVTX files into `Event` objects (used by `regressiondata-check`) |
+| `regressiondata-check` | Standalone cross-platform binary: regression validation (`--json`/`--ignore`) |
 
 ## Built with
 

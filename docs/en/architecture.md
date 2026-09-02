@@ -30,7 +30,7 @@ sigmacatch/
 │       ├── ebpf.rs               # eBPF loader + dispatch (feature `ebpf`, privileges required)
 │       ├── ebpf_event.rs         # eBPF → Sysmon XML synthesis + tests
 │       └── cli.rs                # Diagnostic subcommands: check-filter, list-rules
-├── sigmacatch-check/             # Standalone cross-platform binary: regression check (--json, --ignore, --fix, --path)
+├── regressiondata-check/             # Standalone cross-platform binary: regression check (--json, --ignore, --fix, --path)
 └── crates/
     ├── sigmacatch-ebpf/          # eBPF probes (excluded workspace, nightly, bpfel-unknown-none)
     │   └── src/main.rs           # 6 tracepoints: execve/exec/exit/connect/openat+exit/sendto+sendmsg
@@ -58,7 +58,7 @@ sigmacatch/
 Six binaries are produced: five collector binaries from two crates (`sigmacatch-win` → 2,
 `sigmacatch-lnx` → 3), each embedding a selected set of collectors (cargo features `winevt`/`etw`
 and `auditd`/`builtin`/`sysmon`/`ebpf`, `required-features` per binary), plus the standalone
-cross-platform `sigmacatch-check`:
+cross-platform `regressiondata-check`:
 
 | Binary | Crate | Description |
 |---|---|---|
@@ -67,7 +67,7 @@ cross-platform `sigmacatch-check`:
 | `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog}.rs` | auditd + builtin syslog only (no root needed) |
 | `sigmacatch-linux-sysmon` | `sigmacatch-lnx/src/{auditd,syslog,sysmon}.rs` | + legacy Sysmon-for-Linux XML tail |
 | `sigmacatch-linux-ebpf` | `sigmacatch-lnx/src/{auditd,syslog,ebpf}.rs` | + native eBPF probes (root or CAP_BPF+CAP_PERFMON required) |
-| `sigmacatch-check` | `sigmacatch-check/src/main.rs` | Cross-platform regression validation (EVTX + auditd + JSON); no collector |
+| `regressiondata-check` | `regressiondata-check/src/main.rs` | Cross-platform regression validation (EVTX + auditd + JSON); no collector |
 
 ### Direct ETW
 
@@ -150,7 +150,7 @@ sigmacatch-lnx ──┤   ├── sigmacatch-config      (Config, CliArgs)
                  │   └── sigmacatch-repo        (SigmaRepo, grit-lib wrapper)
                  └── serde (JSON serialization of diagnostic output)
 
-sigmacatch-check ──┬── sigmacatch-detection   (DetectionEngine)
+regressiondata-check ──┬── sigmacatch-detection   (DetectionEngine)
                    ├── sigmacatch-rule        (SigmahqRules: load/filter)
                    ├── sigmacatch-regression  (SigmahqRegression)
                    ├── sigmacatch-types       (Event)
@@ -161,7 +161,7 @@ sigmacatch-check ──┬── sigmacatch-detection   (DetectionEngine)
 `sigmacatch-detection` depends on `sigmacatch-rule` + `sigmacatch-types` + `rsigma-eval`.
 The collectors live inside their binary crates and depend only on `sigmacatch-types`
 (shared types + logsource mapping tables). `input-windows-evtx` depends on
-`sigmacatch-types` + the `evtx` crate. `sigmacatch-check` (regression validation,
+`sigmacatch-types` + the `evtx` crate. `regressiondata-check` (regression validation,
 cross-platform) assembles `detection` + `rule` + `regression` + `types` with
 `input-windows-evtx` (EVTX) and `linux-audit-parser` (auditd) according to each entry's
 `LogType`. The diagnostic subcommands (`cli.rs`) parse arguments manually and use `serde`
