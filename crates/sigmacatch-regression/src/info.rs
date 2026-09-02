@@ -124,9 +124,7 @@ impl InfoYml {
     /// Write to `path` in SigmaHQ 4-space indentation style.
     pub fn save(&self, path: &Path) -> crate::Result<()> {
         let path = crate::long_path::long_path(path);
-        let yaml = serde_yaml::to_string(self)
-            .map_err(|e| crate::RegressionError::Yaml(e.to_string()))?;
-        let yaml = Self::to_sigma_indent(&yaml);
+        let yaml = self.canonical_yaml()?;
         let mut file = std::fs::File::create(&path)?;
         file.write_all(yaml.as_bytes())
             .map_err(|e| crate::RegressionError::Yaml(e.to_string()))?;
@@ -157,10 +155,10 @@ impl InfoYml {
     }
 
     /// Return the canonical 4-space-indented YAML representation.
-    pub fn canonical_yaml(&self) -> String {
+    pub fn canonical_yaml(&self) -> crate::Result<String> {
         let yaml = serde_yaml::to_string(self)
-            .expect("InfoYml serialization cannot fail");
-        Self::to_sigma_indent(&yaml)
+            .map_err(|e| crate::RegressionError::Yaml(e.to_string()))?;
+        Ok(Self::to_sigma_indent(&yaml))
     }
 
     /// Parse an `info.yml` file, stripping BOM if present.
