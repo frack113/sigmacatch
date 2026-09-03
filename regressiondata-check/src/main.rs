@@ -36,6 +36,14 @@ const HELP: &str = "regressiondata-check — validate regression data against lo
       --help, -h    Print this help and exit";
 
 fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .init();
+
     let args: Vec<String> = std::env::args().collect();
 
     let mut json_output = false;
@@ -122,7 +130,7 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    let mut engine = DetectionEngine::new(&rules)?;
+    let mut engine = DetectionEngine::new_lenient(&rules)?;
 
     let mut total = 0usize;
     let mut passed = 0usize;
@@ -188,6 +196,27 @@ fn main() -> anyhow::Result<()> {
             });
             if !json_output {
                 println!("[FAIL] YAML indentation — {}", entry.rule_name);
+            }
+            continue;
+        }
+
+        // Detect info.yml with empty/commented regression_tests_info section.
+        if regression.get_info(idx).is_some_and(|i| i.regression_tests_info.is_empty()) {
+            let msg = "invalid info.yml — no regression_tests_info";
+            if ignore_invalid {
+                ignored += 1;
+                if !json_output {
+                    println!("[IGNORE] {msg} — {}", entry.rule_name);
+                }
+            } else {
+                total += 1;
+                failed.push(CheckFail {
+                    rule_name: entry.rule_name.clone(),
+                    error: msg.to_string(),
+                });
+                if !json_output {
+                    println!("[FAIL] {msg} — {}", entry.rule_name);
+                }
             }
             continue;
         }
@@ -627,8 +656,12 @@ fn validate_json_auxiliary(
             json_path.display()
         ));
     }
-    if let Err(e) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-        return Some(format!("invalid JSON in {}: {e}", json_path.display()));
+    // Accepts both a single JSON object and JSONL (multiple objects).
+    // `into_iter` yields one `Result` per value in the stream.
+    for value in serde_json::Deserializer::from_slice(&bytes).into_iter::<serde_json::Value>() {
+        if let Err(e) = value {
+            return Some(format!("invalid JSON in {}: {e}", json_path.display()));
+        }
     }
     None
 }

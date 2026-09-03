@@ -135,6 +135,58 @@ impl DetectionEngine {
         })
     }
 
+    /// Compile `rules` like [`Self::new`] but skip rules that fail to compile
+    /// instead of returning an error.  Suitable for validation tools where a
+    /// handful of bad rules should not prevent checking the rest.
+    pub fn new_lenient(rules: &SigmahqRules) -> Result<Self, DetectionError> {
+        let win_logsource =
+            parse_pipeline(WIN_LOGSOURCE_PIPELINE).map_err(|source| DetectionError::Pipeline {
+                name: "win_logsource",
+                source,
+            })?;
+        let win_field =
+            parse_pipeline(WIN_FIELD_PIPELINE).map_err(|source| DetectionError::Pipeline {
+                name: "win_field",
+                source,
+            })?;
+        let lnx_logsource =
+            parse_pipeline(LNX_LOGSOURCE_PIPELINE).map_err(|source| DetectionError::Pipeline {
+                name: "lnx_logsource",
+                source,
+            })?;
+        let lnx_field =
+            parse_pipeline(LNX_FIELD_PIPELINE).map_err(|source| DetectionError::Pipeline {
+                name: "lnx_field",
+                source,
+            })?;
+
+        let mut engine =
+            Self::create_engine(&win_logsource, &win_field, &lnx_logsource, &lnx_field)?;
+
+        let errors = engine.add_rules(rules.rules());
+        if !errors.is_empty() {
+            for (idx, err) in &errors {
+                tracing::warn!("Rule at index {idx} failed to compile (lenient): {err}");
+            }
+        }
+
+        let rule_paths = Arc::new(rules.rule_paths().clone());
+        let rule_id_map = Self::build_rule_id_map(&rule_paths);
+
+        Ok(Self {
+            engine,
+            win_logsource_pipeline: win_logsource,
+            win_field_pipeline: win_field,
+            lnx_logsource_pipeline: lnx_logsource,
+            lnx_field_pipeline: lnx_field,
+            events: Vec::new(),
+            alerts: Vec::new(),
+            stats: EngineStats::default(),
+            rule_paths,
+            rule_id_map,
+        })
+    }
+
     /// Swap in a freshly compiled rule set without re-parsing pipelines.
     pub fn reload_rules(&mut self, rules: &SigmahqRules) -> Result<(), DetectionError> {
         // Reuse cached pipelines (clone, not re-parse YAML) for the new engine.
