@@ -121,3 +121,18 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 ## License
 
 MIT
+
+## Releases
+
+See [CHANGELOG.md](CHANGELOG.md) for version history.
+
+Current release: **v0.5.4** (2026-09-04)
+
+Recent tags:
+- v0.5.4 — JSONL support, lenient engine, info.yml validation, failed rules API
+- v0.5.3 — regressiondata-check rename, --fix/--json/--ignore flags
+- v0.5.2 — dependency updates
+- v0.5.1 — various fixes
+- v0.5.0 — native eBPF sysmon input, 3 release binaries
+
+Full history: `git tag -l` or GitHub Releases page.
