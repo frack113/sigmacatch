@@ -71,7 +71,6 @@ serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3.27"
-rsigma-eval = "0.21"
 
 # Quality contract (quality.md Q2.1): inherit workspace lint tiers.
 [lints]

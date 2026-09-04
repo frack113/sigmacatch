@@ -6,6 +6,19 @@
 //! Loads Sigma rules and regression data, replays each stored event through
 //! the detection engine, and reports whether the expected rule still matches.
 //! Works on both Linux and Windows — no platform-specific collectors required.
+//!
+//! # Example
+//!
+//! ```bash
+//! # Validate all regression data in a SigmaHQ clone
+//! regressiondata-check --path ./sigma --json
+//!
+//! # Fix trailing newlines and YAML indentation
+//! regressiondata-check --path ./sigma --fix
+//!
+//! # Skip invalid entries (e.g., experimental rules with no test data)
+//! regressiondata-check --path ./sigma --ignore
+//! ```
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -42,8 +55,9 @@ fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,regressiondata_check=info")),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new("warn,regressiondata_check=info")
+            }),
         )
         .init();
 
@@ -216,7 +230,10 @@ fn main() -> anyhow::Result<()> {
         }
 
         // Detect info.yml with empty/commented regression_tests_info section.
-        if regression.get_info(idx).is_some_and(|i| i.regression_tests_info.is_empty()) {
+        if regression
+            .get_info(idx)
+            .is_some_and(|i| i.regression_tests_info.is_empty())
+        {
             let msg = "invalid info.yml — empty or missing regression_tests_info";
             if ignore_invalid {
                 ignored += 1;

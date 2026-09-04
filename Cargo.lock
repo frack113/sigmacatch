@@ -2589,7 +2589,6 @@ dependencies = [
  "sigmacatch-regression",
  "sigmacatch-rule",
  "sigmacatch-types",
- "tracing",
  "tracing-subscriber",
  "uuid",
 ]
@@ -3167,7 +3166,6 @@ dependencies = [
  "hex",
  "linux-audit-parser",
  "regex",
- "rsigma-eval",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -3304,7 +3302,6 @@ dependencies = [
  "sigmacatch-rule",
  "sigmacatch-runner",
  "sigmacatch-types",
- "tempfile",
  "tokio",
  "tracing",
  "uuid",

@@ -4,6 +4,19 @@
 //! Two-layer tracing subscriber:
 //! - **stderr**: human-readable format (level + message), info level by default
 //! - **file**: structured format (module, file, line), configurable level
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use sigmacatch_logger::init;
+//! use sigmacatch_config::Config;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = Config::default();
+//! let _guard = init(&config, false); // verbose = false
+//! # Ok(())
+//! # }
+//! ```
 
 use sigmacatch_config::Config;
 use std::fs;

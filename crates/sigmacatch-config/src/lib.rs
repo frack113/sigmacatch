@@ -2,6 +2,19 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 //! Application configuration types and loading.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use sigmacatch_config::Config;
+//! use std::path::PathBuf;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = Config::load(&PathBuf::from("config.yaml"))?;
+//! config.save(&PathBuf::from("config.yaml"))?;
+//! # Ok(())
+//! # }
+//! ```
 
 use serde::{Deserialize, Serialize};
 use sigmacatch_repo::DEFAULT_SIGMA_REPO_URL;

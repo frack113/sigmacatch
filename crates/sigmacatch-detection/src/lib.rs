@@ -5,6 +5,37 @@
 //! rules, then evaluating events. Consumes rules from `SigmahqRules` in
 //! read-only mode. No filtering, no skip sets — just the bare essentials for
 //! testing and validation.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use sigmacatch_detection::DetectionEngine;
+//! use sigmacatch_rule::SigmahqRules;
+//! use std::path::Path;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let rules = SigmahqRules::new_from_path(Path::new("sigma"))?;
+//! let engine = DetectionEngine::new(&rules)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! For validation tools that must tolerate a few broken rules, use `new_lenient`:
+//!
+//! ```rust,no_run
+//! use sigmacatch_detection::DetectionEngine;
+//! use sigmacatch_rule::SigmahqRules;
+//! use std::path::Path;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let rules = SigmahqRules::new_from_path(Path::new("sigma"))?;
+//! let (engine, failed) = DetectionEngine::new_lenient(&rules)?;
+//! if !failed.is_empty() {
+//!     eprintln!("{} rules failed to compile", failed.len());
+//! }
+//! # Ok(())
+//! # }
+//! ```
 
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::pipeline::{Pipeline, parse_pipeline};
@@ -81,7 +112,8 @@ pub enum DetectionError {
 impl DetectionEngine {
     /// Parse the four platform pipelines and create an engine.
     /// Returns (engine, win_logsource, win_field, lnx_logsource, lnx_field).
-    fn create_engine_with_pipelines() -> Result<(Engine, Pipeline, Pipeline, Pipeline, Pipeline), DetectionError> {
+    fn create_engine_with_pipelines()
+    -> Result<(Engine, Pipeline, Pipeline, Pipeline, Pipeline), DetectionError> {
         let win_logsource =
             parse_pipeline(WIN_LOGSOURCE_PIPELINE).map_err(|source| DetectionError::Pipeline {
                 name: "win_logsource",
@@ -160,7 +192,13 @@ impl DetectionEngine {
             .into_iter()
             .map(|(idx, err)| {
                 tracing::warn!("Rule at index {idx} failed to compile (lenient): {err}");
-                (idx, DetectionError::AddRules { count: 1, total: rules.len() })
+                (
+                    idx,
+                    DetectionError::AddRules {
+                        count: 1,
+                        total: rules.len(),
+                    },
+                )
             })
             .collect();
 

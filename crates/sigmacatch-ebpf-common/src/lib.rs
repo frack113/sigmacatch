@@ -7,6 +7,27 @@
 //!
 //! Every type here is `#[repr(C)]` and [`Pod`]: the layout is the contract
 //! across the ring buffer boundary.
+//!
+//! # Example
+//!
+//! ```rust
+//! use sigmacatch_ebpf_common::{ExecEvent, EVENT_EXEC};
+//!
+//! # fn main() {
+//! let event = ExecEvent {
+//!     kind: EVENT_EXEC,
+//!     pid: 1234,
+//!     uid: 1000,
+//!     gid: 1000,
+//!     _pad0: 0,
+//!     comm: [0; 16],
+//!     image: [0; 128],
+//!     arg0: [0; 128],
+//!     _pad1: 0,
+//! };
+//! assert_eq!(event.kind, EVENT_EXEC);
+//! # }
+//! ```
 
 #![no_std]
 

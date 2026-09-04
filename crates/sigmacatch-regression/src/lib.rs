@@ -2,6 +2,19 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 //! SigmaHQ-compatible regression data format and helpers.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use sigmacatch_regression::SigmahqRegression;
+//! use std::path::Path;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let regression = SigmahqRegression::new_from_path(Path::new("sigma/regression_data"))?;
+//! println!("Found {} regression entries", regression.len());
+//! # Ok(())
+//! # }
+//! ```
 
 mod evtx;
 mod format;
