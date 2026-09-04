@@ -5,6 +5,37 @@
 //! rules, then evaluating events. Consumes rules from `SigmahqRules` in
 //! read-only mode. No filtering, no skip sets — just the bare essentials for
 //! testing and validation.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use sigmacatch_detection::DetectionEngine;
+//! use sigmacatch_rule::SigmahqRules;
+//! use std::path::Path;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let rules = SigmahqRules::new_from_path(Path::new("sigma"))?;
+//! let engine = DetectionEngine::new(&rules)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! For validation tools that must tolerate a few broken rules, use `new_lenient`:
+//!
+//! ```rust,no_run
+//! use sigmacatch_detection::DetectionEngine;
+//! use sigmacatch_rule::SigmahqRules;
+//! use std::path::Path;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let rules = SigmahqRules::new_from_path(Path::new("sigma"))?;
+//! let (engine, failed) = DetectionEngine::new_lenient(&rules)?;
+//! if !failed.is_empty() {
+//!     eprintln!("{} rules failed to compile", failed.len());
+//! }
+//! # Ok(())
+//! # }
+//! ```
 
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::pipeline::{Pipeline, parse_pipeline};
@@ -79,8 +110,10 @@ pub enum DetectionError {
 }
 
 impl DetectionEngine {
-    /// Compile `rules` and load the embedded platform pipelines.
-    pub fn new(rules: &SigmahqRules) -> Result<Self, DetectionError> {
+    /// Parse the four platform pipelines and create an engine.
+    /// Returns (engine, win_logsource, win_field, lnx_logsource, lnx_field).
+    fn create_engine_with_pipelines()
+    -> Result<(Engine, Pipeline, Pipeline, Pipeline, Pipeline), DetectionError> {
         let win_logsource =
             parse_pipeline(WIN_LOGSOURCE_PIPELINE).map_err(|source| DetectionError::Pipeline {
                 name: "win_logsource",
@@ -102,8 +135,15 @@ impl DetectionEngine {
                 source,
             })?;
 
-        let mut engine =
-            Self::create_engine(&win_logsource, &win_field, &lnx_logsource, &lnx_field)?;
+        let engine = Self::create_engine(&win_logsource, &win_field, &lnx_logsource, &lnx_field)?;
+
+        Ok((engine, win_logsource, win_field, lnx_logsource, lnx_field))
+    }
+
+    /// Compile `rules` and load the embedded platform pipelines.
+    pub fn new(rules: &SigmahqRules) -> Result<Self, DetectionError> {
+        let (mut engine, win_logsource, win_field, lnx_logsource, lnx_field) =
+            Self::create_engine_with_pipelines()?;
 
         // add_rules (&[SigmaRule]) instead of add_collection avoids cloning the
         // whole Vec; indexes are rebuilt once at the end.
@@ -133,6 +173,53 @@ impl DetectionEngine {
             rule_paths,
             rule_id_map,
         })
+    }
+
+    /// Compile `rules` like [`Self::new`] but skip rules that fail to compile
+    /// instead of returning an error.  Suitable for validation tools where a
+    /// handful of bad rules should not prevent checking the rest.
+    ///
+    /// Returns the engine plus a vector of (rule_index, error) for rules that
+    /// failed to compile, allowing callers to surface the failures.
+    pub fn new_lenient(
+        rules: &SigmahqRules,
+    ) -> Result<(Self, Vec<(usize, DetectionError)>), DetectionError> {
+        let (mut engine, win_logsource, win_field, lnx_logsource, lnx_field) =
+            Self::create_engine_with_pipelines()?;
+
+        let errors = engine.add_rules(rules.rules());
+        let failed: Vec<(usize, DetectionError)> = errors
+            .into_iter()
+            .map(|(idx, err)| {
+                tracing::warn!("Rule at index {idx} failed to compile (lenient): {err}");
+                (
+                    idx,
+                    DetectionError::AddRules {
+                        count: 1,
+                        total: rules.len(),
+                    },
+                )
+            })
+            .collect();
+
+        let rule_paths = Arc::new(rules.rule_paths().clone());
+        let rule_id_map = Self::build_rule_id_map(&rule_paths);
+
+        Ok((
+            Self {
+                engine,
+                win_logsource_pipeline: win_logsource,
+                win_field_pipeline: win_field,
+                lnx_logsource_pipeline: lnx_logsource,
+                lnx_field_pipeline: lnx_field,
+                events: Vec::new(),
+                alerts: Vec::new(),
+                stats: EngineStats::default(),
+                rule_paths,
+                rule_id_map,
+            },
+            failed,
+        ))
     }
 
     /// Swap in a freshly compiled rule set without re-parsing pipelines.
@@ -1126,5 +1213,58 @@ detection:
                 "PowerShellCore/Operational".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn test_new_lenient_skips_failing_rules() {
+        // Rule with invalid modifier combination (conflicting |contains and |fieldref)
+        // This triggers "at most one operator may be set per field" error.
+        let bad_rule = r#"title: Bad Rule
+id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb
+status: experimental
+level: low
+author: Test
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  selection:
+    Image|contains|fieldref: "foo"
+  condition: selection
+"#;
+        let good_rule = r#"title: Good Rule
+id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa
+status: stable
+level: low
+author: Test
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  selection:
+    Image: "foo"
+  condition: selection
+"#;
+
+        let dir = tempfile::tempdir().unwrap();
+        let sigma_dir = dir.path().join("sigma");
+        let rules_dir = sigma_dir.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        fs::write(rules_dir.join("bad_rule.yml"), bad_rule).unwrap();
+        fs::write(rules_dir.join("good_rule.yml"), good_rule).unwrap();
+
+        let rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
+
+        // new_lenient should succeed and return the engine plus failed rules
+        let (engine, failed) = DetectionEngine::new_lenient(&rules).unwrap();
+
+        // Good rule should be loaded
+        assert_eq!(engine.rule_count(), 1);
+
+        // One rule should have failed
+        assert_eq!(failed.len(), 1);
+        let (idx, _err) = &failed[0];
+        // The bad rule is at some index; verify it's captured
+        assert!(*idx < rules.len());
     }
 }

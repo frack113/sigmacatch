@@ -2,6 +2,19 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 //! Application configuration types and loading.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use sigmacatch_config::Config;
+//! use std::path::PathBuf;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = Config::load(&PathBuf::from("config.yaml"))?;
+//! config.save(&PathBuf::from("config.yaml"))?;
+//! # Ok(())
+//! # }
+//! ```
 
 use serde::{Deserialize, Serialize};
 use sigmacatch_repo::DEFAULT_SIGMA_REPO_URL;
@@ -175,6 +188,10 @@ fn default_max_failed_cycles() -> u32 {
     3
 }
 
+fn default_stop_file() -> String {
+    ".sigmacatch.stop".to_string()
+}
+
 impl Default for RegressionConfig {
     fn default() -> Self {
         Self {
@@ -186,7 +203,7 @@ impl Default for RegressionConfig {
 
 /// Main application configuration.
 /// Root configuration document (`config.yaml`).
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     /// Logging setup (levels, file rotation).
@@ -200,6 +217,24 @@ pub struct Config {
     /// Event collection backend: `winevt` (default) or `etw`.
     #[serde(default)]
     pub regression: RegressionConfig,
+    /// Stop-control file: while it exists, the runner triggers a graceful
+    /// shutdown (drain + flush + commit) on the next poll, so a continuous
+    /// (`-r 0`) run can be ended without a hard kill. Relative paths resolve
+    /// against the working directory. Default: `.sigmacatch.stop`.
+    #[serde(default = "default_stop_file")]
+    pub stop_file: String,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            log: LogConfig::default(),
+            filter: SigmaFilterConfig::default(),
+            git: GitConfig::default(),
+            regression: RegressionConfig::default(),
+            stop_file: default_stop_file(),
+        }
+    }
 }
 
 impl Config {

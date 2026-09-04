@@ -6,6 +6,31 @@
 //! - [`Event`] — parsed event JSON + raw source bytes (input to the detection engine)
 //! - [`Alert`] — a rule match produced by the detection engine (output)
 //! - [`RegressionHeader`] — minimal rule metadata for regression data generation
+//!
+//! # Example
+//!
+//! ```rust
+//! use sigmacatch_types::{Event, Alert, Product};
+//! use serde_json::json;
+//! use uuid::Uuid;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let event = Event::new(json!({"event_id": 4624}), json!({"event_id": 4624}), b"raw".to_vec());
+//! let alert = Alert {
+//!     rule_id: Uuid::new_v4(),
+//!     rule_title: "Test Rule".into(),
+//!     description: None,
+//!     rule_path: None,
+//!     severity: "medium".into(),
+//!     event_json_raw: json!({"event_id": 4624}),
+//!     event_json: json!({"event_id": 4624}),
+//!     event_raw: b"raw".to_vec(),
+//!     is_etw: false,
+//! };
+//! assert_eq!(Product::Windows.as_str(), "windows");
+//! # Ok(())
+//! # }
+//! ```
 
 use async_trait::async_trait;
 use roxmltree::Node;

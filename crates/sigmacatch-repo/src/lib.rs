@@ -9,6 +9,22 @@
 //!   Porcelain    → High-level wrappers: clone, pull, push, add, commit (`porcelain.rs`)
 //!   Branch       → Branch and HEAD management (`branch.rs`)
 //!   SigmaRepo    → High-level sigma repository manager — the single entry point
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use sigmacatch_repo::{SigmaRepo, GitTransport};
+//! use std::path::Path;
+//!
+//! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut repo = SigmaRepo::new();
+//! repo.set_repo_path(Path::new("sigma").into());
+//! repo.set_info_user("myuser", "me@example.com");
+//! repo.set_info_http("ghp_...");
+//! repo.init().await?;
+//! # Ok(())
+//! # }
+//! ```
 
 pub(crate) mod branch;
 pub(crate) mod plumbing;

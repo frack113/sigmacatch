@@ -2,6 +2,26 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 //! Sigma rule management: loading, filtering, discovering, AST indexing.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use sigmacatch_rule::{SigmahqRules, SigmaFilterConfig};
+//! use std::path::Path;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let filter = SigmaFilterConfig {
+//!     product: "windows".into(),
+//!     min_status: None,
+//!     min_level: None,
+//!     author: None,
+//!     max_rule_size: 1_048_576,
+//! };
+//! let rules = SigmahqRules::new_from_path(Path::new("sigma"))?;
+//! println!("Loaded {} rules", rules.len());
+//! # Ok(())
+//! # }
+//! ```
 
 pub use rsigma_parser::{Level, LogSource, SigmaCollection, SigmaRule, Status, parse_sigma_yaml};
 

@@ -7,6 +7,19 @@
 //! collector events have neither, so this crate synthesizes a valid
 //! single-record EVTX directly from the Winevt XML (direct BinXML stream, no
 //! templates). Round-trip testable on any platform via the `evtx` crate.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use sigmacatch_evtx_writer::write_evtx_from_xml;
+//! use std::path::Path;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let xml = r#"<Event><System><TimeCreated SystemTime="2024-01-01T00:00:00Z"/></System></Event>"#;
+//! write_evtx_from_xml(xml, 1, Path::new("output.evtx"))?;
+//! # Ok(())
+//! # }
+//! ```
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;

@@ -258,6 +258,30 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     });
     info!("Ctrl+C handler registered");
 
+    // Stop-file control: while the configured file exists, the collector is
+    // stopped gracefully on the next poll (drain + flush + commit). This is the
+    // signal the skill's `stop-capture` uses to end a continuous (`-r 0`) run
+    // without a hard kill that would lose the in-flight cycle's regression data.
+    if !config.stop_file.is_empty() {
+        let stop_tx = shutdown_tx.clone();
+        let stop_rx = shutdown_rx.clone();
+        let stop_file = config.stop_file.clone();
+        let poll = std::time::Duration::from_millis(500);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(poll).await;
+                if *stop_rx.borrow() {
+                    break; // shutting down for another reason
+                }
+                if Path::new(&stop_file).exists() {
+                    info!("Stop file detected ({}), shutting down", stop_file);
+                    let _ = stop_tx.send(true);
+                    break;
+                }
+            }
+        });
+    }
+
     let sigma_repo_path = Path::new(&config.git.sigma_repo_path);
     let output_base = sigma_repo_path.join("regression_data");
 
