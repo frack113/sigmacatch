@@ -33,14 +33,17 @@ const HELP: &str = "regressiondata-check — validate regression data against lo
       --ignore      Skip invalid entries without counting them\n\
       --fix         Normalize JSON trailing newlines and info.yml indentation\n\
       --path <DIR>  Root of the sigma repository (default: ./sigma)\n\
-      --help, -h    Print this help and exit";
+      --help, -h    Print this help and exit\n\
+    \n\
+    Notes:\n\
+      Auxiliary .json files are validated as JSON or JSONL (one object per line).";
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,regressiondata_check=info")),
         )
         .init();
 
@@ -130,7 +133,19 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    let mut engine = DetectionEngine::new_lenient(&rules)?;
+    let (mut engine, failed_rules) = DetectionEngine::new_lenient(&rules)?;
+
+    if !failed_rules.is_empty() {
+        let msg = format!(
+            "{} rule(s) failed to compile (lenient mode): {:?}",
+            failed_rules.len(),
+            failed_rules.iter().map(|(i, _)| *i).collect::<Vec<_>>()
+        );
+        if !json_output {
+            eprintln!("[WARN] {msg}");
+        }
+        warnings.push(msg);
+    }
 
     let mut total = 0usize;
     let mut passed = 0usize;
@@ -202,7 +217,7 @@ fn main() -> anyhow::Result<()> {
 
         // Detect info.yml with empty/commented regression_tests_info section.
         if regression.get_info(idx).is_some_and(|i| i.regression_tests_info.is_empty()) {
-            let msg = "invalid info.yml — no regression_tests_info";
+            let msg = "invalid info.yml — empty or missing regression_tests_info";
             if ignore_invalid {
                 ignored += 1;
                 if !json_output {
@@ -658,7 +673,13 @@ fn validate_json_auxiliary(
     }
     // Accepts both a single JSON object and JSONL (multiple objects).
     // `into_iter` yields one `Result` per value in the stream.
-    for value in serde_json::Deserializer::from_slice(&bytes).into_iter::<serde_json::Value>() {
+    let mut iter = serde_json::Deserializer::from_slice(&bytes).into_iter::<serde_json::Value>();
+    match iter.next() {
+        None => return Some(format!("empty JSON in {}", json_path.display())),
+        Some(Err(e)) => return Some(format!("invalid JSON in {}: {e}", json_path.display())),
+        Some(Ok(_)) => {}
+    }
+    for value in iter {
         if let Err(e) = value {
             return Some(format!("invalid JSON in {}: {e}", json_path.display()));
         }

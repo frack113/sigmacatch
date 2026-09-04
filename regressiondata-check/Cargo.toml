@@ -24,8 +24,8 @@ linux-audit-parser = "0.2"
 anyhow = "1.0"
 serde_json = "1.0"
 serde = { version = "1", features = ["derive"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 
 [lints]
