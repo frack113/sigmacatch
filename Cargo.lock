@@ -653,6 +653,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "daachorse"
+version = "3.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5614204febbc33cc07a2806aa6440b904ac012b68eecc37f4493ea4a76455a3d"
+
+[[package]]
 name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2639,6 +2645,7 @@ dependencies = [
  "aho-corasick",
  "base64 0.23.1",
  "chrono",
+ "daachorse",
  "flate2",
  "ipnet",
  "log",

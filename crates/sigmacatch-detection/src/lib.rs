@@ -43,7 +43,7 @@ use rsigma_eval::{Engine, LogSourceExtractor};
 use sigmacatch_rule::SigmahqRules;
 use sigmacatch_types::{Alert, Event};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
@@ -80,6 +80,8 @@ pub struct DetectionEngine {
     rule_paths: Arc<HashMap<Uuid, PathBuf>>,
     /// rule_id string → Uuid, built once for O(1) lookup in the hot path.
     rule_id_map: HashMap<String, Uuid>,
+    /// Path to the HIR cache file (None = no caching).
+    hir_cache_path: Option<PathBuf>,
 }
 
 /// Errors produced by the detection engine while building or persisting it.
@@ -142,6 +144,15 @@ impl DetectionEngine {
 
     /// Compile `rules` and load the embedded platform pipelines.
     pub fn new(rules: &SigmahqRules) -> Result<Self, DetectionError> {
+        Self::new_with_hir_cache(rules, None)
+    }
+
+    /// Compile `rules` and load the embedded platform pipelines,
+    /// with optional HIR cache path for persisting the compiled engine.
+    pub fn new_with_hir_cache(
+        rules: &SigmahqRules,
+        hir_cache_path: Option<PathBuf>,
+    ) -> Result<Self, DetectionError> {
         let (mut engine, win_logsource, win_field, lnx_logsource, lnx_field) =
             Self::create_engine_with_pipelines()?;
 
@@ -161,6 +172,15 @@ impl DetectionEngine {
         let rule_paths = Arc::new(rules.rule_paths().clone());
         let rule_id_map = Self::build_rule_id_map(&rule_paths);
 
+        // Persist HIR cache after first compilation.
+        if let Some(ref cache_path) = hir_cache_path {
+            if let Ok(hir) = engine.save_hir() {
+                if let Err(e) = std::fs::write(cache_path, &hir) {
+                    tracing::warn!("Failed to write HIR cache to {}: {}", cache_path.display(), e);
+                }
+            }
+        }
+
         Ok(Self {
             engine,
             win_logsource_pipeline: win_logsource,
@@ -172,6 +192,7 @@ impl DetectionEngine {
             stats: EngineStats::default(),
             rule_paths,
             rule_id_map,
+            hir_cache_path,
         })
     }
 
@@ -217,6 +238,7 @@ impl DetectionEngine {
                 stats: EngineStats::default(),
                 rule_paths,
                 rule_id_map,
+                hir_cache_path: None,
             },
             failed,
         ))
@@ -243,7 +265,47 @@ impl DetectionEngine {
         let rule_paths = rules.rule_paths().clone();
         self.rule_id_map = Self::build_rule_id_map(&rule_paths);
         self.rule_paths = Arc::new(rule_paths);
+
+        // Persist HIR cache after re-compilation.
+        if let Some(ref cache_path) = self.hir_cache_path {
+            if let Ok(hir) = self.engine.save_hir() {
+                if let Err(e) = std::fs::write(cache_path, &hir) {
+                    tracing::warn!("Failed to write HIR cache to {}: {}", cache_path.display(), e);
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// Set the path for HIR cache file. When set, the compiled engine
+    /// state is persisted after each rule change and loaded on next
+    /// construction if available, avoiding re-compilation of all rules.
+    pub fn set_hir_cache(&mut self, path: impl Into<PathBuf>) {
+        self.hir_cache_path = Some(path.into());
+    }
+
+    /// Try to load a previously saved HIR blob from `path`. Returns
+    /// the loaded engine if successful, or `Engine::new()` if no cache
+    /// exists or loading failed. Caller must add pipelines and rules.
+    pub fn load_hir_cache(path: impl AsRef<Path>) -> Engine {
+        let path = path.as_ref();
+        if !path.exists() {
+            return Engine::new();
+        }
+        let hir = match std::fs::read(path) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::warn!("Failed to read HIR cache {}: {}", path.display(), e);
+                return Engine::new();
+            }
+        };
+        let mut engine = Engine::new();
+        if let Err(e) = engine.load_hir(&hir) {
+            tracing::warn!("Failed to load HIR cache {}: {}", path.display(), e);
+            return Engine::new();
+        }
+        tracing::info!("Loaded HIR cache from {}", path.display());
+        engine
     }
 
     /// Build the rule_id string → Uuid map from the HashMap keys — already
@@ -265,6 +327,11 @@ impl DetectionEngine {
     ) -> Result<Engine, DetectionError> {
         let mut engine = Engine::new();
         engine.set_include_event(true);
+
+        // Enable cross-rule Aho-Corasick prefilter (daachorse-index feature).
+        // For rule sets > 5K rules with many shared substring patterns,
+        // this dramatically reduces the number of rules evaluated per event.
+        engine.set_cross_rule_ac(true);
 
         // Enable bloom pre-filter: short-circuits positive substring matchers
         // (Contains, StartsWith, EndsWith) when the field value cannot possibly
@@ -347,16 +414,16 @@ impl DetectionEngine {
         std::mem::take(&mut self.events)
     }
 
-    /// Evaluate all events in the pile against loaded rules.
+    /// Evaluate all events in the pile against loaded rules using batch evaluation.
     ///
     /// Events must have logsource fields (product, service, category) already
     /// injected by the collector via `Event::inject_logsource_fields()`.
     /// The bloom pre-filter and logsource pruning are both active.
     ///
-    /// The engine carries BOTH the Windows and Linux pipelines; each
-    /// transformation is gated by rule_conditions (product/service), so a
-    /// single evaluation pass routes Windows and Sysmon-for-Linux events
-    /// correctly — no per-product engine needed here.
+    /// Uses `evaluate_batch` for batch processing, which is significantly
+    /// faster than per-event evaluation for large batches. Cross-rule Aho-Corasick
+    /// prefilter (`daachorse-index` feature) short-circuits rules whose substring
+    /// patterns cannot match.
     pub fn process_events(&mut self) {
         let events = std::mem::take(&mut self.events);
         if events.is_empty() {
@@ -365,9 +432,22 @@ impl DetectionEngine {
         tracing::info!(events = events.len(), "processing events");
         self.stats.events_processed += events.len() as u64;
 
-        for event in events {
-            let json_event = JsonEvent::borrow(&event.event_json);
-            let matches = self.engine.evaluate(&json_event);
+        // Build borrowed JsonEvent references for batch evaluation.
+        // These borrow from `events` which is owned here, so they're valid
+        // for the entire scope.
+        let json_events: Vec<JsonEvent<'_>> = events
+            .iter()
+            .map(|event| JsonEvent::borrow(&event.event_json))
+            .collect();
+        let json_event_refs: Vec<&JsonEvent<'_>> = json_events.iter().collect();
+
+        // Batch evaluation: single call to rsigma-eval's optimized engine,
+        // which uses the CandidateIndex, bloom pre-filter, cross-rule
+        // Aho-Corasick prefilter, and logsource extractor to skip
+        // non-matching rules efficiently.
+        let all_matches = self.engine.evaluate_batch(&json_event_refs);
+
+        for (event, matches) in events.iter().zip(all_matches.iter()) {
             if !matches.is_empty() {
                 tracing::debug!(
                     product = ?event.event_json.get("product"),

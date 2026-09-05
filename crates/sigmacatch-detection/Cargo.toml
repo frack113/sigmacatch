@@ -9,7 +9,7 @@ description = "Thin wrapper around rsigma-eval for loading pipelines and rules, 
 license.workspace = true
 
 [dependencies]
-rsigma-eval = "0.21"
+rsigma-eval = { version = "0.21", features = ["daachorse-index"] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 thiserror.workspace = true
