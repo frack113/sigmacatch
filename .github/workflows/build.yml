@@ -108,12 +108,8 @@ jobs:
         include:
           # Each flavour on its own Windows runner + target dir so the
           # sequential recompiles (full / per-feature / check) run in parallel.
-          - flavor: channel+etw
-            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win
           - flavor: winevt
-            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win --no-default-features --features winevt
-          - flavor: etw
-            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win --no-default-features --features etw
+            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win
           - flavor: regressiondata-check
             command: cargo build --release --locked --target x86_64-pc-windows-msvc -p regressiondata-check
     steps:

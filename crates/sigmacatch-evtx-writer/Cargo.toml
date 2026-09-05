@@ -6,7 +6,7 @@ name = "sigmacatch-evtx-writer"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Minimal pure-Rust EVTX writer (single-record, direct BinXML) for ETW regression data"
+description = "Minimal pure-Rust EVTX writer (single-record, direct BinXML) for record-id-less events"
 
 [dependencies]
 thiserror.workspace = true
