@@ -20,17 +20,15 @@ const EVTX_EXPORT_BACKOFF_SECS: [u64; (EVTX_EXPORT_MAX_ATTEMPTS - 1) as usize] =
 ///
 /// Path selection: events that exist in the live Event Log (Winevt collection,
 /// `is_etw == false` with a record id) are re-exported via `EvtExportLog`
-/// (Windows only). Everything else — ETW-synthesized events (`is_etw == true`,
-/// which carry a synthetic record id but never existed in a live log, so
-/// `EvtExportLog` would always return an empty export) and record-id-less
-/// events — is written directly with the pure-Rust EVTX writer (all
-/// platforms).
+/// (Windows only). Everything else — record-id-less events — is written
+/// directly with the pure-Rust EVTX writer (all platforms). The `is_etw`
+/// flag is retained for backward-compatibility of the pure-Rust writer path.
 ///
 /// `EvtExportLog` returns success even for a zero-record match (header-only
 /// file), so every successful call is re-parsed; an empty file is retried
 /// (the live-log race may be transient) then treated as failure and the
-/// `.evtx` is removed. The ETW writer path applies the same re-parse
-/// validation but no retry (deterministic writer — see `write_evtx_etw`).
+/// `.evtx` is removed. The pure-Rust writer path applies the same re-parse
+/// validation but no retry (deterministic writer — see `write_evtx_pure_rust`).
 pub fn write_evtx(
     xml: &str,
     channel: &str,
@@ -47,7 +45,7 @@ pub fn write_evtx(
                 channel
             );
         }
-        write_evtx_etw(xml, channel, rid, path)
+        write_evtx_pure_rust(xml, channel, rid, path)
     } else {
         write_evtx_winevt(xml, channel, rid, path)
     }
@@ -166,7 +164,7 @@ fn write_evtx_winevt(_xml: &str, channel: &str, _rid: u64, _path: &Path) -> Resu
 /// writer) with the same re-parse validation as `EvtExportLog`. Unlike the
 /// live-log export, no retry: the writer is deterministic (same XML → same
 /// output), so an identical retry would fail identically.
-fn write_evtx_etw(xml: &str, channel: &str, rid: u64, path: &Path) -> Result<()> {
+fn write_evtx_pure_rust(xml: &str, channel: &str, rid: u64, path: &Path) -> Result<()> {
     let path = crate::long_path::long_path(path);
 
     let result = sigmacatch_evtx_writer::write_evtx_from_xml(xml, rid, &path)
@@ -267,9 +265,9 @@ mod tests {
 </Event>"#;
 
     #[test]
-    fn test_write_evtx_etw_writes_valid_evtx() {
+    fn test_write_evtx_pure_rust_writes_valid_evtx() {
         let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("etw.evtx");
+        let path = tmp.path().join("noid.evtx");
         write_evtx(
             SAMPLE_XML,
             "Microsoft-Windows-TaskScheduler/Operational",

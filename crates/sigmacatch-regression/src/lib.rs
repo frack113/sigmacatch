@@ -154,7 +154,7 @@ impl SigmahqRegression {
     }
 
     /// Set the regression data format for the active collector
-    /// ([`DataFormat::Evtx`] for Windows Winevt/ETW, [`DataFormat::Log`] for
+    /// ([`DataFormat::Evtx`] for Windows Winevt, [`DataFormat::Log`] for
     /// auditd). Default: [`DataFormat::Evtx`].
     pub fn set_format(&mut self, format: DataFormat) {
         self.format = format;
@@ -733,10 +733,10 @@ mod tests {
     use crate::format::MAX_DATA_BLOB_SIZE;
     use sigmacatch_types::Event;
 
-    /// Build an alert that mirrors what the ETW path produces: an event
-    /// synthesized from raw ETW data with a synthetic record id and
-    /// `is_etw = true`, matched by the detection engine.
-    fn synthetic_etw_alert(rule_id: Uuid) -> Alert {
+    /// Build an alert that exercises the pure-Rust EVTX writer path: an event
+    /// without a record id in the live Event Log (`is_etw = true`), matched by
+    /// the detection engine.
+    fn synthetic_noid_alert(rule_id: Uuid) -> Alert {
         let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
   <System>
     <Provider Name="Microsoft-Windows-Kernel-Process" Guid="{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}"/>
@@ -756,10 +756,10 @@ mod tests {
     <Data Name="CommandLine">cmd.exe /c whoami</Data>
   </EventData>
 </Event>"#;
-        let event = Event::from_xml(xml).expect("synthetic ETW XML must parse");
+        let event = Event::from_xml(xml).expect("synthetic noid XML must parse");
         Alert {
             rule_id,
-            rule_title: "Test ETW Rule".to_string(),
+            rule_title: "Test NoID Rule".to_string(),
             description: Some("integration test".to_string()),
             rule_path: None,
             severity: "critical".to_string(),
@@ -967,16 +967,16 @@ mod tests {
         }
     }
 
-    /// End-to-end pipeline for an ETW alert: data (.evtx, pure-Rust writer) +
+    /// End-to-end pipeline for a no-id alert: data (.evtx, pure-Rust writer) +
     /// info.yml, no auxiliary json by default. `rule_path` is `None` so no
     /// sigma rule file is touched; everything lives in a tempdir.
     #[test]
-    fn test_etw_alert_generates_valid_output() {
+    fn test_noid_alert_generates_valid_output() {
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path().join("regression_data");
         let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
         let rule_id = Uuid::parse_str("7595ba94-cf3b-4471-aa03-4f6baa9e5fad").unwrap();
-        let alert = synthetic_etw_alert(rule_id);
+        let alert = synthetic_noid_alert(rule_id);
 
         let files = reg.add(&alert).expect("data + info.yml generated");
         assert_eq!(files.len(), 2, "default output = evtx + info.yml");
@@ -1011,13 +1011,13 @@ mod tests {
 
     /// With `add_json_output(true)` the auxiliary `.json` joins the triplet.
     #[test]
-    fn test_etw_alert_with_json_output() {
+    fn test_noid_alert_with_json_output() {
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path().join("regression_data");
         let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
         reg.set_add_json_output(true);
         let rule_id = Uuid::parse_str("7595ba94-cf3b-4471-aa03-4f6baa9e5fad").unwrap();
-        let alert = synthetic_etw_alert(rule_id);
+        let alert = synthetic_noid_alert(rule_id);
 
         let files = reg.add(&alert).expect("triplet generated");
         assert_eq!(files.len(), 3, "json + evtx + info.yml");

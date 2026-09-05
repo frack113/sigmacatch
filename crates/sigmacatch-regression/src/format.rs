@@ -28,7 +28,7 @@ pub(crate) const MAX_DATA_BLOB_SIZE: usize = 64 * 1024 * 1024;
 /// Output format of the per-rule regression data file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataFormat {
-    /// Windows Winevt/ETW — `.evtx`, re-exported from the live log
+    /// Windows Winevt — `.evtx`, re-exported from the live log
     /// (`EvtExportLog`) or synthesized with the pure-Rust writer.
     Evtx,
     /// Raw text lines (auditd) — `.log`, written from the event's original

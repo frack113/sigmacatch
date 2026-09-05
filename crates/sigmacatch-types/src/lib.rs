@@ -101,7 +101,7 @@ pub struct Event {
 }
 
 impl Event {
-    /// Build an event from its JSON views and raw bytes (non-ETW source).
+    /// Build an event from its JSON views and raw bytes.
     pub fn new(event_json_raw: Value, event_json: Value, event_raw: Vec<u8>) -> Self {
         Self {
             event_json_raw,

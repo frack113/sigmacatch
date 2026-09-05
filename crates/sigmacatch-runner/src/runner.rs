@@ -26,7 +26,7 @@ pub trait CollectorKind {
     fn mode(&self) -> String;
 
     /// Channels to collect, or `None` when the collector does not need channel
-    /// resolution (ETW). `Some(empty)` means nothing to collect (early exit).
+    /// resolution (e.g. Linux). `Some(empty)` means nothing to collect (early exit).
     fn channels(
         &self,
         engine: &DetectionEngine,
@@ -37,7 +37,7 @@ pub trait CollectorKind {
     fn build(&self, channels: &[String]) -> Box<dyn EventProducer>;
 
     /// Regression data format written for this collector's events:
-    /// [`DataFormat::Evtx`] (Windows Winevt/ETW) or [`DataFormat::Log`]
+    /// [`DataFormat::Evtx`] (Windows Winevt) or [`DataFormat::Log`]
     /// (non-EVTX, e.g. auditd).
     fn regression_format(&self) -> DataFormat {
         DataFormat::Evtx
