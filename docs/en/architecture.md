@@ -53,7 +53,7 @@ sigmacatch/
 
 ## Collectors
 
-Six binaries are produced: five collector binaries from two crates (`sigmacatch-win` → 2,
+Five binaries are produced: four collector binaries from two crates (`sigmacatch-win` → 1,
 `sigmacatch-lnx` → 3), each embedding a selected set of collectors (cargo features `winevt`
 and `auditd`/`builtin`/`sysmon`/`ebpf`, `required-features` per binary), plus the standalone
 cross-platform `regressiondata-check`:
@@ -115,8 +115,8 @@ Regression format: `DataFormat::Log`.
 Each Windows binary defines its own `CollectorKind` in its `main_*.rs`
 (`name()`/`mode()`/`channels()`/`build()`/`regression_format()`); the three Linux binaries
 share a single `LinuxCollector` defined in `entry.rs`. The regression format comes from
-`regression_format()`: `DataFormat::Evtx` for both Windows binaries, `DataFormat::Log` for
-all three Linux binaries.
+`regression_format()`: `DataFormat::Evtx` for the Windows `sigmacatch-channel` binary,
+`DataFormat::Log` for all three Linux binaries.
 
 ## Crate dependency graph
 

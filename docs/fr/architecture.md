@@ -48,9 +48,9 @@ sigmacatch/
 
 ## Collecteurs
 
-Six binaires sont produits depuis trois crates (les binaires de collecte embarquent un
-ensemble de collecteurs sélectionné par features cargo et `required-features` par binaire ;
-`regressiondata-check` est un binaire standalone sans collecteur) :
+Cinq binaires sont produits depuis trois crates (les binaires de collecte embarquent un
+ ensemble de collecteurs sélectionné par features cargo et `required-features` par binaire ;
+ `regressiondata-check` est un binaire standalone sans collecteur) :
 
 | Binaire | Crate | Features | Description |
 |---|---|---|---|
@@ -110,8 +110,8 @@ Format de régression : `DataFormat::Log`.
 Chaque binaire Windows définit son propre `CollectorKind` dans son `main_*.rs`
 (`name()`/`mode()`/`channels()`/`build()`/`regression_format()`) ; les trois binaires Linux
 partagent un unique `LinuxCollector` défini dans `entry.rs`. Le format de régression est
-choisi par `regression_format()` : `DataFormat::Evtx` pour les deux bins Windows,
-`DataFormat::Log` pour les trois bins Linux.
+choisi par `regression_format()` : `DataFormat::Evtx` pour le binaire Windows
+`sigmacatch-channel`, `DataFormat::Log` pour les trois binaires Linux.
 
 ## Graphe de dépendances
 
