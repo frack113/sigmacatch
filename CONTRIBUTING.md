@@ -51,7 +51,7 @@ conventional commits:
 
 | Emoji | Type | Example |
 |-------|------|---------|
-| ✨ | feat | `✨ feat: add ETW collection` |
+| ✨ | feat | `✨ feat: add Winevt collection` |
 | 🐛 | fix | `🐛 fix: handle empty event` |
 | 📚 | docs | `📚 docs: update architecture` |
 | ♻️ | refactor | `♻️ refactor: extract providers` |
@@ -78,8 +78,7 @@ pipeline. Highlights:
 
 - One continuous run until Ctrl+C: collect + evaluate + generate (30s) + commit + push.
 - All aggregation in memory — no intermediate database.
-- Windows collection via the Windows Event Log API (`EvtQueryW`/`EvtNext`/`EvtRender`) or direct
-  ETW; Linux collection via auditd tail, builtin syslog files, and Sysmon-for-Linux.
+- Windows collection via the Windows Event Log API (`EvtQueryW`/`EvtNext`/`EvtRender`); Linux collection via auditd tail, builtin syslog files, and Sysmon-for-Linux.
 - No external `git` binary: everything goes through grit-lib via `sigmacatch-repo`.
 - No hand-rolled parsers: use `rsigma-parser`, `serde_yaml`, `serde_json`, etc.
 - Security first: validate paths, cap sizes, sanitize inputs.

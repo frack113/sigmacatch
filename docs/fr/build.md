@@ -40,25 +40,20 @@ en bout pour tests (`cargo build -p sigmacatch-win`).
 cargo build --release -p sigmacatch-win
 ```
 
-Deux binaires sont produits, chacun avec un seul collecteur (features cargo, les deux
-activées par défaut) :
+Un binaire est produit avec le collecteur Winevt (feature `winevt`, activée par défaut) :
 
 - **`sigmacatch-channel`** (winevt) : API Winevt native (`EvtQueryW` → `EvtNext` → `EvtRender`) sur les channels résolus. Nécessite les droits admin pour les channels `Security` et `System`.
-- **`sigmacatch-etw`** (etw) [beta] : collecte ETW directe via ferrisetw (18 providers, routing générique provider→channel, EventID réel conservé). Pas de droits admin requis pour la plupart des providers.
 
-Builds isolés (un binaire sans l'autre collecteur linké) :
+Build isolé :
 
 ```bash
 # Winevt uniquement
 cargo build --release --bin sigmacatch-channel --no-default-features --features winevt
-
-# ETW uniquement
-cargo build --release --bin sigmacatch-etw --no-default-features --features etw
 ```
 
 > Les sous-commandes de diagnostic (`check-filter`, `list-rules`) sont toujours compilées
-> dans le binaire — aucune feature supplémentaire n'est requise. Chaque cible `[[bin]]`
-> exige sa feature de collecteur (`winevt` ou `etw`) via `required-features`.
+> dans le binaire — aucune feature supplémentaire n'est requise. La cible `[[bin]]`
+> exige sa feature de collecteur (`winevt`) via `required-features`.
 
 Variantes isolées équivalentes côté Linux :
 
@@ -72,13 +67,13 @@ cargo build --release -p sigmacatch-lnx --no-default-features --features auditd,
 cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win
 ```
 
-Les binaires résultants sont à `target/x86_64-pc-windows-msvc/release/sigmacatch-channel.exe`
-et `sigmacatch-etw.exe`. La CI GitHub Actions build nativement sur `windows-latest`.
+Le binaire résultant est à `target/x86_64-pc-windows-msvc/release/sigmacatch-channel.exe`.
+La CI GitHub Actions build nativement sur `windows-latest`.
 
 ## Taille du binaire
 
-Build release optimisé : ~10–11 MB par binaire (constaté en cross
-x86_64-pc-windows-msvc : `sigmacatch-channel.exe` ~10.4 MB, `sigmacatch-etw.exe` ~11 MB).
+Build release optimisé : ~10 MB par binaire (constaté en cross
+x86_64-pc-windows-msvc : `sigmacatch-channel.exe` ~10.4 MB).
 
 Profil appliqué :
 

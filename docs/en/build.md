@@ -39,24 +39,20 @@ for testing (`cargo build -p sigmacatch-win`).
 cargo build --release -p sigmacatch-win
 ```
 
-Two binaries are produced, each with a single collector (cargo features, both enabled by default):
+One binary is produced with the Winevt collector (feature `winevt`, enabled by default):
 
 - **`sigmacatch-channel`** (winevt): native Winevt API (`EvtQueryW` → `EvtNext` → `EvtRender`) on resolved channels. Requires admin rights for `Security` and `System` channels.
-- **`sigmacatch-etw`** (etw) [beta]: direct ETW collection via ferrisetw (18 providers, generic provider→channel routing, real EventID preserved). Requires no admin rights for most providers.
 
-Isolated builds (a binary without the other collector linked):
+Isolated build:
 
 ```bash
 # Winevt only
 cargo build --release --bin sigmacatch-channel --no-default-features --features winevt
-
-# ETW only
-cargo build --release --bin sigmacatch-etw --no-default-features --features etw
 ```
 
 > The diagnostic subcommands (`check-filter`, `list-rules`) are always compiled into the
-> binary — no extra feature is required. Each `[[bin]]` target requires its collector
-> feature (`winevt` or `etw`) via `required-features`.
+> binary — no extra feature is required. The `[[bin]]` target requires its collector
+> feature (`winevt`) via `required-features`.
 
 Linux equivalent isolated builds:
 
@@ -70,13 +66,13 @@ cargo build --release -p sigmacatch-lnx --no-default-features --features auditd,
 cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win
 ```
 
-The resulting binaries are at `target/x86_64-pc-windows-msvc/release/sigmacatch-channel.exe`
-and `sigmacatch-etw.exe`. GitHub Actions CI builds natively on `windows-latest`.
+The resulting binary is at `target/x86_64-pc-windows-msvc/release/sigmacatch-channel.exe`.
+GitHub Actions CI builds natively on `windows-latest`.
 
 ## Binary size
 
-Optimized release build: ~10–11 MB per binary (observed on the x86_64-pc-windows-msvc cross:
-`sigmacatch-channel.exe` ~10.4 MB, `sigmacatch-etw.exe` ~11 MB).
+Optimized release build: ~10 MB per binary (observed on the x86_64-pc-windows-msvc cross:
+`sigmacatch-channel.exe` ~10.4 MB).
 
 Applied profile:
 
