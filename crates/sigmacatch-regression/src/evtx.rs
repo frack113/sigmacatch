@@ -28,12 +28,7 @@ const EVTX_EXPORT_BACKOFF_SECS: [u64; (EVTX_EXPORT_MAX_ATTEMPTS - 1) as usize] =
 /// (the live-log race may be transient) then treated as failure and the
 /// `.evtx` is removed. The pure-Rust writer path applies the same re-parse
 /// validation but no retry (deterministic writer — see `write_evtx_pure_rust`).
-pub fn write_evtx(
-    xml: &str,
-    channel: &str,
-    record_id: Option<u64>,
-    path: &Path,
-) -> Result<()> {
+pub fn write_evtx(xml: &str, channel: &str, record_id: Option<u64>, path: &Path) -> Result<()> {
     let rid = record_id.unwrap_or(1);
     if record_id.is_none() {
         write_evtx_pure_rust(xml, channel, rid, path)

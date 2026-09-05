@@ -83,12 +83,9 @@ impl DataFormat {
     /// Write the data file for one matched alert.
     pub fn write(self, alert: &Alert, path: &Path) -> Result<()> {
         match self {
-            Self::Evtx => crate::evtx::write_evtx(
-                alert.raw_xml(),
-                alert.channel(),
-                alert.record_id(),
-                path,
-            ),
+            Self::Evtx => {
+                crate::evtx::write_evtx(alert.raw_xml(), alert.channel(), alert.record_id(), path)
+            }
             Self::Log => {
                 if alert.event_raw.len() > self.max_blob_size() {
                     return Err(RegressionError::Invalid(format!(

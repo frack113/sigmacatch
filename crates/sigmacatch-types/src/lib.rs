@@ -386,7 +386,7 @@ pub static CHANNEL_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_m
     "PowerShellCore/Operational" => "powershell",
     "Microsoft-Windows-TaskScheduler/Operational" => "taskscheduler",
     "Microsoft-Windows-WMI-Activity/Operational" => "wmi",
-    
+
 };
 
 // ─── LogSource mapping tables (source of truth) ───────────────────────────
