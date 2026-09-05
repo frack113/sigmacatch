@@ -214,7 +214,7 @@ pub struct Config {
     /// Git/fork/contrib behaviour.
     #[serde(default)]
     pub git: GitConfig,
-    /// Event collection backend: `winevt` (default) or `etw`.
+    /// Event collection backend: `winevt`.
     #[serde(default)]
     pub regression: RegressionConfig,
     /// Stop-control file: while it exists, the runner triggers a graceful

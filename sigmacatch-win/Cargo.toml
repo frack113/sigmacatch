@@ -5,7 +5,7 @@
 name = "sigmacatch-win"
 version.workspace = true
 edition.workspace = true
-description = "Windows sigmacatch binaries (Winevt + ETW collectors)"
+description = "Windows sigmacatch binaries (Winevt collector)"
 license.workspace = true
 
 [features]
