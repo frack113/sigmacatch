@@ -9,10 +9,9 @@ sigmacatch/
 ├── Cargo.toml                    # Workspace root
 ├── sigmacatch-win/               # Windows binaries (lib + 1 bin)
 │   └── src/
-│       ├── lib.rs                # pub use sigmacatch-runner + channels module
+│       ├── lib.rs                # channels module (no-op stubs on non-Windows builds)
 │       ├── main_winevt.rs        # bin `sigmacatch-channel`: multi-channel Winevt collector
 │       ├── channels.rs           # Winevt collector (EvtQueryW/EvtNext/EvtRender, multi-channel)
-│       │                         #   enrich, mapper, process_table, process_query, sysmon, paths, pe, filekey
 │       └── cli.rs                # Diagnostic subcommands: check-filter, list-rules
 ├── sigmacatch-lnx/               # Linux binaries (lib + 3 bins, feature-gated)
 │   └── src/
