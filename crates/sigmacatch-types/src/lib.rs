@@ -25,7 +25,6 @@
 //!     event_json_raw: json!({"event_id": 4624}),
 //!     event_json: json!({"event_id": 4624}),
 //!     event_raw: b"raw".to_vec(),
-//!     is_etw: false,
 //! };
 //! assert_eq!(Product::Windows.as_str(), "windows");
 //! # Ok(())
@@ -95,19 +94,15 @@ pub struct Event {
     /// Raw wire bytes as collected (XML for Winevt/sysmon paths, RFC3164 line
     /// for Linux collectors) — written verbatim to regression `.log` data.
     pub event_raw: Vec<u8>,
-    /// True when this event was synthesized from ETW raw data rather than
-    /// re-exported from the live Event Log. Affects EVTX generation.
-    pub is_etw: bool,
 }
 
 impl Event {
-    /// Build an event from its JSON views and raw bytes (non-ETW source).
+    /// Build an event from its JSON views and raw bytes.
     pub fn new(event_json_raw: Value, event_json: Value, event_raw: Vec<u8>) -> Self {
         Self {
             event_json_raw,
             event_json,
             event_raw,
-            is_etw: false,
         }
     }
 
@@ -121,7 +116,6 @@ impl Event {
             event_json_raw: json_raw,
             event_json: json,
             event_raw: raw,
-            is_etw: false,
         })
     }
 
@@ -219,9 +213,7 @@ impl Event {
                 .map(|s| s.to_string())
                 .or_else(|| {
                     // Provider → channel → service (two-step resolution).
-                    // Kernel ETW providers map to synthetic channels that
-                    // resolve to `etw` via CHANNEL_TO_SERVICE.
-                    ETW_PROVIDER_TO_CHANNEL
+                    PROVIDER_TO_CHANNEL
                         .get(provider)
                         .and_then(|ch| CHANNEL_TO_SERVICE.get(ch))
                         .map(|s| s.to_string())
@@ -394,25 +386,13 @@ pub static CHANNEL_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_m
     "PowerShellCore/Operational" => "powershell",
     "Microsoft-Windows-TaskScheduler/Operational" => "taskscheduler",
     "Microsoft-Windows-WMI-Activity/Operational" => "wmi",
-    // Dedicated channels for unmapped ETW events of Sysmon-masquerade providers
-    // (mapper::unmapped_channel_for_masquerade). Service `etw` gives them a real
-    // logsource so they are never evaluated fail-open against every rule.
-    "sigmacatch/etw-kernel-process" => "etw",
-    "sigmacatch/etw-kernel-file" => "etw",
-    "sigmacatch/etw-kernel-network" => "etw",
-    "sigmacatch/etw-kernel-registry" => "etw",
-    "sigmacatch/etw-dns-client" => "etw",
-    "sigmacatch/etw-powershell" => "etw",
-    "sigmacatch/etw-wmi-activity" => "etw",
-    "sigmacatch/etw-service-control-manager" => "etw",
-    "sigmacatch/etw-task-scheduler" => "etw",
-    "sigmacatch/etw-unmapped" => "etw",
+
 };
 
 // ─── LogSource mapping tables (source of truth) ───────────────────────────
 // Centralized here per project contract: every logsource phf mapping table
 // lives in sigmacatch-types (single source of truth). Migrated from
-// sigmacatch-detection::channel_resolver and sigmacatch-win::etw::mapper.
+// sigmacatch-detection::channel_resolver.
 
 /// Service → Windows event channels. Covers every `service:` seen in
 /// Windows Sigma rules; the sysmon category routing is implied by the
@@ -509,12 +489,11 @@ pub static CATEGORY_CHANNELS: phf::Map<&'static str, &'static [&'static str]> = 
     ],
 };
 
-/// ETW provider name → Windows event channel, used to route generic
-/// (non-Sysmon) events. Kernel providers (process, network, file, registry)
-/// map to synthetic channels so the two-step resolution (provider→channel→service)
-/// works uniformly — the synthetic channels are not subscribable but give
-/// `inject_logsource_fields` a real service via the `etw` fallback.
-pub static ETW_PROVIDER_TO_CHANNEL: phf::Map<&'static str, &'static str> = phf::phf_map! {
+/// Provider name → Windows event channel, used to route generic
+/// (non-Sysmon) events. This mapping enables the two-step logsource
+/// resolution (provider → channel → service) for events where the
+/// channel is not directly mapped in CHANNEL_TO_SERVICE.
+pub static PROVIDER_TO_CHANNEL: phf::Map<&'static str, &'static str> = phf::phf_map! {
     "Microsoft-Windows-Security-Auditing" => "Security",
     "Microsoft-Windows-Windows Defender" => "Microsoft-Windows-Windows Defender/Operational",
     "Microsoft-Windows-Windows Firewall With Advanced Security" => "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall",
@@ -1099,8 +1078,6 @@ pub struct Alert {
     pub event_json: Value,
     /// Raw wire bytes as collected (see [`Event::event_raw`]).
     pub event_raw: Vec<u8>,
-    /// True when this alert came from an ETW-synthesized event.
-    pub is_etw: bool,
 }
 
 impl Alert {
@@ -1972,7 +1949,6 @@ mod tests {
             event_json_raw: event.event_json_raw.clone(),
             event_json: event.event_json.clone(),
             event_raw: event.event_raw,
-            is_etw: false,
         };
 
         assert!(

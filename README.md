@@ -10,7 +10,6 @@ Sigmacatch captures real OS events, matches them against [SigmaHQ](https://githu
 | Platform | Collector | Binary | Status |
 |---|---|---|---|
 | Windows | Windows Event Log API (`winevt`) | `sigmacatch-channel` | working |
-| Windows | Direct ETW (`ferrisetw`) | `sigmacatch-etw` | beta |
 | Linux | auditd + builtin syslog (default, no root needed) | `sigmacatch-linux` | need user return |
 | Linux | + legacy Sysmon-for-Linux XML tail | `sigmacatch-linux-sysmon` | need user return |
 | Linux | + native eBPF probes (process/network/file/DNS) | `sigmacatch-linux-ebpf` | need user return |
@@ -27,7 +26,6 @@ Sigmacatch captures real OS events, matches them against [SigmaHQ](https://githu
 ```bash
 cargo build --release
 ./target/release/sigmacatch-channel     # Winevt collector (Windows)
-./target/release/sigmacatch-etw         # ETW collector (Windows)
 ./target/release/sigmacatch-linux       # auditd + builtin syslog (Linux, no root)
 ```
 
@@ -85,7 +83,7 @@ The project is a cargo workspace of 14 packages, plus 1 excluded nightly crate (
 
 | Crate | Purpose |
 |---|---|
-| `sigmacatch-win` | Windows binaries: `sigmacatch-channel` (winevt), `sigmacatch-etw` (ETW) + collectors + diagnostics |
+| `sigmacatch-win` | Windows binary: `sigmacatch-channel` (winevt) + collectors + diagnostics |
 | `sigmacatch-lnx` | Linux binaries (3 flavours): `sigmacatch-linux` (base), `sigmacatch-linux-sysmon` (+ tail), `sigmacatch-linux-ebpf` (+ eBPF) — feature-gated |
 | `sigmacatch-ebpf` | eBPF probe crate (excluded workspace, nightly, `bpfel-unknown-none`) |
 | `sigmacatch-ebpf-common` | Shared `no_std` types for eBPF ring buffer |
@@ -95,7 +93,7 @@ The project is a cargo workspace of 14 packages, plus 1 excluded nightly crate (
 | `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication, remove_id |
 | `sigmacatch-detection` | `DetectionEngine` + per-platform pipelines + channel_resolver + bloom pre-filter |
 | `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, `DataFormat` (Evtx/Log) + validation |
-| `sigmacatch-evtx-writer` | Pure Rust EVTX writer for ETW / record-id-less events |
+| `sigmacatch-evtx-writer` | Pure Rust EVTX writer for record-id-less events |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource mapping tables (phf) |
 | `sigmacatch-repo` | grit-lib wrapper: `SigmaRepo`, GitHub fork detection, plumbing/porcelain git ops, SSH signing |
 | `input-windows-evtx` | Parse EVTX files into `Event` objects (used by `regressiondata-check`) |
@@ -107,7 +105,6 @@ The project is a cargo workspace of 14 packages, plus 1 excluded nightly crate (
 - [grit-lib](https://github.com/gitbutlerapp/grit) — pure Rust git, no CLI needed
 - [tokio](https://crates.io/crates/tokio) — async runtime
 - [windows](https://crates.io/crates/windows) — Windows Event Log API, cfg-gated
-- [ferrisetw](https://crates.io/crates/ferrisetw) — direct ETW collection, cfg-gated
 - [linux-audit-parser](https://crates.io/crates/linux-audit-parser) — auditd log parsing
 - [regex](https://crates.io/crates/regex) — RFC3164 syslog line parsing (builtin collector)
 - [serde](https://crates.io/crates/serde) / [serde_json](https://crates.io/crates/serde_json) / [serde_yaml](https://crates.io/crates/serde_yaml) — serialization

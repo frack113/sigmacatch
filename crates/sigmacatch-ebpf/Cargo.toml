@@ -6,7 +6,7 @@
 # resulting object is embedded by sigmacatch-lnx/build.rs (include_bytes!).
 #
 # Sanctioned Linux `unsafe` zone: per project policy `unsafe` is reserved for
-# Windows FFI (winevt/ETW/EvtExportLog), but this crate's eBPF helpers are
+# Windows FFI (winevt/EvtExportLog), but this crate's eBPF helpers are
 # inherently unsafe and are the sole allowed exception. It is excluded from
 # `cargo clippy --workspace`, so it does not fall under the `build.warnings`
 # gate; every other Linux/moteur crate remains `unsafe`-free.

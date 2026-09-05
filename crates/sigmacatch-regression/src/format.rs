@@ -28,7 +28,7 @@ pub(crate) const MAX_DATA_BLOB_SIZE: usize = 64 * 1024 * 1024;
 /// Output format of the per-rule regression data file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataFormat {
-    /// Windows Winevt/ETW — `.evtx`, re-exported from the live log
+    /// Windows Winevt — `.evtx`, re-exported from the live log
     /// (`EvtExportLog`) or synthesized with the pure-Rust writer.
     Evtx,
     /// Raw text lines (auditd) — `.log`, written from the event's original
@@ -83,13 +83,9 @@ impl DataFormat {
     /// Write the data file for one matched alert.
     pub fn write(self, alert: &Alert, path: &Path) -> Result<()> {
         match self {
-            Self::Evtx => crate::evtx::write_evtx(
-                alert.raw_xml(),
-                alert.channel(),
-                alert.record_id(),
-                alert.is_etw,
-                path,
-            ),
+            Self::Evtx => {
+                crate::evtx::write_evtx(alert.raw_xml(), alert.channel(), alert.record_id(), path)
+            }
             Self::Log => {
                 if alert.event_raw.len() > self.max_blob_size() {
                     return Err(RegressionError::Invalid(format!(
@@ -208,7 +204,6 @@ mod tests {
             event_json_raw: serde_json::json!({}),
             event_json: serde_json::json!({}),
             event_raw,
-            is_etw: false,
         }
     }
 

@@ -7,14 +7,11 @@ Le projet est un cargo workspace de 14 packages, plus 1 crate nightly exclu (`si
 ```text
 sigmacatch/
 ├── Cargo.toml                    # Racine workspace
-├── sigmacatch-win/               # Binaires Windows (lib + 2 bins)
+├── sigmacatch-win/               # Binaires Windows (lib + 1 bin)
 │   └── src/
-│       ├── lib.rs                # pub use sigmacatch-runner + modules channels/etw
+│       ├── lib.rs                # module channels (stubs no-op hors Windows)
 │       ├── main_winevt.rs        # bin `sigmacatch-channel` : collecteur Winevt multi-channel
-│       ├── main_etw.rs           # bin `sigmacatch-etw` : collecteur ETW direct (ferrisetw)
 │       ├── channels.rs           # Collecteur Winevt (EvtQueryW/EvtNext/EvtRender, multi-channel)
-│       ├── etw/                  # Collecteur ETW direct : providers.rs (18 providers), field_maps,
-│       │                         #   enrich, mapper, process_table, process_query, sysmon, paths, pe, filekey
 │       └── cli.rs                # Sous-commandes de diagnostic : check-filter, list-rules
 ├── sigmacatch-lnx/               # Binaires Linux (lib + 3 bins, feature-gated)
 │   └── src/
@@ -50,35 +47,17 @@ sigmacatch/
 
 ## Collecteurs
 
-Six binaires sont produits depuis trois crates (les binaires de collecte embarquent un
-ensemble de collecteurs sélectionné par features cargo et `required-features` par binaire ;
-`regressiondata-check` est un binaire standalone sans collecteur) :
+Cinq binaires sont produits depuis trois crates (les binaires de collecte embarquent un
+ ensemble de collecteurs sélectionné par features cargo et `required-features` par binaire ;
+ `regressiondata-check` est un binaire standalone sans collecteur) :
 
 | Binaire | Crate | Features | Description |
 |---|---|---|---|
 | `sigmacatch-channel` | `sigmacatch-win` | `winevt` | API Winevt native (`EvtQueryW`/`EvtNext`/`EvtRender`), multi-channel, rejouable |
-| `sigmacatch-etw` | `sigmacatch-win` | `etw` | Collecte ETW directe via ferrisetw (18 providers, détail ci-dessous) |
 | `sigmacatch-linux` | `sigmacatch-lnx` | `auditd` + `builtin` | auditd + syslog builtin uniquement (pas de sysmon, pas de root requis) |
 | `sigmacatch-linux-sysmon` | `sigmacatch-lnx` | `auditd` + `builtin` + `sysmon` | + tail Sysmon-for-Linux XML (feature `sysmon`) |
 | `sigmacatch-linux-ebpf` | `sigmacatch-lnx` | `auditd` + `builtin` + `ebpf` | + probes eBPF native (feature `ebpf`, root requis) |
 | `regressiondata-check` | `regressiondata-check` | — | Validation de régression cross-platform (EVTX + auditd + JSON), pas de collector |
-
-### ETW direct
-
-Le collecteur ETW couvre les mêmes channels que le collecteur Winevt (Security, Defender,
-Firewall, Sysmon, …) : 18 providers (9 Sysmon-masquerade + 9 génériques), résolution
-provider→channel par table de mapping, EventID réel conservé [beta]. Pour les providers
-génériques, les champs `EventData` sont fournis par des field maps par provider (fidelité
-variable). Sur non-Windows, les collecteurs Winevt/ETW sont des stubs no-op.
-
-**Résolution de logsource en deux temps (provider → channel → service)** :
-`inject_logsource_fields_for` cherche d'abord le service par channel (`CHANNEL_TO_SERVICE`),
-puis, à défaut, résout le provider via `ETW_PROVIDER_TO_CHANNEL` (source unique de vérité
-dans `sigmacatch-types`) avant de retomber sur `CHANNEL_TO_SERVICE`. Les providers
-Sysmon-masquerade sans channel Winevt réel sont routés vers des channels synthétiques
-`sigmacatch/etw-*` (produits par `mapper::unmapped_channel_for_masquerade`)
-qui résolvent au service `etw` : l'event garde un vrai logsource au lieu d'être évalué
-fail-open contre toutes les règles.
 
 ### Logsource Windows et catégories PowerShell
 
@@ -130,8 +109,8 @@ Format de régression : `DataFormat::Log`.
 Chaque binaire Windows définit son propre `CollectorKind` dans son `main_*.rs`
 (`name()`/`mode()`/`channels()`/`build()`/`regression_format()`) ; les trois binaires Linux
 partagent un unique `LinuxCollector` défini dans `entry.rs`. Le format de régression est
-choisi par `regression_format()` : `DataFormat::Evtx` pour les deux bins Windows,
-`DataFormat::Log` pour les trois bins Linux.
+choisi par `regression_format()` : `DataFormat::Evtx` pour le binaire Windows
+`sigmacatch-channel`, `DataFormat::Log` pour les trois binaires Linux.
 
 ## Graphe de dépendances
 
@@ -182,12 +161,11 @@ et utilisent `serde` pour leurs sorties JSON (toujours compilées).
 8. DetectionEngine::new(&rules)  (pipelines + bloom + LogSourceExtractor)
    └── cycle_channels = kind.channels(&engine, &custom_map)
        ├── Some(vide) (winevt sans channel résolu) → warn + return
-       └── None (etw, linux) → pas de résolution de channels
+       └── None (linux) → pas de résolution de channels
 9. Handler Ctrl+C (watch channel) ; output_base = <sigma_repo_path>/regression_data ;
    clean_partial_artifacts()
 10. collector = kind.build(&cycle_channels) → tokio::spawn(collector.run(tx, stop))
     ├── sigmacatch-channel (winevt)  → EventCollector::new(cycle_channels).run(tx, stop)
-    ├── sigmacatch-etw (etw) → EventCollector::new().run(tx, stop) (routing provider→channel interne)
      └── sigmacatch-linux (auditd + syslog + sysmon) → MultiCollector (les trois tails en parallèle, rotation détectée)
 11. Boucle : tokio::select!
     ├── shutdown_rx (Ctrl+C ou --max-runs atteint) → break

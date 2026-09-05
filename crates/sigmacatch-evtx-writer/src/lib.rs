@@ -3,8 +3,8 @@
 
 //! Minimal pure-Rust EVTX writer.
 //!
-//! `EvtExportLog` re-exports a live-log event by record id + channel. ETW
-//! collector events have neither, so this crate synthesizes a valid
+//! `EvtExportLog` re-exports a live-log event by record id + channel. Events
+//! without a record id have neither, so this crate synthesizes a valid
 //! single-record EVTX directly from the Winevt XML (direct BinXML stream, no
 //! templates). Round-trip testable on any platform via the `evtx` crate.
 //!

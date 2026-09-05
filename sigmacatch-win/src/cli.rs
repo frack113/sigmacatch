@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use sigmacatch_config::{self, Config};
+use sigmacatch_config::Config;
 use sigmacatch_regression::SigmahqRegression;
 use sigmacatch_repo::SigmaRepo;
 use sigmacatch_rule::{

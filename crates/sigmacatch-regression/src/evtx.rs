@@ -19,35 +19,19 @@ const EVTX_EXPORT_BACKOFF_SECS: [u64; (EVTX_EXPORT_MAX_ATTEMPTS - 1) as usize] =
 /// Write a valid EVTX file from a matched event.
 ///
 /// Path selection: events that exist in the live Event Log (Winevt collection,
-/// `is_etw == false` with a record id) are re-exported via `EvtExportLog`
-/// (Windows only). Everything else — ETW-synthesized events (`is_etw == true`,
-/// which carry a synthetic record id but never existed in a live log, so
-/// `EvtExportLog` would always return an empty export) and record-id-less
-/// events — is written directly with the pure-Rust EVTX writer (all
-/// platforms).
+/// with a record id) are re-exported via `EvtExportLog` (Windows only). Events
+/// without a record id are written directly with the pure-Rust EVTX writer
+/// (all platforms).
 ///
 /// `EvtExportLog` returns success even for a zero-record match (header-only
 /// file), so every successful call is re-parsed; an empty file is retried
 /// (the live-log race may be transient) then treated as failure and the
-/// `.evtx` is removed. The ETW writer path applies the same re-parse
-/// validation but no retry (deterministic writer — see `write_evtx_etw`).
-pub fn write_evtx(
-    xml: &str,
-    channel: &str,
-    record_id: Option<u64>,
-    is_etw: bool,
-    path: &Path,
-) -> Result<()> {
+/// `.evtx` is removed. The pure-Rust writer path applies the same re-parse
+/// validation but no retry (deterministic writer — see `write_evtx_pure_rust`).
+pub fn write_evtx(xml: &str, channel: &str, record_id: Option<u64>, path: &Path) -> Result<()> {
     let rid = record_id.unwrap_or(1);
-    if is_etw || record_id.is_none() {
-        if !is_etw {
-            tracing::warn!(
-                "Writing EVTX via pure-Rust writer for a Winevt event without a record id (channel={}) — \
-                 record id missing from the event XML",
-                channel
-            );
-        }
-        write_evtx_etw(xml, channel, rid, path)
+    if record_id.is_none() {
+        write_evtx_pure_rust(xml, channel, rid, path)
     } else {
         write_evtx_winevt(xml, channel, rid, path)
     }
@@ -166,7 +150,7 @@ fn write_evtx_winevt(_xml: &str, channel: &str, _rid: u64, _path: &Path) -> Resu
 /// writer) with the same re-parse validation as `EvtExportLog`. Unlike the
 /// live-log export, no retry: the writer is deterministic (same XML → same
 /// output), so an identical retry would fail identically.
-fn write_evtx_etw(xml: &str, channel: &str, rid: u64, path: &Path) -> Result<()> {
+fn write_evtx_pure_rust(xml: &str, channel: &str, rid: u64, path: &Path) -> Result<()> {
     let path = crate::long_path::long_path(path);
 
     let result = sigmacatch_evtx_writer::write_evtx_from_xml(xml, rid, &path)
@@ -267,14 +251,13 @@ mod tests {
 </Event>"#;
 
     #[test]
-    fn test_write_evtx_etw_writes_valid_evtx() {
+    fn test_write_evtx_pure_rust_writes_valid_evtx() {
         let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("etw.evtx");
+        let path = tmp.path().join("noid.evtx");
         write_evtx(
             SAMPLE_XML,
             "Microsoft-Windows-TaskScheduler/Operational",
             None,
-            true,
             &path,
         )
         .unwrap();
@@ -289,7 +272,6 @@ mod tests {
             SAMPLE_XML,
             "Microsoft-Windows-TaskScheduler/Operational",
             None,
-            false,
             &path,
         )
         .unwrap();
@@ -301,7 +283,7 @@ mod tests {
     fn test_write_evtx_winevt_missing_channel_errors() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("nochannel.evtx");
-        let err = write_evtx(SAMPLE_XML, "", Some(1), false, &path).unwrap_err();
+        let err = write_evtx(SAMPLE_XML, "", Some(1), &path).unwrap_err();
         assert!(err.to_string().contains("empty channel"));
     }
 
@@ -310,7 +292,7 @@ mod tests {
     fn test_write_evtx_winevt_unavailable_on_non_windows() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("winevt.evtx");
-        let err = write_evtx(SAMPLE_XML, "Some/Channel", Some(1), false, &path).unwrap_err();
+        let err = write_evtx(SAMPLE_XML, "Some/Channel", Some(1), &path).unwrap_err();
         assert!(err.to_string().contains("not available on non-Windows"));
         assert!(!path.exists());
     }

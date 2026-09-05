@@ -1,7 +1,7 @@
 # Sigmacatch
 
 Headless tool that captures real Windows events via the **Windows Event Log API**
-(`winevt`) or **direct ETW** (`ferrisetw`), or Linux events via **auditd**, **builtin
+(`winevt`), or Linux events via **auditd**, **builtin
 syslog** (central, authpriv and cron files) and **Sysmon-for-Linux**. It matches them
 against [SigmaHQ](https://github.com/SigmaHQ/sigma) rules and outputs structured
 regression data ready for SigmaHQ PRs.
@@ -14,7 +14,6 @@ the full tree and each crate's role are detailed in [architecture.md](architectu
 ```bash
 cargo build --release
 ./target/release/sigmacatch-channel       # Winevt (Windows)
-./target/release/sigmacatch-etw           # ETW direct (Windows)
 ./target/release/sigmacatch-linux         # auditd + syslog builtin (Linux, no root)
 ./target/release/sigmacatch-linux-sysmon  # + tail Sysmon-for-Linux (Linux)
 ./target/release/sigmacatch-linux-ebpf    # + native eBPF probes (Linux, root required)

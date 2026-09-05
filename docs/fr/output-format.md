@@ -37,7 +37,7 @@ sigma/rules/windows/builtin/security/win_security_foo.yml
 ### EVTX (Windows)
 
 `<rule_id>.evtx` est produit par `EvtExportLog` (re-query de l'event par RecordID depuis le
-log live, retries à backoff court) ou, pour les events ETW / sans record id, par le writer
+log live, retries à backoff court) ou, pour les events sans record id, par le writer
 EVTX pur Rust (`sigmacatch-evtx-writer`, déterministe, sans retry). Le fichier exporté est
 **validé** (re-parse ≥ 1 record) ; un export vide/corrompu (événement purgé entre collecte
 et export) est une erreur : le pipeline saute alors la règle ce cycle (pas de commit) et la
