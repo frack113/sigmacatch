@@ -25,7 +25,6 @@
 //!     event_json_raw: json!({"event_id": 4624}),
 //!     event_json: json!({"event_id": 4624}),
 //!     event_raw: b"raw".to_vec(),
-//!     is_etw: false,
 //! };
 //! assert_eq!(Product::Windows.as_str(), "windows");
 //! # Ok(())
@@ -95,9 +94,6 @@ pub struct Event {
     /// Raw wire bytes as collected (XML for Winevt/sysmon paths, RFC3164 line
     /// for Linux collectors) — written verbatim to regression `.log` data.
     pub event_raw: Vec<u8>,
-    /// True when this event was synthesized without a record ID from the live
-    /// Event Log. Affects EVTX generation path (uses pure-Rust writer).
-    pub is_etw: bool,
 }
 
 impl Event {
@@ -107,7 +103,6 @@ impl Event {
             event_json_raw,
             event_json,
             event_raw,
-            is_etw: false,
         }
     }
 
@@ -121,7 +116,6 @@ impl Event {
             event_json_raw: json_raw,
             event_json: json,
             event_raw: raw,
-            is_etw: false,
         })
     }
 
@@ -1084,8 +1078,6 @@ pub struct Alert {
     pub event_json: Value,
     /// Raw wire bytes as collected (see [`Event::event_raw`]).
     pub event_raw: Vec<u8>,
-    /// True when this alert came from an event without a record ID.
-    pub is_etw: bool,
 }
 
 impl Alert {
@@ -1957,7 +1949,6 @@ mod tests {
             event_json_raw: event.event_json_raw.clone(),
             event_json: event.event_json.clone(),
             event_raw: event.event_raw,
-            is_etw: false,
         };
 
         assert!(

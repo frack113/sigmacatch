@@ -19,10 +19,9 @@ const EVTX_EXPORT_BACKOFF_SECS: [u64; (EVTX_EXPORT_MAX_ATTEMPTS - 1) as usize] =
 /// Write a valid EVTX file from a matched event.
 ///
 /// Path selection: events that exist in the live Event Log (Winevt collection,
-/// `is_etw == false` with a record id) are re-exported via `EvtExportLog`
-/// (Windows only). Everything else — record-id-less events — is written
-/// directly with the pure-Rust EVTX writer (all platforms). The `is_etw`
-/// flag is retained for backward-compatibility of the pure-Rust writer path.
+/// with a record id) are re-exported via `EvtExportLog` (Windows only). Events
+/// without a record id are written directly with the pure-Rust EVTX writer
+/// (all platforms).
 ///
 /// `EvtExportLog` returns success even for a zero-record match (header-only
 /// file), so every successful call is re-parsed; an empty file is retried
@@ -33,18 +32,10 @@ pub fn write_evtx(
     xml: &str,
     channel: &str,
     record_id: Option<u64>,
-    is_etw: bool,
     path: &Path,
 ) -> Result<()> {
     let rid = record_id.unwrap_or(1);
-    if is_etw || record_id.is_none() {
-        if !is_etw {
-            tracing::warn!(
-                "Writing EVTX via pure-Rust writer for a Winevt event without a record id (channel={}) — \
-                 record id missing from the event XML",
-                channel
-            );
-        }
+    if record_id.is_none() {
         write_evtx_pure_rust(xml, channel, rid, path)
     } else {
         write_evtx_winevt(xml, channel, rid, path)
@@ -272,7 +263,6 @@ mod tests {
             SAMPLE_XML,
             "Microsoft-Windows-TaskScheduler/Operational",
             None,
-            true,
             &path,
         )
         .unwrap();
@@ -287,7 +277,6 @@ mod tests {
             SAMPLE_XML,
             "Microsoft-Windows-TaskScheduler/Operational",
             None,
-            false,
             &path,
         )
         .unwrap();
@@ -299,7 +288,7 @@ mod tests {
     fn test_write_evtx_winevt_missing_channel_errors() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("nochannel.evtx");
-        let err = write_evtx(SAMPLE_XML, "", Some(1), false, &path).unwrap_err();
+        let err = write_evtx(SAMPLE_XML, "", Some(1), &path).unwrap_err();
         assert!(err.to_string().contains("empty channel"));
     }
 
@@ -308,7 +297,7 @@ mod tests {
     fn test_write_evtx_winevt_unavailable_on_non_windows() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("winevt.evtx");
-        let err = write_evtx(SAMPLE_XML, "Some/Channel", Some(1), false, &path).unwrap_err();
+        let err = write_evtx(SAMPLE_XML, "Some/Channel", Some(1), &path).unwrap_err();
         assert!(err.to_string().contains("not available on non-Windows"));
         assert!(!path.exists());
     }

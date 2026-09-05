@@ -734,8 +734,7 @@ mod tests {
     use sigmacatch_types::Event;
 
     /// Build an alert that exercises the pure-Rust EVTX writer path: an event
-    /// without a record id in the live Event Log (`is_etw = true`), matched by
-    /// the detection engine.
+    /// without a record id, matched by the detection engine.
     fn synthetic_noid_alert(rule_id: Uuid) -> Alert {
         let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
   <System>
@@ -747,7 +746,6 @@ mod tests {
     <Opcode>0</Opcode>
     <Keywords>0x8000000000000000</Keywords>
     <TimeCreated SystemTime="2024-01-01T00:00:00.0000000Z"/>
-    <EventRecordID>7</EventRecordID>
     <Channel>Microsoft-Windows-Sysmon/Operational</Channel>
     <Computer>localhost</Computer>
   </System>
@@ -766,7 +764,6 @@ mod tests {
             event_json_raw: event.event_json_raw.clone(),
             event_json: event.event_json.clone(),
             event_raw: event.event_raw,
-            is_etw: true,
         }
     }
 
@@ -795,7 +792,6 @@ mod tests {
                 "service": "auditd"
             }),
             event_raw: raw_line.to_vec(),
-            is_etw: false,
         }
     }
 
@@ -1001,7 +997,11 @@ mod tests {
 
         let events = input_windows_evtx::parse_evtx_file(&evtx_path).unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].record_id(), Some(7));
+        assert_eq!(events[0].record_id(), None);
+        assert_eq!(
+            events[0].event_json["Event"]["EventData"]["CommandLine"],
+            "cmd.exe /c whoami"
+        );
 
         // The generated rule is now skippable: a fresh regression instance sees
         // it as existing valid data.
@@ -1031,7 +1031,11 @@ mod tests {
             "JSON file must end with trailing newline"
         );
         let json: serde_json::Value = serde_json::from_slice(&raw_bytes).unwrap();
-        assert_eq!(json["Event"]["System"]["EventRecordID"], 7);
+        assert_eq!(
+            json["Event"]["System"]["EventRecordID"],
+            serde_json::Value::Null,
+            "no-id event carries no EventRecordID"
+        );
         assert_eq!(
             json["Event"]["EventData"]["CommandLine"],
             "cmd.exe /c whoami"

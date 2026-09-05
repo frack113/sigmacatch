@@ -87,7 +87,6 @@ impl DataFormat {
                 alert.raw_xml(),
                 alert.channel(),
                 alert.record_id(),
-                alert.is_etw,
                 path,
             ),
             Self::Log => {
@@ -208,7 +207,6 @@ mod tests {
             event_json_raw: serde_json::json!({}),
             event_json: serde_json::json!({}),
             event_raw,
-            is_etw: false,
         }
     }
 
