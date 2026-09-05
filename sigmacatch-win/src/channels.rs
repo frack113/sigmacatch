@@ -101,9 +101,9 @@ impl EventCollector {
         tx: Arc<mpsc::Sender<Event>>,
         stop: watch::Receiver<bool>,
     ) {
-        let ch = channel.clone();
+        let channel_worker = channel.clone();
         let result = tokio::task::spawn_blocking(move || {
-            Self::collect_continuous(&ch, &tx, &stop);
+            Self::collect_continuous(&channel_worker, &tx, &stop);
         })
         .await;
 
@@ -209,7 +209,6 @@ impl EventCollector {
                 for i in 0..events_fetched as usize {
                     let handle_value = event_handles[i];
                     if handle_value == 0 {
-                        event_handles[i] = 0;
                         continue;
                     }
 
@@ -353,9 +352,7 @@ impl EventCollector {
     fn is_idle_error(e: &windows::core::Error) -> bool {
         use windows::Win32::Foundation::{ERROR_NO_MORE_ITEMS, ERROR_TIMEOUT};
 
-        let code = e.code().0;
-        code == windows::core::HRESULT::from_win32(ERROR_TIMEOUT.0).0
-            || code == windows::core::HRESULT::from_win32(ERROR_NO_MORE_ITEMS.0).0
+        Self::is_win32_error(e, ERROR_TIMEOUT.0) || Self::is_win32_error(e, ERROR_NO_MORE_ITEMS.0)
     }
 
     /// ERROR_EVT_CHANNEL_NOT_FOUND — the channel does not exist on this
@@ -365,8 +362,13 @@ impl EventCollector {
     fn is_channel_not_found(e: &windows::core::Error) -> bool {
         use windows::Win32::Foundation::ERROR_EVT_CHANNEL_NOT_FOUND;
 
-        let code = e.code().0;
-        code == windows::core::HRESULT::from_win32(ERROR_EVT_CHANNEL_NOT_FOUND.0).0
+        Self::is_win32_error(e, ERROR_EVT_CHANNEL_NOT_FOUND.0)
+    }
+
+    /// True when `e` carries the given Win32 error code.
+    #[cfg(windows)]
+    fn is_win32_error(e: &windows::core::Error, code: u32) -> bool {
+        e.code() == windows::core::HRESULT::from_win32(code)
     }
 
     /// Extract the event record id directly from the raw rendered XML as a
