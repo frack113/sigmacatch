@@ -173,16 +173,15 @@ impl DetectionEngine {
         let rule_id_map = Self::build_rule_id_map(&rule_paths);
 
         // Persist HIR cache after first compilation.
-        if let Some(ref cache_path) = hir_cache_path {
-            if let Ok(hir) = engine.save_hir() {
-                if let Err(e) = std::fs::write(cache_path, &hir) {
-                    tracing::warn!(
-                        "Failed to write HIR cache to {}: {}",
-                        cache_path.display(),
-                        e
-                    );
-                }
-            }
+        if let Some(ref cache_path) = hir_cache_path
+            && let Ok(hir) = engine.save_hir()
+            && let Err(e) = std::fs::write(cache_path, &hir)
+        {
+            tracing::warn!(
+                "Failed to write HIR cache to {}: {}",
+                cache_path.display(),
+                e
+            );
         }
 
         Ok(Self {
@@ -271,16 +270,15 @@ impl DetectionEngine {
         self.rule_paths = Arc::new(rule_paths);
 
         // Persist HIR cache after re-compilation.
-        if let Some(ref cache_path) = self.hir_cache_path {
-            if let Ok(hir) = self.engine.save_hir() {
-                if let Err(e) = std::fs::write(cache_path, &hir) {
-                    tracing::warn!(
-                        "Failed to write HIR cache to {}: {}",
-                        cache_path.display(),
-                        e
-                    );
-                }
-            }
+        if let Some(ref cache_path) = self.hir_cache_path
+            && let Ok(hir) = self.engine.save_hir()
+            && let Err(e) = std::fs::write(cache_path, &hir)
+        {
+            tracing::warn!(
+                "Failed to write HIR cache to {}: {}",
+                cache_path.display(),
+                e
+            );
         }
         Ok(())
     }
