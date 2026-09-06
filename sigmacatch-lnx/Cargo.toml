@@ -13,7 +13,7 @@ build = "src/build.rs"
 default = ["auditd", "builtin"]
 auditd = ["dep:async-trait", "dep:linux-audit-parser"]
 builtin = ["dep:async-trait", "dep:regex"]
-sysmon = ["dep:async-trait"]
+sysmon = ["dep:async-trait", "builtin"]
 ebpf = ["dep:async-trait", "dep:aya", "dep:sigmacatch-ebpf-common", "dep:sha2", "dep:hex"]
 
 # Three release flavours share this main; cargo features select the sysmon
