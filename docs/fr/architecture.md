@@ -146,6 +146,8 @@ et utilisent `serde` pour leurs sorties JSON (toujours compilées).
 
 ```text
 1. parse_args() + Config::load_with_cli("config.yaml", cli)
+   └── -n/--dry-run : chargement allégé (pas de validation git), aucun état sur disque
+       (ni config.yaml ni logs/), sortie après validation des règles + du moteur
 2. setup_console() (Windows) ; init_logger(&config, verbose) → tracing (stderr `error` par défaut, `info` avec `-v`, fichier debug)
 3. ensure_dirs() → dossier repo sigma + logs/
 4. SigmaRepo init : set_info_user/set_info_http|ssh (+ ensure_ssh_host_config si ssh+réseau),
@@ -162,13 +164,13 @@ et utilisent `serde` pour leurs sorties JSON (toujours compilées).
    └── cycle_channels = kind.channels(&engine, &custom_map)
        ├── Some(vide) (winevt sans channel résolu) → warn + return
        └── None (linux) → pas de résolution de channels
-9. Handler Ctrl+C (watch channel) ; output_base = <sigma_repo_path>/regression_data ;
-   clean_partial_artifacts()
+9. Handlers d'arrêt (watch channel) : Ctrl+C + stop file (poll 500 ms) ;
+    output_base = <sigma_repo_path>/regression_data ; clean_partial_artifacts()
 10. collector = kind.build(&cycle_channels) → tokio::spawn(collector.run(tx, stop))
     ├── sigmacatch-channel (winevt)  → EventCollector::new(cycle_channels).run(tx, stop)
      └── sigmacatch-linux (auditd + syslog + sysmon) → MultiCollector (les trois tails en parallèle, rotation détectée)
 11. Boucle : tokio::select!
-    ├── shutdown_rx (Ctrl+C ou --max-runs atteint) → break
+    ├── shutdown_rx (Ctrl+C, stop file, ou --max-runs atteint) → break
     ├── event depuis rx → engine.put_events(vec![event])
     └── generate_interval (30s) → spawn_blocking(process_and_generate) → upload_regression() si fichiers
 12. Flush final : arrêt collector (timeout 10s, abort sinon) → drain des events restants (timeout 5s)
@@ -201,6 +203,10 @@ s'accumuler dans le canal mpsc).
 
 ## Notes de conception
 
+- **Stop file** : `config.stop_file` (défaut `.sigmacatch.stop`) est pollé toutes les
+   500 ms ; si le fichier existe, la collecte s'arrête proprement (drain + flush +
+   commit du cycle en cours) — c'est le signal pour terminer un run continu
+   (`-r 0`) sans kill dur qui perdrait les données de régression du cycle en cours.
 - **Skip set** = `HashSet<Uuid>` depuis `SigmahqRegression::get_sigma_id()` (info.yml existants + données valides)
   ∪ `SigmaRepo::pending_regression_rule_ids()` (arbres des branches remote `sigmacatch/*` :
   PR en attente non mergés — une VM fraîche ne recapture pas leurs données),

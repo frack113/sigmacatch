@@ -151,6 +151,8 @@ for their JSON output (always compiled).
 
 ```text
 1. parse_args() + Config::load_with_cli("config.yaml", cli)
+   └── -n/--dry-run: lightweight load (no git validation), zero on-disk state (no
+       config.yaml, no logs/), exits after validating the rules + the engine
 2. setup_console() (Windows) ; init_logger(&config, verbose) → tracing (stderr `error` by default, `info` with `-v`, file debug)
 3. ensure_dirs() → sigma repo dir + logs/
 4. SigmaRepo init: set_info_user/set_info_http|ssh (+ ensure_ssh_host_config when ssh+network),
@@ -167,13 +169,13 @@ for their JSON output (always compiled).
    └── cycle_channels = kind.channels(&engine, &custom_map)
        ├── Some(empty) (winevt with no resolved channel) → warn + return
        └── None (linux) → no channel resolution
-9. Ctrl+C handler (watch channel) ; output_base = <sigma_repo_path>/regression_data ;
-   clean_partial_artifacts()
+9. Shutdown handlers (watch channel): Ctrl+C + stop file (500 ms poll) ;
+    output_base = <sigma_repo_path>/regression_data ; clean_partial_artifacts()
 10. collector = kind.build(&cycle_channels) → tokio::spawn(collector.run(tx, stop))
     ├── sigmacatch-channel (winevt)  → EventCollector::new(cycle_channels).run(tx, stop)
     └── sigmacatch-linux (auditd + syslog + sysmon) → MultiCollector (all tails in parallel, rotation detected)
 11. Loop: tokio::select!
-    ├── shutdown_rx (Ctrl+C or --max-runs reached) → break
+    ├── shutdown_rx (Ctrl+C, stop file, or --max-runs reached) → break
     ├── event from rx → engine.put_events(vec![event])
     └── generate_interval (30s) → spawn_blocking(process_and_generate) → upload_regression() if files
 12. Final flush: collector stop (10s timeout, abort otherwise) → drain remaining events (5s timeout)
@@ -205,6 +207,10 @@ All generation runs in `spawn_blocking` (the `Pipeline` state is moved out and r
 
 ## Design notes
 
+- **Stop file**: `config.stop_file` (default `.sigmacatch.stop`) is polled every 500 ms;
+  when the file exists, collection stops gracefully (drain + flush + commit of the
+  in-flight cycle) — the signal used to end a continuous (`-r 0`) run without a hard
+  kill that would lose the cycle's regression data.
 - **Skip set** = `HashSet<Uuid>` from `SigmahqRegression::get_sigma_id()` (existing info.yml + valid data)
   ∪ `SigmaRepo::pending_regression_rule_ids()` (trees of remote `sigmacatch/*` branches:
   unmerged pending PRs — a fresh VM does not re-capture their data), built once at startup.

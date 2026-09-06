@@ -47,7 +47,9 @@ recapture plus tard.
 
 Le `.json` porte les données réelles pour le matching Sigma (`event_json_raw`). Sa forme
 dépend du producteur : imbriquée et miroir fidèle du XML Winevt pour les events Windows,
-plate (`{message, program, host, service}`) pour les events Linux. Voir
+plate (`{message, program, host, service}`) pour les events Linux. Le pipeline écrit un
+seul objet JSON terminé par exactement une fin de ligne ; le validateur
+(`regressiondata-check`) accepte aussi du JSONL (un objet par ligne). Voir
 [regression-data-format.md](regression-data-format.md) pour les exemples.
 
 ## Annotation du YAML source

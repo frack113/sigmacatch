@@ -24,24 +24,31 @@ regressiondata-check [--json] [--ignore] [--fix] [--path <DIR>]
 `regression_data/` de la racine sigma (`./sigma/regression_data` par défaut). Les
 entrées sont parses selon leur `LogType` : `.evtx` via
 `input_windows_evtx::parse_evtx_bytes`, `.log` via le parser auditd, lignes JSON directes.
-Le logtype `Raw` est ignoré.
+Le logtype `Raw` est sauté (compté dans `Skipped`).
 
 ### Pipeline
 
 1. Charge toutes les règles Sigma depuis la racine sigma (`./sigma` par défaut, `--path <DIR>` pour surcharger)
-2. Construit le `DetectionEngine` une seule fois
+2. Construit le `DetectionEngine` une seule fois en mode **lenient** (`new_lenient`) : les
+   règles qui échouent à la compilation sont sautées avec un avertissement, jamais un échec
 3. Charge les entrées de régression depuis `<DIR>/regression_data`
 4. Validation **bidirectionnelle** du `regression_tests_path` entre règles et entrées :
    chaque entrée doit correspondre à une règle déclarant ce chemin, et chaque chemin déclaré
    doit pointer vers une entrée existante (chemins manquants / incohérents comptés).
-5. Pour chaque entrée `info.yml` :
-   - Valide l'existence + non-vide (pas de vérification structurelle profonde à ce stade)
-   - Charge le `.evtx` / `.log` brut, parse les events
+5. Avertissements non bloquants : rule ids qui ne sont pas des UUID v4 (l'amont SigmaHQ en
+   publie ; on avertit sans échouer) et règles non compilées (mode lenient)
+6. Pour chaque entrée `info.yml` :
+   - Valide l'`info.yml` : `rule_metadata` non vide (toujours un échec), indentation au
+     style SigmaHQ 4 espaces, `regression_tests_info` non vide (vide → échec, ou ignoré
+     avec `--ignore`)
+   - Valide le `.json` auxiliaire s'il est présent : JSON **ou JSONL** (un objet par
+     ligne) valide, exactement une fin de ligne
+   - Charge la donnée brute selon le `logtype` (`.evtx`, `.log`, lignes JSON), parse les events
    - Évalue les events contre la règle
    - Valide : la règle DOIT matcher (test de détection positive)
    - Quand un `.json` auxiliaire est présent, valide le `match_count` déclaré contre le
      nombre réel de hits (incohérence de match_count = échec)
-6. Rapport pass/fail par règle + résumé (exit 1 en cas d'échec de détection ou de chemin)
+7. Rapport pass/fail par règle + résumé (exit 1 en cas d'échec de détection ou de chemin)
 
 ### Sortie
 
@@ -65,8 +72,9 @@ Le logtype `Raw` est ignoré.
 ```
 
 Le résumé affiche aussi, quand non nuls : `Missing paths`, `Mismatched`, `Ignored`,
-`Skipped` et `Dropped lines`. Un résumé en échec sort avec exit 1 (échecs de détection
-**ou** chemins manquants/incohérents).
+`Skipped`, `Dropped lines` et `Warnings`, suivi de la liste `Failed rules`
+(`FAIL <rule_name> — <error>`) quand des entrées ont échoué. Un résumé en échec sort
+avec exit 1 (échecs de détection **ou** chemins manquants/incohérents).
 
 **Exemple :**
 
@@ -101,9 +109,41 @@ regressiondata-check --fix --path .
       "rule_name": "cisco_cli_dot1x_disabled",
       "error": "EMPTY — no events produced from raw data"
     }
+  ],
+  "warning_count": 1,
+  "warnings": [
+    "1 rule(s) failed to compile (lenient mode): [7]"
   ]
 }
 ```
+
+Les `warnings` regroupent les rule ids non-v4 et les règles non compilées (mode lenient) ;
+elles n'entraînent jamais l'exit 1.
+
+---
+
+## Flags des binaires de collecte
+
+Les binaires `sigmacatch-channel`, `sigmacatch-linux`, `sigmacatch-linux-sysmon` et
+`sigmacatch-linux-ebpf` partagent les mêmes flags (parsing commun) :
+
+```text
+sigmacatch [OPTIONS]
+
+  -a, --all-rules     Charge toutes les règles (ignore les données de régression existantes)
+  -c, --contrib       Active le push sur le fork (neutralisé par --offline)
+  -o, --offline       Aucune opération git (fichiers sur disque tels quels, pas de commit/push)
+  -r, --max-runs <N>  Quitte après N cycles de collecte (0 = illimité)
+  -v, --verbose       Journalisation info sur stderr
+  -n, --dry-run       Vérification en lecture seule : charge les règles de ./sigma et
+                      construit le moteur — aucune donnée écrite, aucune opération git/réseau
+      --author <NOM>  Remplace l'auteur git du config.yaml pour ce run
+  --help, -h          Affiche l'aide et quitte
+```
+
+`--dry-run` s'exécute **avant** l'initialisation du logger : il ne crée ni `config.yaml`
+ni `logs/`, saute la validation git (author/email/token) et se limite au chargement des
+règles de `./sigma` + à la construction du moteur de détection.
 
 ---
 

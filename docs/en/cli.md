@@ -28,19 +28,26 @@ parsed according to their `LogType`: `.evtx` via `input_windows_evtx::parse_evtx
 ### Pipeline
 
 1. Loads all Sigma rules from the sigma root (`./sigma` by default, `--path <DIR>` to override)
-2. Builds the `DetectionEngine` once
+2. Builds the `DetectionEngine` once in **lenient** mode (`new_lenient`): rules that fail
+   to compile are skipped with a warning, never a failure
 3. Loads regression entries from `<DIR>/regression_data`
 4. Bidirectional `regression_tests_path` validation between rules and entries:
    every entry's rule must declare a matching `regression_tests_path`, and every declared
    path must point to an existing entry (missing / mismatched paths are counted).
-5. For each `info.yml` entry:
-   - Validates file existence + non-empty (no deep structure check at this stage)
-   - Loads the raw `.evtx` / `.log`, parses events
+5. Non-blocking warnings: rule ids that are not UUID v4 (upstream SigmaHQ ships some;
+   warned, never failed) and rules that failed to compile (lenient mode)
+6. For each `info.yml` entry:
+   - Validates the `info.yml`: non-empty `rule_metadata` (always a failure), SigmaHQ
+     4-space indentation, non-empty `regression_tests_info` (empty → failure, or ignored
+     with `--ignore`)
+   - Validates the auxiliary `.json` if present: valid **JSON or JSONL** (one object per
+     line), exactly one trailing newline
+   - Loads the raw data according to the `logtype` (`.evtx`, `.log`, JSON lines), parses events
    - Evaluates events against the rule
    - Validates: the rule MUST match (positive detection test)
    - When a `.json` auxiliary is present, validates the declared `match_count` against the
      real hit count (match count mismatch is a failure)
-6. Reports pass/fail per rule + summary (exit 1 on any detection or path failure)
+7. Reports pass/fail per rule + summary (exit 1 on any detection or path failure)
 
 ### Output
 
@@ -64,8 +71,9 @@ parsed according to their `LogType`: `.evtx` via `input_windows_evtx::parse_evtx
 ```
 
 The summary also reports, when non-zero: `Missing paths`, `Mismatched`, `Ignored`,
-`Skipped` and `Dropped lines`. A failing summary exits 1 (detection failures **or** any
-missing/mismatched path).
+`Skipped`, `Dropped lines` and `Warnings`, followed by the `Failed rules` list
+(`FAIL <rule_name> — <error>`) when any entry failed. A failing summary exits 1
+(detection failures **or** missing/mismatched paths).
 
 **Example:**
 
@@ -100,9 +108,41 @@ regressiondata-check --fix --path .
       "rule_name": "cisco_cli_dot1x_disabled",
       "error": "EMPTY — no events produced from raw data"
     }
+  ],
+  "warning_count": 1,
+  "warnings": [
+    "1 rule(s) failed to compile (lenient mode): [7]"
   ]
 }
 ```
+
+`warnings` collects non-v4 rule ids and rules that failed to compile (lenient mode);
+they never trigger exit 1.
+
+---
+
+## Flags of the collector binaries
+
+The binaries `sigmacatch-channel`, `sigmacatch-linux`, `sigmacatch-linux-sysmon` and
+`sigmacatch-linux-ebpf` share the same flags (common parsing):
+
+```text
+sigmacatch [OPTIONS]
+
+  -a, --all-rules    Load all rules (ignore existing regression data)
+  -c, --contrib      Enable push to the remote fork (neutralized by --offline)
+  -o, --offline      No git operations at all (on-disk files as-is, no commit/push)
+  -r, --max-runs <N> Exit after N collection cycles (0 = unlimited)
+  -v, --verbose      Info-level logging on stderr
+  -n, --dry-run      Read-only check: load the ./sigma rules and build the engine —
+                     no data written, no git/network operation
+      --author <NAME> Override the git author from config.yaml for this run
+  --help, -h         Print help and exit
+```
+
+`--dry-run` runs **before** logger init: it creates neither `config.yaml` nor `logs/`,
+skips git validation (author/email/token) and only loads the rules from `./sigma` +
+builds the detection engine.
 
 ---
 
