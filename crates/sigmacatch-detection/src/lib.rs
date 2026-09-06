@@ -176,7 +176,11 @@ impl DetectionEngine {
         if let Some(ref cache_path) = hir_cache_path {
             if let Ok(hir) = engine.save_hir() {
                 if let Err(e) = std::fs::write(cache_path, &hir) {
-                    tracing::warn!("Failed to write HIR cache to {}: {}", cache_path.display(), e);
+                    tracing::warn!(
+                        "Failed to write HIR cache to {}: {}",
+                        cache_path.display(),
+                        e
+                    );
                 }
             }
         }
@@ -270,7 +274,11 @@ impl DetectionEngine {
         if let Some(ref cache_path) = self.hir_cache_path {
             if let Ok(hir) = self.engine.save_hir() {
                 if let Err(e) = std::fs::write(cache_path, &hir) {
-                    tracing::warn!("Failed to write HIR cache to {}: {}", cache_path.display(), e);
+                    tracing::warn!(
+                        "Failed to write HIR cache to {}: {}",
+                        cache_path.display(),
+                        e
+                    );
                 }
             }
         }
