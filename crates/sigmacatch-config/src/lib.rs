@@ -346,35 +346,38 @@ impl Config {
 
     /// Reject placeholder/inconsistent values before first run.
     pub fn validate(&self) -> Result<()> {
-        if self.git.author == "sigmacatch" {
-            return Err(ConfigError::Invalid(
-                "config: 'git.author' is the placeholder 'sigmacatch'. \
-                 Set 'author' to your GitHub username in config.yaml"
-                    .to_string(),
-            ));
-        }
-        if !self.git.author.is_empty()
-            && !self
-                .git
-                .author
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-')
-        {
-            return Err(ConfigError::Invalid(format!(
-                "config: 'git.author' must be a valid GitHub username (alphanumeric + hyphens), got {:?}",
-                self.git.author
-            )));
-        }
-        if self.git.email.is_empty() {
-            return Err(ConfigError::Invalid(
-                "config: 'git.email' is required".to_string(),
-            ));
-        }
-        if !self.git.email.contains('@') {
-            return Err(ConfigError::Invalid(format!(
-                "config: 'git.email' must contain '@', got {:?}",
-                self.git.email
-            )));
+        // Skip author/email validation in offline mode — no git operations needed
+        if !self.git.is_offline() {
+            if self.git.author == "sigmacatch" {
+                return Err(ConfigError::Invalid(
+                    "config: 'git.author' is the placeholder 'sigmacatch'. \
+                     Set 'author' to your GitHub username in config.yaml"
+                        .to_string(),
+                ));
+            }
+            if !self.git.author.is_empty()
+                && !self
+                    .git
+                    .author
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-')
+            {
+                return Err(ConfigError::Invalid(format!(
+                    "config: 'git.author' must be a valid GitHub username (alphanumeric + hyphens), got {:?}",
+                    self.git.author
+                )));
+            }
+            if self.git.email.is_empty() {
+                return Err(ConfigError::Invalid(
+                    "config: 'git.email' is required".to_string(),
+                ));
+            }
+            if !self.git.email.contains('@') {
+                return Err(ConfigError::Invalid(format!(
+                    "config: 'git.email' must contain '@', got {:?}",
+                    self.git.email
+                )));
+            }
         }
         // Validate SSH key path if configured. Skipped offline: no network op
         // can use the key, so a stale path must not block an offline startup.
