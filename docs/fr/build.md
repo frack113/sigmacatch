@@ -40,15 +40,18 @@ en bout pour tests (`cargo build -p sigmacatch-win`).
 cargo build --release -p sigmacatch-win
 ```
 
-Un binaire est produit avec le collecteur Winevt (feature `winevt`, activée par défaut) :
+Deux binaires sont produits dans la crate `sigmacatch-win` :
 
-- **`sigmacatch-channel`** (winevt) : API Winevt native (`EvtQueryW` → `EvtNext` → `EvtRender`) sur les channels résolus. Nécessite les droits admin pour les channels `Security` et `System`.
+- **`sigmacatch-channel`** (winevt, feature `winevt`, activée par défaut) : API Winevt native (`EvtQueryW` → `EvtNext` → `EvtRender`) sur les channels résolus. Nécessite les droits admin pour les channels `Security` et `System`.
+- **`sigmacatch-evtx`** (feature `evtx`, hors défauts) : processeur EVTX statique à run unique — scanne récursivement un dossier de fichiers `.evtx`, matche les events contre les règles Sigma et génère des données de régression SigmaHQ, puis commit/push vers une branche `sigmacatch/<date>`. Pas de collecte live, pas d'API Windows : l'EVTX est parsé et réécrit en pur Rust, donc ce binaire se compile et tourne aussi sous Linux (`cargo build --release --bin sigmacatch-evtx --no-default-features --features evtx`).
 
-Build isolé :
+Builds isolés :
 
 ```bash
 # Winevt uniquement
 cargo build --release --bin sigmacatch-channel --no-default-features --features winevt
+# Processeur EVTX statique uniquement (cross-platform)
+cargo build --release --bin sigmacatch-evtx --no-default-features --features evtx
 ```
 
 > Les sous-commandes de diagnostic (`check-filter`, `list-rules`) sont toujours compilées
@@ -70,10 +73,20 @@ cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win
 Le binaire résultant est à `target/x86_64-pc-windows-msvc/release/sigmacatch-channel.exe`.
 La CI GitHub Actions build nativement sur `windows-latest`.
 
+Le processeur EVTX statique (feature `evtx`) :
+
+```bash
+cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win --features evtx
+```
+
+Le binaire résultant est à `target/x86_64-pc-windows-msvc/release/sigmacatch-evtx.exe`.
+Le build croisé par défaut ci-dessus produit les deux binaires sigmacatch-win ; la forme
+`--features evtx` n'est nécessaire que pour un `sigmacatch-evtx.exe` isolé.
+
 ## Taille du binaire
 
 Build release optimisé : ~10 MB par binaire (constaté en cross
-x86_64-pc-windows-msvc : `sigmacatch-channel.exe` ~10.4 MB).
+x86_64-pc-windows-msvc : `sigmacatch-channel.exe` ~10.4 MB, `sigmacatch-evtx.exe` ~11.7 MB).
 
 Profil appliqué :
 

@@ -121,6 +121,33 @@ they never trigger exit 1.
 
 ---
 
+## `sigmacatch-evtx` — static EVTX regression generator (single run)
+
+Standalone, **non-live** binary (feature `evtx` in `sigmacatch-win`): recursively scans a
+directory for `.evtx` files, parses each event in pure Rust, pushes them through the
+detection engine, writes SigmaHQ regression data for every matched rule (pure-Rust EVTX
+writer — never `EvtExportLog`, since static events are not in the live Event Log), then
+commits and pushes per rule to `sigmacatch/<date>` on the configured fork. It exits after
+one pass: read → detect → generate → commit/push, no collection loop.
+
+**Usage:**
+
+```text
+sigmacatch-evtx [OPTIONS]
+
+      --evtx <EVTX_PATH>  Directory of .evtx files, scanned recursively
+                       (default: C:\Windows\System32\winevt\Logs)
+      --config <CONFIG>   Path to config.yaml (default: config.yaml)
+  -v, --verbose        Info-level logging on stderr
+  -h, --help           Print help and exit
+```
+
+The sigma repository and the regression output are taken from the config
+(`git.sigma_repo_path`, relative paths resolved against the config file's directory);
+regression data is written under `<sigma_repo_path>/regression_data`.
+
+---
+
 ## Flags of the collector binaries
 
 The binaries `sigmacatch-channel`, `sigmacatch-linux`, `sigmacatch-linux-sysmon` and

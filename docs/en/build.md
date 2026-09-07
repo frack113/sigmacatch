@@ -39,15 +39,18 @@ for testing (`cargo build -p sigmacatch-win`).
 cargo build --release -p sigmacatch-win
 ```
 
-One binary is produced with the Winevt collector (feature `winevt`, enabled by default):
+Two binaries are produced in the `sigmacatch-win` crate:
 
-- **`sigmacatch-channel`** (winevt): native Winevt API (`EvtQueryW` → `EvtNext` → `EvtRender`) on resolved channels. Requires admin rights for `Security` and `System` channels.
+- **`sigmacatch-channel`** (winevt, feature `winevt`, enabled by default): native Winevt API (`EvtQueryW` → `EvtNext` → `EvtRender`) on resolved channels. Requires admin rights for `Security` and `System` channels.
+- **`sigmacatch-evtx`** (feature `evtx`, not in defaults): static single-run EVTX processor — recursively scans a directory of `.evtx` files, matches the events against Sigma rules and generates SigmaHQ regression data, then commits/pushes to a `sigmacatch/<date>` branch. No live collection, no Windows API: EVTX is parsed and re-written in pure Rust, so this binary also builds and runs on Linux (`cargo build --release --bin sigmacatch-evtx --no-default-features --features evtx`).
 
-Isolated build:
+Isolated builds:
 
 ```bash
 # Winevt only
 cargo build --release --bin sigmacatch-channel --no-default-features --features winevt
+# Static EVTX processor only (cross-platform)
+cargo build --release --bin sigmacatch-evtx --no-default-features --features evtx
 ```
 
 > The diagnostic subcommands (`check-filter`, `list-rules`) are always compiled into the
@@ -68,6 +71,16 @@ cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win
 
 The resulting binary is at `target/x86_64-pc-windows-msvc/release/sigmacatch-channel.exe`.
 GitHub Actions CI builds natively on `windows-latest`.
+
+The static EVTX processor (feature `evtx`):
+
+```bash
+cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win --features evtx
+```
+
+The resulting binary is at `target/x86_64-pc-windows-msvc/release/sigmacatch-evtx.exe`.
+Both sigmacatch-win binaries are produced by the default-feature cross build above; the
+`--features evtx` form is only needed for an isolated `sigmacatch-evtx.exe`.
 
 ## Binary size
 
