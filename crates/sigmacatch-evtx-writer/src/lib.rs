@@ -80,8 +80,10 @@ pub type Result<T> = std::result::Result<T, WriterError>;
 /// Write a single-record EVTX file from event XML, using the timestamp
 /// embedded in the XML (fallback: current time).
 pub fn write_evtx_from_xml(xml: &str, record_id: u64, path: &Path) -> Result<()> {
-    let filetime = filetime_from_event_xml(xml).unwrap_or_else(|_| now_filetime());
-    write_evtx_from_xml_with_time(xml, record_id, filetime, path)
+    let doc = Document::parse(xml)
+        .map_err(|e| WriterError::Invalid(format!("Failed to parse Winevt XML: {e}")))?;
+    let filetime = filetime_from_doc(&doc).unwrap_or_else(|_| now_filetime());
+    write_evtx_from_xml_with_time_inner(&doc, record_id, filetime, path)
 }
 
 /// Write a single-record EVTX file with an explicit record header timestamp
@@ -92,12 +94,23 @@ pub fn write_evtx_from_xml_with_time(
     filetime: u64,
     path: &Path,
 ) -> Result<()> {
+    let doc = Document::parse(xml)
+        .map_err(|e| WriterError::Invalid(format!("Failed to parse Winevt XML: {e}")))?;
+    write_evtx_from_xml_with_time_inner(&doc, record_id, filetime, path)
+}
+
+fn write_evtx_from_xml_with_time_inner(
+    doc: &Document,
+    record_id: u64,
+    filetime: u64,
+    path: &Path,
+) -> Result<()> {
     if record_id == 0 || record_id == u64::MAX {
         return Err(WriterError::Invalid(format!(
             "record_id must be in 1..=u64::MAX-1, got {record_id}"
         )));
     }
-    let chunk = build_chunk(record_id, filetime, xml)?;
+    let chunk = build_chunk_from_doc(record_id, filetime, doc)?;
     let file = build_file_header(record_id);
 
     let mut out = Vec::with_capacity(FILE_HEADER_SIZE + CHUNK_SIZE);
@@ -114,6 +127,10 @@ pub fn write_evtx_from_xml_with_time(
 pub fn filetime_from_event_xml(xml: &str) -> Result<u64> {
     let doc = Document::parse(xml)
         .map_err(|e| WriterError::Invalid(format!("Failed to parse Winevt XML: {e}")))?;
+    filetime_from_doc(&doc)
+}
+
+fn filetime_from_doc(doc: &Document) -> Result<u64> {
     for node in doc.descendants() {
         if node.tag_name().name() == "TimeCreated"
             && let Some(system_time) = node.attribute("SystemTime")
@@ -266,9 +283,7 @@ fn build_file_header(record_id: u64) -> [u8; FILE_HEADER_SIZE] {
     header
 }
 
-fn build_chunk(record_id: u64, filetime: u64, xml: &str) -> Result<[u8; CHUNK_SIZE]> {
-    let doc = Document::parse(xml)
-        .map_err(|e| WriterError::Invalid(format!("Failed to parse Winevt XML: {e}")))?;
+fn build_chunk_from_doc(record_id: u64, filetime: u64, doc: &Document) -> Result<[u8; CHUNK_SIZE]> {
     let root = doc.root_element();
     if root.tag_name().name() != "Event" {
         return Err(WriterError::Invalid(format!(
@@ -414,7 +429,7 @@ fn hash16(utf16: &[u16]) -> u16 {
 
 /// Distance from the record's BinXML start to the template definition body
 /// (fragment + element tree), i.e. the bytes before the tree inside the
-/// container built in [`build_chunk`].
+/// container built in [`build_chunk_from_doc`].
 const TEMPLATE_INSTANCE_PREFIX: usize = 42;
 
 /// BinXML encoder for template-instance record streams.
@@ -670,5 +685,23 @@ mod tests {
         let path = dir.path().join("event.evtx");
         assert!(write_evtx_from_xml(SAMPLE_XML, 0, &path).is_err());
         assert!(write_evtx_from_xml(SAMPLE_XML, u64::MAX, &path).is_err());
+    }
+
+    #[test]
+    fn unparseable_xml_fails_at_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("event.evtx");
+        let err = write_evtx_from_xml("not xml at all", 1, &path).unwrap_err();
+        assert!(matches!(err, WriterError::Invalid(_)));
+        assert!(err.to_string().contains("Failed to parse Winevt XML"));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn parse_error_precedes_record_id_validation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("event.evtx");
+        let err = write_evtx_from_xml("not xml at all", 0, &path).unwrap_err();
+        assert!(err.to_string().contains("Failed to parse Winevt XML"));
     }
 }
