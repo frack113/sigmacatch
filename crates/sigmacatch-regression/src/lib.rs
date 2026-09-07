@@ -329,10 +329,10 @@ impl SigmahqRegression {
             return None;
         }
 
-        let sigma_repo_path = Path::new("sigma");
+        let sigma_repo_path = output_path.parent().unwrap_or_else(|| Path::new("sigma"));
         let rule_rel_path = alert.rule_path.as_ref().and_then(|p| {
             clean_path(p)
-                .strip_prefix(sigma_repo_path)
+                .strip_prefix(clean_path(sigma_repo_path))
                 .ok()
                 .map(|rel| rel.with_extension(""))
         });
@@ -373,7 +373,7 @@ impl SigmahqRegression {
             .as_ref()
             .and_then(|p| {
                 clean_path(p)
-                    .strip_prefix(sigma_repo_path)
+                    .strip_prefix(clean_path(sigma_repo_path))
                     .ok()
                     .map(|p| p.to_path_buf())
             })
@@ -1092,6 +1092,63 @@ mod tests {
         let mut alert = synthetic_log_alert(rule_id);
         alert.event_raw = vec![0u8; MAX_DATA_BLOB_SIZE + 1];
         alert
+    }
+
+    /// Regression over an **absolute** sigma checkout (as resolved from the
+    /// config on the Windows VM): the output must mirror the rule's repo path
+    /// (not the `rules/<rule_id>` fallback) and the rule yaml must be returned
+    /// in the commit file list with an updated `regression_tests_path`.
+    #[test]
+    fn test_mirror_path_and_rule_update_with_absolute_sigma_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path();
+        let base = repo.join("regression_data");
+        let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
+
+        let rule_id = Uuid::new_v4();
+        let rel =
+            Path::new("rules/windows/process_creation/proc_creation_win_token_obfuscation.yml");
+        let rule_abs = repo.join(rel);
+        std::fs::create_dir_all(rule_abs.parent().unwrap()).unwrap();
+        let stale = "regression_tests_path: regression_data/rules/windows/process_creation/token_obfuscation/info.yml";
+        std::fs::write(
+            &rule_abs,
+            format!("title: Token Obfuscation\nid: {rule_id}\nlevel: high\n{stale}\n"),
+        )
+        .unwrap();
+
+        let mut alert = synthetic_noid_alert(rule_id);
+        alert.rule_path = Some(rule_abs.clone());
+
+        let files = reg.add(&alert).expect("data generated");
+
+        let mirror_rel =
+            "regression_data/rules/windows/process_creation/proc_creation_win_token_obfuscation";
+        assert!(
+            files.contains(&format!("{mirror_rel}/{rule_id}.evtx")),
+            "data file at mirrored rule path: {files:?}"
+        );
+        let rel_str = rel.to_str().unwrap().to_string();
+        assert!(
+            files.contains(&rel_str),
+            "rule yaml update included in commit files: {files:?}"
+        );
+        assert!(
+            !base.join(format!("rules/{rule_id}")).exists(),
+            "no id-based fallback directory"
+        );
+
+        let rewritten = std::fs::read_to_string(&rule_abs).unwrap();
+        let expected = format!("regression_tests_path: {mirror_rel}/info.yml");
+        assert_eq!(
+            rewritten
+                .lines()
+                .filter(|l| l.starts_with("regression_tests_path:"))
+                .collect::<Vec<_>>(),
+            vec![expected.as_str()],
+            "stale regression_tests_path replaced with the mirrored one"
+        );
+        assert!(rewritten.ends_with('\n'), "yaml keeps trailing newline");
     }
 
     #[test]

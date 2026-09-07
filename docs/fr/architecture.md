@@ -7,10 +7,11 @@ Le projet est un cargo workspace de 14 packages, plus 1 crate nightly exclu (`si
 ```text
 sigmacatch/
 ├── Cargo.toml                    # Racine workspace
-├── sigmacatch-win/               # Binaires Windows (lib + 1 bin)
+├── sigmacatch-win/               # Binaires Windows (lib + 2 bins)
 │   └── src/
 │       ├── lib.rs                # module channels (stubs no-op hors Windows)
 │       ├── main_winevt.rs        # bin `sigmacatch-channel` : collecteur Winevt multi-channel
+│       ├── main_evtx.rs          # bin `sigmacatch-evtx` : fichier EVTX statique → données de régression (feature `evtx`)
 │       ├── channels.rs           # Collecteur Winevt (EvtQueryW/EvtNext/EvtRender, multi-channel)
 │       └── cli.rs                # Sous-commandes de diagnostic : check-filter, list-rules
 ├── sigmacatch-lnx/               # Binaires Linux (lib + 3 bins, feature-gated)
@@ -47,13 +48,16 @@ sigmacatch/
 
 ## Collecteurs
 
-Cinq binaires sont produits depuis trois crates (les binaires de collecte embarquent un
- ensemble de collecteurs sélectionné par features cargo et `required-features` par binaire ;
- `regressiondata-check` est un binaire standalone sans collecteur) :
+Six binaires sont produits : quatre binaires de collecte depuis deux crates
+(`sigmacatch-win` → 1, `sigmacatch-lnx` → 3), chacun embarquant un ensemble de collecteurs
+sélectionné par features cargo et `required-features` par binaire ; un processeur EVTX
+statique à run unique (`sigmacatch-win` → 1, feature `evtx`) ; et `regressiondata-check`,
+un binaire standalone sans collecteur :
 
 | Binaire | Crate | Features | Description |
 |---|---|---|---|
 | `sigmacatch-channel` | `sigmacatch-win` | `winevt` | API Winevt native (`EvtQueryW`/`EvtNext`/`EvtRender`), multi-channel, rejouable |
+| `sigmacatch-evtx` | `sigmacatch-win` | `evtx` | Run statique unique sur fichiers `.evtx` : parse → détection → génération régression (writer EVTX pur Rust) → commit/push ; pas un collecteur live |
 | `sigmacatch-linux` | `sigmacatch-lnx` | `auditd` + `builtin` | auditd + syslog builtin uniquement (pas de sysmon, pas de root requis) |
 | `sigmacatch-linux-sysmon` | `sigmacatch-lnx` | `auditd` + `builtin` + `sysmon` | + tail Sysmon-for-Linux XML (feature `sysmon`) |
 | `sigmacatch-linux-ebpf` | `sigmacatch-lnx` | `auditd` + `builtin` + `ebpf` | + probes eBPF native (feature `ebpf`, root requis) |
@@ -112,6 +116,14 @@ partagent un unique `LinuxCollector` défini dans `entry.rs`. Le format de régr
 choisi par `regression_format()` : `DataFormat::Evtx` pour le binaire Windows
 `sigmacatch-channel`, `DataFormat::Log` pour les trois binaires Linux.
 
+`sigmacatch-evtx` (feature `evtx`) n'est **pas** un collecteur : il n'utilise ni
+`CollectorKind` ni le pipeline runner continu. C'est une passe unique — énumérer les fichiers
+`.evtx`, parser chaque event (`input-windows-evtx`), alimenter la `DetectionEngine`, puis
+réutiliser la machinerie partagée `SigmahqRegression` + `SigmaRepo` pour écrire les données
+de régression `DataFormat::Evtx` (toujours via le writer EVTX pur Rust, jamais
+`EvtExportLog`) et les commit/push vers le fork. Comme il est 100 % pur Rust, il se compile et
+tourne aussi sous Linux.
+
 ## Graphe de dépendances
 
 ```text
@@ -131,6 +143,15 @@ regressiondata-check ──┬── sigmacatch-detection   (DetectionEngine)
                    ├── sigmacatch-types       (Event)
                    ├── input-windows-evtx     (parse EVTX → Event)
                    └── linux-audit-parser     (parse records auditd → Event)
+
+sigmacatch-evtx (feature `evtx`) ─┬── input-windows-evtx    (parse EVTX → Event)
+                                  ├── sigmacatch-detection  (DetectionEngine)
+                                  ├── sigmacatch-rule       (SigmahqRules : load/filter)
+                                  ├── sigmacatch-regression (SigmahqRegression : writer EVTX pur Rust + info.yml)
+                                  ├── sigmacatch-repo       (SigmaRepo : clone fork, commit/push)
+                                  ├── sigmacatch-config     (Config)
+                                  ├── sigmacatch-logger     (init tracing)
+                                  └── sigmacatch-types      (Event, Alert)
 ```
 
 `sigmacatch-detection` dépend de `sigmacatch-rule` + `sigmacatch-types` + `rsigma-eval`.
@@ -146,6 +167,8 @@ et utilisent `serde` pour leurs sorties JSON (toujours compilées).
 
 ```text
 1. parse_args() + Config::load_with_cli("config.yaml", cli)
+   └── -n/--dry-run : chargement allégé (pas de validation git), aucun état sur disque
+       (ni config.yaml ni logs/), sortie après validation des règles + du moteur
 2. setup_console() (Windows) ; init_logger(&config, verbose) → tracing (stderr `error` par défaut, `info` avec `-v`, fichier debug)
 3. ensure_dirs() → dossier repo sigma + logs/
 4. SigmaRepo init : set_info_user/set_info_http|ssh (+ ensure_ssh_host_config si ssh+réseau),
@@ -162,13 +185,13 @@ et utilisent `serde` pour leurs sorties JSON (toujours compilées).
    └── cycle_channels = kind.channels(&engine, &custom_map)
        ├── Some(vide) (winevt sans channel résolu) → warn + return
        └── None (linux) → pas de résolution de channels
-9. Handler Ctrl+C (watch channel) ; output_base = <sigma_repo_path>/regression_data ;
-   clean_partial_artifacts()
+9. Handlers d'arrêt (watch channel) : Ctrl+C + stop file (poll 500 ms) ;
+    output_base = <sigma_repo_path>/regression_data ; clean_partial_artifacts()
 10. collector = kind.build(&cycle_channels) → tokio::spawn(collector.run(tx, stop))
     ├── sigmacatch-channel (winevt)  → EventCollector::new(cycle_channels).run(tx, stop)
      └── sigmacatch-linux (auditd + syslog + sysmon) → MultiCollector (les trois tails en parallèle, rotation détectée)
 11. Boucle : tokio::select!
-    ├── shutdown_rx (Ctrl+C ou --max-runs atteint) → break
+    ├── shutdown_rx (Ctrl+C, stop file, ou --max-runs atteint) → break
     ├── event depuis rx → engine.put_events(vec![event])
     └── generate_interval (30s) → spawn_blocking(process_and_generate) → upload_regression() si fichiers
 12. Flush final : arrêt collector (timeout 10s, abort sinon) → drain des events restants (timeout 5s)
@@ -199,8 +222,21 @@ Toute la génération tourne en `spawn_blocking` (état `Pipeline` déplacé pui
 les retries `EvtExportLog` ne gèlent jamais la collecte (les événements continuent à
 s'accumuler dans le canal mpsc).
 
+### Variante run unique : `sigmacatch-evtx`
+
+Tout ce qui précède décrit les collecteurs **continus**. `sigmacatch-evtx` en est l'analogue
+one-shot : il tourne exactement une fois — énumérer les fichiers EVTX → `parse_evtx_file` →
+`engine.put_events` → `process_events` → `regression.add` par règle matchée → un commit par
+règle + un push unique (même `upload_rule_batches`), puis se termine. Pas de channel, pas de
+`generate_interval`, pas de watch d'arrêt / stop file : Ctrl+C avorte la passe et saute le
+push de ce qui n'a pas encore été commité.
+
 ## Notes de conception
 
+- **Stop file** : `config.stop_file` (défaut `.sigmacatch.stop`) est pollé toutes les
+   500 ms ; si le fichier existe, la collecte s'arrête proprement (drain + flush +
+   commit du cycle en cours) — c'est le signal pour terminer un run continu
+   (`-r 0`) sans kill dur qui perdrait les données de régression du cycle en cours.
 - **Skip set** = `HashSet<Uuid>` depuis `SigmahqRegression::get_sigma_id()` (info.yml existants + données valides)
   ∪ `SigmaRepo::pending_regression_rule_ids()` (arbres des branches remote `sigmacatch/*` :
   PR en attente non mergés — une VM fraîche ne recapture pas leurs données),
@@ -209,9 +245,9 @@ s'accumuler dans le canal mpsc).
   Les règles dont les données commitées sont invalides (EVTX cassé / texte vide) sont exclues du skip set → régénérées.
 - **Output toujours dans le repo sigma** : `<sigma_repo_path>/regression_data/<rule_rel_path>/`
   (`info.yml` + fichier de données `.evtx`/`.log`, `.json` optionnel), commité sur le fork si `contrib` (commits locaux sinon).
-  Attention : le chemin de génération est codé sur le dépôt local `./sigma` — gardez
-  `git.sigma_repo_path: "sigma"` ; toute autre valeur casse le miroir de chemins et le
-  nettoyage des artefacts partiels.
+  Le chemin de la règle est miroité par rapport au `sigma_repo_path` configuré (relatif ou
+  absolu) — le commit par règle embarque aussi la règle mise à jour avec
+  `regression_tests_path: regression_data/<rule_rel_path>/info.yml`.
 - **Collecteur observable** : le collecteur exclut une fois pour toutes les channels
   inexistants dès `ERROR_EVT_CHANNEL_NOT_FOUND` (un seul `error!`) ; chaque channel vivant
   journalise « initial query OK » puis un heartbeat « still alive » (60s) ; `warn!` quand des

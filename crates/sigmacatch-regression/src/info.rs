@@ -126,7 +126,10 @@ impl InfoYml {
     /// Write to `path` in SigmaHQ 4-space indentation style.
     pub fn save(&self, path: &Path) -> crate::Result<()> {
         let path = crate::long_path::long_path(path);
-        let yaml = self.canonical_yaml()?;
+        let mut yaml = self.canonical_yaml()?;
+        if !yaml.ends_with('\n') {
+            yaml.push('\n');
+        }
         let mut file = std::fs::File::create(&path)?;
         file.write_all(yaml.as_bytes())
             .map_err(|e| crate::RegressionError::Yaml(e.to_string()))?;

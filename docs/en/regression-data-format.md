@@ -150,7 +150,7 @@ regression_tests_info:
 | `info.yml` | YAML | Always `info.yml` | Metadata + results |
 | `<rule_id>.evtx` | Binary | UUID v4 | Valid EVTX (EvtExportLog or pure Rust writer; validated ≥ 1 record at write time) |
 | `<rule_id>.log` | Text | UUID v4 | Complete event (multi-record auditd lines, syslog lines, or Sysmon-for-Linux XML) |
-| `<rule_id>.json` | JSON | UUID v4 | Optional (`regression.add_json_output`) — raw event (nested Winevt JSON or flat Linux JSON) |
+| `<rule_id>.json` | JSON | UUID v4 | Optional (`regression.add_json_output`) — raw event (nested Winevt JSON or flat Linux JSON; single JSON object or JSONL, exactly one trailing newline, validated by `regressiondata-check`) |
 
 The `<rule_id>` in file names is always the UUID from `rule_metadata[0].id`.
 
