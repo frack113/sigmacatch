@@ -245,9 +245,9 @@ push de ce qui n'a pas encore été commité.
   Les règles dont les données commitées sont invalides (EVTX cassé / texte vide) sont exclues du skip set → régénérées.
 - **Output toujours dans le repo sigma** : `<sigma_repo_path>/regression_data/<rule_rel_path>/`
   (`info.yml` + fichier de données `.evtx`/`.log`, `.json` optionnel), commité sur le fork si `contrib` (commits locaux sinon).
-  Attention : le chemin de génération est codé sur le dépôt local `./sigma` — gardez
-  `git.sigma_repo_path: "sigma"` ; toute autre valeur casse le miroir de chemins et le
-  nettoyage des artefacts partiels.
+  Le chemin de la règle est miroité par rapport au `sigma_repo_path` configuré (relatif ou
+  absolu) — le commit par règle embarque aussi la règle mise à jour avec
+  `regression_tests_path: regression_data/<rule_rel_path>/info.yml`.
 - **Collecteur observable** : le collecteur exclut une fois pour toutes les channels
   inexistants dès `ERROR_EVT_CHANNEL_NOT_FOUND` (un seul `error!`) ; chaque channel vivant
   journalise « initial query OK » puis un heartbeat « still alive » (60s) ; `warn!` quand des

@@ -245,9 +245,9 @@ of what was not yet committed.
   are excluded from the skip set → regenerated.
 - **Output always in the sigma repo**: `<sigma_repo_path>/regression_data/<rule_rel_path>/`
   (`info.yml` + data file `.evtx`/`.log`, optional `.json`), committed to the fork if
-  `contrib` (local commits otherwise). Caution: the generation path is hardwired to the
-  local `./sigma` checkout — keep `git.sigma_repo_path: "sigma"`; any other value breaks
-  the path mirroring and partial-artifact cleanup.
+  `contrib` (local commits otherwise). The rule's repo path is mirrored relative to the
+  configured `sigma_repo_path` (absolute or relative) — the per-rule commit also carries the
+  rule yaml updated with `regression_tests_path: regression_data/<rule_rel_path>/info.yml`.
 - **Collector observability**: the collector excludes non-existent channels once on
   `ERROR_EVT_CHANNEL_NOT_FOUND` (single `error!`); each live channel logs "initial query OK"
   then a "still alive" heartbeat (60s); `warn!` when events are fetched but dropped at
