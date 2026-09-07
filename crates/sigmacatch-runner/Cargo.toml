@@ -33,7 +33,7 @@ windows = { version = "0.62", features = [
     "Win32_Security",
 ] }
 
-# Quality contract (quality.md Q2.1): inherit workspace lint tiers.
+# Quality contract: inherit workspace lint tiers ([workspace.lints] in root Cargo.toml).
 [lints]
 workspace = true
 

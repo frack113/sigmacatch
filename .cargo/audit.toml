@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[advisories]
+# RUSTSEC-2023-0071 (rsa Marvin Attack): rsa is a dormant optional dependency
+# of ssh-key 0.6.7 held in Cargo.lock for feature resolution. No sigmacatch
+# crate enables ssh-key's `crypto`/`rsa` feature (only `alloc`, `ed25519`),
+# so the crate is never compiled or linked. No patched version exists.
+ignore = ["RUSTSEC-2023-0071"]

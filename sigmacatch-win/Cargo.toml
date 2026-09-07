@@ -11,7 +11,9 @@ license.workspace = true
 [features]
 default = ["winevt"]
 winevt = ["dep:async-trait", "dep:windows"]
-evtx = ["dep:sigmacatch-logger"]  # cross-platform EVTX file processor (no Windows deps)
+evtx = [
+  "dep:sigmacatch-logger",
+] # cross-platform EVTX file processor (no Windows deps)
 
 [[bin]]
 name = "sigmacatch-channel"
@@ -39,7 +41,14 @@ walkdir = "2"
 ctrlc = "3"
 clap = { version = "4", features = ["derive"] }
 
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "signal"] }
+tokio = { version = "1", features = [
+  "rt",
+  "rt-multi-thread",
+  "macros",
+  "sync",
+  "time",
+  "signal",
+] }
 tracing = "0.1"
 anyhow = "1.0"
 serde_json = "1.0"
@@ -50,14 +59,14 @@ serde = { version = "1", features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", optional = true, features = [
-    "Win32_Foundation",
-    "Win32_System_Com",
-    "Win32_System_EventLog",
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_System_EventLog",
 ] }
 
 [dev-dependencies]
 tempfile = "3"
 
-# Quality contract (quality.md Q2.1): inherit workspace lint tiers.
+# Quality contract: inherit workspace lint tiers ([workspace.lints] in root Cargo.toml).
 [lints]
 workspace = true

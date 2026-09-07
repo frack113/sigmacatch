@@ -19,7 +19,7 @@ evtx = "0.12"
 input-windows-evtx = { path = "../input-windows-evtx" }
 tempfile = "3.27"
 
-# Quality contract (quality.md Q2.1): inherit workspace lint tiers.
+# Quality contract: inherit workspace lint tiers ([workspace.lints] in root Cargo.toml).
 [lints]
 workspace = true
 
