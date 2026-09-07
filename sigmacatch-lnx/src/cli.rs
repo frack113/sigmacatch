@@ -129,11 +129,11 @@ fn count_ground_truth(
     (gt_loaded, gt_product, gt_status, gt_level, gt_author)
 }
 
-fn run_filter_tests(tests: &[FilterTest], json_output: bool) -> bool {
-    let all_rules = match SigmahqRules::new() {
+fn run_filter_tests(tests: &[FilterTest], json_output: bool, sigma_path: &Path) -> bool {
+    let all_rules = match SigmahqRules::new_from_path(sigma_path) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Failed to load rules from ./sigma: {e}");
+            eprintln!("Failed to load rules from {}: {e}", sigma_path.display());
             return false;
         }
     };
@@ -314,11 +314,24 @@ fn cmd_check_filter(args: &[String]) -> i32 {
         }
     }
 
+    let config = match Config::load(&PathBuf::from("config.yaml")) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Failed to load config.yaml: {e}");
+            return 1;
+        }
+    };
+    let sigma_path = Path::new(&config.git.sigma_repo_path);
+
     if !json_output {
-        match SigmahqRules::new() {
-            Ok(r) => println!("Loaded {} total rules from ./sigma", r.len()),
+        match SigmahqRules::new_from_path(sigma_path) {
+            Ok(r) => println!(
+                "Loaded {} total rules from {}",
+                r.len(),
+                sigma_path.display()
+            ),
             Err(e) => {
-                eprintln!("Failed to load rules: {e}");
+                eprintln!("Failed to load rules from {}: {e}", sigma_path.display());
                 return 1;
             }
         }
@@ -417,7 +430,7 @@ fn cmd_check_filter(args: &[String]) -> i32 {
         },
     ];
 
-    let ok = run_filter_tests(&tests, json_output);
+    let ok = run_filter_tests(&tests, json_output, sigma_path);
     if !ok { 1 } else { 0 }
 }
 
@@ -470,10 +483,13 @@ fn cmd_list_rules(args: &[String]) -> i32 {
         }
     };
 
-    let rules = match SigmahqRules::new() {
+    let rules = match SigmahqRules::new_from_path(Path::new(&config.git.sigma_repo_path)) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Failed to load rules from ./sigma: {e}");
+            eprintln!(
+                "Failed to load rules from {}: {e}",
+                config.git.sigma_repo_path
+            );
             return 1;
         }
     };

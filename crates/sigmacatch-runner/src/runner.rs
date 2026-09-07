@@ -120,7 +120,9 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
 
     config.ensure_dirs()?;
     let fork_url = format!("https://github.com/{}/sigma", config.git.author);
+    let sigma_repo_path = Path::new(&config.git.sigma_repo_path).to_path_buf();
     let mut sigma_repo = SigmaRepo::new();
+    sigma_repo.set_repo_path(sigma_repo_path.clone());
     sigma_repo.set_info_user(&config.git.author, &config.git.email);
 
     match config.git.transport {
@@ -158,10 +160,11 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     sigma_repo.set_working_branch(branch_name.clone())?;
     sigma_repo.check_remote_working_branch()?;
 
-    let mut regression = match SigmahqRegression::new() {
-        Ok(r) => r,
-        Err(e) => anyhow::bail!("Failed to load regression data: {e}"),
-    };
+    let mut regression =
+        match SigmahqRegression::new_from_path(&sigma_repo_path.join("regression_data")) {
+            Ok(r) => r,
+            Err(e) => anyhow::bail!("Failed to load regression data: {e}"),
+        };
     regression.set_author(config.git.author.clone());
     regression.set_max_failed_cycles(config.regression.max_failed_cycles);
     regression.set_format(kind.regression_format());
@@ -200,7 +203,7 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
         existing
     };
 
-    let mut rules = SigmahqRules::new()?;
+    let mut rules = SigmahqRules::new_from_path(&sigma_repo_path)?;
 
     for id in &existing_rules {
         rules.remove_id(id);
@@ -282,7 +285,6 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
         });
     }
 
-    let sigma_repo_path = Path::new(&config.git.sigma_repo_path);
     let output_base = sigma_repo_path.join("regression_data");
 
     sigmacatch_regression::clean_partial_artifacts(&output_base);
@@ -441,15 +443,18 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     Ok(())
 }
 
-/// -n/--dry-run: validate that the rules under `./sigma` load and that the
-/// detection engine builds, without writing any regression data or performing
-/// any git/network operation. Intended for Sigma workflows that only need a
-/// read-only sanity check of the on-disk rule set. Runs before the file logger
-/// is initialised, so it uses stderr and creates no `logs/` directory.
+/// -n/--dry-run: validate that the rules under the configured
+/// `sigma_repo_path` (see config validation) load and that the detection
+/// engine builds, without writing any regression data or performing any
+/// git/network operation. Runs before the file logger is initialised, so it
+/// uses stderr and creates no `logs/` directory.
 fn run_dry(config: &Config) -> Result<()> {
-    eprintln!("Dry-run mode enabled — validating rules from ./sigma without writing data");
+    eprintln!(
+        "Dry-run mode enabled — validating rules from {}",
+        config.git.sigma_repo_path
+    );
 
-    let rules = SigmahqRules::new()?;
+    let rules = SigmahqRules::new_from_path(Path::new(&config.git.sigma_repo_path))?;
     let rules = rules.filter(config.filter.clone());
     let stats = rules.stats();
 

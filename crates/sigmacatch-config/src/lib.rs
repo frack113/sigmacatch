@@ -474,7 +474,9 @@ impl Config {
             )));
         }
 
-        // Validate sigma_repo_path — reject empty, path traversal, and absolute paths
+        // Validate sigma_repo_path — reject empty and path traversal. Absolute
+        // (full) paths are allowed; consumers resolve relative paths against
+        // the config file's directory.
         if self.git.sigma_repo_path.trim().is_empty() {
             return Err(ConfigError::Invalid(format!(
                 "config: 'git.sigma_repo_path' must not be empty, got {:?}",
@@ -487,12 +489,6 @@ impl Config {
         {
             return Err(ConfigError::Invalid(format!(
                 "config: 'git.sigma_repo_path' contains '..' path traversal, got {:?}",
-                self.git.sigma_repo_path
-            )));
-        }
-        if std::path::Path::new(&self.git.sigma_repo_path).is_absolute() {
-            return Err(ConfigError::Invalid(format!(
-                "config: 'git.sigma_repo_path' must be a relative path, got {:?}",
                 self.git.sigma_repo_path
             )));
         }
@@ -976,6 +972,49 @@ mod tests {
         assert!(
             !config.git.is_contrib(),
             "offline must normalize contrib to false"
+        );
+    }
+
+    /// `git.sigma_repo_path` may be an absolute (full) path — the validator
+    /// must accept it so Windows deployments can point straight at the repo.
+    #[test]
+    fn test_validate_accepts_absolute_sigma_repo_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let absolute = dir.path().join("sigma");
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "git:").unwrap();
+            writeln!(file, "  author: someuser").unwrap();
+            writeln!(file, "  email: someuser@example.com").unwrap();
+            writeln!(file, "  offline: true").unwrap();
+            writeln!(file, "  sigma_repo_path: {}", absolute.display()).unwrap();
+        }
+        let config = Config::load(&path).unwrap();
+        assert_eq!(
+            PathBuf::from(&config.git.sigma_repo_path),
+            absolute,
+            "absolute sigma_repo_path must be kept as-is"
+        );
+    }
+
+    /// `git.sigma_repo_path` must still reject `..` path traversal.
+    #[test]
+    fn test_validate_rejects_traversal_sigma_repo_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "git:").unwrap();
+            writeln!(file, "  author: someuser").unwrap();
+            writeln!(file, "  email: someuser@example.com").unwrap();
+            writeln!(file, "  offline: true").unwrap();
+            writeln!(file, "  sigma_repo_path: ../escape").unwrap();
+        }
+        let err = Config::load(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("path traversal"),
+            "unexpected error: {err}"
         );
     }
 }
