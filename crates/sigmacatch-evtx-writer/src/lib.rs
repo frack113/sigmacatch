@@ -5,8 +5,13 @@
 //!
 //! `EvtExportLog` re-exports a live-log event by record id + channel. Events
 //! without a record id have neither, so this crate synthesizes a valid
-//! single-record EVTX directly from the Winevt XML (direct BinXML stream, no
-//! templates). Round-trip testable on any platform via the `evtx` crate.
+//! single-record EVTX directly from the Winevt XML. The record is emitted as a
+//! template instance (like real `EvtExportLog` files): a `0x0c` instance token
+//! followed by an inline template definition holding the whole event as literal
+//! BinXML (zero substitutions). This shape is what both the Rust `evtx` crate
+//! and the Go parser embedded in Nextron's `evtx-sigma-checker` (Velocidex
+//! `evtx` v0.2.0) accept. Round-trip testable on any platform via the `evtx`
+//! crate.
 //!
 //! # Example
 //!
@@ -35,6 +40,24 @@ const RECORD_START: usize = CHUNK_HEADER_SIZE;
 /// `HeaderSize` field value used by Windows-produced files (evtx 0.12.2
 /// fixture `security.evtx` reads 128).
 const CHUNK_HEADER_FIELD_SIZE: u32 = 128;
+
+/// Arbitrary template id stored in the template instance. Must be non-zero
+/// (the Velocidex parser rejects `short_id == 0`).
+const TEMPLATE_ID: u32 = 0x51C0;
+
+/// Fixed template GUID (16 bytes). Unused by either parser; the Rust crate
+/// only reads it to key an offline WEVT cache fallback on parse failure.
+const TEMPLATE_GUID: [u8; 16] = [
+    0xb5, 0x72, 0xce, 0x5e, 0x62, 0x72, 0xbb, 0x5b, 0x08, 0x0f, 0x68, 0x8d, 0xd3, 0xd2, 0xc4, 0x6f,
+];
+
+/// Distance from the record's BinXML start (the fragment header) to the
+/// inline template definition. A single-instance stream is `0f 01 01 00` +
+/// `0c 01` + `template_id`(4) + `template_definition_data_offset`(4), so the
+/// definition starts 14 bytes in. The stored value equals the position the
+/// parser reaches right after reading those fields; when both match, the Rust
+/// `evtx` crate and Velocidex parser take their "inline definition" path.
+const TEMPLATE_DEF_DELTA: u32 = 14;
 
 /// Write a single-record EVTX file containing the given Winevt XML.
 ///
@@ -255,10 +278,30 @@ fn build_chunk(record_id: u64, filetime: u64, xml: &str) -> Result<[u8; CHUNK_SI
     }
 
     let mut encoder = Encoder::default();
-    encoder.out.extend_from_slice(&[0x0f, 0x01, 0x01, 0x00]);
     encoder.encode_element(root)?;
 
-    let binxml = &encoder.out;
+    // Template-instance record (mirrors what `EvtExportLog` writes for a
+    // single-event export): fragment, instance token, then an inline template
+    // definition whose body is the whole event as literal BinXML (the string
+    // table name references are patched below).
+    let binxml_offset = RECORD_START + RECORD_HEADER_SIZE;
+    let template_def_offset = binxml_offset as u32 + TEMPLATE_DEF_DELTA;
+
+    let def_body_len = 4 + encoder.out.len() + 1; // fragment + tree + EOF token
+    let mut out = Vec::with_capacity(14 + 4 + 16 + 4 + def_body_len + 4 + 1);
+    out.extend_from_slice(&[0x0f, 0x01, 0x01, 0x00]);
+    out.extend_from_slice(&[0x0c, 0x01]);
+    out.extend_from_slice(&TEMPLATE_ID.to_le_bytes());
+    out.extend_from_slice(&template_def_offset.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes()); // next template offset
+    out.extend_from_slice(&TEMPLATE_GUID);
+    out.extend_from_slice(&(def_body_len as u32).to_le_bytes());
+    out.extend_from_slice(&[0x0f, 0x01, 0x01, 0x00]);
+    out.extend_from_slice(&encoder.out);
+    out.push(0x00); // EOF token, included in the template body
+    out.extend_from_slice(&0u32.to_le_bytes()); // number of substitutions
+
+    let binxml = &out;
     let record_size = align8(RECORD_HEADER_SIZE + 4 + binxml.len());
     let free_space_offset = RECORD_START + record_size;
     if free_space_offset > CHUNK_SIZE {
@@ -292,7 +335,7 @@ fn build_chunk(record_id: u64, filetime: u64, xml: &str) -> Result<[u8; CHUNK_SI
         let offset = names
             .get(name)
             .ok_or_else(|| WriterError::Invalid(format!("missing string table entry {name}")))?;
-        let abs = RECORD_START + RECORD_HEADER_SIZE + pos;
+        let abs = binxml_offset + TEMPLATE_INSTANCE_PREFIX + pos;
         put_u32(&mut chunk[..], abs, (string_table_offset + *offset) as u32);
     }
 
@@ -369,12 +412,19 @@ fn hash16(utf16: &[u16]) -> u16 {
     (hash & 0xFFFF) as u16
 }
 
-/// BinXML encoder for direct (non-template) record streams.
+/// Distance from the record's BinXML start to the template definition body
+/// (fragment + element tree), i.e. the bytes before the tree inside the
+/// container built in [`build_chunk`].
+const TEMPLATE_INSTANCE_PREFIX: usize = 42;
+
+/// BinXML encoder for template-instance record streams.
 ///
-/// Token layout (MS-EVEN6 §2.2.3.1): fragment header `0f 01 01 00`, then for
-/// each element `0x01`/`0x41` (open start, sizes ignored by the parser), the
-/// name ref, `0x06`+value per attribute, `0x02` (close start) / `0x03`
-/// (close empty), children, `0x04` (close element), and a final `0x00` EOF.
+/// Token layout (MS-EVEN6 §2.2.3.1): the record is a `0x0c` template instance
+/// whose inline definition is a fragment header `0f 01 01 00`, then for each
+/// element `0x01`/`0x41` (open start; dependency id + data size, the latter
+/// ignored by both parsers), the name ref, `0x06`+value per attribute, `0x02`
+/// (close start) / `0x03` (close empty), children, `0x04` (close element), and
+/// a final `0x00` EOF.
 #[derive(Default)]
 struct Encoder {
     out: Vec<u8>,
@@ -393,11 +443,13 @@ impl Encoder {
 
         if attrs.is_empty() {
             self.out.push(0x01);
-            self.out.extend_from_slice(&0u32.to_le_bytes());
         } else {
             self.out.push(0x41);
-            self.out.extend_from_slice(&0u32.to_le_bytes());
         }
+        // Dependency identifier (template definitions carry it; ignored by
+        // both parsers). Data size is also ignored, keep it zero.
+        self.out.extend_from_slice(&0u16.to_le_bytes());
+        self.out.extend_from_slice(&0u32.to_le_bytes());
         self.emit_name(node.tag_name().name());
         if !attrs.is_empty() {
             self.out.extend_from_slice(&0u32.to_le_bytes());

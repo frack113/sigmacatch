@@ -15,7 +15,7 @@ use clap::Parser;
 use sigmacatch_config::Config;
 use sigmacatch_detection::DetectionEngine;
 use sigmacatch_logger::init as init_logger;
-use sigmacatch_regression::{clean_partial_artifacts, DataFormat, SigmahqRegression};
+use sigmacatch_regression::{DataFormat, SigmahqRegression, clean_partial_artifacts};
 use sigmacatch_repo::SigmaRepo;
 use sigmacatch_rule::SigmahqRules;
 use sigmacatch_types::{Alert, Event};
@@ -68,7 +68,11 @@ async fn main() -> Result<()> {
 
 async fn run(args: Args, config: Config) -> Result<()> {
     // Resolve relative paths to absolute based on config file's directory
-    let config_dir = args.config.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
+    let config_dir = args
+        .config
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
     let sigma_repo_path = if Path::new(&config.git.sigma_repo_path).is_relative() {
         config_dir.join(&config.git.sigma_repo_path)
     } else {
@@ -278,7 +282,9 @@ async fn run(args: Args, config: Config) -> Result<()> {
     // Commit and push regression data if not offline
     if !config.git.is_offline() && !batches.is_empty() {
         info!("Committing and pushing regression data...");
-        repo.upload_rule_batches(batches, &|| shutdown.load(std::sync::atomic::Ordering::Relaxed))?;
+        repo.upload_rule_batches(batches, &|| {
+            shutdown.load(std::sync::atomic::Ordering::Relaxed)
+        })?;
         info!("Regression data committed and pushed");
     } else if config.git.is_offline() && !batches.is_empty() {
         info!("Offline mode — regression data written to disk only (no commit/push)");

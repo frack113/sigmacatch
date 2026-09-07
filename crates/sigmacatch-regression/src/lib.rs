@@ -329,9 +329,7 @@ impl SigmahqRegression {
             return None;
         }
 
-        let sigma_repo_path = output_path
-            .parent()
-            .unwrap_or_else(|| Path::new("sigma"));
+        let sigma_repo_path = output_path.parent().unwrap_or_else(|| Path::new("sigma"));
         let rule_rel_path = alert.rule_path.as_ref().and_then(|p| {
             clean_path(p)
                 .strip_prefix(clean_path(sigma_repo_path))
@@ -1108,7 +1106,8 @@ mod tests {
         let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
 
         let rule_id = Uuid::new_v4();
-        let rel = Path::new("rules/windows/process_creation/proc_creation_win_token_obfuscation.yml");
+        let rel =
+            Path::new("rules/windows/process_creation/proc_creation_win_token_obfuscation.yml");
         let rule_abs = repo.join(rel);
         std::fs::create_dir_all(rule_abs.parent().unwrap()).unwrap();
         let stale = "regression_tests_path: regression_data/rules/windows/process_creation/token_obfuscation/info.yml";
@@ -1123,7 +1122,8 @@ mod tests {
 
         let files = reg.add(&alert).expect("data generated");
 
-        let mirror_rel = "regression_data/rules/windows/process_creation/proc_creation_win_token_obfuscation";
+        let mirror_rel =
+            "regression_data/rules/windows/process_creation/proc_creation_win_token_obfuscation";
         assert!(
             files.contains(&format!("{mirror_rel}/{rule_id}.evtx")),
             "data file at mirrored rule path: {files:?}"
