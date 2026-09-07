@@ -160,26 +160,53 @@ impl EventCollector {
         let mut last_idle_log = std::time::Instant::now();
 
         let channel_wide = str_to_wide(channel);
+
+        // The query handle is kept open across idle cycles and only recreated
+        // when the underlying XPath changes (record-id cursor moves or rolls
+        // over). This avoids an EvtQuery/EvtClose pair per poll cycle when the
+        // channel has no new events, cutting WinEvt handle churn.
+        let mut query_handle: Option<windows::Win32::System::EventLog::EVT_HANDLE> = None;
+        let mut query_wide: Vec<u16> = Vec::new();
+
         while !*stop.borrow() {
-            let query_wide = if last_record_id == 0 {
+            // Recreate the query only when the XPath actually differs from the
+            // one currently bound to `query_handle`.
+            let new_query = if last_record_id == 0 {
                 str_to_wide("*")
             } else {
                 str_to_wide(&format!("*[System[EventRecordID > {}]]", last_record_id))
             };
-
-            let query_handle = match Self::evt_query(&channel_wide, &query_wide) {
-                Ok(h) => h,
-                Err(e) => {
-                    if Self::is_channel_not_found(&e) {
-                        tracing::error!(
-                            "Channel '{channel}' not found — excluding permanently (role/service not installed)"
-                        );
-                        return;
+            if new_query != query_wide {
+                if let Some(h) = query_handle.take() {
+                    // SAFETY: sole owner of the query handle on this path;
+                    // dropped before rebinding below.
+                    unsafe {
+                        let _ = EvtClose(h);
                     }
-                    tracing::warn!("EvtQuery failed for channel '{channel}': {e}");
-                    std::thread::sleep(std::time::Duration::from_millis(ERROR_BACKOFF_MS));
-                    continue;
                 }
+                query_wide = new_query;
+                match Self::evt_query(&channel_wide, &query_wide) {
+                    Ok(h) => {
+                        query_handle = Some(h);
+                    }
+                    Err(e) => {
+                        if Self::is_channel_not_found(&e) {
+                            tracing::error!(
+                                "Channel '{channel}' not found — excluding permanently (role/service not installed)"
+                            );
+                            return;
+                        }
+                        tracing::warn!("EvtQuery failed for channel '{channel}': {e}");
+                        std::thread::sleep(std::time::Duration::from_millis(ERROR_BACKOFF_MS));
+                        continue;
+                    }
+                }
+            }
+
+            let Some(query_handle_value) = query_handle else {
+                // Query failed above and was not rebound.
+                std::thread::sleep(std::time::Duration::from_millis(ERROR_BACKOFF_MS));
+                continue;
             };
 
             let mut event_handles: [isize; 32] = [0; 32];
@@ -190,7 +217,7 @@ impl EventCollector {
                     break;
                 }
 
-                let events_fetched = match Self::evt_next(query_handle, &mut event_handles) {
+                let events_fetched = match Self::evt_next(query_handle_value, &mut event_handles) {
                     Ok(n) => n,
                     Err(e) => {
                         if Self::is_idle_error(&e) {
@@ -234,15 +261,19 @@ impl EventCollector {
                         match tx.try_send(event) {
                             Ok(()) => {}
                             Err(tokio::sync::mpsc::error::TrySendError::Full(e)) => {
-                                if tx.blocking_send(e).is_err() {
-                                    Self::close_remaining_handles(
-                                        &mut event_handles,
-                                        events_fetched,
-                                        i + 1,
-                                    );
+                                Self::close_remaining_handles(
+                                    &mut event_handles,
+                                    events_fetched,
+                                    i + 1,
+                                );
+                                if let Some(h) = query_handle.take() {
+                                    // SAFETY: sole owner of the query handle on
+                                    // this error path.
                                     unsafe {
-                                        let _ = EvtClose(query_handle);
+                                        let _ = EvtClose(h);
                                     }
+                                }
+                                if tx.blocking_send(e).is_err() {
                                     return;
                                 }
                             }
@@ -252,8 +283,12 @@ impl EventCollector {
                                     events_fetched,
                                     i + 1,
                                 );
-                                unsafe {
-                                    let _ = EvtClose(query_handle);
+                                if let Some(h) = query_handle.take() {
+                                    // SAFETY: sole owner of the query handle on
+                                    // this error path.
+                                    unsafe {
+                                        let _ = EvtClose(h);
+                                    }
                                 }
                                 return;
                             }
@@ -274,12 +309,6 @@ impl EventCollector {
                         }
                     }
                 }
-            }
-
-            // SAFETY: single owner — query_handle was obtained from EvtQuery,
-            // every event handle it yielded was already closed above.
-            unsafe {
-                let _ = EvtClose(query_handle);
             }
 
             if total_sent == 0 {
@@ -336,6 +365,14 @@ impl EventCollector {
 
             if *stop.borrow() {
                 break;
+            }
+        }
+
+        // Close the persistent query handle on exit (if still open).
+        if let Some(h) = query_handle.take() {
+            // SAFETY: sole owner of the persistent query handle at shutdown.
+            unsafe {
+                let _ = EvtClose(h);
             }
         }
 
@@ -510,50 +547,66 @@ impl EventCollector {
         Ok(events_fetched)
     }
 
+    /// Initial buffer size for `EvtRender` — covers 99 % of Windows event
+    /// XML without a size-probe syscall. When the XML is larger, the
+    /// `ERROR_INSUFFICIENT_BUFFER` fallback reallocates to the exact size
+    /// reported by the API.
+    #[cfg(windows)]
+    const INITIAL_RENDER_BUF: u32 = 32 * 1024;
+
     /// Render event handle to XML and parse into an Event.
+    ///
+    /// Attempts a single-pass render with a pre-allocated buffer. Falls back
+    /// to the two-pass size-probe only when the XML exceeds
+    /// `INITIAL_RENDER_BUF`.
     #[cfg(windows)]
     fn render_event(event_handle: windows::Win32::System::EventLog::EVT_HANDLE) -> Option<Event> {
         use windows::Win32::Foundation::ERROR_INSUFFICIENT_BUFFER;
         use windows::Win32::System::EventLog::{EvtRender, EvtRenderEventXml};
 
-        // Size-probe: EvtRender fails with ERROR_INSUFFICIENT_BUFFER and
-        // reports the required size through `buffer_size` — normal, not a failure.
-        let mut buffer_size: u32 = 0;
-        // SAFETY: documented two-call size probe — null buffer with size 0;
-        // the API writes nothing and reports the required size via
-        // `buffer_size` (ERROR_INSUFFICIENT_BUFFER expected).
+        let mut buffer: Vec<u8> = vec![0u8; Self::INITIAL_RENDER_BUF as usize];
+        let mut bytes_used: u32 = 0;
+        // SAFETY: `buffer` is caller-allocated with `INITIAL_RENDER_BUF` bytes;
+        // `bytes_used` receives the written length. When the XML fits, this is
+        // a single syscall instead of the classic two-pass size-probe.
         let result = unsafe {
             EvtRender(
                 None,
                 event_handle,
                 EvtRenderEventXml.0,
-                0,
-                Some(std::ptr::null_mut()),
-                &mut buffer_size,
+                Self::INITIAL_RENDER_BUF,
+                Some(buffer.as_mut_ptr().cast()),
+                &mut bytes_used,
                 std::ptr::null_mut(),
             )
         };
 
+        // Fast path: render succeeded in one pass.
+        if result.is_ok() && bytes_used > 0 {
+            return Self::parse_rendered_xml(&buffer, bytes_used);
+        }
+
+        // Slow path: buffer too small — reallocate to the exact size the API
+        // reported, then render again.
         let insufficient_buffer = matches!(
             result.as_ref().err(),
             Some(e) if e.code() == windows::core::HRESULT::from_win32(ERROR_INSUFFICIENT_BUFFER.0)
         );
 
-        if (result.is_err() && !insufficient_buffer) || buffer_size == 0 {
+        if !insufficient_buffer || bytes_used == 0 {
             return None;
         }
 
-        let mut buffer: Vec<u8> = vec![0u8; buffer_size as usize];
+        buffer.resize(bytes_used as usize, 0);
         let mut bytes_used: u32 = 0;
-        // SAFETY: `buffer` is allocated with exactly the `buffer_size` bytes
-        // reported by the size probe above; `bytes_used` receives the written
-        // length and stays within the allocation.
+        // SAFETY: `buffer` is now exactly the size reported by the first
+        // `EvtRender` call; `bytes_used` receives the written length.
         let result = unsafe {
             EvtRender(
                 None,
                 event_handle,
                 EvtRenderEventXml.0,
-                buffer_size,
+                buffer.len() as u32,
                 Some(buffer.as_mut_ptr().cast()),
                 &mut bytes_used,
                 std::ptr::null_mut(),
@@ -564,7 +617,12 @@ impl EventCollector {
             return None;
         }
 
-        // EvtRender writes a null-terminated UTF-16LE string (not UTF-8).
+        Self::parse_rendered_xml(&buffer, bytes_used)
+    }
+
+    /// Parse the UTF-16LE buffer produced by `EvtRender` into an `Event`.
+    #[cfg(windows)]
+    fn parse_rendered_xml(buffer: &[u8], bytes_used: u32) -> Option<Event> {
         let mut units: Vec<u16> = buffer[..bytes_used as usize]
             .as_chunks::<2>()
             .0

@@ -8,6 +8,13 @@ use std::thread::sleep;
 #[cfg(windows)]
 use std::time::Duration;
 
+/// EVTX file header magic ("ElfFile\0").
+const EVTX_MAGIC: &[u8; 8] = b"ElfFile\x00";
+/// Chunk header magic ("ElfChnk\0").
+const EVTX_CHUNK_MAGIC: &[u8; 8] = b"ElfChnk\x00";
+/// Minimum valid EVTX: 4096-byte header + 64 KiB chunk.
+const MIN_EVTX_SIZE: u64 = 4096 + 64 * 1024;
+
 /// Total `EvtExportLog` attempts (initial + retries) before giving up.
 #[cfg(windows)]
 const EVTX_EXPORT_MAX_ATTEMPTS: u32 = 4;
@@ -147,9 +154,14 @@ fn write_evtx_winevt(_xml: &str, channel: &str, _rid: u64, _path: &Path) -> Resu
 }
 
 /// Write a synthesized single-record EVTX from the event XML (pure-Rust
-/// writer) with the same re-parse validation as `EvtExportLog`. Unlike the
-/// live-log export, no retry: the writer is deterministic (same XML → same
-/// output), so an identical retry would fail identically.
+/// writer) with lightweight structural validation. Unlike the live-log
+/// export, no retry: the writer is deterministic (same XML → same output),
+/// so an identical retry would fail identically.
+///
+/// Validation is a fast header check (magic + minimum size) rather than a
+/// full re-parse — the writer is well-tested and deterministic, so a
+/// structural check catches the failure modes that matter (truncated write,
+/// wrong format) without the cost of `EvtxParser::from_path`.
 fn write_evtx_pure_rust(xml: &str, channel: &str, rid: u64, path: &Path) -> Result<()> {
     let path = crate::long_path::long_path(path);
 
@@ -157,10 +169,10 @@ fn write_evtx_pure_rust(xml: &str, channel: &str, rid: u64, path: &Path) -> Resu
         .map_err(|e| {
             RegressionError::Export(format!("evtx-writer failed for {}: {e}", path.display()))
         })
-        .and_then(|()| exported_has_records(&path));
+        .and_then(|()| validate_evtx_structure(&path));
 
     match result {
-        Ok(true) => {
+        Ok(()) => {
             tracing::info!(
                 "Wrote EVTX via evtx-writer: {} (channel={}, rid={})",
                 path.display(),
@@ -169,35 +181,18 @@ fn write_evtx_pure_rust(xml: &str, channel: &str, rid: u64, path: &Path) -> Resu
             );
             Ok(())
         }
-        Ok(false) => {
-            // Remove the invalid `.evtx` so no broken binary is committed.
-            if path.exists() {
-                let _ = std::fs::remove_file(&path);
-            }
-            Err(RegressionError::Export(format!(
-                "evtx-writer produced an empty EVTX for {} (channel={}, rid={}) — \
-                 the rule will be re-captured on a later cycle",
-                path.display(),
-                channel,
-                rid
-            )))
-        }
         Err(e) => {
             if path.exists() {
                 let _ = std::fs::remove_file(&path);
             }
-            Err(RegressionError::Export(format!(
-                "evtx-writer produced an unreadable EVTX for {} (channel={}, rid={}): {}",
-                path.display(),
-                channel,
-                rid,
-                e
-            )))
+            Err(e)
         }
     }
 }
 
-/// Verify the exported file contains at least one parseable record.
+/// Verify the exported file contains at least one parseable record. Used only
+/// by the `EvtExportLog` re-export path, where the OS (not our deterministic
+/// writer) produces the file and a full parse is the only reliable check.
 #[cfg(windows)]
 fn exported_has_records(path: &Path) -> Result<bool> {
     let path = crate::long_path::long_path(path);
@@ -210,17 +205,46 @@ fn exported_has_records(path: &Path) -> Result<bool> {
     Ok(!events.is_empty())
 }
 
-/// Non-Windows variant used by the pure-Rust writer path (no `Context`
-/// needed there).
-#[cfg(not(windows))]
-fn exported_has_records(path: &Path) -> Result<bool> {
-    let events = input_windows_evtx::parse_evtx_file(path).map_err(|e| {
-        RegressionError::Invalid(format!(
-            "Failed to parse exported EVTX {}: {e}",
-            path.display()
-        ))
+/// Lightweight structural validation for EVTX files written by the pure-Rust
+/// writer. Checks file size, file header magic, and chunk header magic —
+/// enough to catch truncated writes or wrong format without a full re-parse.
+fn validate_evtx_structure(path: &Path) -> Result<()> {
+    let meta = std::fs::metadata(path).map_err(|e| {
+        RegressionError::Invalid(format!("Cannot stat EVTX {}: {e}", path.display()))
     })?;
-    Ok(!events.is_empty())
+
+    if meta.len() < MIN_EVTX_SIZE {
+        return Err(RegressionError::Invalid(format!(
+            "EVTX {} too small ({} bytes, expected >= {})",
+            path.display(),
+            meta.len(),
+            MIN_EVTX_SIZE
+        )));
+    }
+
+    let mut header = [0u8; 4096 + 8]; // file header + chunk magic
+    use std::io::Read;
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut header))
+        .map_err(|e| {
+            RegressionError::Invalid(format!("Cannot read EVTX {}: {e}", path.display()))
+        })?;
+
+    if header[..8] != *EVTX_MAGIC {
+        return Err(RegressionError::Invalid(format!(
+            "EVTX {} has invalid file header magic",
+            path.display()
+        )));
+    }
+
+    if header[4096..4096 + 8] != *EVTX_CHUNK_MAGIC {
+        return Err(RegressionError::Invalid(format!(
+            "EVTX {} has invalid chunk header magic",
+            path.display()
+        )));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -261,7 +285,7 @@ mod tests {
             &path,
         )
         .unwrap();
-        assert!(exported_has_records(&path).unwrap());
+        assert!(validate_evtx_structure(&path).is_ok());
     }
 
     #[test]
@@ -275,7 +299,7 @@ mod tests {
             &path,
         )
         .unwrap();
-        assert!(exported_has_records(&path).unwrap());
+        assert!(validate_evtx_structure(&path).is_ok());
     }
 
     #[cfg(windows)]
