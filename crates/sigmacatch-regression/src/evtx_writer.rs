@@ -671,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn unparseable_xml_fails_at_entry() {
+    fn unparsable_xml_fails_at_entry() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("event.evtx");
         let err = write_evtx_from_xml("not xml at all", 1, &path).unwrap_err();
