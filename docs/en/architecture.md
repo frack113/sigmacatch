@@ -34,10 +34,10 @@ sigmacatch/
     │   └── src/main.rs           # 6 tracepoints: execve/exec/exit/connect/openat+exit/sendto+sendmsg
     ├── sigmacatch-ebpf-common/   # Shared no_std types for eBPF ring buffer (ExecEvent, NetEvent, ...)
     ├── sigmacatch-runner/        # Pipeline shared by both binary crates:
-    │   └── src/runner.rs         #   run<C: CollectorKind> + CollectorKind trait (config + repo init +
-    │                             #   event loop + process_and_generate + commit/push)
+    │   ├── src/runner.rs         #   run<C: CollectorKind> + CollectorKind trait (config + repo init +
+    │   │                         #   event loop + process_and_generate + commit/push)
+    │   └── src/logging.rs        #   two-layer tracing init (stderr `error`/`info`, daily rolling file)
     ├── sigmacatch-config/        # Config YAML + CLI parsing + custom_channels.yaml
-    ├── sigmacatch-logger/        # Two-layer tracing subscriber (stderr `error` by default / `info` with `-v`, daily rolling file debug)
     ├── sigmacatch-rule/          # SigmahqRules: rule loading (parse_sigma_yaml), filter, dedupe, remove_id
     │                             #   + attack.rs (SigmaRuleExt ATT&CK) + discover.rs + thresholds.rs (LoadStats)
     ├── sigmacatch-detection/     # DetectionEngine wrapper + embedded per-platform pipelines
@@ -127,9 +127,8 @@ Because it is pure Rust it also builds and runs on Linux.
 ## Crate dependency graph
 
 ```text
-sigmacatch-win ──┬── sigmacatch-runner      (run<C: CollectorKind>, shared pipeline)
+sigmacatch-win ──┬── sigmacatch-runner      (run<C: CollectorKind>, shared pipeline + tracing init)
 sigmacatch-lnx ──┤   ├── sigmacatch-config      (Config, CliArgs)
-                 │   ├── sigmacatch-logger      (tracing init)
                  │   ├── sigmacatch-rule        (SigmahqRules: load/filter/remove_id)
                  │   ├── sigmacatch-detection   (DetectionEngine: pipelines + bloom + LogSourceExtractor + resolve_channels)
                  │   ├── sigmacatch-regression  (SigmahqRegression: skip set + data generation)
@@ -150,7 +149,6 @@ sigmacatch-evtx (feature `evtx`) ─┬── input-windows-evtx   (parse EVTX �
                                   ├── sigmacatch-regression (SigmahqRegression: pure-Rust EVTX writer + info.yml)
                                   ├── sigmacatch-repo      (SigmaRepo: fork clone, commit/push)
                                   ├── sigmacatch-config    (Config)
-                                  ├── sigmacatch-logger    (tracing init)
                                   └── sigmacatch-types     (Event, Alert)
 ```
 
@@ -169,7 +167,7 @@ for their JSON output (always compiled).
 1. parse_args() + Config::load_with_cli("config.yaml", cli)
    └── -n/--dry-run: lightweight load (no git validation), zero on-disk state (no
        config.yaml, no logs/), exits after validating the rules + the engine
-2. setup_console() (Windows) ; init_logger(&config, verbose) → tracing (stderr `error` by default, `info` with `-v`, file debug)
+2. setup_console() (Windows) ; runner's logging::init(&config, verbose) → tracing (stderr `error` by default, `info` with `-v`, file debug)
 3. ensure_dirs() → sigma repo dir + logs/
 4. SigmaRepo init: set_info_user/set_info_http|ssh (+ ensure_ssh_host_config when ssh+network),
    set_signing_key (if ssh_key_path), set_git_operations(offline, contrib),

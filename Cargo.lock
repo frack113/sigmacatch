@@ -3135,16 +3135,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sigmacatch-logger"
-version = "0.5.4"
-dependencies = [
- "sigmacatch-config",
- "thiserror 2.0.20",
- "tracing-appender",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "sigmacatch-regression"
 version = "0.5.4"
 dependencies = [
@@ -3210,13 +3200,15 @@ dependencies = [
  "chrono",
  "sigmacatch-config",
  "sigmacatch-detection",
- "sigmacatch-logger",
  "sigmacatch-regression",
  "sigmacatch-repo",
  "sigmacatch-rule",
  "sigmacatch-types",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
  "uuid",
  "windows",
 ]
@@ -3249,7 +3241,6 @@ dependencies = [
  "serde_json",
  "sigmacatch-config",
  "sigmacatch-detection",
- "sigmacatch-logger",
  "sigmacatch-regression",
  "sigmacatch-repo",
  "sigmacatch-rule",

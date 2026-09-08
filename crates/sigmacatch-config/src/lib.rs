@@ -411,8 +411,8 @@ impl Config {
             {
                 let mode = meta.permissions().mode() & 0o777;
                 if mode & 0o077 != 0 {
-                    // Pre-logger warning: validate() runs before init_logger,
-                    // so tracing events would be dropped here.
+                    // Pre-logging warning: validate() runs before the runner
+                    // initialises tracing, so tracing events would be dropped here.
                     eprintln!(
                         "WARNING: config: SSH key '{}' has overly permissive mode 0{:o} — should be 0600. \
                          SSH may refuse to use it. Run: chmod 600 {}",
@@ -499,7 +499,7 @@ impl Config {
             .as_ref()
             .filter(|s| **s >= MinStatus(Status::Stable))
         {
-            // Pre-logger warning: validate() runs before init_logger.
+            // Pre-logging warning: validate() runs before the runner initialises tracing.
             eprintln!(
                 "WARNING: filter.min_status = {status} — very restrictive, only stable rules will be loaded"
             );

@@ -11,7 +11,6 @@ description = "Shared sigmacatch pipeline runner (detection + regression generat
 [dependencies]
 sigmacatch-config = { path = "../sigmacatch-config" }
 sigmacatch-detection = { path = "../sigmacatch-detection" }
-sigmacatch-logger = { path = "../sigmacatch-logger" }
 sigmacatch-regression = { path = "../sigmacatch-regression" }
 sigmacatch-repo = { path = "../sigmacatch-repo" }
 sigmacatch-rule = { path = "../sigmacatch-rule" }
@@ -19,6 +18,9 @@ sigmacatch-types = { path = "../sigmacatch-types" }
 
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "signal"] }
 tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror.workspace = true
 anyhow = "1.0"
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }

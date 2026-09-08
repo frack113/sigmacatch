@@ -89,7 +89,6 @@ The project is a cargo workspace of 13 packages, plus 1 excluded nightly crate (
 | `sigmacatch-ebpf-common` | Shared `no_std` types for eBPF ring buffer |
 | `sigmacatch-runner` | Shared pipeline (`run<C: CollectorKind>`): config, repo init, event loop, generation, commit/push |
 | `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml |
-| `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug) |
 | `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication, remove_id |
 | `sigmacatch-detection` | `DetectionEngine` + per-platform pipelines + channel_resolver + bloom pre-filter |
 | `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, `DataFormat` (Evtx/Log) + validation + pure-Rust EVTX writer (`evtx_writer`) |

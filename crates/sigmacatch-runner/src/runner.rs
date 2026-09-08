@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use sigmacatch_config::{self, Config, parse_args};
 use sigmacatch_detection::DetectionEngine;
-use sigmacatch_logger::init as init_logger;
 use sigmacatch_regression::{DataFormat, SigmahqRegression};
 use sigmacatch_repo::SigmaRepo;
 use sigmacatch_rule::SigmahqRules;
@@ -99,7 +98,7 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     #[cfg(windows)]
     setup_console();
 
-    let _guard = init_logger(&config, cli.verbose)?;
+    let _guard = crate::logging::init(&config, cli.verbose)?;
 
     info!(
         "Sigma Regression Generator v{} — build {}",
