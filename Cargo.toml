@@ -13,7 +13,6 @@ members = [
     "crates/sigmacatch-config",
     "crates/sigmacatch-logger",
     "crates/input-windows-evtx",
-    "crates/sigmacatch-evtx-writer",
     "crates/sigmacatch-rule",
     "crates/sigmacatch-repo",
     "crates/sigmacatch-ebpf-common",

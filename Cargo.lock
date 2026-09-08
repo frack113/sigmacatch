@@ -3107,19 +3107,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sigmacatch-evtx-writer"
-version = "0.5.4"
-dependencies = [
- "chrono",
- "crc32fast",
- "evtx",
- "input-windows-evtx",
- "roxmltree",
- "tempfile",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "sigmacatch-lnx"
 version = "0.5.4"
 dependencies = [
@@ -3162,10 +3149,12 @@ name = "sigmacatch-regression"
 version = "0.5.4"
 dependencies = [
  "chrono",
+ "crc32fast",
+ "evtx",
  "input-windows-evtx",
+ "roxmltree",
  "serde",
  "serde_json",
- "sigmacatch-evtx-writer",
  "sigmacatch-types",
  "tempfile",
  "thiserror 2.0.20",

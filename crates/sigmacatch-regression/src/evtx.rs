@@ -165,7 +165,7 @@ fn write_evtx_winevt(_xml: &str, channel: &str, _rid: u64, _path: &Path) -> Resu
 fn write_evtx_pure_rust(xml: &str, channel: &str, rid: u64, path: &Path) -> Result<()> {
     let path = crate::long_path::long_path(path);
 
-    let result = sigmacatch_evtx_writer::write_evtx_from_xml(xml, rid, &path)
+    let result = crate::evtx_writer::write_evtx_from_xml(xml, rid, &path)
         .map_err(|e| {
             RegressionError::Export(format!("evtx-writer failed for {}: {e}", path.display()))
         })

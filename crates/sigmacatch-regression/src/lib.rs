@@ -17,6 +17,7 @@
 //! ```
 
 mod evtx;
+mod evtx_writer;
 mod format;
 pub mod info;
 /// SigmaHQ `logtype` metadata helpers for `info.yml`.

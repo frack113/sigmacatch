@@ -34,7 +34,7 @@ sigma/rules/windows/builtin/security/win_security_foo.yml
 
 `<rule_id>.evtx` is produced by `EvtExportLog` (re-queries the event by RecordID from the
 live log, short-backoff retries) or, for record-id-less events, by the pure Rust EVTX
-writer (`sigmacatch-evtx-writer`, deterministic, no retry). The exported file is
+writer (`evtx_writer` module of `sigmacatch-regression`, deterministic, no retry). The exported file is
 **validated** (re-parse ≥ 1 record); an empty/corrupt export (event rotated out between
 collection and export) is an error: the pipeline skips the rule for that cycle (no commit)
 and re-captures it later.

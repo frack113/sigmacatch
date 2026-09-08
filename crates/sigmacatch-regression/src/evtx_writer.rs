@@ -4,7 +4,7 @@
 //! Minimal pure-Rust EVTX writer.
 //!
 //! `EvtExportLog` re-exports a live-log event by record id + channel. Events
-//! without a record id have neither, so this crate synthesizes a valid
+//! without a record id have neither, so this module synthesizes a valid
 //! single-record EVTX directly from the Winevt XML. The record is emitted as a
 //! template instance (like real `EvtExportLog` files): a `0x0c` instance token
 //! followed by an inline template definition holding the whole event as literal
@@ -13,18 +13,9 @@
 //! `evtx` v0.2.0) accept. Round-trip testable on any platform via the `evtx`
 //! crate.
 //!
-//! # Example
-//!
-//! ```rust,no_run
-//! use sigmacatch_evtx_writer::write_evtx_from_xml;
-//! use std::path::Path;
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let xml = r#"<Event><System><TimeCreated SystemTime="2024-01-01T00:00:00Z"/></System></Event>"#;
-//! write_evtx_from_xml(xml, 1, Path::new("output.evtx"))?;
-//! # Ok(())
-//! # }
-//! ```
+//! The module is self-contained within `sigmacatch-regression`: it depends on
+//! no sibling module of the crate — only on the external crates `thiserror`,
+//! `chrono`, `crc32fast` and `roxmltree`. Consumed through [`crate::evtx`].
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -65,7 +56,7 @@ const TEMPLATE_DEF_DELTA: u32 = 14;
 /// element (current time when absent or malformed).
 /// Errors produced while writing EVTX files.
 #[derive(Debug, thiserror::Error)]
-pub enum WriterError {
+pub(crate) enum WriterError {
     /// Filesystem failure.
     #[error("filesystem error: {0}")]
     Io(#[from] std::io::Error),
@@ -75,11 +66,11 @@ pub enum WriterError {
 }
 
 /// Crate-local result alias over [`WriterError`].
-pub type Result<T> = std::result::Result<T, WriterError>;
+pub(crate) type Result<T> = std::result::Result<T, WriterError>;
 
 /// Write a single-record EVTX file from event XML, using the timestamp
 /// embedded in the XML (fallback: current time).
-pub fn write_evtx_from_xml(xml: &str, record_id: u64, path: &Path) -> Result<()> {
+pub(crate) fn write_evtx_from_xml(xml: &str, record_id: u64, path: &Path) -> Result<()> {
     let doc = Document::parse(xml)
         .map_err(|e| WriterError::Invalid(format!("Failed to parse Winevt XML: {e}")))?;
     let filetime = filetime_from_doc(&doc).unwrap_or_else(|_| now_filetime());
@@ -88,7 +79,8 @@ pub fn write_evtx_from_xml(xml: &str, record_id: u64, path: &Path) -> Result<()>
 
 /// Write a single-record EVTX file with an explicit record header timestamp
 /// (100ns ticks since 1601-01-01).
-pub fn write_evtx_from_xml_with_time(
+#[cfg(test)]
+fn write_evtx_from_xml_with_time(
     xml: &str,
     record_id: u64,
     filetime: u64,
@@ -124,7 +116,8 @@ fn write_evtx_from_xml_with_time_inner(
 /// Extract a FILETIME (100ns ticks since 1601) from the event's
 /// `TimeCreated SystemTime`; falls back to the current time when absent or
 /// malformed so the record header always carries a parseable timestamp.
-pub fn filetime_from_event_xml(xml: &str) -> Result<u64> {
+#[cfg(test)]
+fn filetime_from_event_xml(xml: &str) -> Result<u64> {
     let doc = Document::parse(xml)
         .map_err(|e| WriterError::Invalid(format!("Failed to parse Winevt XML: {e}")))?;
     filetime_from_doc(&doc)
@@ -703,5 +696,79 @@ mod tests {
         let path = dir.path().join("event.evtx");
         let err = write_evtx_from_xml("not xml at all", 0, &path).unwrap_err();
         assert!(err.to_string().contains("Failed to parse Winevt XML"));
+    }
+
+    #[test]
+    fn write_evtx_from_xml_with_time_uses_explicit_timestamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("event.evtx");
+        let filetime = system_time_to_filetime("2026-01-15T10:30:45.0000000Z").unwrap();
+        write_evtx_from_xml_with_time(SAMPLE_XML, 1, filetime, &path).unwrap();
+
+        let data = std::fs::read(&path).unwrap();
+        let header_filetime_offset = FILE_HEADER_SIZE + RECORD_START + 16;
+        let stored_filetime = u64::from_le_bytes(
+            data[header_filetime_offset..header_filetime_offset + 8]
+                .try_into()
+                .unwrap(),
+        );
+        assert_eq!(
+            stored_filetime, filetime,
+            "record-header FILETIME must equal the explicit timestamp"
+        );
+
+        let mut parser = evtx::EvtxParser::from_path(&path).unwrap();
+        let mut records = parser.records();
+        let record = records.next().unwrap().unwrap();
+        assert!(records.next().is_none());
+        let xml = std::str::from_utf8(record.data.as_bytes()).unwrap();
+        assert!(xml.contains(r#"<TimeCreated SystemTime="2026-01-15T10:30:45.1234567Z">"#));
+    }
+
+    #[test]
+    fn generate_evtx_roundtrips() {
+        const XML: &str = SAMPLE_XML;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("event.evtx");
+        write_evtx_from_xml(XML, 1, &path).unwrap();
+
+        let events = input_windows_evtx::parse_evtx_file(&path).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_json["Event"]["System"]["EventID"], 106);
+    }
+
+    #[test]
+    fn golden_output_is_byte_identical() {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let xml = std::fs::read_to_string(
+            std::path::Path::new(manifest).join("tests/fixtures/sample.xml"),
+        )
+        .unwrap();
+        let golden =
+            std::fs::read(std::path::Path::new(manifest).join("tests/fixtures/sample.evtx"))
+                .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("golden.evtx");
+        write_evtx_from_xml(&xml, 1, &path).unwrap();
+
+        let written = std::fs::read(&path).unwrap();
+        assert_eq!(
+            written.len(),
+            golden.len(),
+            "size mismatch: written {} vs golden {}",
+            written.len(),
+            golden.len()
+        );
+        if written != golden {
+            for (i, (a, b)) in written.iter().zip(golden.iter()).enumerate() {
+                if a != b {
+                    panic!(
+                        "byte mismatch at offset {i} (0x{i:04x}): written=0x{a:02x} golden=0x{b:02x}"
+                    );
+                }
+            }
+        }
     }
 }

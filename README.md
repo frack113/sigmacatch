@@ -79,7 +79,7 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 
 ## Workspace
 
-The project is a cargo workspace of 14 packages, plus 1 excluded nightly crate (`sigmacatch-ebpf`):
+The project is a cargo workspace of 13 packages, plus 1 excluded nightly crate (`sigmacatch-ebpf`):
 
 | Crate | Purpose |
 |---|---|
@@ -92,8 +92,7 @@ The project is a cargo workspace of 14 packages, plus 1 excluded nightly crate (
 | `sigmacatch-logger` | Two-layer tracing subscriber (stderr `error` by default, `info` with `-v`; daily rolling file debug) |
 | `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication, remove_id |
 | `sigmacatch-detection` | `DetectionEngine` + per-platform pipelines + channel_resolver + bloom pre-filter |
-| `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, `DataFormat` (Evtx/Log) + validation |
-| `sigmacatch-evtx-writer` | Pure Rust EVTX writer for record-id-less events |
+| `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, `DataFormat` (Evtx/Log) + validation + pure-Rust EVTX writer (`evtx_writer`) |
 | `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource mapping tables (phf) |
 | `sigmacatch-repo` | grit-lib wrapper: `SigmaRepo`, GitHub fork detection, plumbing/porcelain git ops, SSH signing |
 | `input-windows-evtx` | Parse EVTX files into `Event` objects (used by `regressiondata-check`) |

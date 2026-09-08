@@ -2,7 +2,7 @@
 
 ## Cargo workspace
 
-The project is a cargo workspace of 14 packages, plus 1 excluded nightly crate (`sigmacatch-ebpf`):
+The project is a cargo workspace of 13 packages, plus 1 excluded nightly crate (`sigmacatch-ebpf`):
 
 ```text
 sigmacatch/
@@ -44,10 +44,9 @@ sigmacatch/
     │                             #   (1_win_logsource.yml, 2_win_field_name.yml, 3_lnx_logsource.yml,
     │                             #   4_lnx_field_name.yml — transformations gated by product rule_conditions) + channel_resolver
     ├── sigmacatch-regression/    # SigmahqRegression (get_sigma_id, add, retire), InfoYml, DataFormat
-    │                             #   (evtx.rs, format.rs, info.rs, logtype.rs, long_path.rs)
+    │                             #   (evtx.rs, evtx_writer.rs, format.rs, info.rs, logtype.rs, long_path.rs)
     ├── sigmacatch-types/         # Shared types: Event, Alert, RegressionHeader + XML parsing + logsource mapping tables
     ├── sigmacatch-repo/          # grit-lib wrapper + SigmaRepo + git operations + signing.rs + transport.rs
-    ├── sigmacatch-evtx-writer/   # Pure Rust EVTX writer (record-id-less events — no EvtExportLog possible)
     └── input-windows-evtx/       # EVTX file parser → Event
 ```
 
