@@ -329,7 +329,7 @@ fn build_chunk_from_doc(record_id: u64, filetime: u64, doc: &Document) -> Result
     put_u32(&mut chunk, 40, CHUNK_HEADER_FIELD_SIZE);
     put_u32(&mut chunk, 44, (RECORD_START + RECORD_HEADER_SIZE) as u32);
     put_u32(&mut chunk, 48, free_space_offset as u32);
-    put_u32(&mut chunk, 52, 0);
+    put_u32(&mut chunk, 52, 0); // Flags (unused)
 
     let record = &mut chunk[RECORD_START..free_space_offset];
     record[..4].copy_from_slice(b"\x2a\x2a\x00\x00");
@@ -348,7 +348,8 @@ fn build_chunk_from_doc(record_id: u64, filetime: u64, doc: &Document) -> Result
     }
 
     let events_checksum = crc32fast::hash(&chunk[CHUNK_HEADER_SIZE..free_space_offset]);
-    put_u32(&mut chunk, 52, events_checksum);
+    put_u32(&mut chunk, 52, 0); // Flags (unused, per MS-EVEN6 §2.1.1 offset 0x34)
+    put_u32(&mut chunk, 56, events_checksum); // Chunk Checksum (MS-EVEN6 §2.1.1 offset 0x38)
     let mut header_crc = crc32fast::Hasher::new();
     header_crc.update(&chunk[..120]);
     header_crc.update(&chunk[128..CHUNK_HEADER_SIZE]);
