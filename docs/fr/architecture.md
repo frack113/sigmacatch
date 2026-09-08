@@ -2,7 +2,7 @@
 
 ## Cargo workspace
 
-Le projet est un cargo workspace de 14 packages, plus 1 crate nightly exclu (`sigmacatch-ebpf`) :
+Le projet est un cargo workspace de 13 packages, plus 1 crate nightly exclu (`sigmacatch-ebpf`) :
 
 ```text
 sigmacatch/
@@ -34,15 +34,15 @@ sigmacatch/
     │   └── src/main.rs           # 6 tracepoints : execve/exec/exit/connect/openat+exit/sendto+sendmsg
     ├── sigmacatch-ebpf-common/   # Types no_std partagés (ring buffer) : ExecEvent, NetEvent, ...
     ├── sigmacatch-runner/        # Pipeline partagé aux crates binaires :
-    │   └── src/runner.rs         #   run<C: CollectorKind> + trait CollectorKind
+    │   ├── src/runner.rs         #   run<C: CollectorKind> + trait CollectorKind + bootstrap_repo_regression (branche sigmacatch/<date>, clone/pull)
+    │   ├── src/cli.rs            #   diagnostics CLI partagés (check-filter, list-rules)
+    │   └── src/logging.rs        #   init tracing à deux couches (stderr error/info, fichier rolling)
     ├── sigmacatch-config/        # Config YAML + parsing CLI + custom_channels.yaml
-    ├── sigmacatch-logger/        # Abonnement tracing à deux couches (stderr error/info, fichier rolling)
     ├── sigmacatch-rule/          # SigmahqRules : chargement de règles, filtre, dédupe, remove_id
     ├── sigmacatch-detection/     # Wrapper DetectionEngine + pipelines par plateforme
-    ├── sigmacatch-regression/    # SigmahqRegression, InfoYml, DataFormat (evtx/log)
+    ├── sigmacatch-regression/    # SigmahqRegression, InfoYml, DataFormat (evtx/log) + module evtx_writer
     ├── sigmacatch-types/         # Types partagés : Event, Alert, RegressionHeader + parsing XML + logsource tables
     ├── sigmacatch-repo/          # wrapper grit-lib + SigmaRepo + opérations git + signing
-    ├── sigmacatch-evtx-writer/   # Writer EVTX pur Rust
     └── input-windows-evtx/       # Parser fichiers EVTX → Event
 ```
 
@@ -127,9 +127,8 @@ tourne aussi sous Linux.
 ## Graphe de dépendances
 
 ```text
-sigmacatch-win ──┬── sigmacatch-runner      (run<C: CollectorKind>, pipeline partagé)
+sigmacatch-win ──┬── sigmacatch-runner      (run<C: CollectorKind>, pipeline partagé + init tracing + module cli)
 sigmacatch-lnx ──┤   ├── sigmacatch-config      (Config, CliArgs)
-                 │   ├── sigmacatch-logger      (init tracing)
                  │   ├── sigmacatch-rule        (SigmahqRules : load/filter/remove_id)
                  │   ├── sigmacatch-detection   (DetectionEngine : pipelines + bloom + LogSourceExtractor + resolve_channels)
                  │   ├── sigmacatch-regression  (SigmahqRegression : skip set + génération données)
@@ -150,7 +149,6 @@ sigmacatch-evtx (feature `evtx`) ─┬── input-windows-evtx    (parse EVTX 
                                   ├── sigmacatch-regression (SigmahqRegression : writer EVTX pur Rust + info.yml)
                                   ├── sigmacatch-repo       (SigmaRepo : clone fork, commit/push)
                                   ├── sigmacatch-config     (Config)
-                                  ├── sigmacatch-logger     (init tracing)
                                   └── sigmacatch-types      (Event, Alert)
 ```
 
@@ -169,7 +167,7 @@ et utilisent `serde` pour leurs sorties JSON (toujours compilées).
 1. parse_args() + Config::load_with_cli("config.yaml", cli)
    └── -n/--dry-run : chargement allégé (pas de validation git), aucun état sur disque
        (ni config.yaml ni logs/), sortie après validation des règles + du moteur
-2. setup_console() (Windows) ; init_logger(&config, verbose) → tracing (stderr `error` par défaut, `info` avec `-v`, fichier debug)
+2. setup_console() (Windows) ; logging::init du runner (&config, verbose) → tracing (stderr `error` par défaut, `info` avec `-v`, fichier debug)
 3. ensure_dirs() → dossier repo sigma + logs/
 4. SigmaRepo init : set_info_user/set_info_http|ssh (+ ensure_ssh_host_config si ssh+réseau),
    set_signing_key (si ssh_key_path), set_git_operations(offline, contrib),

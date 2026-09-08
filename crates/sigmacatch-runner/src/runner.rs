@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use sigmacatch_config::{self, Config, parse_args};
 use sigmacatch_detection::DetectionEngine;
-use sigmacatch_logger::init as init_logger;
 use sigmacatch_regression::{DataFormat, SigmahqRegression};
 use sigmacatch_repo::SigmaRepo;
 use sigmacatch_rule::SigmahqRules;
@@ -74,53 +73,21 @@ struct Pipeline {
     regression: SigmahqRegression,
 }
 
-/// Run the sigmacatch pipeline with the given collector.
-pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
-    let cli = parse_args();
-
-    let config_path = PathBuf::from("config.yaml");
-    let mut config = if cli.dry_run {
-        // Dry-run never creates config.yaml and skips git validation — only the
-        // `./sigma` rules need to load, so no on-disk state is required.
-        Config::load_for_dry_run(&config_path, &cli)?
-    } else {
-        Config::load_with_cli(&config_path, &cli)?
-    };
-
-    if cli.dry_run {
-        // Before logger init: dry-run must leave zero on-disk state, not even logs/.
-        return run_dry(&config);
-    }
-
-    if cli.all_rules {
-        info!("All-rules mode enabled — skip set will be empty");
-    }
-
-    #[cfg(windows)]
-    setup_console();
-
-    let _guard = init_logger(&config, cli.verbose)?;
-
-    info!(
-        "Sigma Regression Generator v{} — build {}",
-        env!("CARGO_PKG_VERSION"),
-        option_env!("BUILD_TIME").unwrap_or("unknown")
-    );
-
-    info!(
-        "{} started for {} <{}>",
-        kind.name(),
-        config.git.author,
-        config.git.email
-    );
-
-    let branch_name = format!("sigmacatch/{}", chrono::Local::now().format("%Y%m%d"));
-    info!("Branch name: {branch_name}");
-    let push_branch = branch_name.clone();
-
-    config.ensure_dirs()?;
+/// Bootstrap the sigma git repository and the shared regression handler
+/// (`sigmacatch/<date>` working branch, remote checks, repo + regression state).
+///
+/// Single source of truth for the bootstrap sequence shared by the continuous
+/// runner (`run`) and the one-shot `sigmacatch-evtx` binary (AD-6). Returns the
+/// configured repo, the derived branch name and the loaded regression handler;
+/// the caller still applies its own regression configuration (author, format,
+/// skip handling, …) and owns the resolved `sigma_repo_path`.
+pub async fn bootstrap_repo_regression(
+    config: &Config,
+    sigma_repo_path: &Path,
+) -> Result<(SigmaRepo, String, SigmahqRegression)> {
     let fork_url = format!("https://github.com/{}/sigma", config.git.author);
     let mut sigma_repo = SigmaRepo::new();
+    sigma_repo.set_repo_path(sigma_repo_path.to_path_buf());
     sigma_repo.set_info_user(&config.git.author, &config.git.email);
 
     match config.git.transport {
@@ -154,14 +121,68 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
         info!("No-contrib mode: push disabled — commits will be local only");
     }
 
-    sigma_repo.set_remote_url(fork_url.clone()).await?;
+    let branch_name = format!("sigmacatch/{}", chrono::Local::now().format("%Y%m%d"));
+    info!("Branch name: {branch_name}");
+
+    sigma_repo.set_remote_url(fork_url).await?;
     sigma_repo.set_working_branch(branch_name.clone())?;
     sigma_repo.check_remote_working_branch()?;
 
-    let mut regression = match SigmahqRegression::new() {
-        Ok(r) => r,
-        Err(e) => anyhow::bail!("Failed to load regression data: {e}"),
+    let regression =
+        match SigmahqRegression::new_from_path(&sigma_repo_path.join("regression_data")) {
+            Ok(r) => r,
+            Err(e) => anyhow::bail!("Failed to load regression data: {e}"),
+        };
+
+    Ok((sigma_repo, branch_name, regression))
+}
+
+/// Run the sigmacatch pipeline with the given collector.
+pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
+    let cli = parse_args();
+
+    let config_path = PathBuf::from("config.yaml");
+    let mut config = if cli.dry_run {
+        // Dry-run never creates config.yaml and skips git validation — only the
+        // `./sigma` rules need to load, so no on-disk state is required.
+        Config::load_for_dry_run(&config_path, &cli)?
+    } else {
+        Config::load_with_cli(&config_path, &cli)?
     };
+
+    if cli.dry_run {
+        // Before logger init: dry-run must leave zero on-disk state, not even logs/.
+        return run_dry(&config);
+    }
+
+    if cli.all_rules {
+        info!("All-rules mode enabled — skip set will be empty");
+    }
+
+    #[cfg(windows)]
+    setup_console();
+
+    let _guard = crate::logging::init(&config, cli.verbose)?;
+
+    info!(
+        "Sigma Regression Generator v{} — build {}",
+        env!("CARGO_PKG_VERSION"),
+        option_env!("BUILD_TIME").unwrap_or("unknown")
+    );
+
+    info!(
+        "{} started for {} <{}>",
+        kind.name(),
+        config.git.author,
+        config.git.email
+    );
+
+    config.ensure_dirs()?;
+    let sigma_repo_path = Path::new(&config.git.sigma_repo_path).to_path_buf();
+    let (sigma_repo, branch_name, mut regression) =
+        bootstrap_repo_regression(&config, &sigma_repo_path).await?;
+    let push_branch = branch_name.clone();
+
     regression.set_author(config.git.author.clone());
     regression.set_max_failed_cycles(config.regression.max_failed_cycles);
     regression.set_format(kind.regression_format());
@@ -200,7 +221,7 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
         existing
     };
 
-    let mut rules = SigmahqRules::new()?;
+    let mut rules = SigmahqRules::new_from_path(&sigma_repo_path)?;
 
     for id in &existing_rules {
         rules.remove_id(id);
@@ -282,7 +303,6 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
         });
     }
 
-    let sigma_repo_path = Path::new(&config.git.sigma_repo_path);
     let output_base = sigma_repo_path.join("regression_data");
 
     sigmacatch_regression::clean_partial_artifacts(&output_base);
@@ -441,15 +461,18 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     Ok(())
 }
 
-/// -n/--dry-run: validate that the rules under `./sigma` load and that the
-/// detection engine builds, without writing any regression data or performing
-/// any git/network operation. Intended for Sigma workflows that only need a
-/// read-only sanity check of the on-disk rule set. Runs before the file logger
-/// is initialised, so it uses stderr and creates no `logs/` directory.
+/// -n/--dry-run: validate that the rules under the configured
+/// `sigma_repo_path` (see config validation) load and that the detection
+/// engine builds, without writing any regression data or performing any
+/// git/network operation. Runs before the file logger is initialised, so it
+/// uses stderr and creates no `logs/` directory.
 fn run_dry(config: &Config) -> Result<()> {
-    eprintln!("Dry-run mode enabled — validating rules from ./sigma without writing data");
+    eprintln!(
+        "Dry-run mode enabled — validating rules from {}",
+        config.git.sigma_repo_path
+    );
 
-    let rules = SigmahqRules::new()?;
+    let rules = SigmahqRules::new_from_path(Path::new(&config.git.sigma_repo_path))?;
     let rules = rules.filter(config.filter.clone());
     let stats = rules.stats();
 

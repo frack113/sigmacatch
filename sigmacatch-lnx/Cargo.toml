@@ -45,11 +45,9 @@ required-features = ["auditd", "builtin", "sysmon"]
 
 [dependencies]
 sigmacatch-runner = { path = "../crates/sigmacatch-runner" }
-sigmacatch-config = { path = "../crates/sigmacatch-config" }
 sigmacatch-detection = { path = "../crates/sigmacatch-detection" }
 sigmacatch-regression = { path = "../crates/sigmacatch-regression" }
 sigmacatch-rule = { path = "../crates/sigmacatch-rule" }
-sigmacatch-repo = { path = "../crates/sigmacatch-repo" }
 sigmacatch-types = { path = "../crates/sigmacatch-types" }
 sigmacatch-ebpf-common = { path = "../crates/sigmacatch-ebpf-common", optional = true }
 
@@ -67,11 +65,9 @@ serde_json = "1.0"
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 
-serde = { version = "1", features = ["derive"] }
-
 [dev-dependencies]
 tempfile = "3.27"
 
-# Quality contract (quality.md Q2.1): inherit workspace lint tiers.
+# Quality contract: inherit workspace lint tiers ([workspace.lints] in root Cargo.toml).
 [lints]
 workspace = true

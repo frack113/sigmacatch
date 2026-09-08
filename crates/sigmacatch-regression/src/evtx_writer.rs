@@ -4,7 +4,7 @@
 //! Minimal pure-Rust EVTX writer.
 //!
 //! `EvtExportLog` re-exports a live-log event by record id + channel. Events
-//! without a record id have neither, so this crate synthesizes a valid
+//! without a record id have neither, so this module synthesizes a valid
 //! single-record EVTX directly from the Winevt XML. The record is emitted as a
 //! template instance (like real `EvtExportLog` files): a `0x0c` instance token
 //! followed by an inline template definition holding the whole event as literal
@@ -13,18 +13,9 @@
 //! `evtx` v0.2.0) accept. Round-trip testable on any platform via the `evtx`
 //! crate.
 //!
-//! # Example
-//!
-//! ```rust,no_run
-//! use sigmacatch_evtx_writer::write_evtx_from_xml;
-//! use std::path::Path;
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let xml = r#"<Event><System><TimeCreated SystemTime="2024-01-01T00:00:00Z"/></System></Event>"#;
-//! write_evtx_from_xml(xml, 1, Path::new("output.evtx"))?;
-//! # Ok(())
-//! # }
-//! ```
+//! The module is self-contained within `sigmacatch-regression`: it depends on
+//! no sibling module of the crate — only on the external crates `thiserror`,
+//! `chrono`, `crc32fast` and `roxmltree`. Consumed through [`crate::evtx`].
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -59,35 +50,51 @@ const TEMPLATE_GUID: [u8; 16] = [
 /// `evtx` crate and Velocidex parser take their "inline definition" path.
 const TEMPLATE_DEF_DELTA: u32 = 14;
 
-/// Write a single-record EVTX file containing the given Winevt XML.
-///
-/// The record header timestamp is derived from the event's `TimeCreated`
-/// element (current time when absent or malformed).
+/// Epoch delta: 100-ns intervals between 1601-01-01 and 1970-01-01.
+const UNIX_TO_FILETIME_NS: i128 = 116_444_736_000_000_000;
+
+/// Sample Winevt XML event (includes TaskInstanceId). Sourced from fixture.
+#[cfg(test)]
+pub(crate) const SAMPLE_XML: &str = include_str!("../tests/fixtures/sample.xml");
+
 /// Errors produced while writing EVTX files.
 #[derive(Debug, thiserror::Error)]
-pub enum WriterError {
-    /// Filesystem failure.
-    #[error("filesystem error: {0}")]
-    Io(#[from] std::io::Error),
+pub(crate) enum WriterError {
     /// Input XML or parameters violate the EVTX writer contract.
     #[error("{0}")]
     Invalid(String),
 }
 
 /// Crate-local result alias over [`WriterError`].
-pub type Result<T> = std::result::Result<T, WriterError>;
+pub(crate) type Result<T> = std::result::Result<T, WriterError>;
 
 /// Write a single-record EVTX file from event XML, using the timestamp
-/// embedded in the XML (fallback: current time).
-pub fn write_evtx_from_xml(xml: &str, record_id: u64, path: &Path) -> Result<()> {
-    let filetime = filetime_from_event_xml(xml).unwrap_or_else(|_| now_filetime());
-    write_evtx_from_xml_with_time(xml, record_id, filetime, path)
+/// embedded in the XML. Returns the extracted FILETIME on success.
+/// Errors if `TimeCreated` is missing or malformed (no fallback to current time).
+pub(crate) fn write_evtx_from_xml(xml: &str, record_id: u64, path: &Path) -> Result<u64> {
+    let doc = Document::parse(xml)
+        .map_err(|e| WriterError::Invalid(format!("Failed to parse Winevt XML: {e}")))?;
+    let filetime = filetime_from_doc(&doc)?;
+    write_evtx_from_xml_with_time_inner(&doc, record_id, filetime, path)?;
+    Ok(filetime)
 }
 
 /// Write a single-record EVTX file with an explicit record header timestamp
-/// (100ns ticks since 1601-01-01).
-pub fn write_evtx_from_xml_with_time(
+/// (100ns ticks since 1601-01-01). Deterministic: no fallback to current time.
+#[allow(dead_code)]
+pub(crate) fn write_evtx_from_xml_with_time(
     xml: &str,
+    record_id: u64,
+    filetime: u64,
+    path: &Path,
+) -> Result<()> {
+    let doc = Document::parse(xml)
+        .map_err(|e| WriterError::Invalid(format!("Failed to parse Winevt XML: {e}")))?;
+    write_evtx_from_xml_with_time_inner(&doc, record_id, filetime, path)
+}
+
+fn write_evtx_from_xml_with_time_inner(
+    doc: &Document,
     record_id: u64,
     filetime: u64,
     path: &Path,
@@ -97,7 +104,7 @@ pub fn write_evtx_from_xml_with_time(
             "record_id must be in 1..=u64::MAX-1, got {record_id}"
         )));
     }
-    let chunk = build_chunk(record_id, filetime, xml)?;
+    let chunk = build_chunk_from_doc(record_id, filetime, doc)?;
     let file = build_file_header(record_id);
 
     let mut out = Vec::with_capacity(FILE_HEADER_SIZE + CHUNK_SIZE);
@@ -111,9 +118,14 @@ pub fn write_evtx_from_xml_with_time(
 /// Extract a FILETIME (100ns ticks since 1601) from the event's
 /// `TimeCreated SystemTime`; falls back to the current time when absent or
 /// malformed so the record header always carries a parseable timestamp.
-pub fn filetime_from_event_xml(xml: &str) -> Result<u64> {
+#[cfg(test)]
+fn filetime_from_event_xml(xml: &str) -> Result<u64> {
     let doc = Document::parse(xml)
         .map_err(|e| WriterError::Invalid(format!("Failed to parse Winevt XML: {e}")))?;
+    filetime_from_doc(&doc)
+}
+
+fn filetime_from_doc(doc: &Document) -> Result<u64> {
     for node in doc.descendants() {
         if node.tag_name().name() == "TimeCreated"
             && let Some(system_time) = node.attribute("SystemTime")
@@ -154,9 +166,9 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
     let hour = u32::from(read_u16(11)?);
     let minute = u32::from(read_u16(14)?);
     let second = u32::from(read_u16(17)?);
-    if !(1..=12).contains(&month) || hour > 23 || minute > 59 || second > 60 {
+    if !(1..=12).contains(&month) || hour > 23 || minute > 59 || second > 59 {
         return Err(WriterError::Invalid(format!(
-            "malformed SystemTime: {system_time}"
+            "malformed SystemTime: {system_time} (leap second not supported)"
         )));
     }
     let max_day = match month {
@@ -194,9 +206,11 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
 
     let mut offset_secs: i64 = 0;
     let tz_start = bytes.iter().position(|&b| b == b'T').unwrap_or(bytes.len());
+    let mut tz_end = tz_start;
     for (i, &b) in bytes[tz_start..].iter().enumerate() {
         let i = i + tz_start;
         if b == b'Z' || b == b'z' {
+            tz_end = i + 1;
             break;
         }
         if b == b'+' || b == b'-' {
@@ -216,8 +230,14 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
             if b == b'-' {
                 offset_secs = -offset_secs;
             }
+            tz_end = i + 6;
             break;
         }
+    }
+    if tz_end != bytes.len() {
+        return Err(WriterError::Invalid(format!(
+            "trailing garbage after timezone in SystemTime: {system_time}"
+        )));
     }
 
     // Days since 1970-01-01 (Howard Hinnant's algorithm), then UNIX seconds,
@@ -233,7 +253,6 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
     let unix_secs = days * 86400 + hour as i64 * 3600 + minute as i64 * 60 + second as i64;
     let unix_ns = unix_secs as i128 * 1_000_000_000 + i128::from(fraction_ns)
         - offset_secs as i128 * 1_000_000_000;
-    const UNIX_TO_FILETIME_NS: i128 = 116_444_736_000_000_000;
     let filetime = (unix_ns + UNIX_TO_FILETIME_NS).div_euclid(100);
     if filetime < 0 {
         return Err(WriterError::Invalid(format!(
@@ -241,15 +260,6 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
         )));
     }
     Ok(filetime as u64)
-}
-
-fn now_filetime() -> u64 {
-    use chrono::Utc;
-    let now = Utc::now();
-    let unix_ns =
-        i128::from(now.timestamp()) * 1_000_000_000 + i128::from(now.timestamp_subsec_nanos());
-    const UNIX_TO_FILETIME_NS: i128 = 116_444_736_000_000_000;
-    ((unix_ns + UNIX_TO_FILETIME_NS).div_euclid(100)) as u64
 }
 
 fn build_file_header(record_id: u64) -> [u8; FILE_HEADER_SIZE] {
@@ -266,9 +276,7 @@ fn build_file_header(record_id: u64) -> [u8; FILE_HEADER_SIZE] {
     header
 }
 
-fn build_chunk(record_id: u64, filetime: u64, xml: &str) -> Result<[u8; CHUNK_SIZE]> {
-    let doc = Document::parse(xml)
-        .map_err(|e| WriterError::Invalid(format!("Failed to parse Winevt XML: {e}")))?;
+fn build_chunk_from_doc(record_id: u64, filetime: u64, doc: &Document) -> Result<[u8; CHUNK_SIZE]> {
     let root = doc.root_element();
     if root.tag_name().name() != "Event" {
         return Err(WriterError::Invalid(format!(
@@ -321,7 +329,7 @@ fn build_chunk(record_id: u64, filetime: u64, xml: &str) -> Result<[u8; CHUNK_SI
     put_u32(&mut chunk, 40, CHUNK_HEADER_FIELD_SIZE);
     put_u32(&mut chunk, 44, (RECORD_START + RECORD_HEADER_SIZE) as u32);
     put_u32(&mut chunk, 48, free_space_offset as u32);
-    put_u32(&mut chunk, 52, 0);
+    put_u32(&mut chunk, 52, 0); // Flags (unused)
 
     let record = &mut chunk[RECORD_START..free_space_offset];
     record[..4].copy_from_slice(b"\x2a\x2a\x00\x00");
@@ -340,7 +348,8 @@ fn build_chunk(record_id: u64, filetime: u64, xml: &str) -> Result<[u8; CHUNK_SI
     }
 
     let events_checksum = crc32fast::hash(&chunk[CHUNK_HEADER_SIZE..free_space_offset]);
-    put_u32(&mut chunk, 52, events_checksum);
+    put_u32(&mut chunk, 52, 0); // Flags (unused, per MS-EVEN6 §2.1.1 offset 0x34)
+    put_u32(&mut chunk, 56, events_checksum); // Chunk Checksum (MS-EVEN6 §2.1.1 offset 0x38)
     let mut header_crc = crc32fast::Hasher::new();
     header_crc.update(&chunk[..120]);
     header_crc.update(&chunk[128..CHUNK_HEADER_SIZE]);
@@ -414,7 +423,7 @@ fn hash16(utf16: &[u16]) -> u16 {
 
 /// Distance from the record's BinXML start to the template definition body
 /// (fragment + element tree), i.e. the bytes before the tree inside the
-/// container built in [`build_chunk`].
+/// container built in [`build_chunk_from_doc`].
 const TEMPLATE_INSTANCE_PREFIX: usize = 42;
 
 /// BinXML encoder for template-instance record streams.
@@ -522,30 +531,6 @@ fn put_u64(buf: &mut [u8], offset: usize, value: u64) {
 mod tests {
     use super::*;
 
-    const SAMPLE_XML: &str = r#"<?xml version="1.0" encoding="utf-8" standalone="yes"?>
-<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
-  <System>
-    <Provider Name="Microsoft-Windows-TaskScheduler" Guid="{de7b24ea-73c8-4a09-985d-5bdadcfa9017}"/>
-    <EventID>106</EventID>
-    <Version>0</Version>
-    <Level>4</Level>
-    <Task>106</Task>
-    <Opcode>0</Opcode>
-    <Keywords>0x8020000000000000</Keywords>
-    <TimeCreated SystemTime="2026-01-15T10:30:45.1234567Z"/>
-    <EventRecordID>1</EventRecordID>
-    <Correlation/>
-    <Execution ProcessID="1234" ThreadID="5678"/>
-    <Channel>Microsoft-Windows-TaskScheduler/Operational</Channel>
-    <Computer>WIN-TEST</Computer>
-    <Security UserID="S-1-5-18"/>
-  </System>
-  <EventData>
-    <Data Name="TaskName">\MyTask &amp; More</Data>
-    <Data Name="TaskInstanceId">abc-123</Data>
-  </EventData>
-</Event>"#;
-
     #[test]
     fn filetime_parses_time_created() {
         let ft = filetime_from_event_xml(SAMPLE_XML).unwrap();
@@ -567,8 +552,7 @@ mod tests {
             .unwrap()
             .timestamp_nanos_opt()
             .unwrap() as i128;
-        const UNIX_TO_FILETIME_NS: i128 = 116_444_736_000_000_000;
-        ((unix + i128::from(ns) + UNIX_TO_FILETIME_NS).div_euclid(100)) as u64
+        ((unix + i128::from(ns) + super::UNIX_TO_FILETIME_NS).div_euclid(100)) as u64
     }
 
     #[test]
@@ -658,6 +642,20 @@ mod tests {
     }
 
     #[test]
+    fn leap_second_rejected() {
+        assert!(system_time_to_filetime("2026-01-01T00:00:60Z").is_err());
+        assert!(system_time_to_filetime("2026-12-31T23:59:60Z").is_err());
+        assert!(system_time_to_filetime("2026-01-01T00:00:60.0000000Z").is_err());
+    }
+
+    #[test]
+    fn timezone_trailing_garbage_rejected() {
+        assert!(system_time_to_filetime("2026-01-01T00:00:00Zextra").is_err());
+        assert!(system_time_to_filetime("2026-01-01T00:00:00+02:00extra").is_err());
+        assert!(system_time_to_filetime("2026-01-01T00:00:00-05:00trash").is_err());
+    }
+
+    #[test]
     fn leap_years_are_accepted() {
         assert!(system_time_to_filetime("2024-02-29T00:00:00Z").is_ok());
         assert!(system_time_to_filetime("2000-02-29T00:00:00Z").is_ok());
@@ -670,5 +668,139 @@ mod tests {
         let path = dir.path().join("event.evtx");
         assert!(write_evtx_from_xml(SAMPLE_XML, 0, &path).is_err());
         assert!(write_evtx_from_xml(SAMPLE_XML, u64::MAX, &path).is_err());
+    }
+
+    #[test]
+    fn unparsable_xml_fails_at_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("event.evtx");
+        let err = write_evtx_from_xml("not xml at all", 1, &path).unwrap_err();
+        assert!(matches!(err, WriterError::Invalid(_)));
+        assert!(err.to_string().contains("Failed to parse Winevt XML"));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn parse_error_precedes_record_id_validation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("event.evtx");
+        let err = write_evtx_from_xml("not xml at all", 0, &path).unwrap_err();
+        assert!(err.to_string().contains("Failed to parse Winevt XML"));
+    }
+
+    #[test]
+    fn write_evtx_from_xml_with_time_uses_explicit_timestamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("event.evtx");
+        let filetime = system_time_to_filetime("2026-01-15T10:30:45.0000000Z").unwrap();
+        write_evtx_from_xml_with_time(SAMPLE_XML, 1, filetime, &path).unwrap();
+
+        let data = std::fs::read(&path).unwrap();
+        let header_filetime_offset = FILE_HEADER_SIZE + RECORD_START + 16;
+        let stored_filetime = u64::from_le_bytes(
+            data[header_filetime_offset..header_filetime_offset + 8]
+                .try_into()
+                .unwrap(),
+        );
+        assert_eq!(
+            stored_filetime, filetime,
+            "record-header FILETIME must equal the explicit timestamp"
+        );
+
+        let mut parser = evtx::EvtxParser::from_path(&path).unwrap();
+        let mut records = parser.records();
+        let record = records.next().unwrap().unwrap();
+        assert!(records.next().is_none());
+        let xml = std::str::from_utf8(record.data.as_bytes()).unwrap();
+        assert!(xml.contains(r#"<TimeCreated SystemTime="2026-01-15T10:30:45.1234567Z">"#));
+    }
+
+    #[test]
+    fn generate_evtx_roundtrips() {
+        const XML: &str = SAMPLE_XML;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("event.evtx");
+        write_evtx_from_xml(XML, 1, &path).unwrap();
+
+        let events = input_windows_evtx::parse_evtx_file(&path).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_json["Event"]["System"]["EventID"], 106);
+    }
+
+    #[test]
+    fn golden_output_is_byte_identical() {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let xml = std::fs::read_to_string(
+            std::path::Path::new(manifest).join("tests/fixtures/sample.xml"),
+        )
+        .unwrap();
+        let golden =
+            std::fs::read(std::path::Path::new(manifest).join("tests/fixtures/sample.evtx"))
+                .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("golden.evtx");
+        write_evtx_from_xml(&xml, 1, &path).unwrap();
+
+        let written = std::fs::read(&path).unwrap();
+        assert_eq!(
+            written.len(),
+            golden.len(),
+            "size mismatch: written {} vs golden {}",
+            written.len(),
+            golden.len()
+        );
+        if written != golden {
+            for (i, (a, b)) in written.iter().zip(golden.iter()).enumerate() {
+                if a != b {
+                    panic!(
+                        "byte mismatch at offset {i} (0x{i:04x}): written=0x{a:02x} golden=0x{b:02x}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn write_evtx_from_xml_missing_timecreated_errors() {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Test" Guid="{123}"/>
+    <EventID>1</EventID>
+    <TimeCreated/>
+    <EventRecordID>1</EventRecordID>
+    <Channel>Test/Channel</Channel>
+    <Computer>TEST</Computer>
+    <Security UserID="S-1-5-18"/>
+  </System>
+  <EventData/>
+</Event>"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing_time.evtx");
+        let err = write_evtx_from_xml(xml, 1, &path).unwrap_err();
+        assert!(matches!(err, WriterError::Invalid(_)));
+        assert!(err.to_string().contains("no TimeCreated"));
+    }
+
+    #[test]
+    fn write_evtx_from_xml_malformed_timecreated_errors() {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Test" Guid="{123}"/>
+    <EventID>1</EventID>
+    <TimeCreated SystemTime="not-a-timestamp"/>
+    <EventRecordID>1</EventRecordID>
+    <Channel>Test/Channel</Channel>
+    <Computer>TEST</Computer>
+    <Security UserID="S-1-5-18"/>
+  </System>
+  <EventData/>
+</Event>"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad_time.evtx");
+        let err = write_evtx_from_xml(xml, 1, &path).unwrap_err();
+        assert!(matches!(err, WriterError::Invalid(_)));
+        assert!(err.to_string().contains("malformed SystemTime"));
     }
 }

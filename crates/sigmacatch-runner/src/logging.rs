@@ -5,18 +5,10 @@
 //! - **stderr**: human-readable format (level + message), info level by default
 //! - **file**: structured format (module, file, line), configurable level
 //!
-//! # Example
-//!
-//! ```rust,no_run
-//! use sigmacatch_logger::init;
-//! use sigmacatch_config::Config;
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let config = Config::default();
-//! let _guard = init(&config, false); // verbose = false
-//! # Ok(())
-//! # }
-//! ```
+//! Lives in `sigmacatch-runner` (AD-4): the shared run loop calls `init` with
+//! the parsed `Config` and the CLI `verbose` flag, and the `sigmacatch-evtx`
+//! one-shot binary does the same. The returned `WorkerGuard` must be kept
+//! alive for the lifetime of the process to flush the non-blocking file writer.
 
 use sigmacatch_config::Config;
 use std::fs;

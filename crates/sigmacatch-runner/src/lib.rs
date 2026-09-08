@@ -17,6 +17,9 @@
 //! # }
 //! ```
 
-pub use runner::{CollectorKind, run};
+pub use runner::{CollectorKind, bootstrap_repo_regression, run};
+
+pub mod cli;
+pub mod logging;
 
 mod runner;

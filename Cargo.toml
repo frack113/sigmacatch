@@ -11,9 +11,7 @@ members = [
     "crates/sigmacatch-detection",
     "crates/sigmacatch-types",
     "crates/sigmacatch-config",
-    "crates/sigmacatch-logger",
     "crates/input-windows-evtx",
-    "crates/sigmacatch-evtx-writer",
     "crates/sigmacatch-rule",
     "crates/sigmacatch-repo",
     "crates/sigmacatch-ebpf-common",
@@ -31,7 +29,7 @@ version = "0.5.4"
 edition = "2024"
 license = "MIT"
 
-# Quality contract (quality.md Q2.2): explicit tiers, single source of truth.
+# Quality contract: explicit lint tiers, single source of truth ([workspace.lints]).
 # Pedantic/nursery groups stay OUT — cherry-pick individual lints only, each
 # ratcheted to zero before being added here (ratchet protocol Q2.3).
 [workspace.dependencies]

@@ -15,7 +15,7 @@ evtx = "0.12"
 sigmacatch-types = { path = "../sigmacatch-types" }
 tokio = { version = "1", features = ["sync"] }
 
-# Quality contract (quality.md Q2.1): inherit workspace lint tiers.
+# Quality contract: inherit workspace lint tiers ([workspace.lints] in root Cargo.toml).
 [lints]
 workspace = true
 

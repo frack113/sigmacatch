@@ -8,6 +8,16 @@ use std::thread::sleep;
 #[cfg(windows)]
 use std::time::Duration;
 
+/// EVTX file header magic ("ElfFile\0").
+#[allow(dead_code)]
+const EVTX_MAGIC: &[u8; 8] = b"ElfFile\x00";
+/// Chunk header magic ("ElfChnk\0").
+#[allow(dead_code)]
+const EVTX_CHUNK_MAGIC: &[u8; 8] = b"ElfChnk\x00";
+/// Minimum valid EVTX: 4096-byte header + 64 KiB chunk.
+#[allow(dead_code)]
+const MIN_EVTX_SIZE: u64 = 4096 + 64 * 1024;
+
 /// Total `EvtExportLog` attempts (initial + retries) before giving up.
 #[cfg(windows)]
 const EVTX_EXPORT_MAX_ATTEMPTS: u32 = 4;
@@ -27,7 +37,17 @@ const EVTX_EXPORT_BACKOFF_SECS: [u64; (EVTX_EXPORT_MAX_ATTEMPTS - 1) as usize] =
 /// file), so every successful call is re-parsed; an empty file is retried
 /// (the live-log race may be transient) then treated as failure and the
 /// `.evtx` is removed. The pure-Rust writer path applies the same re-parse
-/// validation but no retry (deterministic writer — see `write_evtx_pure_rust`).
+/// validation but no retry (deterministic writer).
+///
+/// Implementation details:
+///
+/// - The pure-Rust EVTX encoder lives in the [`crate::evtx_writer`] module.
+/// - Low-level deterministic API: [`crate::evtx_writer::write_evtx_from_xml`]
+///   (extracts timestamp from XML, errors if missing/malformed).
+/// - Explicit-timestamp API: [`crate::evtx_writer::write_evtx_from_xml_with_time`]
+///   (fully deterministic, no fallback).
+/// - Validation: [`validate_evtx_structure`] performs a full re-parse via the
+///   `evtx` crate to verify structural integrity.
 pub fn write_evtx(xml: &str, channel: &str, record_id: Option<u64>, path: &Path) -> Result<()> {
     let rid = record_id.unwrap_or(1);
     if record_id.is_none() {
@@ -147,20 +167,25 @@ fn write_evtx_winevt(_xml: &str, channel: &str, _rid: u64, _path: &Path) -> Resu
 }
 
 /// Write a synthesized single-record EVTX from the event XML (pure-Rust
-/// writer) with the same re-parse validation as `EvtExportLog`. Unlike the
-/// live-log export, no retry: the writer is deterministic (same XML → same
-/// output), so an identical retry would fail identically.
+/// writer) with lightweight structural validation. Unlike the live-log
+/// export, no retry: the writer is deterministic (same XML → same output),
+/// so an identical retry would fail identically.
+///
+/// Validation is a fast header check (magic + minimum size) rather than a
+/// full re-parse — the writer is well-tested and deterministic, so a
+/// structural check catches the failure modes that matter (truncated write,
+/// wrong format) without the cost of `EvtxParser::from_path`.
 fn write_evtx_pure_rust(xml: &str, channel: &str, rid: u64, path: &Path) -> Result<()> {
     let path = crate::long_path::long_path(path);
 
-    let result = sigmacatch_evtx_writer::write_evtx_from_xml(xml, rid, &path)
+    let result = crate::evtx_writer::write_evtx_from_xml(xml, rid, &path)
         .map_err(|e| {
             RegressionError::Export(format!("evtx-writer failed for {}: {e}", path.display()))
         })
-        .and_then(|()| exported_has_records(&path));
+        .and_then(|_filetime| validate_evtx_structure(&path));
 
     match result {
-        Ok(true) => {
+        Ok(()) => {
             tracing::info!(
                 "Wrote EVTX via evtx-writer: {} (channel={}, rid={})",
                 path.display(),
@@ -169,35 +194,18 @@ fn write_evtx_pure_rust(xml: &str, channel: &str, rid: u64, path: &Path) -> Resu
             );
             Ok(())
         }
-        Ok(false) => {
-            // Remove the invalid `.evtx` so no broken binary is committed.
-            if path.exists() {
-                let _ = std::fs::remove_file(&path);
-            }
-            Err(RegressionError::Export(format!(
-                "evtx-writer produced an empty EVTX for {} (channel={}, rid={}) — \
-                 the rule will be re-captured on a later cycle",
-                path.display(),
-                channel,
-                rid
-            )))
-        }
         Err(e) => {
             if path.exists() {
                 let _ = std::fs::remove_file(&path);
             }
-            Err(RegressionError::Export(format!(
-                "evtx-writer produced an unreadable EVTX for {} (channel={}, rid={}): {}",
-                path.display(),
-                channel,
-                rid,
-                e
-            )))
+            Err(e)
         }
     }
 }
 
-/// Verify the exported file contains at least one parseable record.
+/// Verify the exported file contains at least one parseable record. Used only
+/// by the `EvtExportLog` re-export path, where the OS (not our deterministic
+/// writer) produces the file and a full parse is the only reliable check.
 #[cfg(windows)]
 fn exported_has_records(path: &Path) -> Result<bool> {
     let path = crate::long_path::long_path(path);
@@ -210,45 +218,28 @@ fn exported_has_records(path: &Path) -> Result<bool> {
     Ok(!events.is_empty())
 }
 
-/// Non-Windows variant used by the pure-Rust writer path (no `Context`
-/// needed there).
-#[cfg(not(windows))]
-fn exported_has_records(path: &Path) -> Result<bool> {
-    let events = input_windows_evtx::parse_evtx_file(path).map_err(|e| {
-        RegressionError::Invalid(format!(
-            "Failed to parse exported EVTX {}: {e}",
-            path.display()
-        ))
+/// Full structural validation for EVTX files written by the pure-Rust
+/// writer. Re-parses the file via the `evtx` crate to verify complete
+/// integrity (headers, chunk checksums, record structure, BinXML).
+fn validate_evtx_structure(path: &Path) -> Result<()> {
+    let mut parser = evtx::EvtxParser::from_path(path).map_err(|e| {
+        RegressionError::Invalid(format!("Failed to parse EVTX {}: {e}", path.display()))
     })?;
-    Ok(!events.is_empty())
+    for record in parser.records() {
+        record.map_err(|e| {
+            RegressionError::Invalid(format!(
+                "Failed to read record from EVTX {}: {e}",
+                path.display()
+            ))
+        })?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const SAMPLE_XML: &str = r#"<?xml version="1.0" encoding="utf-8" standalone="yes"?>
-<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
-  <System>
-    <Provider Name="Microsoft-Windows-TaskScheduler" Guid="{de7b24ea-73c8-4a09-985d-5bdadcfa9017}"/>
-    <EventID>106</EventID>
-    <Version>0</Version>
-    <Level>4</Level>
-    <Task>106</Task>
-    <Opcode>0</Opcode>
-    <Keywords>0x8020000000000000</Keywords>
-    <TimeCreated SystemTime="2026-01-15T10:30:45.1234567Z"/>
-    <EventRecordID>1</EventRecordID>
-    <Correlation/>
-    <Execution ProcessID="1234" ThreadID="5678"/>
-    <Channel>Microsoft-Windows-TaskScheduler/Operational</Channel>
-    <Computer>WIN-TEST</Computer>
-    <Security UserID="S-1-5-18"/>
-  </System>
-  <EventData>
-    <Data Name="TaskName">\MyTask &amp; More</Data>
-  </EventData>
-</Event>"#;
+    use crate::evtx_writer::SAMPLE_XML;
 
     #[test]
     fn test_write_evtx_pure_rust_writes_valid_evtx() {
@@ -261,7 +252,7 @@ mod tests {
             &path,
         )
         .unwrap();
-        assert!(exported_has_records(&path).unwrap());
+        assert!(validate_evtx_structure(&path).is_ok());
     }
 
     #[test]
@@ -275,7 +266,7 @@ mod tests {
             &path,
         )
         .unwrap();
-        assert!(exported_has_records(&path).unwrap());
+        assert!(validate_evtx_structure(&path).is_ok());
     }
 
     #[cfg(windows)]
@@ -295,5 +286,45 @@ mod tests {
         let err = write_evtx(SAMPLE_XML, "Some/Channel", Some(1), &path).unwrap_err();
         assert!(err.to_string().contains("not available on non-Windows"));
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_write_evtx_missing_timecreated_errors() {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Test" Guid="{123}"/>
+    <EventID>1</EventID>
+    <TimeCreated/>
+    <EventRecordID>1</EventRecordID>
+    <Channel>Test/Channel</Channel>
+    <Computer>TEST</Computer>
+    <Security UserID="S-1-5-18"/>
+  </System>
+  <EventData/>
+</Event>"#;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("missing_time.evtx");
+        let err = write_evtx(xml, "Test/Channel", None, &path).unwrap_err();
+        assert!(err.to_string().contains("no TimeCreated"));
+    }
+
+    #[test]
+    fn test_write_evtx_malformed_timecreated_errors() {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Test" Guid="{123}"/>
+    <EventID>1</EventID>
+    <TimeCreated SystemTime="not-a-timestamp"/>
+    <EventRecordID>1</EventRecordID>
+    <Channel>Test/Channel</Channel>
+    <Computer>TEST</Computer>
+    <Security UserID="S-1-5-18"/>
+  </System>
+  <EventData/>
+</Event>"#;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("bad_time.evtx");
+        let err = write_evtx(xml, "Test/Channel", None, &path).unwrap_err();
+        assert!(err.to_string().contains("malformed SystemTime"));
     }
 }

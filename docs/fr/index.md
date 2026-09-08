@@ -6,7 +6,7 @@ Outil headless qui capture de vrais événements Windows via l'**API Windows Eve
 compare à des règles [SigmaHQ](https://github.com/SigmaHQ/sigma) et produit des données de
 régression structurées prêtes pour les PR SigmaHQ.
 
-Le projet est un cargo workspace de 14 packages, plus 1 crate nightly exclu (`sigmacatch-ebpf`) ;
+Le projet est un cargo workspace de 13 packages, plus 1 crate nightly exclu (`sigmacatch-ebpf`) ;
 l'arborescence complète et les rôles de chaque crate sont détaillés dans
 [architecture.md](architecture.md).
 

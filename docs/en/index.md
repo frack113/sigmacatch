@@ -6,7 +6,7 @@ syslog** (central, authpriv and cron files) and **Sysmon-for-Linux**. It matches
 against [SigmaHQ](https://github.com/SigmaHQ/sigma) rules and outputs structured
 regression data ready for SigmaHQ PRs.
 
-The project is a cargo workspace of 14 packages, plus 1 excluded nightly crate (`sigmacatch-ebpf`);
+The project is a cargo workspace of 13 packages, plus 1 excluded nightly crate (`sigmacatch-ebpf`);
 the full tree and each crate's role are detailed in [architecture.md](architecture.md).
 
 ## Quick start

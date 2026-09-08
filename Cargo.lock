@@ -3107,19 +3107,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sigmacatch-evtx-writer"
-version = "0.5.4"
-dependencies = [
- "chrono",
- "crc32fast",
- "evtx",
- "input-windows-evtx",
- "roxmltree",
- "tempfile",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "sigmacatch-lnx"
 version = "0.5.4"
 dependencies = [
@@ -3130,14 +3117,11 @@ dependencies = [
  "hex",
  "linux-audit-parser",
  "regex",
- "serde",
  "serde_json",
  "sha2 0.11.0",
- "sigmacatch-config",
  "sigmacatch-detection",
  "sigmacatch-ebpf-common",
  "sigmacatch-regression",
- "sigmacatch-repo",
  "sigmacatch-rule",
  "sigmacatch-runner",
  "sigmacatch-types",
@@ -3148,24 +3132,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "sigmacatch-logger"
-version = "0.5.4"
-dependencies = [
- "sigmacatch-config",
- "thiserror 2.0.20",
- "tracing-appender",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "sigmacatch-regression"
 version = "0.5.4"
 dependencies = [
  "chrono",
+ "crc32fast",
+ "evtx",
  "input-windows-evtx",
+ "roxmltree",
  "serde",
  "serde_json",
- "sigmacatch-evtx-writer",
  "sigmacatch-types",
  "tempfile",
  "thiserror 2.0.20",
@@ -3219,15 +3195,19 @@ version = "0.5.4"
 dependencies = [
  "anyhow",
  "chrono",
+ "serde",
+ "serde_json",
  "sigmacatch-config",
  "sigmacatch-detection",
- "sigmacatch-logger",
  "sigmacatch-regression",
  "sigmacatch-repo",
  "sigmacatch-rule",
  "sigmacatch-types",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
  "uuid",
  "windows",
 ]
@@ -3252,24 +3232,18 @@ version = "0.5.4"
 dependencies = [
  "anyhow",
  "async-trait",
- "chrono",
  "clap",
  "ctrlc",
  "input-windows-evtx",
- "serde",
- "serde_json",
  "sigmacatch-config",
  "sigmacatch-detection",
- "sigmacatch-logger",
  "sigmacatch-regression",
- "sigmacatch-repo",
  "sigmacatch-rule",
  "sigmacatch-runner",
  "sigmacatch-types",
  "tempfile",
  "tokio",
  "tracing",
- "uuid",
  "walkdir",
  "windows",
 ]
