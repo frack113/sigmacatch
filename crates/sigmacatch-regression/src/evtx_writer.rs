@@ -166,9 +166,9 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
     let hour = u32::from(read_u16(11)?);
     let minute = u32::from(read_u16(14)?);
     let second = u32::from(read_u16(17)?);
-    if !(1..=12).contains(&month) || hour > 23 || minute > 59 || second > 60 {
+    if !(1..=12).contains(&month) || hour > 23 || minute > 59 || second > 59 {
         return Err(WriterError::Invalid(format!(
-            "malformed SystemTime: {system_time}"
+            "malformed SystemTime: {system_time} (leap second not supported)"
         )));
     }
     let max_day = match month {
@@ -206,9 +206,11 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
 
     let mut offset_secs: i64 = 0;
     let tz_start = bytes.iter().position(|&b| b == b'T').unwrap_or(bytes.len());
+    let mut tz_end = tz_start;
     for (i, &b) in bytes[tz_start..].iter().enumerate() {
         let i = i + tz_start;
         if b == b'Z' || b == b'z' {
+            tz_end = i + 1;
             break;
         }
         if b == b'+' || b == b'-' {
@@ -228,8 +230,14 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
             if b == b'-' {
                 offset_secs = -offset_secs;
             }
+            tz_end = i + 6;
             break;
         }
+    }
+    if tz_end != bytes.len() {
+        return Err(WriterError::Invalid(format!(
+            "trailing garbage after timezone in SystemTime: {system_time}"
+        )));
     }
 
     // Days since 1970-01-01 (Howard Hinnant's algorithm), then UNIX seconds,
@@ -630,6 +638,20 @@ mod tests {
         assert!(system_time_to_filetime("202A-01-01T00:00:00Z").is_err());
         assert!(system_time_to_filetime("2026-13-01T00:00:00Z").is_err());
         assert!(system_time_to_filetime("2026-01-01T25:00:00Z").is_err());
+    }
+
+    #[test]
+    fn leap_second_rejected() {
+        assert!(system_time_to_filetime("2026-01-01T00:00:60Z").is_err());
+        assert!(system_time_to_filetime("2026-12-31T23:59:60Z").is_err());
+        assert!(system_time_to_filetime("2026-01-01T00:00:60.0000000Z").is_err());
+    }
+
+    #[test]
+    fn timezone_trailing_garbage_rejected() {
+        assert!(system_time_to_filetime("2026-01-01T00:00:00Zextra").is_err());
+        assert!(system_time_to_filetime("2026-01-01T00:00:00+02:00extra").is_err());
+        assert!(system_time_to_filetime("2026-01-01T00:00:00-05:00trash").is_err());
     }
 
     #[test]
