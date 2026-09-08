@@ -1184,6 +1184,7 @@ pub trait EventProducer: Send {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_parse_sysmon_process() {
@@ -2087,6 +2088,69 @@ mod tests {
         assert!(
             !system.contains_key("#attributes"),
             "inherited namespace must not be re-emitted on children"
+        );
+    }
+
+    /// Every channel listed in `SERVICE_CHANNELS` must exist in
+    /// `CHANNEL_TO_SERVICE` and be mapped to the same service (BWD, AD-2).
+    #[test]
+    fn test_service_channels_bwd_consistency() {
+        let mut channel_to_service: HashMap<&str, &str> = HashMap::new();
+        for (channel, service) in CHANNEL_TO_SERVICE.entries() {
+            channel_to_service.insert(*channel, *service);
+        }
+
+        let mut failing = Vec::new();
+        for (service, channels) in SERVICE_CHANNELS.entries() {
+            for channel in *channels {
+                match channel_to_service.get(channel) {
+                    None => failing.push(format!(
+                        "service '{}': channel '{}' absent from CHANNEL_TO_SERVICE",
+                        service, channel
+                    )),
+                    Some(mapped) if mapped != service => failing.push(format!(
+                        "service '{}': channel '{}' maps to '{}' in CHANNEL_TO_SERVICE",
+                        service, channel, mapped
+                    )),
+                    _ => {}
+                }
+            }
+        }
+        assert!(failing.is_empty(), "BWD mismatch:\n{}", failing.join("\n"));
+    }
+
+    /// Every channel in `CHANNEL_TO_SERVICE` must be resolvable by
+    /// `SERVICE_CHANNELS` (a rule subscribed to the service must reach the
+    /// channel). The single allowed FWD asymmetry is `Linux-Sysmon/Operational`
+    /// (Windows-only resolution scope, AD-2).
+    #[test]
+    fn test_channel_to_service_fwd_resolvable() {
+        let mut service_channels: HashMap<&str, Vec<&str>> = HashMap::new();
+        for (service, channels) in SERVICE_CHANNELS.entries() {
+            service_channels.insert(*service, channels.to_vec());
+        }
+
+        let mut failing = Vec::new();
+        for (channel, service) in CHANNEL_TO_SERVICE.entries() {
+            if *channel == "Linux-Sysmon/Operational" {
+                continue;
+            }
+            match service_channels.get(service) {
+                None => failing.push(format!(
+                    "channel '{}' -> service '{}' unknown to SERVICE_CHANNELS",
+                    channel, service
+                )),
+                Some(channels) if !channels.contains(channel) => failing.push(format!(
+                    "channel '{}' -> SERVICE_CHANNELS['{}'] does not list it",
+                    channel, service
+                )),
+                _ => {}
+            }
+        }
+        assert!(
+            failing.is_empty(),
+            "FWD mismatch (only allowed: Linux-Sysmon/Operational):\n{}",
+            failing.join("\n")
         );
     }
 }
