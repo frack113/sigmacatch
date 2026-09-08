@@ -10,12 +10,10 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use chrono::Local;
 use clap::Parser;
 use sigmacatch_config::Config;
 use sigmacatch_detection::DetectionEngine;
-use sigmacatch_regression::{DataFormat, SigmahqRegression, clean_partial_artifacts};
-use sigmacatch_repo::SigmaRepo;
+use sigmacatch_regression::{DataFormat, clean_partial_artifacts};
 use sigmacatch_rule::SigmahqRules;
 use sigmacatch_runner::logging::init as init_logger;
 use sigmacatch_types::{Alert, Event};
@@ -90,51 +88,9 @@ async fn run(args: Args, config: Config) -> Result<()> {
 
     info!("Loaded config: author={}", config.git.author);
 
-    // Initialize Sigma repository (single-run, not live)
-    let fork_url = format!("https://github.com/{}/sigma", config.git.author);
-    let mut repo = SigmaRepo::new();
-    repo.set_repo_path(sigma_repo_path.clone());
-    repo.set_info_user(&config.git.author, &config.git.email);
-
-    match config.git.transport {
-        sigmacatch_repo::GitTransport::Ssh => {
-            repo.set_info_ssh(config.git.ssh_key_path.as_deref());
-        }
-        sigmacatch_repo::GitTransport::Http => {
-            repo.set_info_http(&config.git.github_token);
-        }
-    }
-
-    if matches!(config.git.transport, sigmacatch_repo::GitTransport::Ssh)
-        && config.git.needs_network()
-        && let Err(e) = sigmacatch_repo::ensure_ssh_host_config(config.git.ssh_key_path.as_deref())
-    {
-        warn!("Failed to write SSH host-config: {e}");
-    }
-
-    if let Some(ref key_path) = config.git.ssh_key_path {
-        repo.set_signing_key(Some(std::path::PathBuf::from(key_path)));
-    }
-
-    repo.set_git_operations(config.git.is_offline(), config.git.is_contrib());
-
-    if config.git.is_offline() {
-        info!("Offline mode: all git operations skipped — on-disk files used as-is");
-    }
-    if config.git.is_contrib() {
-        info!("Contrib mode: push enabled — will push to remote fork");
-    } else {
-        info!("No-contrib mode: push disabled — commits will be local only");
-    }
-
-    // set_remote_url calls init() internally (clone or pull)
-    repo.set_remote_url(fork_url).await?;
-
-    // Set working branch (date-based, same as runner)
-    let branch_name = format!("sigmacatch/{}", Local::now().format("%Y%m%d"));
-    info!("Branch name: {branch_name}");
-    repo.set_working_branch(branch_name.clone())?;
-    repo.check_remote_working_branch()?;
+    // Initialize Sigma repository and regression handler (single bootstrap, AD-6)
+    let (repo, _branch_name, mut regression) =
+        sigmacatch_runner::bootstrap_repo_regression(&config, &sigma_repo_path).await?;
 
     // Load Sigma rules with filters
     let rules = SigmahqRules::new_from_path(&sigma_repo_path)?;
@@ -165,12 +121,11 @@ async fn run(args: Args, config: Config) -> Result<()> {
     let mut engine = DetectionEngine::new(&rules)?;
     info!("Detection engine created");
 
-    // Create regression handler
+    // Configure regression handler (created by bootstrap)
     let author = config.git.author.trim();
     if author.is_empty() {
         anyhow::bail!("config.git.author is empty; set your GitHub username in config.yaml");
     }
-    let mut regression = SigmahqRegression::new_from_path(&output_path)?;
     clean_partial_artifacts(&output_path);
     regression.set_author(author.to_string());
     regression.set_format(DataFormat::Evtx);

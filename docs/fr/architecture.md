@@ -34,7 +34,7 @@ sigmacatch/
     │   └── src/main.rs           # 6 tracepoints : execve/exec/exit/connect/openat+exit/sendto+sendmsg
     ├── sigmacatch-ebpf-common/   # Types no_std partagés (ring buffer) : ExecEvent, NetEvent, ...
     ├── sigmacatch-runner/        # Pipeline partagé aux crates binaires :
-    │   ├── src/runner.rs         #   run<C: CollectorKind> + trait CollectorKind
+    │   ├── src/runner.rs         #   run<C: CollectorKind> + trait CollectorKind + bootstrap_repo_regression (branche sigmacatch/<date>, clone/pull)
     │   ├── src/cli.rs            #   diagnostics CLI partagés (check-filter, list-rules)
     │   └── src/logging.rs        #   init tracing à deux couches (stderr error/info, fichier rolling)
     ├── sigmacatch-config/        # Config YAML + parsing CLI + custom_channels.yaml

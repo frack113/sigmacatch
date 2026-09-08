@@ -73,6 +73,70 @@ struct Pipeline {
     regression: SigmahqRegression,
 }
 
+/// Bootstrap the sigma git repository and the shared regression handler
+/// (`sigmacatch/<date>` working branch, remote checks, repo + regression state).
+///
+/// Single source of truth for the bootstrap sequence shared by the continuous
+/// runner (`run`) and the one-shot `sigmacatch-evtx` binary (AD-6). Returns the
+/// configured repo, the derived branch name and the loaded regression handler;
+/// the caller still applies its own regression configuration (author, format,
+/// skip handling, …) and owns the resolved `sigma_repo_path`.
+pub async fn bootstrap_repo_regression(
+    config: &Config,
+    sigma_repo_path: &Path,
+) -> Result<(SigmaRepo, String, SigmahqRegression)> {
+    let fork_url = format!("https://github.com/{}/sigma", config.git.author);
+    let mut sigma_repo = SigmaRepo::new();
+    sigma_repo.set_repo_path(sigma_repo_path.to_path_buf());
+    sigma_repo.set_info_user(&config.git.author, &config.git.email);
+
+    match config.git.transport {
+        sigmacatch_config::GitTransport::Http => sigma_repo.set_info_http(&config.git.github_token),
+        sigmacatch_config::GitTransport::Ssh => {
+            sigma_repo.set_info_ssh(config.git.ssh_key_path.as_deref())
+        }
+    };
+
+    if matches!(config.git.transport, sigmacatch_config::GitTransport::Ssh)
+        && config.git.needs_network()
+        && let Err(e) = sigmacatch_repo::ensure_ssh_host_config(config.git.ssh_key_path.as_deref())
+    {
+        warn!("Failed to write SSH host-config: {e}");
+    }
+
+    if let Some(ref key_path) = config.git.ssh_key_path {
+        sigma_repo.set_signing_key(Some(std::path::PathBuf::from(key_path)));
+    }
+
+    sigma_repo.set_git_operations(config.git.is_offline(), config.git.is_contrib());
+
+    if config.git.is_offline() {
+        info!(
+            "Offline mode: all git operations skipped — on-disk files used as-is (no commit/push)"
+        );
+    }
+    if config.git.is_contrib() {
+        info!("Contrib mode: push enabled — will push to remote fork");
+    } else {
+        info!("No-contrib mode: push disabled — commits will be local only");
+    }
+
+    let branch_name = format!("sigmacatch/{}", chrono::Local::now().format("%Y%m%d"));
+    info!("Branch name: {branch_name}");
+
+    sigma_repo.set_remote_url(fork_url).await?;
+    sigma_repo.set_working_branch(branch_name.clone())?;
+    sigma_repo.check_remote_working_branch()?;
+
+    let regression =
+        match SigmahqRegression::new_from_path(&sigma_repo_path.join("regression_data")) {
+            Ok(r) => r,
+            Err(e) => anyhow::bail!("Failed to load regression data: {e}"),
+        };
+
+    Ok((sigma_repo, branch_name, regression))
+}
+
 /// Run the sigmacatch pipeline with the given collector.
 pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     let cli = parse_args();
@@ -113,57 +177,12 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
         config.git.email
     );
 
-    let branch_name = format!("sigmacatch/{}", chrono::Local::now().format("%Y%m%d"));
-    info!("Branch name: {branch_name}");
+    config.ensure_dirs()?;
+    let sigma_repo_path = Path::new(&config.git.sigma_repo_path).to_path_buf();
+    let (sigma_repo, branch_name, mut regression) =
+        bootstrap_repo_regression(&config, &sigma_repo_path).await?;
     let push_branch = branch_name.clone();
 
-    config.ensure_dirs()?;
-    let fork_url = format!("https://github.com/{}/sigma", config.git.author);
-    let sigma_repo_path = Path::new(&config.git.sigma_repo_path).to_path_buf();
-    let mut sigma_repo = SigmaRepo::new();
-    sigma_repo.set_repo_path(sigma_repo_path.clone());
-    sigma_repo.set_info_user(&config.git.author, &config.git.email);
-
-    match config.git.transport {
-        sigmacatch_config::GitTransport::Http => sigma_repo.set_info_http(&config.git.github_token),
-        sigmacatch_config::GitTransport::Ssh => {
-            sigma_repo.set_info_ssh(config.git.ssh_key_path.as_deref())
-        }
-    };
-
-    if matches!(config.git.transport, sigmacatch_config::GitTransport::Ssh)
-        && config.git.needs_network()
-        && let Err(e) = sigmacatch_repo::ensure_ssh_host_config(config.git.ssh_key_path.as_deref())
-    {
-        warn!("Failed to write SSH host-config: {e}");
-    }
-
-    if let Some(ref key_path) = config.git.ssh_key_path {
-        sigma_repo.set_signing_key(Some(std::path::PathBuf::from(key_path)));
-    }
-
-    sigma_repo.set_git_operations(config.git.is_offline(), config.git.is_contrib());
-
-    if config.git.is_offline() {
-        info!(
-            "Offline mode: all git operations skipped — on-disk files used as-is (no commit/push)"
-        );
-    }
-    if config.git.is_contrib() {
-        info!("Contrib mode: push enabled — will push to remote fork");
-    } else {
-        info!("No-contrib mode: push disabled — commits will be local only");
-    }
-
-    sigma_repo.set_remote_url(fork_url.clone()).await?;
-    sigma_repo.set_working_branch(branch_name.clone())?;
-    sigma_repo.check_remote_working_branch()?;
-
-    let mut regression =
-        match SigmahqRegression::new_from_path(&sigma_repo_path.join("regression_data")) {
-            Ok(r) => r,
-            Err(e) => anyhow::bail!("Failed to load regression data: {e}"),
-        };
     regression.set_author(config.git.author.clone());
     regression.set_max_failed_cycles(config.regression.max_failed_cycles);
     regression.set_format(kind.regression_format());
