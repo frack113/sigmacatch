@@ -69,18 +69,20 @@ pub(crate) enum WriterError {
 pub(crate) type Result<T> = std::result::Result<T, WriterError>;
 
 /// Write a single-record EVTX file from event XML, using the timestamp
-/// embedded in the XML (fallback: current time).
-pub(crate) fn write_evtx_from_xml(xml: &str, record_id: u64, path: &Path) -> Result<()> {
+/// embedded in the XML. Returns the extracted FILETIME on success.
+/// Errors if `TimeCreated` is missing or malformed (no fallback to current time).
+pub(crate) fn write_evtx_from_xml(xml: &str, record_id: u64, path: &Path) -> Result<u64> {
     let doc = Document::parse(xml)
         .map_err(|e| WriterError::Invalid(format!("Failed to parse Winevt XML: {e}")))?;
-    let filetime = filetime_from_doc(&doc).unwrap_or_else(|_| now_filetime());
-    write_evtx_from_xml_with_time_inner(&doc, record_id, filetime, path)
+    let filetime = filetime_from_doc(&doc)?;
+    write_evtx_from_xml_with_time_inner(&doc, record_id, filetime, path)?;
+    Ok(filetime)
 }
 
 /// Write a single-record EVTX file with an explicit record header timestamp
-/// (100ns ticks since 1601-01-01).
-#[cfg(test)]
-fn write_evtx_from_xml_with_time(
+/// (100ns ticks since 1601-01-01). Deterministic: no fallback to current time.
+#[allow(dead_code)]
+pub(crate) fn write_evtx_from_xml_with_time(
     xml: &str,
     record_id: u64,
     filetime: u64,
@@ -250,14 +252,6 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
         )));
     }
     Ok(filetime as u64)
-}
-
-fn now_filetime() -> u64 {
-    use chrono::Utc;
-    let now = Utc::now();
-    let unix_ns =
-        i128::from(now.timestamp()) * 1_000_000_000 + i128::from(now.timestamp_subsec_nanos());
-    ((unix_ns + UNIX_TO_FILETIME_NS).div_euclid(100)) as u64
 }
 
 fn build_file_header(record_id: u64) -> [u8; FILE_HEADER_SIZE] {
@@ -743,5 +737,47 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn write_evtx_from_xml_missing_timecreated_errors() {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Test" Guid="{123}"/>
+    <EventID>1</EventID>
+    <TimeCreated/>
+    <EventRecordID>1</EventRecordID>
+    <Channel>Test/Channel</Channel>
+    <Computer>TEST</Computer>
+    <Security UserID="S-1-5-18"/>
+  </System>
+  <EventData/>
+</Event>"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing_time.evtx");
+        let err = write_evtx_from_xml(xml, 1, &path).unwrap_err();
+        assert!(matches!(err, WriterError::Invalid(_)));
+        assert!(err.to_string().contains("no TimeCreated"));
+    }
+
+    #[test]
+    fn write_evtx_from_xml_malformed_timecreated_errors() {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Test" Guid="{123}"/>
+    <EventID>1</EventID>
+    <TimeCreated SystemTime="not-a-timestamp"/>
+    <EventRecordID>1</EventRecordID>
+    <Channel>Test/Channel</Channel>
+    <Computer>TEST</Computer>
+    <Security UserID="S-1-5-18"/>
+  </System>
+  <EventData/>
+</Event>"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad_time.evtx");
+        let err = write_evtx_from_xml(xml, 1, &path).unwrap_err();
+        assert!(matches!(err, WriterError::Invalid(_)));
+        assert!(err.to_string().contains("malformed SystemTime"));
     }
 }

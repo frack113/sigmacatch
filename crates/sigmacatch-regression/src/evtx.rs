@@ -169,7 +169,7 @@ fn write_evtx_pure_rust(xml: &str, channel: &str, rid: u64, path: &Path) -> Resu
         .map_err(|e| {
             RegressionError::Export(format!("evtx-writer failed for {}: {e}", path.display()))
         })
-        .and_then(|()| validate_evtx_structure(&path));
+        .and_then(|_filetime| validate_evtx_structure(&path));
 
     match result {
         Ok(()) => {
@@ -297,5 +297,45 @@ mod tests {
         let err = write_evtx(SAMPLE_XML, "Some/Channel", Some(1), &path).unwrap_err();
         assert!(err.to_string().contains("not available on non-Windows"));
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_write_evtx_missing_timecreated_errors() {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Test" Guid="{123}"/>
+    <EventID>1</EventID>
+    <TimeCreated/>
+    <EventRecordID>1</EventRecordID>
+    <Channel>Test/Channel</Channel>
+    <Computer>TEST</Computer>
+    <Security UserID="S-1-5-18"/>
+  </System>
+  <EventData/>
+</Event>"#;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("missing_time.evtx");
+        let err = write_evtx(xml, "Test/Channel", None, &path).unwrap_err();
+        assert!(err.to_string().contains("no TimeCreated"));
+    }
+
+    #[test]
+    fn test_write_evtx_malformed_timecreated_errors() {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Test" Guid="{123}"/>
+    <EventID>1</EventID>
+    <TimeCreated SystemTime="not-a-timestamp"/>
+    <EventRecordID>1</EventRecordID>
+    <Channel>Test/Channel</Channel>
+    <Computer>TEST</Computer>
+    <Security UserID="S-1-5-18"/>
+  </System>
+  <EventData/>
+</Event>"#;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("bad_time.evtx");
+        let err = write_evtx(xml, "Test/Channel", None, &path).unwrap_err();
+        assert!(err.to_string().contains("malformed SystemTime"));
     }
 }
