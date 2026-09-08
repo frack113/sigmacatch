@@ -50,16 +50,16 @@ const TEMPLATE_GUID: [u8; 16] = [
 /// `evtx` crate and Velocidex parser take their "inline definition" path.
 const TEMPLATE_DEF_DELTA: u32 = 14;
 
-/// Write a single-record EVTX file containing the given Winevt XML.
-///
-/// The record header timestamp is derived from the event's `TimeCreated`
-/// element (current time when absent or malformed).
+/// Epoch delta: 100-ns intervals between 1601-01-01 and 1970-01-01.
+const UNIX_TO_FILETIME_NS: i128 = 116_444_736_000_000_000;
+
+/// Sample Winevt XML event (includes TaskInstanceId). Sourced from fixture.
+#[cfg(test)]
+pub(crate) const SAMPLE_XML: &str = include_str!("../tests/fixtures/sample.xml");
+
 /// Errors produced while writing EVTX files.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum WriterError {
-    /// Filesystem failure.
-    #[error("filesystem error: {0}")]
-    Io(#[from] std::io::Error),
     /// Input XML or parameters violate the EVTX writer contract.
     #[error("{0}")]
     Invalid(String),
@@ -243,7 +243,6 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
     let unix_secs = days * 86400 + hour as i64 * 3600 + minute as i64 * 60 + second as i64;
     let unix_ns = unix_secs as i128 * 1_000_000_000 + i128::from(fraction_ns)
         - offset_secs as i128 * 1_000_000_000;
-    const UNIX_TO_FILETIME_NS: i128 = 116_444_736_000_000_000;
     let filetime = (unix_ns + UNIX_TO_FILETIME_NS).div_euclid(100);
     if filetime < 0 {
         return Err(WriterError::Invalid(format!(
@@ -258,7 +257,6 @@ fn now_filetime() -> u64 {
     let now = Utc::now();
     let unix_ns =
         i128::from(now.timestamp()) * 1_000_000_000 + i128::from(now.timestamp_subsec_nanos());
-    const UNIX_TO_FILETIME_NS: i128 = 116_444_736_000_000_000;
     ((unix_ns + UNIX_TO_FILETIME_NS).div_euclid(100)) as u64
 }
 
@@ -530,30 +528,6 @@ fn put_u64(buf: &mut [u8], offset: usize, value: u64) {
 mod tests {
     use super::*;
 
-    const SAMPLE_XML: &str = r#"<?xml version="1.0" encoding="utf-8" standalone="yes"?>
-<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
-  <System>
-    <Provider Name="Microsoft-Windows-TaskScheduler" Guid="{de7b24ea-73c8-4a09-985d-5bdadcfa9017}"/>
-    <EventID>106</EventID>
-    <Version>0</Version>
-    <Level>4</Level>
-    <Task>106</Task>
-    <Opcode>0</Opcode>
-    <Keywords>0x8020000000000000</Keywords>
-    <TimeCreated SystemTime="2026-01-15T10:30:45.1234567Z"/>
-    <EventRecordID>1</EventRecordID>
-    <Correlation/>
-    <Execution ProcessID="1234" ThreadID="5678"/>
-    <Channel>Microsoft-Windows-TaskScheduler/Operational</Channel>
-    <Computer>WIN-TEST</Computer>
-    <Security UserID="S-1-5-18"/>
-  </System>
-  <EventData>
-    <Data Name="TaskName">\MyTask &amp; More</Data>
-    <Data Name="TaskInstanceId">abc-123</Data>
-  </EventData>
-</Event>"#;
-
     #[test]
     fn filetime_parses_time_created() {
         let ft = filetime_from_event_xml(SAMPLE_XML).unwrap();
@@ -575,8 +549,7 @@ mod tests {
             .unwrap()
             .timestamp_nanos_opt()
             .unwrap() as i128;
-        const UNIX_TO_FILETIME_NS: i128 = 116_444_736_000_000_000;
-        ((unix + i128::from(ns) + UNIX_TO_FILETIME_NS).div_euclid(100)) as u64
+        ((unix + i128::from(ns) + super::UNIX_TO_FILETIME_NS).div_euclid(100)) as u64
     }
 
     #[test]
