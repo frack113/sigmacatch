@@ -37,7 +37,17 @@ const EVTX_EXPORT_BACKOFF_SECS: [u64; (EVTX_EXPORT_MAX_ATTEMPTS - 1) as usize] =
 /// file), so every successful call is re-parsed; an empty file is retried
 /// (the live-log race may be transient) then treated as failure and the
 /// `.evtx` is removed. The pure-Rust writer path applies the same re-parse
-/// validation but no retry (deterministic writer — see `write_evtx_pure_rust`).
+/// validation but no retry (deterministic writer).
+///
+/// Implementation details:
+///
+/// - The pure-Rust EVTX encoder lives in the [`crate::evtx_writer`] module.
+/// - Low-level deterministic API: [`crate::evtx_writer::write_evtx_from_xml`]
+///   (extracts timestamp from XML, errors if missing/malformed).
+/// - Explicit-timestamp API: [`crate::evtx_writer::write_evtx_from_xml_with_time`]
+///   (fully deterministic, no fallback).
+/// - Validation: [`validate_evtx_structure`] performs a full re-parse via the
+///   `evtx` crate to verify structural integrity.
 pub fn write_evtx(xml: &str, channel: &str, record_id: Option<u64>, path: &Path) -> Result<()> {
     let rid = record_id.unwrap_or(1);
     if record_id.is_none() {
