@@ -3198,6 +3198,8 @@ version = "0.5.4"
 dependencies = [
  "anyhow",
  "chrono",
+ "serde",
+ "serde_json",
  "sigmacatch-config",
  "sigmacatch-detection",
  "sigmacatch-regression",

@@ -36,6 +36,7 @@ sigmacatch/
     ├── sigmacatch-runner/        # Pipeline shared by both binary crates:
     │   ├── src/runner.rs         #   run<C: CollectorKind> + CollectorKind trait (config + repo init +
     │   │                         #   event loop + process_and_generate + commit/push)
+    │   ├── src/cli.rs            #   shared diagnostic CLI (check-filter, list-rules)
     │   └── src/logging.rs        #   two-layer tracing init (stderr `error`/`info`, daily rolling file)
     ├── sigmacatch-config/        # Config YAML + CLI parsing + custom_channels.yaml
     ├── sigmacatch-rule/          # SigmahqRules: rule loading (parse_sigma_yaml), filter, dedupe, remove_id
@@ -127,7 +128,7 @@ Because it is pure Rust it also builds and runs on Linux.
 ## Crate dependency graph
 
 ```text
-sigmacatch-win ──┬── sigmacatch-runner      (run<C: CollectorKind>, shared pipeline + tracing init)
+sigmacatch-win ──┬── sigmacatch-runner      (run<C: CollectorKind>, shared pipeline + tracing init + cli module)
 sigmacatch-lnx ──┤   ├── sigmacatch-config      (Config, CliArgs)
                  │   ├── sigmacatch-rule        (SigmahqRules: load/filter/remove_id)
                  │   ├── sigmacatch-detection   (DetectionEngine: pipelines + bloom + LogSourceExtractor + resolve_channels)

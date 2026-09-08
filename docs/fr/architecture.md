@@ -34,7 +34,8 @@ sigmacatch/
     │   └── src/main.rs           # 6 tracepoints : execve/exec/exit/connect/openat+exit/sendto+sendmsg
     ├── sigmacatch-ebpf-common/   # Types no_std partagés (ring buffer) : ExecEvent, NetEvent, ...
     ├── sigmacatch-runner/        # Pipeline partagé aux crates binaires :
-    │   └── src/runner.rs         #   run<C: CollectorKind> + trait CollectorKind
+    │   ├── src/runner.rs         #   run<C: CollectorKind> + trait CollectorKind
+    │   ├── src/cli.rs            #   diagnostics CLI partagés (check-filter, list-rules)
     │   └── src/logging.rs        #   init tracing à deux couches (stderr error/info, fichier rolling)
     ├── sigmacatch-config/        # Config YAML + parsing CLI + custom_channels.yaml
     ├── sigmacatch-rule/          # SigmahqRules : chargement de règles, filtre, dédupe, remove_id
@@ -126,7 +127,7 @@ tourne aussi sous Linux.
 ## Graphe de dépendances
 
 ```text
-sigmacatch-win ──┬── sigmacatch-runner      (run<C: CollectorKind>, pipeline partagé + init tracing)
+sigmacatch-win ──┬── sigmacatch-runner      (run<C: CollectorKind>, pipeline partagé + init tracing + module cli)
 sigmacatch-lnx ──┤   ├── sigmacatch-config      (Config, CliArgs)
                  │   ├── sigmacatch-rule        (SigmahqRules : load/filter/remove_id)
                  │   ├── sigmacatch-detection   (DetectionEngine : pipelines + bloom + LogSourceExtractor + resolve_channels)

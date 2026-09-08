@@ -19,6 +19,7 @@
 
 pub use runner::{CollectorKind, run};
 
+pub mod cli;
 pub mod logging;
 
 mod runner;
