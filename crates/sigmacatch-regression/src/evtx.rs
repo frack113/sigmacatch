@@ -9,10 +9,13 @@ use std::thread::sleep;
 use std::time::Duration;
 
 /// EVTX file header magic ("ElfFile\0").
+#[allow(dead_code)]
 const EVTX_MAGIC: &[u8; 8] = b"ElfFile\x00";
 /// Chunk header magic ("ElfChnk\0").
+#[allow(dead_code)]
 const EVTX_CHUNK_MAGIC: &[u8; 8] = b"ElfChnk\x00";
 /// Minimum valid EVTX: 4096-byte header + 64 KiB chunk.
+#[allow(dead_code)]
 const MIN_EVTX_SIZE: u64 = 4096 + 64 * 1024;
 
 /// Total `EvtExportLog` attempts (initial + retries) before giving up.
@@ -205,45 +208,21 @@ fn exported_has_records(path: &Path) -> Result<bool> {
     Ok(!events.is_empty())
 }
 
-/// Lightweight structural validation for EVTX files written by the pure-Rust
-/// writer. Checks file size, file header magic, and chunk header magic —
-/// enough to catch truncated writes or wrong format without a full re-parse.
+/// Full structural validation for EVTX files written by the pure-Rust
+/// writer. Re-parses the file via the `evtx` crate to verify complete
+/// integrity (headers, chunk checksums, record structure, BinXML).
 fn validate_evtx_structure(path: &Path) -> Result<()> {
-    let meta = std::fs::metadata(path).map_err(|e| {
-        RegressionError::Invalid(format!("Cannot stat EVTX {}: {e}", path.display()))
+    let mut parser = evtx::EvtxParser::from_path(path).map_err(|e| {
+        RegressionError::Invalid(format!("Failed to parse EVTX {}: {e}", path.display()))
     })?;
-
-    if meta.len() < MIN_EVTX_SIZE {
-        return Err(RegressionError::Invalid(format!(
-            "EVTX {} too small ({} bytes, expected >= {})",
-            path.display(),
-            meta.len(),
-            MIN_EVTX_SIZE
-        )));
-    }
-
-    let mut header = [0u8; 4096 + 8]; // file header + chunk magic
-    use std::io::Read;
-    std::fs::File::open(path)
-        .and_then(|mut f| f.read_exact(&mut header))
-        .map_err(|e| {
-            RegressionError::Invalid(format!("Cannot read EVTX {}: {e}", path.display()))
+    for record in parser.records() {
+        record.map_err(|e| {
+            RegressionError::Invalid(format!(
+                "Failed to read record from EVTX {}: {e}",
+                path.display()
+            ))
         })?;
-
-    if header[..8] != *EVTX_MAGIC {
-        return Err(RegressionError::Invalid(format!(
-            "EVTX {} has invalid file header magic",
-            path.display()
-        )));
     }
-
-    if header[4096..4096 + 8] != *EVTX_CHUNK_MAGIC {
-        return Err(RegressionError::Invalid(format!(
-            "EVTX {} has invalid chunk header magic",
-            path.display()
-        )));
-    }
-
     Ok(())
 }
 
