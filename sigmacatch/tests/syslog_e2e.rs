@@ -6,7 +6,7 @@
 //! self-contained.
 
 use sigmacatch_detection::DetectionEngine;
-use sigmacatch_lnx::syslog;
+use sigmacatch::syslog;
 use sigmacatch_rule::SigmahqRules;
 
 const SSHD_LINE: &[u8] =

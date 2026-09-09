@@ -12,7 +12,7 @@
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // The run function is the main entry point for all collectors.
-//! // See sigmacatch-win and sigmacatch-lnx binaries for implementation.
+//! // See the sigmacatch collector crate for implementation.
 //! # Ok(())
 //! # }
 //! ```

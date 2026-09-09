@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 //! Shared diagnostic CLI subcommands (`check-filter`, `list-rules`) used by the
-//! `sigmacatch-channel` and `sigmacatch-linux` binaries.
+//! single `sigmacatch` binary.
 //!
-//! The platform binaries only dispatch on `argv` (help texts and aliases) and
-//! delegate the actual logic here (AD-5). Everything is driven from the loaded
+//! The binary only dispatches on `argv` (help texts and aliases) and
+//! delegates the actual logic here (AD-5). Everything is driven from the loaded
 //! `config.yaml` in the current working directory.
 
 use std::collections::BTreeSet;

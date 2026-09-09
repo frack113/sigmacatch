@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[package]
+name = "sigmacatch"
+version.workspace = true
+edition.workspace = true
+description = "sigmacatch — Sigma regression collector (single binary, inputs via cargo features)"
+license.workspace = true
+build = "src/build.rs"
+
+# One binary. Cargo features select which inputs are compiled in:
+#   Windows: winevt (live Event Log), evtx (one-shot EVTX files)
+#   Linux:   auditd, builtin (system syslog), sysmon (Sysmon-for-Linux tail), ebpf (native probes)
+# At runtime, `--evtx <PATH>` selects the EVTX one-shot, `winevt` the live
+# collector (Windows), and the Linux inputs run in parallel.
+[features]
+default = ["winevt"]
+winevt = ["dep:async-trait", "dep:windows"]
+evtx = [] # cross-platform EVTX file processor (no Windows deps)
+auditd = ["dep:async-trait", "dep:linux-audit-parser"]
+builtin = ["dep:async-trait", "dep:regex"]
+sysmon = ["dep:async-trait", "builtin"] # Sysmon-for-Linux legacy tail
+ebpf = ["dep:async-trait", "dep:aya", "dep:sigmacatch-ebpf-common", "dep:sha2", "dep:hex"]
+
+[dependencies]
+sigmacatch-runner = { path = "../crates/sigmacatch-runner" }
+sigmacatch-detection = { path = "../crates/sigmacatch-detection" }
+sigmacatch-regression = { path = "../crates/sigmacatch-regression" }
+sigmacatch-rule = { path = "../crates/sigmacatch-rule" }
+sigmacatch-types = { path = "../crates/sigmacatch-types" }
+input-windows-evtx = { path = "../crates/input-windows-evtx" }
+sigmacatch-ebpf-common = { path = "../crates/sigmacatch-ebpf-common", optional = true }
+
+async-trait = { version = "0.1", optional = true }
+linux-audit-parser = { version = "0.2", optional = true }
+regex = { version = "1", optional = true }
+aya = { version = "0.14", optional = true }
+sha2 = { version = "0.11", optional = true }
+hex = { version = "0.4", optional = true }
+
+walkdir = "2"
+tokio = { version = "1", features = [
+  "rt",
+  "rt-multi-thread",
+  "macros",
+  "sync",
+  "time",
+  "signal",
+] }
+tracing = "0.1"
+anyhow = "1.0"
+serde_json = "1.0"
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", optional = true, features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_System_EventLog",
+] }
+
+# Integration tests: each requires its input features compiled in.
+[[test]]
+name = "auditd_collector"
+required-features = ["auditd", "builtin"]
+
+[[test]]
+name = "syslog_collector"
+required-features = ["builtin"]
+
+[[test]]
+name = "syslog_e2e"
+required-features = ["auditd", "builtin"]
+
+# End-to-end against the legacy Sysmon-for-Linux tail.
+[[test]]
+name = "sysmon_e2e"
+required-features = ["auditd", "builtin", "sysmon"]
+
+# Diagnostics eBPF-only (parses the embedded probe object).
+[[example]]
+name = "ebpf_parse_check"
+required-features = ["ebpf"]
+
+[dev-dependencies]
+tempfile = "3"
+
+# Quality contract: inherit workspace lint tiers ([workspace.lints] in root Cargo.toml).
+[lints]
+workspace = true

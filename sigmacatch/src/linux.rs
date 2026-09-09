@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Shared pipeline entry of the three Linux binaries (`sigmacatch-linux`,
-//! `-sysmon`, `-ebpf`); cargo features select which sysmon source
-//! (legacy tail / eBPF / none) is compiled in. Each binary is a thin
-//! wrapper calling [`run`].
+//! Shared pipeline entry of the Linux inputs (`auditd`, `builtin` syslog,
+//! `sysmon` legacy tail, `ebpf` native probes). Cargo features select which
+//! inputs are compiled in; at runtime `LinuxCollector` starts every compiled,
+//! available source in parallel. Selected from `main.rs` on Linux.
 
 use std::collections::HashMap;
 
@@ -18,10 +18,27 @@ use tokio::sync::{mpsc, watch};
 
 #[cfg(feature = "sysmon")]
 use crate::sysmon;
-use crate::{auditd, syslog};
 
 fn auditd_available() -> bool {
-    std::path::Path::new(auditd::DEFAULT_LOG_PATH).is_file()
+    #[cfg(feature = "auditd")]
+    {
+        std::path::Path::new(crate::auditd::DEFAULT_LOG_PATH).is_file()
+    }
+    #[cfg(not(feature = "auditd"))]
+    {
+        false
+    }
+}
+
+fn syslog_available() -> bool {
+    #[cfg(feature = "builtin")]
+    {
+        crate::syslog::default_log_exists()
+    }
+    #[cfg(not(feature = "builtin"))]
+    {
+        false
+    }
 }
 
 fn mode_for(auditd_ok: bool, syslog_ok: bool, ebpf_planned: bool) -> String {
@@ -75,16 +92,22 @@ fn make_sysmon_collector(syslog_ok: bool) -> Option<(&'static str, Box<dyn Event
     None
 }
 
+/// Every compiled-in, available source becomes a collector. Parameters are
+/// kept in the signature regardless of features so the runtime selection is
+/// uniform across builds (a param may be unused with a single-input feature).
+#[allow(unused_variables)]
 fn select_collectors(
     auditd_ok: bool,
     syslog_ok: bool,
 ) -> Vec<(&'static str, Box<dyn EventProducer>)> {
     let mut collectors: Vec<(&'static str, Box<dyn EventProducer>)> = Vec::new();
+    #[cfg(feature = "auditd")]
     if auditd_ok {
-        collectors.push(("auditd", Box::new(auditd::EventCollector::new())));
+        collectors.push(("auditd", Box::new(crate::auditd::EventCollector::new())));
     }
+    #[cfg(feature = "builtin")]
     if syslog_ok {
-        collectors.push(("syslog", Box::new(syslog::EventCollector::new())));
+        collectors.push(("syslog", Box::new(crate::syslog::EventCollector::new())));
     }
     if let Some(sysmon) = make_sysmon_collector(syslog_ok) {
         collectors.push(sysmon);
@@ -159,15 +182,11 @@ fn ebpf_planned() -> bool {
 
 impl CollectorKind for LinuxCollector {
     fn name(&self) -> &'static str {
-        "sigmacatch-linux"
+        "sigmacatch"
     }
 
     fn mode(&self) -> String {
-        mode_for(
-            auditd_available(),
-            syslog::default_log_exists(),
-            ebpf_planned(),
-        )
+        mode_for(auditd_available(), syslog_available(), ebpf_planned())
     }
 
     fn channels(
@@ -181,7 +200,7 @@ impl CollectorKind for LinuxCollector {
     fn build(&self, _channels: &[String]) -> Box<dyn EventProducer> {
         Box::new(MultiCollector(select_collectors(
             auditd_available(),
-            syslog::default_log_exists(),
+            syslog_available(),
         )))
     }
 
@@ -190,17 +209,9 @@ impl CollectorKind for LinuxCollector {
     }
 }
 
-#[path = "cli.rs"]
-mod cli;
-
-/// Async entry shared by every flavour: diagnostics dispatch, privilege and
-/// source guards, then the continuous runner.
+/// Async entry of the Linux inputs: privilege and source guards, then the
+/// continuous runner. Selected from `main.rs`.
 pub async fn run() -> Result<()> {
-    // Diagnostics first: the tools subcommands must work on machines with no
-    // local log source; only the collection loop requires one.
-    if let Some(code) = cli::dispatch() {
-        std::process::exit(code);
-    }
     // Spec constraint: refuse to start without eBPF privileges rather than
     // degrade silently — the syslog fallback only covers old kernels.
     #[cfg(feature = "ebpf")]
@@ -210,17 +221,12 @@ pub async fn run() -> Result<()> {
              or grant CAP_BPF+CAP_PERFMON"
         );
     }
-    if !std::path::Path::new(auditd::DEFAULT_LOG_PATH).is_file()
-        && !syslog::default_log_exists()
-        && !cfg!(feature = "ebpf")
-    {
+    let auditd_ok = auditd_available();
+    let syslog_ok = syslog_available();
+    if !auditd_ok && !syslog_ok && !ebpf_planned() {
         anyhow::bail!(
-            "no linux log source found: {} (auditd) nor {:?} / {:?} / {:?} (syslog). \
-             Install/configure one of them first.",
-            auditd::DEFAULT_LOG_PATH,
-            syslog::DEFAULT_LOG_PATHS,
-            syslog::AUTH_LOG_PATHS,
-            syslog::CRON_LOG_PATHS,
+            "no linux log source found: compile and configure the matching input \
+             feature (auditd / builtin / sysmon / ebpf) and publish a log first."
         );
     }
     sigmacatch_runner::run(&LinuxCollector).await
@@ -266,10 +272,13 @@ mod tests {
         let names = |a: bool, s: bool| -> Vec<&'static str> {
             select_collectors(a, s).iter().map(|(n, _)| *n).collect()
         };
-        // Source guards are honoured regardless of flavour.
+        // Source guards are honoured regardless of compiled features.
         assert!(!names(false, true).contains(&"auditd"));
         assert!(!names(true, false).contains(&"syslog"));
+        // Each collector module only exists when its feature is compiled in.
+        #[cfg(feature = "auditd")]
         assert!(names(true, true).contains(&"auditd"));
+        #[cfg(feature = "builtin")]
         assert!(names(true, true).contains(&"syslog"));
         // Nothing to run without any source file.
         assert!(names(false, false).is_empty());

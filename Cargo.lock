@@ -1586,7 +1586,7 @@ dependencies = [
 
 [[package]]
 name = "input-windows-evtx"
-version = "0.5.4"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "evtx",
@@ -2494,7 +2494,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "regressiondata-check"
-version = "0.5.4"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "input-windows-evtx",
@@ -3024,50 +3024,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
-name = "sigmacatch-config"
-version = "0.5.4"
-dependencies = [
- "serde",
- "sigmacatch-repo",
- "sigmacatch-rule",
- "sigmacatch-types",
- "tempfile",
- "thiserror 2.0.20",
- "tracing",
- "yaml_serde",
-]
-
-[[package]]
-name = "sigmacatch-detection"
-version = "0.5.4"
-dependencies = [
- "rsigma-eval",
- "serde",
- "serde_json",
- "sigmacatch-rule",
- "sigmacatch-types",
- "tempfile",
- "thiserror 2.0.20",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "sigmacatch-ebpf-common"
-version = "0.5.4"
-dependencies = [
- "bytemuck",
-]
-
-[[package]]
-name = "sigmacatch-lnx"
-version = "0.5.4"
+name = "sigmacatch"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "aya",
  "chrono",
  "hex",
+ "input-windows-evtx",
  "linux-audit-parser",
  "regex",
  "serde_json",
@@ -3082,11 +3047,49 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "walkdir",
+ "windows",
+]
+
+[[package]]
+name = "sigmacatch-config"
+version = "0.6.0"
+dependencies = [
+ "serde",
+ "sigmacatch-repo",
+ "sigmacatch-rule",
+ "sigmacatch-types",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tracing",
+ "yaml_serde",
+]
+
+[[package]]
+name = "sigmacatch-detection"
+version = "0.6.0"
+dependencies = [
+ "rsigma-eval",
+ "serde",
+ "serde_json",
+ "sigmacatch-rule",
+ "sigmacatch-types",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "sigmacatch-ebpf-common"
+version = "0.6.0"
+dependencies = [
+ "bytemuck",
 ]
 
 [[package]]
 name = "sigmacatch-regression"
-version = "0.5.4"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "crc32fast",
@@ -3106,7 +3109,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-repo"
-version = "0.5.4"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3130,7 +3133,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-rule"
-version = "0.5.4"
+version = "0.6.0"
 dependencies = [
  "dunce",
  "rsigma-parser",
@@ -3144,7 +3147,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-runner"
-version = "0.5.4"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3167,7 +3170,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-types"
-version = "0.5.4"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "phf",
@@ -3177,23 +3180,6 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "uuid",
-]
-
-[[package]]
-name = "sigmacatch-win"
-version = "0.5.4"
-dependencies = [
- "anyhow",
- "async-trait",
- "input-windows-evtx",
- "sigmacatch-detection",
- "sigmacatch-runner",
- "sigmacatch-types",
- "tempfile",
- "tokio",
- "tracing",
- "walkdir",
- "windows",
 ]
 
 [[package]]

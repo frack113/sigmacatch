@@ -87,7 +87,7 @@ struct Pipeline {
 /// (`sigmacatch/<date>` working branch, remote checks, repo + regression state).
 ///
 /// Single source of truth for the bootstrap sequence shared by the continuous
-/// runner (`run`) and the one-shot `sigmacatch-evtx` binary (AD-6). Returns the
+/// runner (`run`) and the one-shot `--evtx` input (AD-6). Returns the
 /// configured repo, the derived branch name and the loaded regression handler;
 /// the caller still applies its own regression configuration (author, format,
 /// skip handling, …) and owns the resolved `sigma_repo_path`.

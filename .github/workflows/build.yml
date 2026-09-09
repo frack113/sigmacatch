@@ -50,17 +50,14 @@ jobs:
           # feature build can no longer clobber an earlier-named bin in a
           # shared target dir (the reason the old job built them sequentially).
           - flavor: base
-            bin: sigmacatch-linux
             features: auditd,builtin
             mode: build
             nightly: false
           - flavor: sysmon
-            bin: sigmacatch-linux-sysmon
             features: auditd,builtin,sysmon
             mode: check
             nightly: false
           - flavor: ebpf
-            bin: sigmacatch-linux-ebpf
             features: auditd,builtin,ebpf
             mode: check
             nightly: true
@@ -91,13 +88,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Build / check flavour
         run: |
-          if [ -n "${{ matrix.bin }}" ]; then
-            cargo ${{ matrix.mode }} --release --locked -p sigmacatch-lnx \
-              --bin ${{ matrix.bin }} --no-default-features --features ${{ matrix.features }}
-          else
-            cargo ${{ matrix.mode }} --release --locked -p sigmacatch-lnx \
-              --no-default-features --features ${{ matrix.features }}
-          fi
+          cargo ${{ matrix.mode }} --release --locked -p sigmacatch --no-default-features \
+            --features ${{ matrix.features }}
 
   windows:
     name: Windows — ${{ matrix.flavor }}
@@ -109,7 +101,9 @@ jobs:
           # Each flavour on its own Windows runner + target dir so the
           # sequential recompiles (full / per-feature / check) run in parallel.
           - flavor: winevt
-            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch-win
+            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch
+          - flavor: winevt-evtx
+            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch --features evtx
           - flavor: regressiondata-check
             command: cargo build --release --locked --target x86_64-pc-windows-msvc -p regressiondata-check
     steps:

@@ -23,22 +23,23 @@ env:
 
 jobs:
   test:
-    name: Test ${{ matrix.package }}
+    name: Test ${{ matrix.package }}${{ matrix.features != '' && format(' — {0}', matrix.features) || '' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        package:
-          - sigmacatch-lnx
-          - sigmacatch-win
-          - sigmacatch-runner
-          - sigmacatch-regression
-          - sigmacatch-detection
-          - sigmacatch-config
-          - sigmacatch-rule
-          - sigmacatch-repo
-          - sigmacatch-types
-          - regressiondata-check
+        include:
+          - { package: sigmacatch, features: 'auditd,builtin,sysmon' }
+          - { package: sigmacatch, features: 'auditd,builtin,ebpf' }
+          - { package: sigmacatch, features: 'evtx' }
+          - { package: sigmacatch-runner, features: '' }
+          - { package: sigmacatch-regression, features: '' }
+          - { package: sigmacatch-detection, features: '' }
+          - { package: sigmacatch-config, features: '' }
+          - { package: sigmacatch-rule, features: '' }
+          - { package: sigmacatch-repo, features: '' }
+          - { package: sigmacatch-types, features: '' }
+          - { package: regressiondata-check, features: '' }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -47,4 +48,10 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo test --locked -p ${{ matrix.package }}
+      - name: Test package
+        run: |
+          if [ -n "${{ matrix.features }}" ]; then
+            cargo test --locked -p ${{ matrix.package }} --no-default-features --features ${{ matrix.features }}
+          else
+            cargo test --locked -p ${{ matrix.package }}
+          fi

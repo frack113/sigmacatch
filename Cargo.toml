@@ -4,8 +4,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "sigmacatch-win",
-    "sigmacatch-lnx",
+    "sigmacatch",
     "crates/sigmacatch-runner",
     "crates/sigmacatch-regression",
     "crates/sigmacatch-detection",
@@ -19,13 +18,13 @@ members = [
 ]
 
 # Nightly-only bpf-el crate: built separately (see crates/sigmacatch-ebpf/Cargo.toml
-# and sigmacatch-lnx/build.rs), never as part of the stable workspace graph.
+# and sigmacatch/build.rs), never as part of the stable workspace graph.
 exclude = [
     "crates/sigmacatch-ebpf",
 ]
 
 [workspace.package]
-version = "0.5.4"
+version = "0.6.0"
 edition = "2024"
 license = "MIT"
 

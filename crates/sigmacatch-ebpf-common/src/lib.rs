@@ -3,7 +3,7 @@
 
 //! Wire-format types shared between the eBPF probes (`crates/sigmacatch-ebpf`,
 //! compiled no_std for `bpfel-unknown-none`) and the userspace loader
-//! (`sigmacatch-lnx/src/ebpf.rs`).
+//! (`sigmacatch/src/ebpf.rs`).
 //!
 //! Every type here is `#[repr(C)]` and [`Pod`]: the layout is the contract
 //! across the ring buffer boundary.

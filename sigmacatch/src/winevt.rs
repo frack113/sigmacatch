@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! `sigmacatch-channel` — Winevt multi-channel binary (feature `winevt`).
+//! Winevt multi-channel collector (feature `winevt`).
+//!
+//! Selected by `main.rs` when running on Windows.
 
 use std::collections::HashMap;
 
@@ -10,13 +12,13 @@ use sigmacatch_detection::DetectionEngine;
 use sigmacatch_runner::{self, CollectorKind};
 use sigmacatch_types::EventProducer;
 
-use sigmacatch_win::channels;
+use crate::channels;
 
 struct WinevtCollector;
 
 impl CollectorKind for WinevtCollector {
     fn name(&self) -> &'static str {
-        "sigmacatch-channel"
+        "sigmacatch"
     }
 
     fn mode(&self) -> String {
@@ -36,12 +38,8 @@ impl CollectorKind for WinevtCollector {
     }
 }
 
-mod cli;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    if let Some(code) = cli::dispatch() {
-        std::process::exit(code);
-    }
-    sigmacatch_runner::run(&WinevtCollector).await
+/// Async entry — selected by `main.rs` on Windows.
+pub async fn run() -> Result<()> {
+    let collector = WinevtCollector;
+    sigmacatch_runner::run(&collector).await
 }

@@ -553,7 +553,7 @@ pub struct CliArgs {
     /// writing any regression data or performing any git operation.
     pub dry_run: bool,
     /// `--evtx <PATH>`: directory of EVTX files to process
-    /// (sigmacatch-evtx only; ignored by other binaries).
+    /// (one-shot `evtx` input; ignored otherwise).
     pub evtx_path: Option<PathBuf>,
 }
 
@@ -575,7 +575,7 @@ FLAGS:
 
 OPTIONS:
     --author <NAME>           Override GitHub username from config.yaml
-    --evtx <PATH>             Directory of EVTX files to process (sigmacatch-evtx only)
+    --evtx <PATH>             Directory of EVTX files to process (one-shot evtx input)
 ";
 
 /// Parse CLI arguments from environment.

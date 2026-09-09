@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! CLI subcommands for the main `sigmacatch-channel` binary.
+//! CLI subcommands for the single `sigmacatch` binary.
 //!
-//! Always compiled into the `sigmacatch-channel` binary. Dispatched from
-//! `main_winevt.rs` before `runner::run()` is entered. The diagnostic logic
-//! (check-filter, list-rules) lives in `sigmacatch-runner::cli` (AD-5).
+//! Always compiled. Dispatched from `main.rs` before `runner::run()` is
+//! entered. The diagnostic logic (check-filter, list-rules) lives in
+//! `sigmacatch-runner::cli` (AD-5).
 
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
 
@@ -42,10 +42,10 @@ pub fn dispatch() -> Option<i32> {
 fn print_check_filter_help() {
     println!(
         "\
-sigmacatch-channel check-filter — validate filter dimensions against ground truth
+sigmacatch check-filter — validate filter dimensions against ground truth
 
 USAGE:
-    sigmacatch-channel check-filter [OPTIONS]
+    sigmacatch check-filter [OPTIONS]
 
 OPTIONS:
     --json    Output results as JSON instead of human-readable text
@@ -56,10 +56,10 @@ OPTIONS:
 fn print_list_rules_help() {
     println!(
         "\
-sigmacatch-channel list-rules — list all loaded rules with metadata
+sigmacatch list-rules — list all loaded rules with metadata
 
 USAGE:
-    sigmacatch-channel list-rules [OPTIONS]
+    sigmacatch list-rules [OPTIONS]
 
 OPTIONS:
     --json       Output results as JSON instead of human-readable text

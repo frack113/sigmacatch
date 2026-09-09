@@ -6,8 +6,8 @@
 //! - **file**: structured format (module, file, line), configurable level
 //!
 //! Lives in `sigmacatch-runner` (AD-4): the shared run loop calls `init` with
-//! the parsed `Config` and the CLI `verbose` flag, and the `sigmacatch-evtx`
-//! one-shot binary does the same. The returned `WorkerGuard` must be kept
+//! the parsed `Config` and the CLI `verbose` flag, and the `--evtx` one-shot
+//! input path does the same. The returned `WorkerGuard` must be kept
 //! alive for the lifetime of the process to flush the non-blocking file writer.
 
 use sigmacatch_config::Config;

@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! `sigmacatch-evtx` — Generate Sigma regression data from EVTX files.
+//! EVTX one-shot input (feature `evtx`): generate Sigma regression data from
+//! EVTX files.
 //!
 //! Recursively scans a directory for `.evtx` files, parses them, matches against
 //! Sigma rules, and generates SigmaHQ-format regression data under
-//! `sigma/regression_data/`.
+//! `sigma/regression_data/`. Selected by `main.rs` when `--evtx` is present
+//! (any platform — file parsing only, no Event Log subscription).
 
 use std::path::{Path, PathBuf};
 
@@ -24,7 +26,7 @@ struct EvtxCollector {
 
 impl CollectorKind for EvtxCollector {
     fn name(&self) -> &'static str {
-        "sigmacatch-evtx"
+        "sigmacatch"
     }
 
     fn mode(&self) -> String {
@@ -86,8 +88,8 @@ fn parse_evtx_arg() -> Option<PathBuf> {
     None
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// Async entry — selected by `main.rs` when `--evtx` is present.
+pub async fn run() -> Result<()> {
     let evtx_path = parse_evtx_arg().unwrap_or_else(|| PathBuf::from(DEFAULT_EVTX_PATH));
 
     if !evtx_path.exists() {
@@ -148,22 +150,5 @@ mod tests {
 
         let files = find_evtx_files(dir.path()).unwrap();
         assert_eq!(files.len(), 2);
-    }
-
-    #[test]
-    fn test_parse_evtx_arg_present() {
-        let args: Vec<String> = vec![
-            "sigmacatch-evtx".into(),
-            "--evtx".into(),
-            "/data/logs".into(),
-        ];
-        // parse_evtx_arg reads from std::env::args(), so we can't unit-test it
-        // directly.  The function is intentionally trivial (3 lines) and tested
-        // via the integration path.
-    }
-
-    #[test]
-    fn test_parse_evtx_arg_absent() {
-        // Same caveat as above — std::env::args() is process-global.
     }
 }
