@@ -43,14 +43,14 @@ cargo build --release -p sigmacatch-win
 Deux binaires sont produits dans la crate `sigmacatch-win` :
 
 - **`sigmacatch-channel`** (winevt, feature `winevt`, activée par défaut) : API Winevt native (`EvtQueryW` → `EvtNext` → `EvtRender`) sur les channels résolus. Nécessite les droits admin pour les channels `Security` et `System`.
-- **`sigmacatch-evtx`** (feature `evtx`, hors défauts) : processeur EVTX statique à run unique — scanne récursivement un dossier de fichiers `.evtx`, matche les events contre les règles Sigma et génère des données de régression SigmaHQ, puis commit/push vers une branche `sigmacatch/<date>`. Pas de collecte live, pas d'API Windows : l'EVTX est parsé et réécrit en pur Rust, donc ce binaire se compile et tourne aussi sous Linux (`cargo build --release --bin sigmacatch-evtx --no-default-features --features evtx`).
+- **`sigmacatch-evtx`** (feature `evtx`, hors défauts) : collecteur EVTX one-shot (`live_capture() = false`) — scanne récursivement un dossier de fichiers `.evtx`, matche les events contre les règles Sigma et génère des données de régression SigmaHQ, puis commit/push vers une branche `sigmacatch/<date>` et sort. Pas de collecte live, pas d'API Windows : l'EVTX est parsé et réécrit en pur Rust, donc ce binaire se compile et tourne aussi sous Linux (`cargo build --release --bin sigmacatch-evtx --no-default-features --features evtx`).
 
 Builds isolés :
 
 ```bash
 # Winevt uniquement
 cargo build --release --bin sigmacatch-channel --no-default-features --features winevt
-# Processeur EVTX statique uniquement (cross-platform)
+# Collecteur EVTX one-shot uniquement (cross-platform)
 cargo build --release --bin sigmacatch-evtx --no-default-features --features evtx
 ```
 
@@ -73,7 +73,7 @@ cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win
 Le binaire résultant est à `target/x86_64-pc-windows-msvc/release/sigmacatch-channel.exe`.
 La CI GitHub Actions build nativement sur `windows-latest`.
 
-Le processeur EVTX statique (feature `evtx`) :
+Le collecteur EVTX one-shot (feature `evtx`) :
 
 ```bash
 cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win --features evtx

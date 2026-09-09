@@ -18,7 +18,7 @@ cargo build --release
 ./target/release/sigmacatch-linux-sysmon  # + tail Sysmon-for-Linux (Linux)
 ./target/release/sigmacatch-linux-ebpf    # + native eBPF probes (Linux, root required)
 cargo build --release -p regressiondata-check # Cross-platform regression validation (Linux & Windows)
-cargo build --release --bin sigmacatch-evtx --no-default-features --features evtx # Static EVTX processor (single-run, cross-platform)
+cargo build --release --bin sigmacatch-evtx --no-default-features --features evtx # One-shot EVTX collector (cross-platform)
 ```
 
 ## Documentation

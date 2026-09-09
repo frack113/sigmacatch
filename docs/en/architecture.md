@@ -11,7 +11,7 @@ sigmacatch/
 │   └── src/
 │       ├── lib.rs                # channels module (no-op stubs on non-Windows builds)
 │       ├── main_winevt.rs        # bin `sigmacatch-channel`: multi-channel Winevt collector
-│       ├── main_evtx.rs          # bin `sigmacatch-evtx`: static EVTX file → regression data (feature `evtx`)
+│       ├── main_evtx.rs          # bin `sigmacatch-evtx`: one-shot EVTX file collector (feature `evtx`)
 │       ├── channels.rs           # Winevt collector (EvtQueryW/EvtNext/EvtRender, multi-channel)
 │       └── cli.rs                # Diagnostic subcommands: check-filter, list-rules
 ├── sigmacatch-lnx/               # Linux binaries (lib + 3 bins, feature-gated)
@@ -21,9 +21,10 @@ sigmacatch/
 │       ├── main_base.rs          # bin `sigmacatch-linux` (thin wrapper over entry::run)
 │       ├── main_sysmon.rs        # bin `sigmacatch-linux-sysmon` (thin wrapper, + sysmon tail)
 │       ├── main_ebpf.rs          # bin `sigmacatch-linux-ebpf` (thin wrapper, + native eBPF)
-│       ├── auditd.rs             # Auditd collector (tail /var/log/audit/audit.log, event id grouping)
-│       ├── syslog.rs             # Builtin syslog collector (central /var/log/messages → /var/log/syslog + authpriv + cron files, RFC3164)
-│       ├── sysmon.rs             # Sysmon-for-Linux collector (`sysmon`-tagged syslog lines, feature `sysmon`)
+│       ├── auditd.rs             # Auditd collector (LineHandler grouping by event id, via tail)
+│       ├── syslog.rs             # Builtin syslog collector (LineHandler per file, via tail)
+│       ├── sysmon.rs             # Sysmon-for-Linux collector (LineHandler, via tail, feature `sysmon`)
+│       ├── tail.rs               # Shared tail driver (LineHandler trait + rotation detection)
 │       ├── sysmon_parse.rs       # Sysmon XML parsing (always compiled, shared by tail + eBPF)
 │       ├── ebpf.rs               # eBPF loader + dispatch (feature `ebpf`, privileges required)
 │       ├── ebpf_event.rs         # eBPF → Sysmon XML synthesis + tests
@@ -53,14 +54,14 @@ sigmacatch/
 
 ## Collectors
 
-Six binaries are produced: four collector binaries from two crates (`sigmacatch-win` → 1,
-`sigmacatch-lnx` → 3), a static single-run EVTX processor (`sigmacatch-win` → 1, feature
+Six binaries are produced: four live collector binaries from two crates (`sigmacatch-win` → 1,
+`sigmacatch-lnx` → 3), a one-shot EVTX collector (`sigmacatch-win` → 1, feature
 `evtx`), and the standalone cross-platform `regressiondata-check`:
 
 | Binary | Crate | Description |
 |---|---|---|
 | `sigmacatch-channel` | `sigmacatch-win/src/channels.rs` | Native Winevt API (`EvtQueryW`/`EvtNext`/`EvtRender`), multi-channel, replayable |
-| `sigmacatch-evtx` | `sigmacatch-win/src/main_evtx.rs` | Static single run over `.evtx` files: parse → detect → generate regression (pure-Rust EVTX writer) → commit/push; not a live collector |
+| `sigmacatch-evtx` | `sigmacatch-win/src/main_evtx.rs` | One-shot `.evtx` collector (`live_capture() = false`): parse → detect → generate regression (pure-Rust EVTX writer) → commit/push, then exit |
 | `sigmacatch-linux` | `sigmacatch-lnx/src/{auditd,syslog}.rs` | auditd + builtin syslog only (no root needed) |
 | `sigmacatch-linux-sysmon` | `sigmacatch-lnx/src/{auditd,syslog,sysmon}.rs` | + legacy Sysmon-for-Linux XML tail |
 | `sigmacatch-linux-ebpf` | `sigmacatch-lnx/src/{auditd,syslog,ebpf}.rs` | + native eBPF probes (root or CAP_BPF+CAP_PERFMON required) |
@@ -113,17 +114,32 @@ The two sysmon binaries add an additional collector:
 Regression format: `DataFormat::Log`.
 
 Each Windows collector binary defines its own `CollectorKind` in its `main_*.rs`
-(`name()`/`mode()`/`channels()`/`build()`/`regression_format()`); the three Linux binaries
-share a single `LinuxCollector` defined in `entry.rs`. The regression format comes from
-`regression_format()`: `DataFormat::Evtx` for the Windows `sigmacatch-channel` binary,
-`DataFormat::Log` for all three Linux binaries.
+(`name()`/`mode()`/`channels()`/`build()`/`regression_format()`/`live_capture()`); the three
+Linux binaries share a single `LinuxCollector` defined in `entry.rs`. The regression format
+comes from `regression_format()`: `DataFormat::Evtx` for the Windows `sigmacatch-channel`
+binary, `DataFormat::Log` for all three Linux binaries.
 
-`sigmacatch-evtx` (feature `evtx`) is **not** a collector: it does not use `CollectorKind`
-or the continuous runner pipeline. It is a single pass — enumerate `.evtx` files, parse each
-event (`input-windows-evtx`), feed the `DetectionEngine`, then reuse the shared
-`SigmahqRegression` + `SigmaRepo` machinery to write `DataFormat::Evtx` regression data
-(always via the pure-Rust EVTX writer, never `EvtExportLog`) and commit/push it to the fork.
-Because it is pure Rust it also builds and runs on Linux.
+`live_capture()` is an intrinsic property of the collector, not a CLI flag: it defaults to
+`true` and is overridden only by `sigmacatch-evtx` (`false`). Continuous collectors run an
+endless loop gated by the stop-file; a one-shot collector lets its `EventProducer::run()`
+return, the mpsc sender drops, and `run()` exits when `rx.recv()` returns `None`.
+
+`tail.rs` is the shared tail driver for the Linux file collectors (auditd, builtin syslog,
+sysmon): it owns the file handle, the 100 ms poll loop, rotation detection (dev/ino change →
+re-open from offset 0) and the channel, and drives a pure `LineHandler` per collector. Each
+`LineHandler` turns whole lines into events (`auditd` groups records by event id and flushes
+on sequence change or idle poll; `syslog` emits one event per RFC3164 line, excluding `sysmon`
+lines; `sysmon` parses XML bodies, skipping truncated ones). Gated on the tailling features.
+
+`sigmacatch-evtx` (feature `evtx`) is a `CollectorKind` with `live_capture() = false`: it runs
+through the same shared `run()` pipeline as the continuous collectors, in one-shot mode —
+enumerate `.evtx` files, parse each event (`input-windows-evtx`), feed the `DetectionEngine`,
+then reuse the shared `SigmahqRegression` + `SigmaRepo` machinery to write `DataFormat::Evtx`
+regression data (always via the pure-Rust EVTX writer, never `EvtExportLog`) and commit/push
+it to the fork. Because `EventProducer::run()` returns when all files are exhausted, the
+process self-terminates. It has no `channels()`, no interval, and no stop-file poller. Its
+`EventRecordID` field is stripped per event (Event 4688 requires absence to trigger the
+imaging rule). Because it is pure Rust it also builds and runs on Linux.
 
 ## Crate dependency graph
 
@@ -162,7 +178,7 @@ cross-platform) assembles `detection` + `rule` + `regression` + `types` with
 `LogType`. The diagnostic subcommands (`cli.rs`) parse arguments manually and use `serde`
 for their JSON output (always compiled).
 
-## Pipeline (continuous loop)
+## Pipeline (shared runner)
 
 ```text
 1. parse_args() + Config::load_with_cli("config.yaml", cli)
@@ -178,23 +194,27 @@ for their JSON output (always compiled).
    └── existing_rules = regression.get_sigma_id() ∪ sigma_repo.pending_regression_rule_ids()
        (remote sigmacatch/* branches pending merge; scan skipped offline) → HashSet<Uuid> (empty with --all-rules)
 6. SigmahqRules::new() → load + dedupe; remove_id(existing_rules)
-    └── filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size }); 0 rules → bail
+   └── filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size }); 0 rules → bail
 7. custom_map = load_custom_channel_mapping("custom_channels.yaml")
 8. DetectionEngine::new(&rules)  (pipelines + bloom + LogSourceExtractor)
    └── cycle_channels = kind.channels(&engine, &custom_map)
        ├── Some(empty) (winevt with no resolved channel) → warn + return
-       └── None (linux) → no channel resolution
-9. Shutdown handlers (watch channel): Ctrl+C + stop file (500 ms poll) ;
-    output_base = <sigma_repo_path>/regression_data ; clean_partial_artifacts()
+       └── None (linux, evtx) → no channel resolution
+9. Shutdown handlers (watch channel): Ctrl+C, plus stop-file poller (500 ms) when live_capture()
+   ; output_base = <sigma_repo_path>/regression_data ; clean_partial_artifacts()
 10. collector = kind.build(&cycle_channels) → tokio::spawn(collector.run(tx, stop))
     ├── sigmacatch-channel (winevt)  → EventCollector::new(cycle_channels).run(tx, stop)
-    └── sigmacatch-linux (auditd + syslog + sysmon) → MultiCollector (all tails in parallel, rotation detected)
+    ├── sigmacatch-linux (auditd + syslog + sysmon) → MultiCollector (all tails in parallel, rotation detected)
+    └── sigmacatch-evtx (one-shot)   → EvtxCollector.run(tx, stop): enumerate files, send every parsed event,
+                                       returns when exhausted → sender dropped
 11. Loop: tokio::select!
-    ├── shutdown_rx (Ctrl+C, stop file, or --max-runs reached) → break
+    ├── shutdown_rx (Ctrl+C, or stop file / --max-runs reached when live_capture()) → break
     ├── event from rx → engine.put_events(vec![event])
-    └── generate_interval (30s) → spawn_blocking(process_and_generate) → upload_regression() if files
+    ├── generate_interval (30s, live_capture only) → spawn_blocking(process_and_generate) → upload_regression() if files
+    └── [one-shot only] rx.recv() → None (sender dropped, collector finished) → break
 12. Final flush: collector stop (10s timeout, abort otherwise) → drain remaining events (5s timeout)
     → process_and_generate() → upload_regression() (per-rule commit) → single push if contrib
+    — one-shot propagates the final upload's error (non-zero exit); live mode logs and continues
 ```
 
 `process_and_generate()`:
@@ -220,14 +240,15 @@ upload_regression() → upload_rule_batches()   # in sigmacatch-repo
 All generation runs in `spawn_blocking` (the `Pipeline` state is moved out and returned) —
 `EvtExportLog` retries never freeze collection (events keep buffering in the mpsc channel).
 
-### Single-run variant: `sigmacatch-evtx`
+### One-shot variant: `sigmacatch-evtx`
 
-Everything above describes the **continuous** collectors. `sigmacatch-evtx` is the
-one-shot analogue: it runs exactly once — enumerate EVTX files → `parse_evtx_file` →
-`engine.put_events` → `process_events` → `regression.add` per matched rule → one commit per
-rule + single push (same `upload_rule_batches`), then exits. It has no channel, no
-`generate_interval`, no shutdown-watch/stop-file: Ctrl+C aborts the pass and skips the push
-of what was not yet committed.
+Everything above describes the shared `run()` pipeline. `sigmacatch-evtx`
+(`live_capture() = false`) is the one-shot analogue: its `EventCollector` is preloaded with
+the enumerated `.evtx` files and `EventProducer::run()` emits every parsed event then returns
+— the mpsc sender drops, `rx.recv()` yields `None`, and the shared loop breaks. There is no
+`channels()`, no `generate_interval`, no stop-file poller, and `--max-runs` is ignored
+(`-r 0` semantics). Ctrl+C still aborts the pass (the runner always registers it); any
+in-flight cycle is dropped and the push of what was not yet committed is skipped.
 
 ## Design notes
 

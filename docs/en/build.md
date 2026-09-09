@@ -42,14 +42,14 @@ cargo build --release -p sigmacatch-win
 Two binaries are produced in the `sigmacatch-win` crate:
 
 - **`sigmacatch-channel`** (winevt, feature `winevt`, enabled by default): native Winevt API (`EvtQueryW` → `EvtNext` → `EvtRender`) on resolved channels. Requires admin rights for `Security` and `System` channels.
-- **`sigmacatch-evtx`** (feature `evtx`, not in defaults): static single-run EVTX processor — recursively scans a directory of `.evtx` files, matches the events against Sigma rules and generates SigmaHQ regression data, then commits/pushes to a `sigmacatch/<date>` branch. No live collection, no Windows API: EVTX is parsed and re-written in pure Rust, so this binary also builds and runs on Linux (`cargo build --release --bin sigmacatch-evtx --no-default-features --features evtx`).
+- **`sigmacatch-evtx`** (feature `evtx`, not in defaults): one-shot EVTX collector (`live_capture() = false`) — recursively scans a directory of `.evtx` files, matches the events against Sigma rules and generates SigmaHQ regression data, then commits/pushes to a `sigmacatch/<date>` branch and exits. No live collection, no Windows API: EVTX is parsed and re-written in pure Rust, so this binary also builds and runs on Linux (`cargo build --release --bin sigmacatch-evtx --no-default-features --features evtx`).
 
 Isolated builds:
 
 ```bash
 # Winevt only
 cargo build --release --bin sigmacatch-channel --no-default-features --features winevt
-# Static EVTX processor only (cross-platform)
+# One-shot EVTX collector only (cross-platform)
 cargo build --release --bin sigmacatch-evtx --no-default-features --features evtx
 ```
 
@@ -72,7 +72,7 @@ cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win
 The resulting binary is at `target/x86_64-pc-windows-msvc/release/sigmacatch-channel.exe`.
 GitHub Actions CI builds natively on `windows-latest`.
 
-The static EVTX processor (feature `evtx`):
+The one-shot EVTX collector (feature `evtx`):
 
 ```bash
 cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win --features evtx

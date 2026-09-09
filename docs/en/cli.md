@@ -121,14 +121,17 @@ they never trigger exit 1.
 
 ---
 
-## `sigmacatch-evtx` — static EVTX regression generator (single run)
+## `sigmacatch-evtx` — one-shot EVTX collector (single run)
 
-Standalone, **non-live** binary (feature `evtx` in `sigmacatch-win`): recursively scans a
+Feature `evtx` in `sigmacatch-win`: a `CollectorKind` with `live_capture() = false` that runs
+through the **same** `run()` pipeline as the continuous collectors. It recursively scans a
 directory for `.evtx` files, parses each event in pure Rust, pushes them through the
 detection engine, writes SigmaHQ regression data for every matched rule (pure-Rust EVTX
 writer — never `EvtExportLog`, since static events are not in the live Event Log), then
-commits and pushes per rule to `sigmacatch/<date>` on the configured fork. It exits after
-one pass: read → detect → generate → commit/push, no collection loop.
+commits and pushes per rule to `sigmacatch/<date>` on the configured fork. Because
+`EventProducer::run()` returns once every file is drained, the sender drops and the shared
+loop exits — one pass: read → detect → generate → commit/push, no collection loop. A failed
+final upload exits with a non-zero status.
 
 **Usage:**
 
@@ -137,10 +140,15 @@ sigmacatch-evtx [OPTIONS]
 
       --evtx <EVTX_PATH>  Directory of .evtx files, scanned recursively
                        (default: C:\Windows\System32\winevt\Logs)
-      --config <CONFIG>   Path to config.yaml (default: config.yaml)
   -v, --verbose        Info-level logging on stderr
   -h, --help           Print help and exit
 ```
+
+`--evtx` is parsed by every binary's shared CLI but used only here. Like all binaries the
+config file is read from the working directory (`config.yaml` in the CWD — there is no
+`--config` flag). It supports the common flags below (`-a`, `-c`, `-o`, `-v`, `-n`,
+`--author`); `-r/--max-runs` is accepted but ignored (self-terminating), and `-n/--dry-run`
+keeps its read-only semantics.
 
 The sigma repository and the regression output are taken from the config
 (`git.sigma_repo_path`, relative paths resolved against the config file's directory);

@@ -122,15 +122,17 @@ elles n'entraînent jamais l'exit 1.
 
 ---
 
-## `sigmacatch-evtx` — générateur de régression EVTX statique (run unique)
+## `sigmacatch-evtx` — collecteur EVTX one-shot (run unique)
 
-Binaire **non-live** autonome (feature `evtx` dans `sigmacatch-win`) : il scanne
-récursivement un dossier pour des fichiers `.evtx`, parse chaque event en pur Rust, les
-pousse à travers le moteur de détection, écrit les données de régression SigmaHQ pour chaque
-règle matchée (writer EVTX pur Rust — jamais `EvtExportLog`, car les events statiques ne sont
-pas dans le journal d'événements live), puis commit et push par règle vers `sigmacatch/<date>`
-sur le fork configuré. Il se termine après une passe : lecture → détection → génération →
-commit/push, sans boucle de collecte.
+Feature `evtx` dans `sigmacatch-win` : un `CollectorKind` avec `live_capture() = false` qui
+passe par le **même** pipeline `run()` que les collecteurs continus. Il scanne récursivement
+un dossier pour des fichiers `.evtx`, parse chaque event en pur Rust, les pousse à travers le
+moteur de détection, écrit les données de régression SigmaHQ pour chaque règle matchée (writer
+EVTX pur Rust — jamais `EvtExportLog`, car les events statiques ne sont pas dans le journal
+d'événements live), puis commit et push par règle vers `sigmacatch/<date>` sur le fork
+configuré. Comme `EventProducer::run()` se termine une fois tous les fichiers drainés, le
+sender tombe et la boucle partagée sort — une passe : lecture → détection → génération →
+commit/push, sans boucle de collecte. Un échec de l'upload final sort avec un statut non nul.
 
 **Utilisation :**
 
@@ -139,10 +141,15 @@ sigmacatch-evtx [OPTIONS]
 
       --evtx <EVTX_PATH>  Dossier de fichiers .evtx, scanné récursivement
                        (défaut : C:\Windows\System32\winevt\Logs)
-      --config <CONFIG>   Chemin vers config.yaml (défaut : config.yaml)
   -v, --verbose        Journalisation info sur stderr
   -h, --help           Affiche l'aide et quitte
 ```
+
+`--evtx` est parsé par le CLI partagé de tous les binaires mais n'est utilisé qu'ici. Comme
+tous les binaires, la config est lue depuis le dossier de travail (`config.yaml` dans le CWD —
+pas de flag `--config`). Il supporte les flags communs ci-dessous (`-a`, `-c`, `-o`, `-v`,
+`-n`, `--author`) ; `-r/--max-runs` est accepté mais ignoré (auto-terminant), et `-n/--dry-run`
+garde sa sémantique lecture seule.
 
 Le repo sigma et la sortie de régression proviennent de la config
 (`git.sigma_repo_path`, chemins relatifs résolus depuis le dossier du fichier de config) ;
