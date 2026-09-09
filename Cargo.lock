@@ -1585,17 +1585,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "input-windows-evtx"
-version = "0.6.0"
-dependencies = [
- "async-trait",
- "evtx",
- "sigmacatch-types",
- "thiserror 2.0.20",
- "tokio",
-]
-
-[[package]]
 name = "ipnet"
 version = "2.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2493,23 +2482,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
-name = "regressiondata-check"
-version = "0.6.0"
-dependencies = [
- "anyhow",
- "input-windows-evtx",
- "linux-audit-parser",
- "serde",
- "serde_json",
- "sigmacatch-detection",
- "sigmacatch-regression",
- "sigmacatch-rule",
- "sigmacatch-types",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "rend"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3031,54 +3003,37 @@ dependencies = [
  "async-trait",
  "aya",
  "chrono",
+ "crc32fast",
+ "dunce",
+ "evtx",
+ "flate2",
+ "grit-lib",
  "hex",
- "input-windows-evtx",
  "linux-audit-parser",
+ "phf",
+ "rayon",
  "regex",
+ "reqwest",
+ "roxmltree",
+ "rsigma-eval",
+ "rsigma-parser",
+ "serde",
  "serde_json",
+ "sha1",
  "sha2 0.11.0",
- "sigmacatch-config",
- "sigmacatch-detection",
  "sigmacatch-ebpf-common",
- "sigmacatch-regression",
- "sigmacatch-rule",
- "sigmacatch-runner",
- "sigmacatch-types",
+ "ssh-key",
  "tempfile",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
  "uuid",
  "walkdir",
  "windows",
-]
-
-[[package]]
-name = "sigmacatch-config"
-version = "0.6.0"
-dependencies = [
- "serde",
- "sigmacatch-repo",
- "sigmacatch-rule",
- "sigmacatch-types",
- "tempfile",
- "thiserror 2.0.20",
- "tracing",
  "yaml_serde",
-]
-
-[[package]]
-name = "sigmacatch-detection"
-version = "0.6.0"
-dependencies = [
- "rsigma-eval",
- "serde",
- "serde_json",
- "sigmacatch-rule",
- "sigmacatch-types",
- "tempfile",
- "thiserror 2.0.20",
- "tracing",
- "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -3086,101 +3041,6 @@ name = "sigmacatch-ebpf-common"
 version = "0.6.0"
 dependencies = [
  "bytemuck",
-]
-
-[[package]]
-name = "sigmacatch-regression"
-version = "0.6.0"
-dependencies = [
- "chrono",
- "crc32fast",
- "evtx",
- "input-windows-evtx",
- "roxmltree",
- "serde",
- "serde_json",
- "sigmacatch-types",
- "tempfile",
- "thiserror 2.0.20",
- "tracing",
- "uuid",
- "windows",
- "yaml_serde",
-]
-
-[[package]]
-name = "sigmacatch-repo"
-version = "0.6.0"
-dependencies = [
- "anyhow",
- "chrono",
- "crc32fast",
- "flate2",
- "grit-lib",
- "input-windows-evtx",
- "rayon",
- "reqwest",
- "serde",
- "sha1",
- "sha2 0.11.0",
- "ssh-key",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "uuid",
- "zeroize",
-]
-
-[[package]]
-name = "sigmacatch-rule"
-version = "0.6.0"
-dependencies = [
- "dunce",
- "rsigma-parser",
- "serde",
- "tempfile",
- "thiserror 2.0.20",
- "tracing",
- "uuid",
- "yaml_serde",
-]
-
-[[package]]
-name = "sigmacatch-runner"
-version = "0.6.0"
-dependencies = [
- "anyhow",
- "chrono",
- "serde",
- "serde_json",
- "sigmacatch-config",
- "sigmacatch-detection",
- "sigmacatch-regression",
- "sigmacatch-repo",
- "sigmacatch-rule",
- "sigmacatch-types",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "uuid",
- "windows",
-]
-
-[[package]]
-name = "sigmacatch-types"
-version = "0.6.0"
-dependencies = [
- "async-trait",
- "phf",
- "roxmltree",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
- "uuid",
 ]
 
 [[package]]

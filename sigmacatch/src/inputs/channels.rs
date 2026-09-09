@@ -9,8 +9,8 @@
 
 use std::sync::Arc;
 
+use crate::types::{Event, EventProducer, ProducerError};
 use async_trait::async_trait;
-use sigmacatch_types::{Event, EventProducer, ProducerError};
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio::task::JoinSet;

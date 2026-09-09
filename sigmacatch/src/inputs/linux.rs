@@ -8,12 +8,12 @@
 
 use std::collections::HashMap;
 
+use crate::detection::DetectionEngine;
+use crate::regression::DataFormat;
+use crate::runner::CollectorKind;
+use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::Result;
 use async_trait::async_trait;
-use sigmacatch_detection::DetectionEngine;
-use sigmacatch_regression::DataFormat;
-use sigmacatch_runner::{self, CollectorKind};
-use sigmacatch_types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
 
 #[cfg(feature = "sysmon")]
@@ -235,7 +235,7 @@ pub async fn run() -> Result<()> {
              feature (auditd / builtin / sysmon / ebpf) and publish a log first."
         );
     }
-    sigmacatch_runner::run(&LinuxCollector).await
+    crate::runner::run(&LinuxCollector).await
 }
 
 #[cfg(test)]

@@ -7,6 +7,7 @@
 
 use std::fs;
 
+use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::{Context, bail};
 use async_trait::async_trait;
 use aya::Ebpf;
@@ -15,7 +16,6 @@ use aya::programs::TracePoint;
 use sigmacatch_ebpf_common::{
     DnsEvent, EVENT_DNS, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_NET, FileCreateEvent, NetEvent,
 };
-use sigmacatch_types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
 use tracing::info;
 

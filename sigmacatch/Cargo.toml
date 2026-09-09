@@ -9,38 +9,51 @@ description = "sigmacatch — Sigma regression collector (single binary, inputs 
 license.workspace = true
 build = "src/build.rs"
 
-# One binary. Cargo features select which inputs are compiled in:
+# Inputs are selected with cargo features:
 #   Windows: winevt (live Event Log), evtx (one-shot EVTX files)
 #   Linux:   auditd, builtin (system syslog), sysmon (Sysmon-for-Linux tail), ebpf (native probes)
 # At runtime, `--evtx <PATH>` selects the EVTX one-shot, `winevt` the live
 # collector (Windows), and the Linux inputs run in parallel.
+#
+# Everything else (runner, detection, rules, repo, regression data generator)
+# is OS-independent and always compiled in. The `regressiondata-check` bin is
+# a second artifact of this package and needs no input features.
 [features]
 default = ["winevt"]
-winevt = ["dep:async-trait", "dep:windows"]
-evtx = [] # cross-platform EVTX file processor (no Windows deps)
-auditd = ["dep:async-trait", "dep:linux-audit-parser"]
-builtin = ["dep:async-trait", "dep:regex"]
-sysmon = ["dep:async-trait", "builtin"] # Sysmon-for-Linux legacy tail
-ebpf = ["dep:async-trait", "dep:aya", "dep:sigmacatch-ebpf-common", "dep:sha2", "dep:hex"]
+winevt = []
+evtx = []
+auditd = []
+builtin = ["dep:regex"]
+sysmon = ["builtin"] # Sysmon-for-Linux legacy tail
+ebpf = ["dep:aya", "dep:sigmacatch-ebpf-common", "dep:hex"]
 
 [dependencies]
-sigmacatch-runner = { path = "../crates/sigmacatch-runner" }
-sigmacatch-config = { path = "../crates/sigmacatch-config" }
-sigmacatch-detection = { path = "../crates/sigmacatch-detection" }
-sigmacatch-regression = { path = "../crates/sigmacatch-regression" }
-sigmacatch-rule = { path = "../crates/sigmacatch-rule" }
-sigmacatch-types = { path = "../crates/sigmacatch-types" }
-input-windows-evtx = { path = "../crates/input-windows-evtx" }
 sigmacatch-ebpf-common = { path = "../crates/sigmacatch-ebpf-common", optional = true }
 
-async-trait = { version = "0.1", optional = true }
-linux-audit-parser = { version = "0.2", optional = true }
-regex = { version = "1", optional = true }
+anyhow = "1.0"
+async-trait = "0.1"
 aya = { version = "0.14", optional = true }
-sha2 = { version = "0.11", optional = true }
+chrono = "0.4"
+crc32fast = "1.5"
+evtx = "0.12"
+flate2 = "1.1"
+grit-lib = "0.5"
 hex = { version = "0.4", optional = true }
-
-walkdir = "2"
+linux-audit-parser = "0.2"
+phf = { version = "0.14", features = ["macros"] }
+rayon = "1.12"
+regex = { version = "1", optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking"] }
+roxmltree = "0.21"
+rsigma-eval = { version = "0.21", features = ["daachorse-index"] }
+rsigma-parser = "0.21"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = { package = "yaml_serde", version = "0.10" }
+sha1 = "0.11"
+sha2 = "0.11"
+ssh-key = { version = "0.6", features = ["alloc", "ed25519"] }
+thiserror.workspace = true
 tokio = { version = "1", features = [
   "rt",
   "rt-multi-thread",
@@ -50,17 +63,24 @@ tokio = { version = "1", features = [
   "signal",
 ] }
 tracing = "0.1"
-anyhow = "1.0"
-serde_json = "1.0"
-chrono = "0.4"
-uuid = { version = "1", features = ["v4"] }
+tracing-appender = "0.2"
+tracing-subscriber.workspace = true
+uuid = { version = "1", features = ["v4", "serde"] }
+walkdir = "2"
+zeroize = "1.9"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", optional = true, features = [
+windows = { version = "0.62", features = [
   "Win32_Foundation",
+  "Win32_System_Console",
   "Win32_System_Com",
   "Win32_System_EventLog",
+  "Win32_System_Threading",
+  "Win32_Security",
 ] }
+
+[target.'cfg(not(unix))'.dependencies]
+dunce = "1.0"
 
 # Integration tests: each requires its input features compiled in.
 [[test]]
@@ -87,6 +107,11 @@ required-features = ["ebpf"]
 
 [dev-dependencies]
 tempfile = "3"
+
+# Library doc blocks may reference items by their old crate names; keep
+# doctests off (same policy as the merged crates had).
+[lib]
+doctest = false
 
 # Quality contract: inherit workspace lint tiers ([workspace.lints] in root Cargo.toml).
 [lints]

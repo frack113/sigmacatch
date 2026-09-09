@@ -12,10 +12,11 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::detection::DetectionEngine;
+use crate::regression::DataFormat;
+use crate::runner::CollectorKind;
+use crate::types::EventProducer;
 use anyhow::Result;
-use sigmacatch_detection::DetectionEngine;
-use sigmacatch_runner::{CollectorKind, DataFormat};
-use sigmacatch_types::EventProducer;
 use walkdir::WalkDir;
 
 /// Default directory containing EVTX files on a Windows host.
@@ -43,7 +44,7 @@ impl CollectorKind for EvtxCollector {
     }
 
     fn build(&self, _channels: &[String]) -> Box<dyn EventProducer> {
-        let mut collector = input_windows_evtx::EventCollector::new();
+        let mut collector = crate::evtx_reader::EventCollector::new();
         for path in &self.files {
             collector.add_file(path.clone());
         }
@@ -104,7 +105,7 @@ pub async fn run(evtx_path: Option<PathBuf>) -> Result<()> {
     );
 
     let collector = EvtxCollector { files };
-    sigmacatch_runner::run(&collector).await
+    crate::runner::run(&collector).await
 }
 
 #[cfg(test)]

@@ -7,10 +7,10 @@
 
 use std::collections::HashMap;
 
+use crate::detection::DetectionEngine;
+use crate::runner::CollectorKind;
+use crate::types::EventProducer;
 use anyhow::Result;
-use sigmacatch_detection::DetectionEngine;
-use sigmacatch_runner::{self, CollectorKind};
-use sigmacatch_types::EventProducer;
 
 use crate::inputs::channels;
 
@@ -41,5 +41,5 @@ impl CollectorKind for WinevtCollector {
 /// Async entry — selected by `main.rs` on Windows.
 pub async fn run() -> Result<()> {
     let collector = WinevtCollector;
-    sigmacatch_runner::run(&collector).await
+    crate::runner::run(&collector).await
 }

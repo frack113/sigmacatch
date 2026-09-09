@@ -10,14 +10,14 @@
 //! Cargo features select which inputs are compiled in; requesting an unbuilt
 //! input is a clear startup error.
 //!
-//! CLI parsing is single-sourced in `sigmacatch_config::parse_args`
+//! CLI parsing is single-sourced in [`sigmacatch::config::parse_args`]
 //! (`CliArgs`): the `--evtx` presence test and the EVTX path both come from
 //! the same parse, never an ad-hoc `argv` scan.
 
 use std::path::PathBuf;
 
 use anyhow::Result;
-use sigmacatch_config::parse_args;
+use sigmacatch::config::parse_args;
 
 #[tokio::main]
 async fn main() -> Result<()> {

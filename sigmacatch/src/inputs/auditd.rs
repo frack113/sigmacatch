@@ -17,10 +17,10 @@
 //! receiver. Log rotation (inode change) is detected and the file re-opened.
 //! Non-Linux → silent stub.
 
+use crate::types::{Event, EventProducer, ProducerError};
 use async_trait::async_trait;
 use linux_audit_parser::{Parser, Value as AuditValue};
 use serde_json::{Map, Value as JsonValue};
-use sigmacatch_types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
 
 /// Default path of the audit log.

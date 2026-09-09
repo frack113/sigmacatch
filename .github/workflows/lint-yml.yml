@@ -3,12 +3,12 @@ name: Lint YAML
 on:
   push:
     paths:
-      - 'crates/sigmacatch-detection/pipelines/*.yml'
+      - 'sigmacatch/src/detection/pipelines/*.yml'
       - '.yamllint'
   pull_request:
     branches: [main]
     paths:
-      - 'crates/sigmacatch-detection/pipelines/*.yml'
+      - 'sigmacatch/src/detection/pipelines/*.yml'
       - '.yamllint'
 
 permissions:
@@ -29,4 +29,4 @@ jobs:
       - name: Install yamllint
         run: pip install yamllint --quiet
       - name: Lint pipeline YAML files
-        run: yamllint -f parsable --config-file .yamllint crates/sigmacatch-detection/pipelines/
+        run: yamllint -f parsable --config-file .yamllint sigmacatch/src/detection/pipelines/

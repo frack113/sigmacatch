@@ -28,8 +28,8 @@
 
 use crate::inputs::syslog;
 use crate::inputs::sysmon_parse::{parse_line, record_to_event};
+use crate::types::{Event, EventProducer, ProducerError};
 use async_trait::async_trait;
-use sigmacatch_types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
 
 /// Sysmon for Linux event collector (implements `EventProducer` directly).

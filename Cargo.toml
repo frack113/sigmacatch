@@ -5,16 +5,7 @@
 resolver = "2"
 members = [
     "sigmacatch",
-    "crates/sigmacatch-runner",
-    "crates/sigmacatch-regression",
-    "crates/sigmacatch-detection",
-    "crates/sigmacatch-types",
-    "crates/sigmacatch-config",
-    "crates/input-windows-evtx",
-    "crates/sigmacatch-rule",
-    "crates/sigmacatch-repo",
     "crates/sigmacatch-ebpf-common",
-    "regressiondata-check",
 ]
 
 # Nightly-only bpf-el crate: built separately (see crates/sigmacatch-ebpf/Cargo.toml

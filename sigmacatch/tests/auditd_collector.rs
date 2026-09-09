@@ -6,7 +6,7 @@
 #![cfg(all(target_os = "linux", feature = "auditd"))]
 
 use sigmacatch::inputs::auditd::EventCollector;
-use sigmacatch_types::EventProducer;
+use sigmacatch::types::EventProducer;
 use std::io::Write;
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
@@ -20,7 +20,10 @@ const NEXT_SYSCALL: &[u8] = b"type=SYSCALL msg=audit(1717056140.100:90413): arch
 
 async fn run_collector(
     path: &str,
-) -> (mpsc::Receiver<sigmacatch_types::Event>, watch::Sender<bool>) {
+) -> (
+    mpsc::Receiver<sigmacatch::types::Event>,
+    watch::Sender<bool>,
+) {
     let (tx, rx) = mpsc::channel(100);
     let (stop_tx, stop_rx) = watch::channel(false);
     let collector = EventCollector::with_path(path.to_string());

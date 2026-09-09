@@ -17,10 +17,10 @@ use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
 
+use crate::types::Event;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use sigmacatch_ebpf_common::{DnsEvent, ExecEvent, FileCreateEvent, NetEvent};
-use sigmacatch_types::Event;
 
 const PROVIDER_GUID: &str = "{ff032593-a8d3-4f13-b0d6-01fc615a0f97}";
 const CHANNEL: &str = "Linux-Sysmon/Operational";
@@ -549,8 +549,8 @@ fn full_cmdline(ev: &ExecEvent) -> String {
 /// indistinguishable from tailed-sysmon events.
 fn to_event(xml: String) -> Event {
     let json_raw =
-        sigmacatch_types::parse_winevt_xml_raw(&xml).expect("rendered XML must always parse");
-    let json = sigmacatch_types::parse_winevt_xml(&xml).expect("rendered XML must always parse");
+        crate::types::parse_winevt_xml_raw(&xml).expect("rendered XML must always parse");
+    let json = crate::types::parse_winevt_xml(&xml).expect("rendered XML must always parse");
     let mut event = Event::new(json_raw, json, xml.into_bytes());
     event.inject_logsource_fields_for("linux", None);
     event

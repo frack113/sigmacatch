@@ -29,17 +29,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { package: sigmacatch, features: '' }
           - { package: sigmacatch, features: 'auditd,builtin,sysmon' }
           - { package: sigmacatch, features: 'auditd,builtin,ebpf' }
           - { package: sigmacatch, features: 'evtx' }
-          - { package: sigmacatch-runner, features: '' }
-          - { package: sigmacatch-regression, features: '' }
-          - { package: sigmacatch-detection, features: '' }
-          - { package: sigmacatch-config, features: '' }
-          - { package: sigmacatch-rule, features: '' }
-          - { package: sigmacatch-repo, features: '' }
-          - { package: sigmacatch-types, features: '' }
-          - { package: regressiondata-check, features: '' }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -6,7 +6,7 @@
 #![cfg(all(target_os = "linux", feature = "builtin"))]
 
 use sigmacatch::inputs::syslog::EventCollector;
-use sigmacatch_types::EventProducer;
+use sigmacatch::types::EventProducer;
 use std::io::Write;
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
@@ -18,7 +18,10 @@ const KERNEL: &[u8] = b"May 11 14:23:41 host123 kernel: [123456.789] EXT4-fs(sda
 
 async fn run_collector(
     path: &str,
-) -> (mpsc::Receiver<sigmacatch_types::Event>, watch::Sender<bool>) {
+) -> (
+    mpsc::Receiver<sigmacatch::types::Event>,
+    watch::Sender<bool>,
+) {
     let (tx, rx) = mpsc::channel(100);
     let (stop_tx, stop_rx) = watch::channel(false);
     let collector = EventCollector::with_path(Some(path.to_string()));

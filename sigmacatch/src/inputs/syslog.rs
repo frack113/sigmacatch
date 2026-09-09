@@ -21,10 +21,10 @@
 //! watch or by dropping the receiver. Log rotation (inode change) is detected
 //! and the file re-opened. Non-Linux → silent stub.
 
+use crate::types::{Event, EventProducer, ProducerError};
 use async_trait::async_trait;
 use regex::Regex;
 use serde_json::{Map, Value as JsonValue};
-use sigmacatch_types::{Event, EventProducer, ProducerError};
 use std::sync::OnceLock;
 use tokio::sync::{mpsc, watch};
 

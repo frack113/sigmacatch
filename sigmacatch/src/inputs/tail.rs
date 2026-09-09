@@ -9,7 +9,7 @@
 //! channel, the file handle and the poll/rotation lifecycle. Runs in a blocking
 //! task (callers use `spawn_blocking`).
 
-use sigmacatch_types::Event;
+use crate::types::Event;
 use tokio::sync::{mpsc, watch};
 
 /// Poll interval of the tail loop (how often new bytes are read from the file).

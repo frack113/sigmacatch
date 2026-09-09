@@ -5,9 +5,9 @@
 //! alert. Rule body is a verbatim SigmaHQ rule, embedded so the test is
 //! self-contained.
 
+use sigmacatch::detection::DetectionEngine;
 use sigmacatch::inputs::syslog;
-use sigmacatch_detection::DetectionEngine;
-use sigmacatch_rule::SigmahqRules;
+use sigmacatch::rule::SigmahqRules;
 
 const SSHD_LINE: &[u8] =
     b"Aug 23 10:00:03 sigmacatch-linux sshd[123]: fatal: Corrupted MAC on input from 192.168.122.1";
