@@ -93,22 +93,13 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 
 ## Workspace
 
-The project is a cargo workspace of 12 packages, plus 1 excluded nightly crate (`sigmacatch-ebpf`):
+The project is a cargo workspace of 3 packages, plus 1 excluded nightly crate (`sigmacatch-ebpf`):
 
-| Crate | Purpose |
+| Package | Purpose |
 |---|---|
-| `sigmacatch` | Single binary. Inputs are cargo features: `winevt` (default), `evtx`, `auditd`, `builtin` (syslog), `sysmon` (legacy tail), `ebpf` (native probes) |
-| `sigmacatch-ebpf` | eBPF probe crate (excluded workspace, nightly, `bpfel-unknown-none`) |
+| `sigmacatch` | Main package: one library (`src/lib.rs`) + two binaries (`sigmacatch`, `regressiondata-check`). Inputs are cargo features: `winevt` (default), `evtx`, `auditd`, `builtin` (syslog), `sysmon` (legacy tail), `ebpf` (native probes). Modules inside: `runner` (shared pipeline), `config` (YAML + CLI), `rule` (rule loading/filtering), `detection` (engines + pipelines), `regression` (data generation + EVTX writer), `types` (shared types), `repo` (grit-lib wrapper), `evtx_reader` (EVTX parser), `inputs/*` (input adapters) |
 | `sigmacatch-ebpf-common` | Shared `no_std` types for eBPF ring buffer |
-| `sigmacatch-runner` | Shared pipeline (`run<C: CollectorKind>`): config, repo init, event loop, generation, commit/push |
-| `sigmacatch-config` | Config YAML + CLI parsing + custom_channels.yaml |
-| `sigmacatch-rule` | `SigmahqRules`: rule loading, filtering, deduplication, remove_id |
-| `sigmacatch-detection` | `DetectionEngine` + per-platform pipelines + channel_resolver + bloom pre-filter |
-| `sigmacatch-regression` | `SigmahqRegression`, `InfoYml`, `DataFormat` (Evtx/Log) + validation + pure-Rust EVTX writer (`evtx_writer`) |
-| `sigmacatch-types` | Shared types: `Event`, `Alert`, `RegressionHeader`, XML parsing, logsource mapping tables (phf) |
-| `sigmacatch-repo` | grit-lib wrapper: `SigmaRepo`, GitHub fork detection, plumbing/porcelain git ops, SSH signing |
-| `input-windows-evtx` | Parse EVTX files into `Event` objects (used by `sigmacatch` and `regressiondata-check`) |
-| `regressiondata-check` | Standalone cross-platform binary: regression validation (`--json`/`--ignore`) |
+| `sigmacatch-ebpf` | eBPF probe crate (excluded workspace, nightly, `bpfel-unknown-none`) |
 
 ## Built with
 

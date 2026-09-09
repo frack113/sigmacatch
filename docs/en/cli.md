@@ -22,7 +22,7 @@ regressiondata-check [--json] [--ignore] [--fix] [--path <DIR>]
 
 **Purpose:** deep validation of all regression data in the sigma root's
 `regression_data/` (`./sigma/regression_data` by default). Entries are
-parsed according to their `LogType`: `.evtx` via `input_windows_evtx::parse_evtx_bytes`,
+parsed according to their `LogType`: `.evtx` via `evtx_reader::parse_evtx_bytes`,
 `.log` via the auditd parser, straight JSON lines. The `Raw` logtype is skipped.
 
 ### Pipeline

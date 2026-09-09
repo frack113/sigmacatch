@@ -23,7 +23,7 @@ regressiondata-check [--json] [--ignore] [--fix] [--path <DIR>]
 **Fonction :** validation approfondie de toutes les données de régression dans le
 `regression_data/` de la racine sigma (`./sigma/regression_data` par défaut). Les
 entrées sont parses selon leur `LogType` : `.evtx` via
-`input_windows_evtx::parse_evtx_bytes`, `.log` via le parser auditd, lignes JSON directes.
+`evtx_reader::parse_evtx_bytes`, `.log` via le parser auditd, lignes JSON directes.
 Le logtype `Raw` est sauté (compté dans `Skipped`).
 
 ### Pipeline

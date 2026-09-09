@@ -1,6 +1,6 @@
 # Git Workflow
 
-All git operations go through **grit-lib** (pure Rust) via the `sigmacatch-repo` crate — never a `git` binary on PATH. The invariants below are non-negotiable.
+All git operations go through **grit-lib** (pure Rust) via the `repo` module of the `sigmacatch` package — never a `git` binary on PATH. The invariants below are non-negotiable.
 
 ## Invariants
 

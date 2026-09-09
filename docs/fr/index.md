@@ -12,7 +12,7 @@ par des features cargo et à l'exécution par l'argument `--evtx` (one-shot EVTX
 sinon Winevt live sur Windows et tous les inputs Linux compilés et disponibles
 en parallèle.
 
-Le projet est un cargo workspace de 12 packages, plus 1 crate nightly exclu
+Le projet est un cargo workspace de 3 packages, plus 1 crate nightly exclu
 (`sigmacatch-ebpf`) ; l'arborescence complète et les rôles de chaque crate sont
 détaillés dans [architecture.md](architecture.md).
 
@@ -28,7 +28,7 @@ cargo build --release -p sigmacatch --no-default-features --features auditd,buil
 # One-shot EVTX, n'importe quelle plateforme :
 cargo build --release -p sigmacatch --no-default-features --features evtx
 ./target/release/sigmacatch --evtx /chemin/vers/dossier-evtx
-cargo build --release -p regressiondata-check                # Validation de régression cross-platform (Linux & Windows)
+cargo build --release -p sigmacatch --bin regressiondata-check                # Validation de régression cross-platform (Linux & Windows)
 ```
 
 ## Documentation

@@ -98,15 +98,15 @@ The `check-filter` and `list-rules` subcommands are **always compiled** into the
 `sigmacatch` binary — no dedicated cargo feature is required (the `tools` feature
 has been removed).
 
-Regression validation (`check`) is not a subcommand: it is the standalone
-**`regressiondata-check`** binary, cross-platform, which needs no collector and no
-extra feature:
+Regression validation (`check`) is not a subcommand: it is the second binary
+**`regressiondata-check`** of the `sigmacatch` package, cross-platform, which needs no
+collector and no extra feature:
 
 ```bash
 # Linux
-cargo build --release -p regressiondata-check
+cargo build --release -p sigmacatch --bin regressiondata-check
 # Windows
-cargo xwin build --release --target x86_64-pc-windows-msvc -p regressiondata-check
+cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch --bin regressiondata-check
 ```
 
 Details and sample output → [cli.md](cli.md).

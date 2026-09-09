@@ -2,69 +2,67 @@
 
 ## Cargo workspace
 
-The project is a cargo workspace of 12 packages, plus 1 excluded nightly crate (`sigmacatch-ebpf`):
+The project is a cargo workspace of 3 packages, plus 1 excluded nightly crate (`sigmacatch-ebpf`):
 
 ```text
 sigmacatch/
 ├── Cargo.toml                    # Workspace root
-├── sigmacatch/                   # Single binary `sigmacatch` (features select the inputs)
+├── sigmacatch/                   # Main package (library + two binaries)
 │   ├── Cargo.toml                # features: winevt (default), evtx, auditd, builtin, sysmon, ebpf
+│   ├── build.rs                  # eBPF object builder (Linux target + feature `ebpf` only)
 │   └── src/
 │       ├── main.rs               # Dispatch: --evtx → evtx input; winevt on Windows; linux inputs on Linux
-│       ├── lib.rs                # Module gates (platform + feature)
-│       ├── cli.rs                # Diagnostic subcommands: check-filter, list-rules
-│       ├── winevt.rs             # WinevtCollector (live Event Log, feature `winevt`)
-│       ├── evtx.rs               # EvtxCollector (one-shot EVTX files, feature `evtx`)
-│       ├── channels.rs           # Winevt collector (EvtQueryW/EvtNext/EvtRender, multi-channel)
-│       ├── linux.rs              # LinuxCollector + run() (any Linux input feature)
-│       ├── auditd.rs             # Auditd collector (LineHandler grouping by event id, via tail)
-│       ├── syslog.rs             # Builtin syslog collector (LineHandler per file, via tail)
-│       ├── sysmon.rs             # Sysmon-for-Linux collector (LineHandler, via tail, feature `sysmon`)
-│       ├── tail.rs               # Shared tail driver (LineHandler trait + rotation detection)
-│       ├── sysmon_parse.rs       # Sysmon XML parsing (feature `builtin`)
-│       ├── ebpf.rs               # eBPF loader + dispatch (feature `ebpf`, privileges required)
-│       ├── ebpf_event.rs         # eBPF → Sysmon XML synthesis + tests
-│       └── build.rs              # eBPF object builder (Linux target + feature `ebpf` only)
-├── regressiondata-check/             # Standalone cross-platform binary: regression check (--json, --ignore, --fix, --path)
-└── crates/
-    ├── sigmacatch-ebpf/          # eBPF probes (excluded workspace, nightly, bpfel-unknown-none)
-    │   └── src/main.rs           # 6 tracepoints: execve/exec/exit/connect/openat+exit/sendto+sendmsg
-    ├── sigmacatch-ebpf-common/   # Shared no_std types for eBPF ring buffer (ExecEvent, NetEvent, ...)
-    ├── sigmacatch-runner/        # Pipeline shared by every collector crate:
-    │   ├── src/runner.rs         #   run<C: CollectorKind> + CollectorKind trait + bootstrap_repo_regression (sigmacatch/<date> branch, clone/pull)
-    │   │                         #   event loop + process_and_generate + commit/push)
-    │   ├── src/cli.rs            #   shared diagnostic CLI (check-filter, list-rules)
-    │   └── src/logging.rs        #   two-layer tracing init (stderr `error`/`info`, daily rolling file)
-    ├── sigmacatch-config/        # Config YAML + CLI parsing + custom_channels.yaml
-    ├── sigmacatch-rule/          # SigmahqRules: rule loading (parse_sigma_yaml), filter, dedupe, remove_id
-    │                             #   + attack.rs (SigmaRuleExt ATT&CK) + discover.rs + thresholds.rs (LoadStats)
-    ├── sigmacatch-detection/     # DetectionEngine wrapper + embedded per-platform pipelines
-    │                             #   (1_win_logsource.yml, 2_win_field_name.yml, 3_lnx_logsource.yml,
-    │                             #   4_lnx_field_name.yml — transformations gated by product rule_conditions) + channel_resolver
-    ├── sigmacatch-regression/    # SigmahqRegression (get_sigma_id, add, retire), InfoYml, DataFormat
-    │                             #   (evtx.rs, evtx_writer.rs, format.rs, info.rs, logtype.rs, long_path.rs)
-    ├── sigmacatch-types/         # Shared types: Event, Alert, RegressionHeader + XML parsing + logsource mapping tables
-    ├── sigmacatch-repo/          # grit-lib wrapper + SigmaRepo + git operations + signing.rs + transport.rs
-    └── input-windows-evtx/       # EVTX file parser → Event
+│       ├── lib.rs                # Module declarations + re-exports (CollectorKind, run, bootstrap_repo_regression, DataFormat)
+│       ├── cli.rs                # Dispatch + diagnostic subcommands: check-filter, list-rules
+│       ├── runner.rs             # run<C: CollectorKind> shared pipeline + CollectorKind trait + bootstrap_repo_regression
+│       ├── logging.rs            # Two-layer tracing init (stderr error/info, daily rolling file)
+│       ├── config.rs             # Config, GitConfig, SigmaFilterConfig, LogConfig, CliArgs, parse_args, custom_channels.yaml
+│       ├── types.rs              # Event, Alert, RegressionHeader, Product, EventProducer, XML parsing, phf logsource tables
+│       ├── evtx_reader.rs        # EVTX file parsing → Event (cross-platform, used by both binaries)
+│       ├── detection/            # DetectionEngine + per-platform pipelines + channel_resolver
+│       ├── rule/                 # SigmahqRules: load/filter/dedupe/remove_id + thresholds, attack, discover
+│       ├── repo/                 # grit-lib wrapper: SigmaRepo, plumbing/, porcelain, branch, signing, transport
+│       ├── regression/           # SigmahqRegression, InfoYml, DataFormat (evtx/log), logtype, format, evtx_writer
+│       ├── inputs/               # Input adapters (feature × platform gate matrix in mod.rs):
+│       │   ├── mod.rs            #   feature × target_os gate matrix
+│       │   ├── winevt.rs         #   WinevtCollector (Event Log live, feature `winevt`)
+│       │   ├── evtx.rs           #   EvtxCollector (one-shot EVTX files, feature `evtx`)
+│       │   ├── channels.rs       #   Winevt collector (EvtQueryW/EvtNext/EvtRender, multi-channel)
+│       │   ├── linux.rs          #   LinuxCollector + run() (any Linux input feature)
+│       │   ├── auditd.rs         #   Auditd collector (LineHandler grouping by event id, via tail)
+│       │   ├── syslog.rs         #   Builtin syslog collector (LineHandler per file, via tail)
+│       │   ├── sysmon.rs         #   Sysmon-for-Linux collector (LineHandler, via tail, feature `sysmon`)
+│       │   ├── tail.rs           #   Shared tail driver (LineHandler trait + rotation detection)
+│       │   ├── sysmon_parse.rs   #   Sysmon XML parsing (feature `builtin`)
+│       │   ├── ebpf.rs           #   eBPF loader + dispatch (feature `ebpf`, privileges required)
+│       │   └── ebpf_event.rs     #   eBPF → Sysmon XML synthesis + tests
+│       ├── bin/
+│       │   └── regressiondata-check.rs  # Standalone cross-platform binary: regression check (--json, --ignore, --fix, --path)
+│       └── tests/
+│           └── fixtures/           # Fixtures: sample.xml, sample.evtx, valid-single.evtx
+├── crates/
+│   ├── sigmacatch-ebpf/          # eBPF probes (excluded workspace, nightly, bpfel-unknown-none)
+│   │   └── src/main.rs           # 6 tracepoints: execve/exec/exit/connect/openat+exit/sendto+sendmsg
+│   └── sigmacatch-ebpf-common/   # Shared no_std types for eBPF ring buffer (ExecEvent, NetEvent, ...)
 ```
 
 ## Collectors
 
-One binary `sigmacatch` is produced from the `sigmacatch/` crate. Cargo features
+One binary `sigmacatch` is produced from the `sigmacatch` package. Cargo features
 select which inputs are compiled in, and `main.rs` picks the runtime input: the
 one-shot EVTX collector when `--evtx` is present, the live Winevt collector on
 Windows, or the set of compiled-in, available Linux inputs. Plus the standalone
-cross-platform `regressiondata-check`:
+cross-platform `regressiondata-check` (second binary of the `sigmacatch` package):
 
 | Input | Module | Features | Description |
 |---|---|---|---|
-| winevt | `sigmacatch/src/channels.rs` | `winevt` | Native Winevt API (`EvtQueryW`/`EvtNext`/`EvtRender`), multi-channel, replayable |
-| evtx | `sigmacatch/src/evtx.rs` | `evtx` | One-shot `.evtx` collector (`live_capture() = false`): parse → detect → generate regression (pure-Rust EVTX writer) → commit/push, then exit |
-| auditd | `sigmacatch/src/auditd.rs` | `auditd` | auditd tail (no root needed) |
-| builtin syslog | `sigmacatch/src/syslog.rs` | `builtin` | Central/authpriv/cron syslog tails (no root needed) |
-| sysmon (tail) | `sigmacatch/src/sysmon.rs` | `sysmon` (implies `builtin`) | Legacy Sysmon-for-Linux XML tail |
-| sysmon (ebpf) | `sigmacatch/src/ebpf.rs` | `ebpf` | Native eBPF probes (root or CAP_BPF+CAP_PERFMON required) |
-| regressiondata-check | `regressiondata-check/src/main.rs` | — | Cross-platform regression validation (EVTX + auditd + JSON); no collector |
+| winevt | `sigmacatch/src/inputs/channels.rs` | `winevt` | Native Winevt API (`EvtQueryW`/`EvtNext`/`EvtRender`), multi-channel, replayable |
+| evtx | `sigmacatch/src/inputs/evtx.rs` | `evtx` | One-shot `.evtx` collector (`live_capture() = false`): parse → detect → generate regression (pure-Rust EVTX writer) → commit/push, then exit |
+| auditd | `sigmacatch/src/inputs/auditd.rs` | `auditd` | auditd tail (no root needed) |
+| builtin syslog | `sigmacatch/src/inputs/syslog.rs` | `builtin` | Central/authpriv/cron syslog tails (no root needed) |
+| sysmon (tail) | `sigmacatch/src/inputs/sysmon.rs` | `sysmon` (implies `builtin`) | Legacy Sysmon-for-Linux XML tail |
+| sysmon (ebpf) | `sigmacatch/src/inputs/ebpf.rs` | `ebpf` | Native eBPF probes (root or CAP_BPF+CAP_PERFMON required) |
+| regressiondata-check | `sigmacatch/src/bin/regressiondata-check.rs` | — | Cross-platform regression validation (EVTX + auditd + JSON); no collector |
 
 ### Windows logsource and PowerShell categories
 
@@ -131,7 +129,7 @@ lines; `sysmon` parses XML bodies, skipping truncated ones). Gated on the tailli
 
 The `evtx` input (feature `evtx`) is a `CollectorKind` with `live_capture() = false`: it runs
 through the same shared `run()` pipeline as the continuous collectors, in one-shot mode —
-enumerate `.evtx` files, parse each event (`input-windows-evtx`), feed the `DetectionEngine`,
+enumerate `.evtx` files, parse each event (`evtx_reader`), feed the `DetectionEngine`,
 then reuse the shared `SigmahqRegression` + `SigmaRepo` machinery to write `DataFormat::Evtx`
 regression data (always via the pure-Rust EVTX writer, never `EvtExportLog`) and commit/push
 it to the fork. Because `EventProducer::run()` returns when all files are exhausted, the
@@ -142,27 +140,29 @@ imaging rule). Because it is pure Rust it also builds and runs on Linux.
 ## Crate dependency graph
 
 ```text
-sigmacatch ──┬── sigmacatch-runner      (run<C: CollectorKind>, shared pipeline + tracing init + cli module)
-             │   ├── sigmacatch-config      (Config, CliArgs)
-             │   ├── sigmacatch-rule        (SigmahqRules: load/filter/remove_id)
-             │   ├── sigmacatch-detection   (DetectionEngine: pipelines + bloom + LogSourceExtractor + resolve_channels)
-             │   ├── sigmacatch-regression  (SigmahqRegression: skip set + data generation)
-             │   ├── sigmacatch-types       (Event, Alert, RegressionHeader, Product, EventProducer, XML parsing)
-             │   └── sigmacatch-repo        (SigmaRepo, grit-lib wrapper)
-             ├── input-windows-evtx     (parse EVTX → Event; feature `evtx`)
-             └── serde (JSON serialization of diagnostic output)
+sigmacatch (package)
+├── src/runner.rs         (run<C: CollectorKind>, shared pipeline + tracing init + cli module)
+├── src/config.rs         (Config, CliArgs)
+├── src/rule/             (SigmahqRules: load/filter/remove_id)
+├── src/detection/        (DetectionEngine: pipelines + bloom + LogSourceExtractor + resolve_channels)
+├── src/regression/       (SigmahqRegression: skip set + data generation)
+├── src/types.rs          (Event, Alert, RegressionHeader, Product, EventProducer, XML parsing)
+├── src/repo/             (SigmaRepo, grit-lib wrapper)
+├── src/evtx_reader.rs    (parse EVTX → Event)
+└── serde                 (JSON serialization of diagnostic output)
 
-regressiondata-check ──┬── sigmacatch-detection   (DetectionEngine)
-                   ├── sigmacatch-rule        (SigmahqRules: load/filter)
-                   ├── sigmacatch-regression  (SigmahqRegression)
-                   ├── sigmacatch-types       (Event)
-                   ├── input-windows-evtx     (parse EVTX → Event)
-                   └── linux-audit-parser     (parse auditd records → Event)
+regressiondata-check (second binary of sigmacatch package)
+├── reuses src/detection/ (DetectionEngine)
+├── reuses src/rule/      (SigmahqRules: load/filter)
+├── reuses src/regression/ (SigmahqRegression)
+├── reuses src/types.rs   (Event)
+├── reuses src/evtx_reader.rs (parse EVTX → Event)
+└── linux-audit-parser    (parse auditd records → Event)
 ```
 
-`input-windows-evtx` depends on `sigmacatch-types` + the `evtx` crate.
-`regressiondata-check` (regression validation, cross-platform) assembles `detection` +
-`rule` + `regression` + `types` with `input-windows-evtx` (EVTX) and `linux-audit-parser`
+The module `evtx_reader` depends on `types` + the `evtx` crate.
+`regressiondata-check` (regression validation, cross-platform) reuses the same modules
+(`detection`, `rule`, `regression`, `types`, `evtx_reader`) with `linux-audit-parser`
 (auditd) according to each entry's `LogType`. The diagnostic subcommands (`cli.rs`) parse
 arguments manually and use `serde` for their JSON output (always compiled).
 
@@ -219,7 +219,7 @@ engine.process_events() → get_alerts()
     ↓
 returns (restored Pipeline, batches: Vec<(Uuid, Vec<String>)>)
     ↓
-upload_regression() → upload_rule_batches()   # in sigmacatch-repo
+upload_regression() → upload_rule_batches()   # in sigmacatch::repo
      ├── one commit per rule: "🧪 test: add regression data for rule {rule_id}"
      ├── commit/push failure → rollback local branch to pre-batch tip
      └── SINGLE push if git.contrib: true (otherwise local commits only)
