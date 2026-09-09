@@ -32,10 +32,6 @@ use async_trait::async_trait;
 use sigmacatch_types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
 
-/// Poll interval of the tail loop (how often new bytes are read from the file).
-#[cfg(target_os = "linux")]
-const TAIL_POLL_MS: u64 = 100;
-
 /// Sysmon for Linux event collector (implements `EventProducer` directly).
 pub struct EventCollector {
     /// Pinned path, or `None` to discover the first existing default path.
@@ -112,10 +108,7 @@ impl EventProducer for EventCollector {
     }
 }
 
-/// Blocking tail loop: read appended lines from the central syslog, keep the
-/// `sysmon` ones and emit one [`Event`] per parsed XML body. Detects log
-/// rotation (inode change) and re-opens the file. Exits when `stop` is set or
-/// the receiver is dropped. Runs in `spawn_blocking`.
+/// Run the blocking tail on `path` in `spawn_blocking`.
 #[cfg(target_os = "linux")]
 async fn tail_loop(
     path: &str,
@@ -126,120 +119,30 @@ async fn tail_loop(
     let path = path.to_string();
 
     let task = tokio::task::spawn_blocking(move || {
-        use std::fs::OpenOptions;
-
-        let file = OpenOptions::new()
-            .read(true)
-            .open(&path)
-            .map_err(|e| anyhow::anyhow!("failed to open syslog {path}: {e}"))?;
-        let mut state = TailState::new(file, path);
-        loop {
-            if *stop.borrow() || tx.is_closed() {
-                break;
-            }
-            if let Err(e) = state.poll(&tx) {
-                tracing::warn!("sysmon tail error: {e}");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(TAIL_POLL_MS));
-        }
-        Ok(())
+        crate::tail::run(&path, SysmonHandler, tx, stop)
     });
 
     task.await
         .map_err(|e| anyhow::anyhow!("sysmon tail task panicked: {e}"))?
 }
 
-/// Tracks the open log file, its identity (dev/ino) for rotation detection
-/// and partial lines.
+/// Keeps the `sysmon` RFC3164 lines and emits one [`Event`] per parsed XML
+/// body. Truncated XML (rsyslog size limits) is skipped with a warning;
+/// collection continues.
 #[cfg(target_os = "linux")]
-struct TailState {
-    file: std::fs::File,
-    path: String,
-    dev: u64,
-    ino: u64,
-    pending: Vec<u8>,
-}
+struct SysmonHandler;
 
 #[cfg(target_os = "linux")]
-impl TailState {
-    fn new(file: std::fs::File, path: String) -> Self {
-        use std::io::{Seek, SeekFrom};
-        use std::os::unix::fs::MetadataExt;
-
-        let (dev, ino) = match file.metadata() {
-            Ok(m) => (m.dev(), m.ino()),
-            Err(_) => (0, 0),
+impl crate::tail::LineHandler for SysmonHandler {
+    fn on_line(&mut self, line: &[u8]) -> anyhow::Result<Vec<Event>> {
+        let Some(record) = parse_line(line) else {
+            return Ok(Vec::new());
         };
-        let _ = (&file).seek(SeekFrom::End(0));
-        Self {
-            file,
-            path,
-            dev,
-            ino,
-            pending: Vec::new(),
-        }
-    }
-
-    fn check_rotation(&self) -> anyhow::Result<bool> {
-        use std::os::unix::fs::MetadataExt;
-
-        match std::fs::metadata(&self.path) {
-            Ok(m) => Ok(m.dev() != self.dev || m.ino() != self.ino),
-            Err(_) => Ok(false),
-        }
-    }
-
-    fn reopen(&mut self) -> anyhow::Result<()> {
-        use std::io::{Seek, SeekFrom};
-        use std::os::unix::fs::MetadataExt;
-
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .open(&self.path)
-            .map_err(|e| anyhow::anyhow!("failed to re-open syslog {}: {e}", self.path))?;
-        let (dev, ino) = match file.metadata() {
-            Ok(m) => (m.dev(), m.ino()),
-            Err(_) => (0, 0),
+        let Some(event) = record_to_event(line, &record) else {
+            tracing::warn!("invalid sysmon XML skipped");
+            return Ok(Vec::new());
         };
-        self.file = file;
-        self.dev = dev;
-        self.ino = ino;
-        self.pending.clear();
-        let _ = (&self.file).seek(SeekFrom::Start(0));
-        tracing::info!("syslog rotated — re-opened {}", self.path);
-        Ok(())
-    }
-
-    fn poll(&mut self, tx: &mpsc::Sender<Event>) -> anyhow::Result<()> {
-        use std::io::Read;
-
-        if self.check_rotation()? {
-            self.reopen()?;
-        }
-        let mut buf = [0u8; 8192];
-        let n = self.file.read(&mut buf)?;
-        if n == 0 {
-            return Ok(());
-        }
-        self.pending.extend_from_slice(&buf[..n]);
-        self.drain_lines(tx)
-    }
-
-    fn drain_lines(&mut self, tx: &mpsc::Sender<Event>) -> anyhow::Result<()> {
-        while let Some(pos) = self.pending.iter().position(|&b| b == b'\n') {
-            let line: Vec<u8> = self.pending.drain(..=pos).collect();
-            let Some(record) = parse_line(&line) else {
-                continue;
-            };
-            let Some(event) = record_to_event(&line, &record) else {
-                tracing::warn!("invalid sysmon XML skipped");
-                continue;
-            };
-            if tx.blocking_send(event).is_err() {
-                return Ok(());
-            }
-        }
-        Ok(())
+        Ok(vec![event])
     }
 }
 

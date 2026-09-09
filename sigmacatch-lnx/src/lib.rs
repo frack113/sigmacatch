@@ -7,6 +7,10 @@
 
 pub use sigmacatch_runner::{CollectorKind, run};
 
+// Shared tail driver for the file-tailing collectors (Linux only).
+#[cfg(all(target_os = "linux", any(feature = "auditd", feature = "builtin", feature = "sysmon")))]
+mod tail;
+
 #[cfg(feature = "auditd")]
 pub mod auditd;
 #[cfg(feature = "ebpf")]

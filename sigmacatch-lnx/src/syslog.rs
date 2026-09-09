@@ -274,7 +274,8 @@ impl EventProducer for EventCollector {
                 let tx = tx.clone();
                 let stop = stop.clone();
                 tasks.push(tokio::task::spawn_blocking(move || {
-                    blocking_tail(&path, kind, tx, stop)
+                    tracing::info!("builtin syslog collector starting (tail {path})");
+                    crate::tail::run(&path, SyslogHandler { kind }, tx, stop)
                 }));
             }
             drop(tx);
@@ -304,110 +305,25 @@ impl EventProducer for EventCollector {
     }
 }
 
-/// Blocking tail loop body for one file: read appended lines, parse and emit
-/// one [`Event`] per line. Detects log rotation (inode change) and re-opens
-/// the file. Exits when `stop` is set or the receiver is dropped.
+/// Handles one tailed syslog file: parses each line and emits one [`Event`]
+/// per valid line, excluding `sysmon` lines (handled exclusively by the sysmon
+/// collector to prevent double-capture).
 #[cfg(target_os = "linux")]
-fn blocking_tail(
-    path: &str,
+struct SyslogHandler {
     kind: SourceKind,
-    tx: mpsc::Sender<Event>,
-    stop: watch::Receiver<bool>,
-) -> anyhow::Result<()> {
-    use std::fs::OpenOptions;
-    use std::time::Duration;
-
-    tracing::info!("builtin syslog collector starting (tail {path})");
-    let file = OpenOptions::new().read(true).open(path)?;
-    let mut state = TailState::new(file, path.to_string());
-    while !*stop.borrow() && !tx.is_closed() {
-        if let Err(e) = state.poll(kind, &tx) {
-            tracing::warn!("builtin syslog tail error: {e}");
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    Ok(())
-}
-
-/// Tracks the open log file, its identity (dev/ino) for rotation detection and
-/// partial lines.
-#[cfg(target_os = "linux")]
-struct TailState {
-    file: std::fs::File,
-    path: String,
-    dev: u64,
-    ino: u64,
-    pending: Vec<u8>,
 }
 
 #[cfg(target_os = "linux")]
-impl TailState {
-    fn new(file: std::fs::File, path: String) -> Self {
-        use std::io::Seek;
-        use std::os::unix::fs::MetadataExt;
-        let (dev, ino) = file
-            .metadata()
-            .map(|m| (m.dev(), m.ino()))
-            .unwrap_or((0, 0));
-        let _ = (&file).seek(std::io::SeekFrom::End(0));
-        Self {
-            file,
-            path,
-            dev,
-            ino,
-            pending: Vec::new(),
+impl crate::tail::LineHandler for SyslogHandler {
+    fn on_line(&mut self, line: &[u8]) -> anyhow::Result<Vec<Event>> {
+        let Some(record) = parse_line(line) else {
+            return Ok(Vec::new());
+        };
+        // sysmon for Linux handled exclusively by the sysmon collector.
+        if record.program.eq_ignore_ascii_case("sysmon") {
+            return Ok(Vec::new());
         }
-    }
-
-    fn check_rotation(&self) -> std::io::Result<bool> {
-        use std::os::unix::fs::MetadataExt;
-        let m = std::fs::metadata(&self.path)?;
-        Ok(m.dev() != self.dev || m.ino() != self.ino)
-    }
-
-    fn reopen(&mut self) -> std::io::Result<()> {
-        use std::io::Seek;
-        let file = std::fs::OpenOptions::new().read(true).open(&self.path)?;
-        use std::os::unix::fs::MetadataExt;
-        let (dev, ino) = file
-            .metadata()
-            .map(|m| (m.dev(), m.ino()))
-            .unwrap_or((0, 0));
-        let _ = (&file).seek(std::io::SeekFrom::Start(0));
-        self.file = file;
-        self.dev = dev;
-        self.ino = ino;
-        self.pending.clear();
-        Ok(())
-    }
-
-    fn poll(&mut self, kind: SourceKind, tx: &mpsc::Sender<Event>) -> std::io::Result<()> {
-        if self.check_rotation()? {
-            self.reopen()?;
-        }
-        use std::io::Read;
-        let mut buf = [0u8; 8192];
-        let n = self.file.read(&mut buf)?;
-        if n == 0 {
-            return Ok(());
-        }
-        self.pending.extend_from_slice(&buf[..n]);
-        self.drain_lines(kind, tx)
-    }
-
-    fn drain_lines(&mut self, kind: SourceKind, tx: &mpsc::Sender<Event>) -> std::io::Result<()> {
-        while let Some(pos) = self.pending.iter().position(|&b| b == b'\n') {
-            let line = self.pending[..=pos].to_vec();
-            self.pending = self.pending[pos + 1..].to_vec();
-            // sysmon for Linux handled exclusively by the sysmon collector.
-            if let Some(record) = parse_line(&line)
-                && !record.program.eq_ignore_ascii_case("sysmon")
-                && tx.blocking_send(build_event(kind, &line, &record)).is_err()
-            {
-                return Ok(());
-            }
-        }
-        Ok(())
+        Ok(vec![build_event(self.kind, line, &record)])
     }
 }
 

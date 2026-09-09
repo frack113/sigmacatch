@@ -26,10 +26,6 @@ use tokio::sync::{mpsc, watch};
 /// Default path of the audit log.
 pub const DEFAULT_LOG_PATH: &str = "/var/log/audit/audit.log";
 
-/// Poll interval of the tail loop (how often new bytes are read from the file).
-#[cfg(target_os = "linux")]
-const TAIL_POLL_MS: u64 = 100;
-
 /// A parsed audit record: one line of the audit log.
 pub struct Record {
     /// Audit event identifier (timestamp ms + sequence).
@@ -153,6 +149,95 @@ impl EventProducer for EventCollector {
     }
 }
 
+/// Run the blocking tail on `path` in `spawn_blocking`.
+#[cfg(target_os = "linux")]
+async fn tail_loop(
+    path: &str,
+    tx: mpsc::Sender<Event>,
+    stop: watch::Receiver<bool>,
+) -> anyhow::Result<()> {
+    use tracing::info;
+
+    info!("auditd collector starting (tail {path})");
+    let path = path.to_string();
+
+    let task = tokio::task::spawn_blocking(move || {
+        crate::tail::run(&path, AuditdHandler::new(), tx, stop)
+    });
+
+    match task.await {
+        Ok(res) => res,
+        Err(e) => Err(anyhow::anyhow!("audit tail task panicked: {e}")),
+    }
+}
+
+/// Groups consecutive audit records sharing the same audit event id
+/// (`msg=audit(timestamp:sequence)`) so each emitted event carries the
+/// complete original audit event lines — required for the `.log` regression
+/// data file. A group is flushed when a record with a different id arrives or
+/// when the tail reports an idle poll.
+#[cfg(target_os = "linux")]
+struct AuditdHandler {
+    group_seq: Option<linux_audit_parser::EventID>,
+    group_lines: Vec<u8>,
+    group_records: Vec<Record>,
+}
+
+#[cfg(target_os = "linux")]
+impl AuditdHandler {
+    fn new() -> Self {
+        Self {
+            group_seq: None,
+            group_lines: Vec::new(),
+            group_records: Vec::new(),
+        }
+    }
+
+    /// Move the accumulated group into `out` as one event per record, each
+    /// carrying the full original lines.
+    fn flush_group(&mut self, out: &mut Vec<Event>) {
+        if self.group_records.is_empty() {
+            self.group_seq = None;
+            return;
+        }
+        let lines = std::mem::take(&mut self.group_lines);
+        let records = std::mem::take(&mut self.group_records);
+        self.group_seq = None;
+        for record in records {
+            out.push(record_to_event(&lines, &record));
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl crate::tail::LineHandler for AuditdHandler {
+    fn on_line(&mut self, line: &[u8]) -> anyhow::Result<Vec<Event>> {
+        let Some(record) = parse_line(line) else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::new();
+        if self.group_seq != Some(record.id) {
+            self.flush_group(&mut out);
+            self.group_seq = Some(record.id);
+        }
+        self.group_lines.extend_from_slice(line);
+        self.group_records.push(record);
+        Ok(out)
+    }
+
+    fn on_idle(&mut self) -> anyhow::Result<Vec<Event>> {
+        let mut out = Vec::new();
+        self.flush_group(&mut out);
+        Ok(out)
+    }
+
+    fn on_rotate(&mut self) {
+        self.group_seq = None;
+        self.group_lines.clear();
+        self.group_records.clear();
+    }
+}
+
 /// Build the `Event` for a single audit record of a grouped audit event:
 /// - `event_json_raw`: structured `{stamp, type, node?, fields}` preserving
 ///   the record and its audit event ID;
@@ -192,169 +277,6 @@ pub fn record_to_event(lines: &[u8], record: &Record) -> Event {
     let mut event = Event::new(json_raw, JsonValue::Object(flat), lines.to_vec());
     event.inject_logsource_fields_for("linux", Some("auditd"));
     event
-}
-
-/// Blocking tail loop: read appended lines from the audit log, parse and
-/// reassemble them into events, send them through `tx`. Detects log rotation
-/// (inode change) and re-opens the file. Exits when `stop` is set or the
-/// receiver is dropped. Runs in `spawn_blocking`.
-#[cfg(target_os = "linux")]
-async fn tail_loop(
-    path: &str,
-    tx: mpsc::Sender<Event>,
-    stop: watch::Receiver<bool>,
-) -> anyhow::Result<()> {
-    use tracing::info;
-
-    info!("auditd collector starting (tail {path})");
-    let path = path.to_string();
-
-    let task = tokio::task::spawn_blocking(move || {
-        use std::fs::OpenOptions;
-
-        let file = OpenOptions::new()
-            .read(true)
-            .open(&path)
-            .map_err(|e| anyhow::anyhow!("failed to open audit log {path}: {e}"))?;
-        let mut state = TailState::new(file, path);
-        loop {
-            if *stop.borrow() || tx.is_closed() {
-                break;
-            }
-            if let Err(e) = state.poll(&tx) {
-                tracing::warn!("audit log tail error: {e}");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(TAIL_POLL_MS));
-        }
-        Ok(())
-    });
-
-    match task.await {
-        Ok(res) => res,
-        Err(e) => Err(anyhow::anyhow!("audit tail task panicked: {e}")),
-    }
-}
-
-/// Tracks the open log file, its identity (dev/ino) for rotation detection,
-/// partial lines and the audit event currently being grouped.
-#[cfg(target_os = "linux")]
-struct TailState {
-    file: std::fs::File,
-    path: String,
-    dev: u64,
-    ino: u64,
-    pending: Vec<u8>,
-    group_seq: Option<linux_audit_parser::EventID>,
-    group_lines: Vec<u8>,
-    group_records: Vec<Record>,
-}
-
-#[cfg(target_os = "linux")]
-impl TailState {
-    fn new(file: std::fs::File, path: String) -> Self {
-        use std::io::{Seek, SeekFrom};
-        use std::os::unix::fs::MetadataExt;
-
-        let (dev, ino) = match file.metadata() {
-            Ok(m) => (m.dev(), m.ino()),
-            Err(_) => (0, 0),
-        };
-        let _ = (&file).seek(SeekFrom::End(0));
-        Self {
-            file,
-            path,
-            dev,
-            ino,
-            pending: Vec::new(),
-            group_seq: None,
-            group_lines: Vec::new(),
-            group_records: Vec::new(),
-        }
-    }
-
-    fn poll(&mut self, tx: &mpsc::Sender<Event>) -> anyhow::Result<()> {
-        use std::io::Read;
-
-        if self.check_rotation()? {
-            self.reopen()?;
-        }
-
-        let mut buf = [0u8; 8192];
-        let n = self.file.read(&mut buf)?;
-        if n == 0 {
-            if self.pending.is_empty() {
-                self.flush_group(tx)?;
-            }
-            return Ok(());
-        }
-        self.pending.extend_from_slice(&buf[..n]);
-        self.drain_lines(tx)
-    }
-
-    fn check_rotation(&self) -> anyhow::Result<bool> {
-        use std::os::unix::fs::MetadataExt;
-
-        match std::fs::metadata(&self.path) {
-            Ok(m) => Ok(m.dev() != self.dev || m.ino() != self.ino),
-            Err(_) => Ok(false),
-        }
-    }
-
-    fn reopen(&mut self) -> anyhow::Result<()> {
-        use std::io::{Seek, SeekFrom};
-        use std::os::unix::fs::MetadataExt;
-
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .open(&self.path)
-            .map_err(|e| anyhow::anyhow!("failed to re-open audit log {}: {e}", self.path))?;
-        let (dev, ino) = match file.metadata() {
-            Ok(m) => (m.dev(), m.ino()),
-            Err(_) => (0, 0),
-        };
-        self.file = file;
-        self.dev = dev;
-        self.ino = ino;
-        self.pending.clear();
-        self.group_seq = None;
-        self.group_lines.clear();
-        self.group_records.clear();
-        let _ = (&self.file).seek(SeekFrom::Start(0));
-        tracing::info!("audit log rotated — re-opened {}", self.path);
-        Ok(())
-    }
-
-    fn drain_lines(&mut self, tx: &mpsc::Sender<Event>) -> anyhow::Result<()> {
-        while let Some(pos) = self.pending.iter().position(|&b| b == b'\n') {
-            let line: Vec<u8> = self.pending.drain(..=pos).collect();
-            if let Some(record) = parse_line(&line) {
-                if self.group_seq != Some(record.id) {
-                    self.flush_group(tx)?;
-                    self.group_seq = Some(record.id);
-                }
-                self.group_lines.extend_from_slice(&line);
-                self.group_records.push(record);
-            }
-        }
-        Ok(())
-    }
-
-    fn flush_group(&mut self, tx: &mpsc::Sender<Event>) -> anyhow::Result<()> {
-        if self.group_records.is_empty() {
-            self.group_seq = None;
-            return Ok(());
-        }
-        let lines = std::mem::take(&mut self.group_lines);
-        let records = std::mem::take(&mut self.group_records);
-        self.group_seq = None;
-        for record in records {
-            if tx.blocking_send(record_to_event(&lines, &record)).is_err() {
-                tracing::warn!("channel closed, dropping remaining records from group");
-                break;
-            }
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
