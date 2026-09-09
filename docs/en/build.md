@@ -5,87 +5,85 @@
 - Rust 2024 edition (1.85+)
 - For Windows cross-compilation from Linux: `cargo install cargo-xwin` (auto-downloads Windows SDK)
 
-## Linux / macOS
+## Cargo features
+
+One binary `sigmacatch`; the **cargo features** select which inputs are compiled in:
+
+| Feature | Input | Platform | Default? |
+|---|---|---|---|
+| `winevt` | Windows Event Log live (`EvtQueryW` → `EvtNext` → `EvtRender`) | Windows | yes |
+| `evtx` | EVTX files one-shot, pure Rust | any | no |
+| `auditd` | auditd `/var/log/audit/audit.log` | Linux | no |
+| `builtin` | builtin syslog (central, authpriv, cron) | Linux | no |
+| `sysmon` | Sysmon-for-Linux XML tail (depends on `builtin`) | Linux | no |
+| `ebpf` | native eBPF probes (process/network/file/DNS) | Linux | no |
+
+At runtime `--evtx <PATH>` selects the one-shot EVTX input; on Windows the live
+Winevt collector is the default; on Linux every compiled **and available** input
+runs in parallel. Bail at startup if no source is found.
+
+## Linux
 
 ```bash
-# Build the Linux binary
-cargo build --release -p sigmacatch-lnx
+# auditd + builtin syslog (base features, no root)
+cargo build --release -p sigmacatch --no-default-features --features auditd,builtin
+
+# + Sysmon-for-Linux tail
+cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,sysmon
+
+# + native eBPF probes (root/CAP_BPF+CAP_PERFMON required at runtime, kernel 5.14+/BTF,
+#   nightly toolchain + bpf-linker to build the probes — otherwise a placeholder falls back to the tail)
+cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,ebpf
 
 # Lint
-cargo clippy -- -W warnings
+cargo clippy -p sigmacatch --no-default-features --features auditd,builtin,sysmon -- -W warnings
 ```
 
-Produces `sigmacatch-linux` (default features `auditd` + `builtin`). It runs, in parallel,
-the **auditd** collector when `/var/log/audit/audit.log` exists and the **builtin syslog**
-collectors (every existing file among central `/var/log/messages`, `/var/log/syslog`;
-authpriv `/var/log/secure`, `/var/log/auth.log`; cron `/var/log/cron`, `/var/log/cron.log`).
-No Sysmon source: the `-sysmon` and `-ebpf` flavour binaries add it (see below). Bail at
-startup if no source is found. Full specification of the three collectors:
-[architecture.md](architecture.md).
+It runs, in parallel, the **auditd** collector when `/var/log/audit/audit.log` exists and the
+**builtin syslog** collectors (every existing file among central `/var/log/messages`,
+`/var/log/syslog`; authpriv `/var/log/secure`, `/var/log/auth.log`; cron `/var/log/cron`,
+`/var/log/cron.log`). Full specification of the collectors: [architecture.md](architecture.md).
 
-The two extended Linux flavours additionally embed a Sysmon source, selected by cargo feature:
-
-```bash
-cargo build --release -p sigmacatch-lnx --no-default-features --features auditd,builtin,sysmon  # sigmacatch-linux-sysmon
-cargo build --release -p sigmacatch-lnx --no-default-features --features auditd,builtin,ebpf   # sigmacatch-linux-ebpf (root/CAP_BPF+CAP_PERFMON required)
-```
-
-On Linux/macOS the Windows collectors are no-op stubs — the pipeline still runs end-to-end
-for testing (`cargo build -p sigmacatch-win`).
+The `winevt` feature (default) compiles as no-op stubs on Linux: toggling to a Linux
+build always uses `--no-default-features`.
 
 ## Windows
 
 ```bash
-cargo build --release -p sigmacatch-win
+cargo build --release -p sigmacatch        # winevt (default feature)
+cargo build --release -p sigmacatch --features evtx   # + one-shot EVTX
 ```
 
-Two binaries are produced in the `sigmacatch-win` crate:
-
-- **`sigmacatch-channel`** (winevt, feature `winevt`, enabled by default): native Winevt API (`EvtQueryW` → `EvtNext` → `EvtRender`) on resolved channels. Requires admin rights for `Security` and `System` channels.
-- **`sigmacatch-evtx`** (feature `evtx`, not in defaults): one-shot EVTX collector (`live_capture() = false`) — recursively scans a directory of `.evtx` files, matches the events against Sigma rules and generates SigmaHQ regression data, then commits/pushes to a `sigmacatch/<date>` branch and exits. No live collection, no Windows API: EVTX is parsed and re-written in pure Rust, so this binary also builds and runs on Linux (`cargo build --release --bin sigmacatch-evtx --no-default-features --features evtx`).
-
-Isolated builds:
+The **winevt** collector uses the native Winevt API on the resolved channels; it requires
+admin rights for the `Security` and `System` channels. The **evtx** input (`live_capture() = false`)
+recursively scans a directory of `.evtx` files, matches the events against Sigma rules, generates
+SigmaHQ regression data, then commits/pushes to a `sigmacatch/<date>` branch and exits — no
+Windows API, so it also builds and runs on Linux (`--no-default-features --features evtx`).
 
 ```bash
-# Winevt only
-cargo build --release --bin sigmacatch-channel --no-default-features --features winevt
-# One-shot EVTX collector only (cross-platform)
-cargo build --release --bin sigmacatch-evtx --no-default-features --features evtx
+# One-shot EVTX input only (cross-platform)
+cargo build --release -p sigmacatch --no-default-features --features evtx
 ```
 
 > The diagnostic subcommands (`check-filter`, `list-rules`) are always compiled into the
-> binary — no extra feature is required. The `[[bin]]` target requires its collector
-> feature (`winevt`) via `required-features`.
-
-Linux equivalent isolated builds:
-
-```bash
-cargo build --release -p sigmacatch-lnx --no-default-features --features auditd,builtin
-```
+> binary — no extra feature is required.
 
 ## Windows cross-compilation (from Linux)
 
 ```bash
-cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win
+# winevt (default)
+cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch
+# winevt + evtx (to deploy on the collection VM)
+cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch --features evtx
 ```
 
-The resulting binary is at `target/x86_64-pc-windows-msvc/release/sigmacatch-channel.exe`.
+The resulting binary is at `target/x86_64-pc-windows-msvc/release/sigmacatch.exe`.
 GitHub Actions CI builds natively on `windows-latest`.
-
-The one-shot EVTX collector (feature `evtx`):
-
-```bash
-cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch-win --features evtx
-```
-
-The resulting binary is at `target/x86_64-pc-windows-msvc/release/sigmacatch-evtx.exe`.
-Both sigmacatch-win binaries are produced by the default-feature cross build above; the
-`--features evtx` form is only needed for an isolated `sigmacatch-evtx.exe`.
 
 ## Binary size
 
-Optimized release build: ~10 MB per binary (observed on the x86_64-pc-windows-msvc cross:
-`sigmacatch-channel.exe` ~10.4 MB).
+Optimized release build: ~10 MB (observed on the x86_64-pc-windows-msvc cross:
+`sigmacatch.exe` ~10.4 MB, ~11.7 MB with `evtx`).
 
 Applied profile:
 
@@ -96,13 +94,13 @@ Applied profile:
 
 ## Diagnostic subcommands
 
-The `check-filter` and `list-rules` subcommands are **always compiled** into both
-`sigmacatch-channel` and `sigmacatch-linux` — no dedicated cargo feature is required
-(the `tools` feature has been removed).
+The `check-filter` and `list-rules` subcommands are **always compiled** into the
+`sigmacatch` binary — no dedicated cargo feature is required (the `tools` feature
+has been removed).
 
-Regression validation (`check`) is no longer a subcommand: it is the standalone
-**`regressiondata-check`** binary (`regressiondata-check`), cross-platform, which needs no
-collector and no extra feature:
+Regression validation (`check`) is not a subcommand: it is the standalone
+**`regressiondata-check`** binary, cross-platform, which needs no collector and no
+extra feature:
 
 ```bash
 # Linux

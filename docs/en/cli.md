@@ -2,7 +2,7 @@
 
 ## `regressiondata-check` — regression validation (cross-platform)
 
-`check` is no longer a subcommand of the collector binaries: it is a standalone
+`check` is no longer a subcommand of the collector: it is a standalone
 **`regressiondata-check`** binary, built for Linux and Windows, without a collector. It
 loads the Sigma rules and regression data, replays each stored event
 through the detection engine, and verifies that the expected rule still matches.
@@ -121,9 +121,9 @@ they never trigger exit 1.
 
 ---
 
-## `sigmacatch-evtx` — one-shot EVTX collector (single run)
+## `--evtx` — one-shot EVTX input (single run)
 
-Feature `evtx` in `sigmacatch-win`: a `CollectorKind` with `live_capture() = false` that runs
+Feature `evtx`: a `CollectorKind` with `live_capture() = false` that runs
 through the **same** `run()` pipeline as the continuous collectors. It recursively scans a
 directory for `.evtx` files, parses each event in pure Rust, pushes them through the
 detection engine, writes SigmaHQ regression data for every matched rule (pure-Rust EVTX
@@ -136,7 +136,7 @@ final upload exits with a non-zero status.
 **Usage:**
 
 ```text
-sigmacatch-evtx [OPTIONS]
+sigmacatch --evtx <EVTX_PATH> [OPTIONS]
 
       --evtx <EVTX_PATH>  Directory of .evtx files, scanned recursively
                        (default: C:\Windows\System32\winevt\Logs)
@@ -144,7 +144,7 @@ sigmacatch-evtx [OPTIONS]
   -h, --help           Print help and exit
 ```
 
-`--evtx` is parsed by every binary's shared CLI but used only here. Like all binaries the
+`--evtx` is parsed by the shared CLI but used only by the `evtx` input. Like always the
 config file is read from the working directory (`config.yaml` in the CWD — there is no
 `--config` flag). It supports the common flags below (`-a`, `-c`, `-o`, `-v`, `-n`,
 `--author`); `-r/--max-runs` is accepted but ignored (self-terminating), and `-n/--dry-run`
@@ -156,10 +156,9 @@ regression data is written under `<sigma_repo_path>/regression_data`.
 
 ---
 
-## Flags of the collector binaries
+## Flags of the collector binary
 
-The binaries `sigmacatch-channel`, `sigmacatch-linux`, `sigmacatch-linux-sysmon` and
-`sigmacatch-linux-ebpf` share the same flags (common parsing):
+The single `sigmacatch` binary (whatever the compiled inputs) shares these flags:
 
 ```text
 sigmacatch [OPTIONS]
@@ -172,6 +171,8 @@ sigmacatch [OPTIONS]
   -n, --dry-run      Read-only check: load the ./sigma rules and build the engine —
                      no data written, no git/network operation
       --author <NAME> Override the git author from config.yaml for this run
+      --evtx <PATH>   Directory of EVTX files to process (one-shot evtx input;
+                      requests the `evtx` feature when not compiled in)
   --help, -h         Print help and exit
 ```
 
@@ -181,18 +182,17 @@ builds the detection engine.
 
 ---
 
-## Diagnostic subcommands of the collector binaries
+## Diagnostic subcommands of the collector binary
 
-The commands below are subcommands of the binaries, **always compiled** (the `tools`
+The commands below are subcommands of `sigmacatch`, **always compiled** (the `tools`
 feature has been removed):
 
 | Binary | Subcommands |
 |---|---|
-| `sigmacatch-channel` (Windows) | `check-filter`, `list-rules` |
-| `sigmacatch-linux` (Linux) | `check-filter`, `list-rules` |
+| `sigmacatch` (any platform) | `check-filter`, `list-rules` |
 
-An unknown or absent subcommand → the binary starts its normal collection loop.
-The Linux equivalents share the same logic with the `linux` product filter.
+An unknown or absent subcommand → `sigmacatch` starts its normal collection loop (or, with
+`--evtx`, the one-shot EVTX pass). The `filter.product` value is taken from the config.
 
 > **Common prerequisite:** every subcommand loads `config.yaml` through `Config::load`,
 > which runs **full** validation (including git.author/email/token) — not just the
@@ -201,7 +201,7 @@ The Linux equivalents share the same logic with the `linux` product filter.
 
 ## check-filter
 
-**Usage:** `sigmacatch-channel check-filter [--json]`
+**Usage:** `sigmacatch check-filter [--json]`
 
 **Purpose:** validates `SigmaFilterConfig` (product / status / level / author) against the real
 Sigma rule set. No CLI args — runs every filter combination automatically.
@@ -220,12 +220,12 @@ directly from the raw rules — so a self-consistent but wrong `stats()` would s
 ### Example
 
 ```bash
-sigmacatch-channel check-filter
+sigmacatch check-filter
 ```
 
 ## list-rules
 
-**Usage:** `sigmacatch-channel list-rules [--json] [--coverage]`
+**Usage:** `sigmacatch list-rules [--json] [--coverage]`
 
 **Purpose:** lists the loaded rules with their path. With `--coverage`, also shows the ratio
 of rules that have local regression data (`with_data / total`, not a percentage); the ids on
@@ -242,8 +242,8 @@ separately.
 ### Example
 
 ```bash
-sigmacatch-channel list-rules
-sigmacatch-channel list-rules --json --coverage
+sigmacatch list-rules
+sigmacatch list-rules --json --coverage
 ```
 
 The `get-atomic` and `check-channels` subcommands have been removed. `get-atomic` is
