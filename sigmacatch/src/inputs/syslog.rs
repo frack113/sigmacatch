@@ -275,7 +275,7 @@ impl EventProducer for EventCollector {
                 let stop = stop.clone();
                 tasks.push(tokio::task::spawn_blocking(move || {
                     tracing::info!("builtin syslog collector starting (tail {path})");
-                    crate::tail::run(&path, SyslogHandler { kind }, tx, stop)
+                    crate::inputs::tail::run(&path, SyslogHandler { kind }, tx, stop)
                 }));
             }
             drop(tx);
@@ -314,7 +314,7 @@ struct SyslogHandler {
 }
 
 #[cfg(target_os = "linux")]
-impl crate::tail::LineHandler for SyslogHandler {
+impl crate::inputs::tail::LineHandler for SyslogHandler {
     fn on_line(&mut self, line: &[u8]) -> anyhow::Result<Vec<Event>> {
         let Some(record) = parse_line(line) else {
             return Ok(Vec::new());

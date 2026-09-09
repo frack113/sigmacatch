@@ -162,7 +162,7 @@ async fn tail_loop(
     let path = path.to_string();
 
     let task = tokio::task::spawn_blocking(move || {
-        crate::tail::run(&path, AuditdHandler::new(), tx, stop)
+        crate::inputs::tail::run(&path, AuditdHandler::new(), tx, stop)
     });
 
     match task.await {
@@ -210,7 +210,7 @@ impl AuditdHandler {
 }
 
 #[cfg(target_os = "linux")]
-impl crate::tail::LineHandler for AuditdHandler {
+impl crate::inputs::tail::LineHandler for AuditdHandler {
     fn on_line(&mut self, line: &[u8]) -> anyhow::Result<Vec<Event>> {
         let Some(record) = parse_line(line) else {
             return Ok(Vec::new());

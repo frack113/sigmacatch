@@ -33,8 +33,9 @@ fn main() {
     );
     // Build-script warnings are denied workspace-wide (Q7.1): every outcome
     // below is silent here and surfaced at runtime by src/ebpf.rs instead.
-    let target_is_linux =
-        env::var("TARGET").map(|t| t.starts_with("x86_64-unknown-linux") || t.starts_with("aarch64-unknown-linux")).unwrap_or(false);
+    let target_is_linux = env::var("TARGET")
+        .map(|t| t.starts_with("x86_64-unknown-linux") || t.starts_with("aarch64-unknown-linux"))
+        .unwrap_or(false);
     if env::var("CARGO_FEATURE_EBPF").is_err() || !target_is_linux {
         return;
     }

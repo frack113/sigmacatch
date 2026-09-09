@@ -5,8 +5,8 @@
 //! alert. Rule body is a verbatim SigmaHQ rule, embedded so the test is
 //! self-contained.
 
+use sigmacatch::inputs::syslog;
 use sigmacatch_detection::DetectionEngine;
-use sigmacatch::syslog;
 use sigmacatch_rule::SigmahqRules;
 
 const SSHD_LINE: &[u8] =

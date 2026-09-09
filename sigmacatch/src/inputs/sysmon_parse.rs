@@ -6,7 +6,7 @@
 //! this wire format — legacy tail collector AND the synthetic raw lines of
 //! the eBPF input alike.
 
-use crate::syslog::{self, Record};
+use crate::inputs::syslog::{self, Record};
 use sigmacatch_types::Event;
 
 /// Parse a single syslog line into a [`Record`] when it carries a Sysmon for

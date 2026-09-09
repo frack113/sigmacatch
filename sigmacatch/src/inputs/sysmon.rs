@@ -6,13 +6,13 @@
 //! Sysmon for Linux writes each event as a single RFC3164 line tagged `sysmon`
 //! whose body is Windows-eventlog XML (`<Event><System>…</System>
 //! <EventData>…</EventData></Event>`). The collector tails the same central
-//! files as [`crate::syslog`], keeps only those lines and parses their XML via
+//! files as [`crate::inputs::syslog`], keeps only those lines and parses their XML via
 //! the shared winevt parser: the schema matches Sysmon on Windows, so events
 //! carry the full field set (`Image`, `CommandLine`, …) and the detection
 //! engine pipelines work unchanged. Logsource is injected from the event
 //! channel `Linux-Sysmon/Operational` → `product: linux` + `service: sysmon`.
 //!
-//! Lines tagged `sysmon` are excluded from [`crate::syslog`] — one line is
+//! Lines tagged `sysmon` are excluded from [`crate::inputs::syslog`] — one line is
 //! emitted exactly once, by this collector. Truncated XML (rsyslog size
 //! limits) is skipped with a warning; collection continues.
 //!
@@ -26,8 +26,8 @@
 //! watch or by dropping the receiver. Log rotation (inode change) is detected
 //! and the file re-opened. Non-Linux → silent stub.
 
-use crate::syslog;
-use crate::sysmon_parse::{parse_line, record_to_event};
+use crate::inputs::syslog;
+use crate::inputs::sysmon_parse::{parse_line, record_to_event};
 use async_trait::async_trait;
 use sigmacatch_types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
@@ -119,7 +119,7 @@ async fn tail_loop(
     let path = path.to_string();
 
     let task = tokio::task::spawn_blocking(move || {
-        crate::tail::run(&path, SysmonHandler, tx, stop)
+        crate::inputs::tail::run(&path, SysmonHandler, tx, stop)
     });
 
     task.await
@@ -133,7 +133,7 @@ async fn tail_loop(
 struct SysmonHandler;
 
 #[cfg(target_os = "linux")]
-impl crate::tail::LineHandler for SysmonHandler {
+impl crate::inputs::tail::LineHandler for SysmonHandler {
     fn on_line(&mut self, line: &[u8]) -> anyhow::Result<Vec<Event>> {
         let Some(record) = parse_line(line) else {
             return Ok(Vec::new());

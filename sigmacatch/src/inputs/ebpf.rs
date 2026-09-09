@@ -19,7 +19,7 @@ use sigmacatch_types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
 use tracing::info;
 
-use crate::ebpf_event::EventBuilder;
+use crate::inputs::ebpf_event::EventBuilder;
 
 const RING_POLL_MS: u64 = 100;
 

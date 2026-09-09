@@ -17,12 +17,12 @@ use sigmacatch_types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
 
 #[cfg(feature = "sysmon")]
-use crate::sysmon;
+use crate::inputs::sysmon;
 
 fn auditd_available() -> bool {
     #[cfg(feature = "auditd")]
     {
-        std::path::Path::new(crate::auditd::DEFAULT_LOG_PATH).is_file()
+        std::path::Path::new(crate::inputs::auditd::DEFAULT_LOG_PATH).is_file()
     }
     #[cfg(not(feature = "auditd"))]
     {
@@ -33,7 +33,7 @@ fn auditd_available() -> bool {
 fn syslog_available() -> bool {
     #[cfg(feature = "builtin")]
     {
-        crate::syslog::default_log_exists()
+        crate::inputs::syslog::default_log_exists()
     }
     #[cfg(not(feature = "builtin"))]
     {
@@ -68,7 +68,7 @@ fn mode_for(auditd_ok: bool, syslog_ok: bool, ebpf_planned: bool) -> String {
 fn make_sysmon_collector(syslog_ok: bool) -> Option<(&'static str, Box<dyn EventProducer>)> {
     #[cfg(feature = "ebpf")]
     {
-        match crate::ebpf::EventCollector::new() {
+        match crate::inputs::ebpf::EventCollector::new() {
             Ok(collector) => return Some(("sysmon", Box::new(collector))),
             Err(e) => {
                 tracing::warn!("eBPF collector unavailable ({e:#})");
@@ -103,11 +103,17 @@ fn select_collectors(
     let mut collectors: Vec<(&'static str, Box<dyn EventProducer>)> = Vec::new();
     #[cfg(feature = "auditd")]
     if auditd_ok {
-        collectors.push(("auditd", Box::new(crate::auditd::EventCollector::new())));
+        collectors.push((
+            "auditd",
+            Box::new(crate::inputs::auditd::EventCollector::new()),
+        ));
     }
     #[cfg(feature = "builtin")]
     if syslog_ok {
-        collectors.push(("syslog", Box::new(crate::syslog::EventCollector::new())));
+        collectors.push((
+            "syslog",
+            Box::new(crate::inputs::syslog::EventCollector::new()),
+        ));
     }
     if let Some(sysmon) = make_sysmon_collector(syslog_ok) {
         collectors.push(sysmon);
@@ -172,7 +178,7 @@ struct LinuxCollector;
 fn ebpf_planned() -> bool {
     #[cfg(feature = "ebpf")]
     {
-        crate::ebpf::has_required_privileges()
+        crate::inputs::ebpf::has_required_privileges()
     }
     #[cfg(not(feature = "ebpf"))]
     {
@@ -215,7 +221,7 @@ pub async fn run() -> Result<()> {
     // Spec constraint: refuse to start without eBPF privileges rather than
     // degrade silently — the syslog fallback only covers old kernels.
     #[cfg(feature = "ebpf")]
-    if !crate::ebpf::has_required_privileges() {
+    if !crate::inputs::ebpf::has_required_privileges() {
         anyhow::bail!(
             "insufficient privileges for the eBPF collector: run as root \
              or grant CAP_BPF+CAP_PERFMON"

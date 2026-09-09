@@ -5,7 +5,7 @@
 
 #![cfg(all(target_os = "linux", feature = "auditd"))]
 
-use sigmacatch::auditd::EventCollector;
+use sigmacatch::inputs::auditd::EventCollector;
 use sigmacatch_types::EventProducer;
 use std::io::Write;
 use std::time::Duration;

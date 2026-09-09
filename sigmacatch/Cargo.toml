@@ -25,6 +25,7 @@ ebpf = ["dep:async-trait", "dep:aya", "dep:sigmacatch-ebpf-common", "dep:sha2", 
 
 [dependencies]
 sigmacatch-runner = { path = "../crates/sigmacatch-runner" }
+sigmacatch-config = { path = "../crates/sigmacatch-config" }
 sigmacatch-detection = { path = "../crates/sigmacatch-detection" }
 sigmacatch-regression = { path = "../crates/sigmacatch-regression" }
 sigmacatch-rule = { path = "../crates/sigmacatch-rule" }

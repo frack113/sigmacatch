@@ -9,17 +9,38 @@
 //!
 //! Cargo features select which inputs are compiled in; requesting an unbuilt
 //! input is a clear startup error.
+//!
+//! CLI parsing is single-sourced in `sigmacatch_config::parse_args`
+//! (`CliArgs`): the `--evtx` presence test and the EVTX path both come from
+//! the same parse, never an ad-hoc `argv` scan.
+
+use std::path::PathBuf;
 
 use anyhow::Result;
+use sigmacatch_config::parse_args;
 
-fn has_flag(name: &str) -> bool {
-    std::env::args().any(|a| a == name)
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Diagnostics first: the subcommands must work on machines with no local
+    // log source; only the collection loop requires one.
+    if let Some(code) = sigmacatch::cli::dispatch() {
+        std::process::exit(code);
+    }
+    // Single argument parse for the whole run (help/unknown flags, --evtx…).
+    let cli = parse_args();
+    if cli.evtx_path.is_some() {
+        return run_evtx(cli.evtx_path).await;
+    }
+    dispatch_collector().await
 }
 
-async fn run_evtx() -> Result<()> {
+/// One-shot EVTX input, cross-platform. `evtx_path` is unused when the `evtx`
+/// input isn't compiled in (the eager `--evtx` check still bails clearly).
+#[allow(unused_variables)]
+async fn run_evtx(evtx_path: Option<PathBuf>) -> Result<()> {
     #[cfg(feature = "evtx")]
     {
-        sigmacatch::evtx::run().await
+        sigmacatch::inputs::evtx::run(evtx_path).await
     }
     #[cfg(not(feature = "evtx"))]
     {
@@ -30,34 +51,26 @@ async fn run_evtx() -> Result<()> {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Diagnostics first: the subcommands must work on machines with no local
-    // log source; only the collection loop requires one.
-    if let Some(code) = sigmacatch::cli::dispatch() {
-        std::process::exit(code);
-    }
-    dispatch_collector().await
-}
-
-/// Dispatch to the compiled-in input. Each arm is `#[cfg]`-gated; on a given
-/// build exactly one platform arm is live, so the trailing bail is
+/// Dispatch to the compiled-in platform input. Each arm is `#[cfg]`-gated; on
+/// a given build exactly one platform arm is live, so the trailing bail is
 /// unreachable there (allowed).
 #[allow(unreachable_code)]
 async fn dispatch_collector() -> Result<()> {
-    if has_flag("--evtx") {
-        return run_evtx().await;
-    }
     #[cfg(all(target_os = "windows", feature = "winevt"))]
     {
-        return sigmacatch::winevt::run().await;
+        return sigmacatch::inputs::winevt::run().await;
     }
     #[cfg(all(
         target_os = "linux",
-        any(feature = "auditd", feature = "builtin", feature = "sysmon", feature = "ebpf")
+        any(
+            feature = "auditd",
+            feature = "builtin",
+            feature = "sysmon",
+            feature = "ebpf"
+        )
     ))]
     {
-        return sigmacatch::linux::run().await;
+        return sigmacatch::inputs::linux::run().await;
     }
     anyhow::bail!(
         "no usable input compiled into this build — rebuild with one of:\n  \

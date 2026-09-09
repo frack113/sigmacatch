@@ -7,7 +7,8 @@
 //! Recursively scans a directory for `.evtx` files, parses them, matches against
 //! Sigma rules, and generates SigmaHQ-format regression data under
 //! `sigma/regression_data/`. Selected by `main.rs` when `--evtx` is present
-//! (any platform — file parsing only, no Event Log subscription).
+//! (any platform — file parsing only, no Event Log subscription). The EVTX
+//! path is passed in from the shared CLI parse — never scanned again here.
 
 use std::path::{Path, PathBuf};
 
@@ -75,22 +76,15 @@ fn find_evtx_files(dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// Extract the value of `--evtx <PATH>` from `std::env::args()`.
-///
-/// Returns `None` when the flag is absent (caller uses the default path).
-fn parse_evtx_arg() -> Option<PathBuf> {
-    let args: Vec<String> = std::env::args().collect();
-    for i in 1..args.len() {
-        if args[i] == "--evtx" {
-            return args.get(i + 1).map(PathBuf::from);
-        }
-    }
-    None
+/// Extract the EVTX directory: the explicit `--evtx` value when given,
+/// otherwise the default Windows Event Log path.
+pub fn evtx_path_or_default(evtx_path: Option<PathBuf>) -> PathBuf {
+    evtx_path.unwrap_or_else(|| PathBuf::from(DEFAULT_EVTX_PATH))
 }
 
 /// Async entry — selected by `main.rs` when `--evtx` is present.
-pub async fn run() -> Result<()> {
-    let evtx_path = parse_evtx_arg().unwrap_or_else(|| PathBuf::from(DEFAULT_EVTX_PATH));
+pub async fn run(evtx_path: Option<PathBuf>) -> Result<()> {
+    let evtx_path = evtx_path_or_default(evtx_path);
 
     if !evtx_path.exists() {
         anyhow::bail!("Path does not exist: {}", evtx_path.display());
@@ -103,7 +97,11 @@ pub async fn run() -> Result<()> {
     if files.is_empty() {
         anyhow::bail!("No EVTX files found in {}", evtx_path.display());
     }
-    eprintln!("Found {} EVTX file(s) in {}", files.len(), evtx_path.display());
+    eprintln!(
+        "Found {} EVTX file(s) in {}",
+        files.len(),
+        evtx_path.display()
+    );
 
     let collector = EvtxCollector { files };
     sigmacatch_runner::run(&collector).await

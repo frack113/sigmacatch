@@ -16,33 +16,6 @@ pub use sigmacatch_runner::{CollectorKind, run};
 // Always compiled: diagnostic subcommands (check-filter, list-rules).
 pub mod cli;
 
-// Windows inputs.
-#[cfg(feature = "winevt")]
-pub mod channels;
-#[cfg(feature = "winevt")]
-pub mod winevt;
-#[cfg(feature = "evtx")]
-pub mod evtx;
-
-// Linux inputs. Unix-only code (tail MetadataExt, eBPF) is gated on
-// `target_os = "linux"`; selecting a Linux feature on another platform is
-// silently inert.
-#[cfg(all(target_os = "linux", feature = "auditd"))]
-pub mod auditd;
-#[cfg(all(target_os = "linux", feature = "builtin"))]
-pub mod syslog;
-#[cfg(all(target_os = "linux", any(feature = "auditd", feature = "builtin", feature = "sysmon")))]
-mod tail;
-#[cfg(all(target_os = "linux", feature = "builtin"))]
-pub mod sysmon_parse;
-#[cfg(all(target_os = "linux", feature = "sysmon"))]
-pub mod sysmon;
-#[cfg(all(target_os = "linux", feature = "ebpf"))]
-pub mod ebpf;
-#[cfg(all(target_os = "linux", feature = "ebpf"))]
-pub mod ebpf_event;
-#[cfg(all(
-    target_os = "linux",
-    any(feature = "auditd", feature = "builtin", feature = "sysmon", feature = "ebpf")
-))]
-pub mod linux;
+// Input adapters. The whole `feature × platform` gate matrix lives in
+// `inputs/mod.rs`; this library exposes it unconditionally here.
+pub mod inputs;

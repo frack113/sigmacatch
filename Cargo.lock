@@ -3037,6 +3037,7 @@ dependencies = [
  "regex",
  "serde_json",
  "sha2 0.11.0",
+ "sigmacatch-config",
  "sigmacatch-detection",
  "sigmacatch-ebpf-common",
  "sigmacatch-regression",

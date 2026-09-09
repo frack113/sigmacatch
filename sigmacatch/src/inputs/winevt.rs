@@ -12,7 +12,7 @@ use sigmacatch_detection::DetectionEngine;
 use sigmacatch_runner::{self, CollectorKind};
 use sigmacatch_types::EventProducer;
 
-use crate::channels;
+use crate::inputs::channels;
 
 struct WinevtCollector;
 
