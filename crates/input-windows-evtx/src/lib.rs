@@ -90,6 +90,23 @@ impl Default for EventCollector {
     }
 }
 
+/// Remove `Event.System.EventRecordID` from an event's JSON.
+///
+/// Events parsed from a static EVTX file are not present in the live Windows
+/// Event Log.  Without this strip, `write_evtx` would re-export via
+/// `EvtExportLog` (which queries the live log and finds nothing).  Stripping
+/// the record id forces the pure-Rust EVTX writer path instead.
+fn strip_record_id(event: &mut Event) {
+    if let Some(system) = event
+        .event_json
+        .get_mut("Event")
+        .and_then(|v| v.get_mut("System"))
+        .and_then(|v| v.as_object_mut())
+    {
+        system.remove("EventRecordID");
+    }
+}
+
 #[async_trait]
 impl EventProducer for EventCollector {
     async fn run(
@@ -107,10 +124,11 @@ impl EventProducer for EventCollector {
                     path.display()
                 ))))
             })?;
-            for event in events {
+            for mut event in events {
                 if *stop.borrow() {
                     break;
                 }
+                strip_record_id(&mut event);
                 tx.send(event).await.map_err(|_| {
                     ProducerError::Collector(Box::new(EvtxError::Parse(
                         "Channel send failed — receiver dropped".to_string(),

@@ -41,6 +41,16 @@ pub trait CollectorKind {
     fn regression_format(&self) -> DataFormat {
         DataFormat::Evtx
     }
+
+    /// Whether this collector emits live (streaming) events.
+    ///
+    /// When `true` (the default), the drive loop uses a 30-second generation
+    /// interval and a stop-file poller.  When `false` (one-shot mode, e.g.
+    /// EVTX file input), the loop runs until the channel closes and produces
+    /// a single generation cycle — no interval, no stop-file.
+    fn live_capture(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(windows)]
@@ -283,7 +293,7 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     // stopped gracefully on the next poll (drain + flush + commit). This is the
     // signal the skill's `stop-capture` uses to end a continuous (`-r 0`) run
     // without a hard kill that would lose the in-flight cycle's regression data.
-    if !config.stop_file.is_empty() {
+    if kind.live_capture() && !config.stop_file.is_empty() {
         let stop_tx = shutdown_tx.clone();
         let stop_rx = shutdown_rx.clone();
         let stop_file = config.stop_file.clone();
@@ -310,19 +320,38 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<Event>(100_000);
     let collector_stop = shutdown_rx.clone();
     let collector = kind.build(&cycle_channels);
-    // Keep a clone of the sender in the main task so we can drop it
-    // after the loop breaks, forcing the channel to close once the
-    // collector finishes.
-    let main_tx = tx.clone();
+    // In live mode keep a clone of the sender so the channel stays open after
+    // the collector finishes (the final-flush drain closes it later).  In
+    // one-shot mode the sender moves into the collector — when its run()
+    // returns the sender is dropped and `rx.recv()` yields None to signal
+    // completion.
+    let main_tx = if kind.live_capture() {
+        Some(tx.clone())
+    } else {
+        None
+    };
     let collector_handle = tokio::spawn(async move {
         if let Err(e) = collector.run(tx, collector_stop).await {
             warn!("Collector finished with error: {}", e);
         }
     });
-    info!("Continuous collector started ({})", kind.mode());
+    info!(
+        "{} started ({})",
+        kind.name(),
+        if kind.live_capture() {
+            "live capture"
+        } else {
+            "one-shot EVTX"
+        }
+    );
 
-    let mut generate_interval = tokio::time::interval(std::time::Duration::from_secs(30));
-    generate_interval.tick().await; // skip immediate first tick
+    let mut generate_interval = if kind.live_capture() {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        interval.tick().await; // skip immediate first tick
+        Some(interval)
+    } else {
+        None
+    };
 
     let mut branch_pushed = false;
     let max_runs = cli.max_runs;
@@ -337,53 +366,76 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
         regression,
     });
 
-    loop {
-        tokio::select! {
-            _ = shutdown_rx.changed() => {
-                info!("Shutting down…");
-                break;
-            }
-            Some(event) = rx.recv(), if pipeline_slot.is_some() => {
-                if let Some(pipeline) = pipeline_slot.as_mut() {
-                    let product = event.event_json.get("product").map(|v| v.to_string());
-                    pipeline.engine.put_events(vec![event]);
-                    tracing::debug!("event received (product={:?})", product);
+    if kind.live_capture() {
+        // ── Live capture: generation at 30 s intervals ────────────────────
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.changed() => {
+                    info!("Shutting down…");
+                    break;
                 }
-            }
-            _ = generate_interval.tick() => {
-                let Some(taken) = pipeline_slot.take() else {
-                    continue;
-                };
-                match tokio::task::spawn_blocking(move || process_and_generate(taken)).await {
-                    Ok((returned, batches)) => {
-                        pipeline_slot = Some(returned);
-                        runs_completed += 1;
-                        info!("Cycle {} completed", runs_completed);
+                Some(event) = rx.recv(), if pipeline_slot.is_some() => {
+                    if let Some(pipeline) = pipeline_slot.as_mut() {
+                        let product = event.event_json.get("product").map(|v| v.to_string());
+                        pipeline.engine.put_events(vec![event]);
+                        tracing::debug!("event received (product={:?})", product);
+                    }
+                }
+                _ = generate_interval.as_mut().unwrap().tick() => {
+                    let Some(taken) = pipeline_slot.take() else {
+                        continue;
+                    };
+                    match tokio::task::spawn_blocking(move || process_and_generate(taken)).await {
+                        Ok((returned, batches)) => {
+                            pipeline_slot = Some(returned);
+                            runs_completed += 1;
+                            info!("Cycle {} completed", runs_completed);
 
-                        if !batches.is_empty() {
-                            let shutdown = shutdown_rx.clone();
-                            upload_regression(
-                                &sigma_repo,
-                                batches,
-                                &mut branch_pushed,
-                                &push_branch,
-                                &move || *shutdown.borrow(),
-                            );
+                            if !batches.is_empty() {
+                                let shutdown = shutdown_rx.clone();
+                                let _ = upload_regression(
+                                    &sigma_repo,
+                                    batches,
+                                    &mut branch_pushed,
+                                    &push_branch,
+                                    &move || *shutdown.borrow(),
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            error!("Generation task failed (panicked): {}", e);
+                            let _ = shutdown_tx.send(true);
+                            break;
                         }
                     }
-                    Err(e) => {
-                        error!("Generation task failed (panicked): {}", e);
-                        let _ = shutdown_tx.send(true);
-                        break;
+
+                    if let Some(limit) = max_runs
+                        && runs_completed >= limit {
+                            info!("Reached max-runs limit ({}), shutting down", limit);
+                            let _ = shutdown_tx.send(true);
+                            break;
+                        }
+                }
+            }
+        }
+    } else {
+        // ── One-shot (e.g. EVTX file input): run until channel closes ─────
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.changed() => {
+                    info!("Shutting down…");
+                    break;
+                }
+                event = rx.recv(), if pipeline_slot.is_some() => {
+                    match event {
+                        Some(event) => {
+                            if let Some(pipeline) = pipeline_slot.as_mut() {
+                                pipeline.engine.put_events(vec![event]);
+                            }
+                        }
+                        None => break, // collector finished (channel closed)
                     }
                 }
-
-                if let Some(limit) = max_runs
-                    && runs_completed >= limit {
-                        info!("Reached max-runs limit ({}), shutting down", limit);
-                        let _ = shutdown_tx.send(true);
-                        break;
-                    }
             }
         }
     }
@@ -446,15 +498,26 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
         }
     };
     if !batches.is_empty() {
-        // Final flush: we are already shutting down — never abort the
-        // promised last commit/push.
-        upload_regression(
-            &sigma_repo,
-            batches,
-            &mut branch_pushed,
-            &push_branch,
-            &|| false,
-        );
+        // Final flush: never abort the promised last commit/push.
+        // Live mode: log errors and exit cleanly (no data loss on disk).
+        // One-shot mode: propagate to preserve the process exit code.
+        if kind.live_capture() {
+            let _ = upload_regression(
+                &sigma_repo,
+                batches,
+                &mut branch_pushed,
+                &push_branch,
+                &|| false,
+            );
+        } else {
+            upload_regression(
+                &sigma_repo,
+                batches,
+                &mut branch_pushed,
+                &push_branch,
+                &|| false,
+            )?;
+        }
     }
 
     info!("{} finished", kind.name());
@@ -511,20 +574,20 @@ fn upload_regression(
     branch_pushed: &mut bool,
     push_branch: &str,
     should_abort: &dyn Fn() -> bool,
-) {
+) -> Result<()> {
     if batches.is_empty() {
-        return;
+        return Ok(());
     }
 
-    if let Err(e) = sigma_repo.upload_rule_batches(batches, should_abort) {
-        error!("Failed to commit/push regression data: {}", e);
-    } else if sigma_repo.contrib_enabled() && !*branch_pushed {
+    sigma_repo.upload_rule_batches(batches, should_abort)?;
+    if sigma_repo.contrib_enabled() && !*branch_pushed {
         *branch_pushed = true;
         info!(
             "Branch '{}' pushed to origin. Next step: create PR at https://github.com/SigmaHQ/sigma/pulls",
             push_branch
         );
     }
+    Ok(())
 }
 
 fn process_and_generate(mut pipeline: Pipeline) -> (Pipeline, Vec<(Uuid, Vec<String>)>) {

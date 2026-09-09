@@ -25,17 +25,12 @@ required-features = ["evtx"]
 
 [dependencies]
 sigmacatch-runner = { path = "../crates/sigmacatch-runner" }
-sigmacatch-config = { path = "../crates/sigmacatch-config" }
 sigmacatch-detection = { path = "../crates/sigmacatch-detection" }
-sigmacatch-regression = { path = "../crates/sigmacatch-regression" }
-sigmacatch-rule = { path = "../crates/sigmacatch-rule" }
 sigmacatch-types = { path = "../crates/sigmacatch-types" }
 input-windows-evtx = { path = "../crates/input-windows-evtx" }
 
 async-trait = { version = "0.1", optional = true }
 walkdir = "2"
-ctrlc = "3"
-clap = { version = "4", features = ["derive"] }
 
 tokio = { version = "1", features = [
   "rt",

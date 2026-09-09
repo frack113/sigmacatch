@@ -552,6 +552,9 @@ pub struct CliArgs {
     /// `-n/--dry-run`: validate the loaded rules from `./sigma` without
     /// writing any regression data or performing any git operation.
     pub dry_run: bool,
+    /// `--evtx <PATH>`: directory of EVTX files to process
+    /// (sigmacatch-evtx only; ignored by other binaries).
+    pub evtx_path: Option<PathBuf>,
 }
 
 const HELP: &str = "\
@@ -572,6 +575,7 @@ FLAGS:
 
 OPTIONS:
     --author <NAME>           Override GitHub username from config.yaml
+    --evtx <PATH>             Directory of EVTX files to process (sigmacatch-evtx only)
 ";
 
 /// Parse CLI arguments from environment.
@@ -595,6 +599,7 @@ fn parse_args_from(args: &[String]) -> CliArgs {
     let mut verbose = false;
     let mut max_runs: Option<u32> = None;
     let mut dry_run = false;
+    let mut evtx_path: Option<PathBuf> = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -630,6 +635,16 @@ fn parse_args_from(args: &[String]) -> CliArgs {
             }
             "-v" | "--verbose" => verbose = true,
             "-n" | "--dry-run" => dry_run = true,
+            "--evtx" => {
+                i += 1;
+                match args.get(i) {
+                    Some(v) if !v.starts_with('-') => evtx_path = Some(PathBuf::from(v)),
+                    _ => {
+                        eprintln!("Error: --evtx requires a value");
+                        std::process::exit(1);
+                    }
+                }
+            }
             unknown => {
                 eprintln!("Error: unknown flag `{}`", unknown);
                 std::process::exit(1);
@@ -645,6 +660,7 @@ fn parse_args_from(args: &[String]) -> CliArgs {
         verbose,
         max_runs,
         dry_run,
+        evtx_path,
     }
 }
 
@@ -695,6 +711,21 @@ mod cli_tests {
         assert!(parsed.dry_run);
         let parsed = parse_args_from(&args(&["-n"]));
         assert!(parsed.dry_run);
+    }
+
+    #[test]
+    fn test_parse_evtx_path() {
+        let parsed = parse_args_from(&args(&["--evtx", "/data/logs"]));
+        assert_eq!(
+            parsed.evtx_path.as_deref(),
+            Some(std::path::Path::new("/data/logs"))
+        );
+    }
+
+    #[test]
+    fn test_parse_evtx_absent_is_none() {
+        let parsed = parse_args_from(&args(&["--verbose"]));
+        assert_eq!(parsed.evtx_path, None);
     }
 }
 /// Load custom channel mappings from a YAML file.

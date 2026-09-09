@@ -19,6 +19,11 @@
 
 pub use runner::{CollectorKind, bootstrap_repo_regression, run};
 
+/// Re-export [`sigmacatch_regression::DataFormat`] so binary crates that
+/// implement `CollectorKind` do not need a direct dependency on
+/// `sigmacatch-regression`.
+pub use sigmacatch_regression::DataFormat;
+
 pub mod cli;
 pub mod logging;
 
