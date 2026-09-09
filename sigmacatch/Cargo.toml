@@ -25,14 +25,13 @@ evtx = []
 auditd = []
 builtin = ["dep:regex"]
 sysmon = ["builtin"] # Sysmon-for-Linux legacy tail
-ebpf = ["dep:aya", "dep:sigmacatch-ebpf-common", "dep:hex"]
+ebpf = ["dep:aya", "dep:bytemuck", "dep:hex"]
 
 [dependencies]
-sigmacatch-ebpf-common = { path = "../crates/sigmacatch-ebpf-common", optional = true }
-
 anyhow = "1.0"
 async-trait = "0.1"
 aya = { version = "0.14", optional = true }
+bytemuck = { version = "1", default-features = false, features = ["derive"], optional = true }
 chrono = "0.4"
 crc32fast = "1.5"
 evtx = "0.12"

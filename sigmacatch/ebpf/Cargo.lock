@@ -238,13 +238,6 @@ name = "sigmacatch-ebpf"
 version = "0.1.0"
 dependencies = [
  "aya-ebpf",
- "sigmacatch-ebpf-common",
-]
-
-[[package]]
-name = "sigmacatch-ebpf-common"
-version = "0.6.0"
-dependencies = [
  "bytemuck",
 ]
 

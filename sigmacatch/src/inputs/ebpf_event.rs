@@ -17,10 +17,10 @@ use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
 
+use crate::ebpf_common::{DnsEvent, ExecEvent, FileCreateEvent, NetEvent};
 use crate::types::Event;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
-use sigmacatch_ebpf_common::{DnsEvent, ExecEvent, FileCreateEvent, NetEvent};
 
 const PROVIDER_GUID: &str = "{ff032593-a8d3-4f13-b0d6-01fc615a0f97}";
 const CHANNEL: &str = "Linux-Sysmon/Operational";
@@ -606,7 +606,7 @@ fn read_session_id(pid: u32) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sigmacatch_ebpf_common::{ARG0_LEN, EVENT_EXEC, EVENT_NET, IMAGE_LEN, NetEvent};
+    use crate::ebpf_common::{ARG0_LEN, EVENT_EXEC, EVENT_NET, IMAGE_LEN, NetEvent};
 
     pub(super) fn sample_net(family: u16, port_be: u16, addr: [u8; 16]) -> NetEvent {
         NetEvent {
@@ -872,7 +872,7 @@ mod net_tests {
 mod file_tests {
     use super::tests::sample_exec;
     use super::*;
-    use sigmacatch_ebpf_common::{AT_FDCWD, EVENT_FILE, PATH_LEN};
+    use crate::ebpf_common::{AT_FDCWD, EVENT_FILE, PATH_LEN};
 
     fn sample_file(pid: u32) -> FileCreateEvent {
         let mut ev = FileCreateEvent {
@@ -966,7 +966,7 @@ mod file_tests {
 mod dns_tests {
     use super::tests::sample_exec;
     use super::*;
-    use sigmacatch_ebpf_common::{DNS_PAYLOAD_LEN, DnsEvent, EVENT_DNS};
+    use crate::ebpf_common::{DNS_PAYLOAD_LEN, DnsEvent, EVENT_DNS};
 
     /// Wire bytes for a query of `name` type A (header id=0x1234).
     fn dns_query_wire(name: &str) -> Vec<u8> {

@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sigmacatch contributors
 #
-# Standalone crate, deliberately EXCLUDED from the root workspace: it only
-# builds with nightly + rust-src + bpf-linker for the bpf-el target. The
-# resulting object is embedded by sigmacatch/build.rs (include_bytes!).
+# Standalone crate nested in the sigmacatch package, deliberately EXCLUDED
+# from the root workspace: it only builds with nightly + rust-src + bpf-linker
+# for the bpf-el target. The resulting object is embedded by
+# sigmacatch/src/build.rs (include_bytes!). The shared wire-format types come
+# from sigmacatch/src/ebpf_common.rs via `#[path]` (single source of truth).
 #
 # Sanctioned Linux `unsafe` zone: per project policy `unsafe` is reserved for
 # Windows FFI (winevt/EvtExportLog), but this crate's eBPF helpers are
@@ -22,7 +24,7 @@ license = "MIT"
 
 [dependencies]
 aya-ebpf = "0.2"
-sigmacatch-ebpf-common = { path = "../sigmacatch-ebpf-common" }
+bytemuck = { version = "1", default-features = false, features = ["derive"] }
 
 [[bin]]
 name = "sigmacatch-ebpf"

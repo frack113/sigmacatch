@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Wire-format types shared between the eBPF probes (`crates/sigmacatch-ebpf`,
+//! Wire-format types shared between the eBPF probes (`sigmacatch/ebpf`,
 //! compiled no_std for `bpfel-unknown-none`) and the userspace loader
-//! (`sigmacatch/src/ebpf.rs`).
+//! (`sigmacatch/src/inputs/ebpf.rs`).
 //!
-//! Every type here is `#[repr(C)]` and [`Pod`]: the layout is the contract
-//! across the ring buffer boundary.
+//! The probe crate includes this very file via `#[path]` (single source of
+//! truth); every type here is `#[repr(C)]` and [`Pod`] so the layout is the
+//! contract across the ring buffer boundary.
 //!
 //! # Example
 //!
 //! ```rust
-//! use sigmacatch_ebpf_common::{ExecEvent, EVENT_EXEC};
+//! use sigmacatch::ebpf_common::{ExecEvent, EVENT_EXEC};
 //!
 //! # fn main() {
 //! let event = ExecEvent {
@@ -28,8 +29,6 @@
 //! assert_eq!(event.kind, EVENT_EXEC);
 //! # }
 //! ```
-
-#![no_std]
 
 use bytemuck::Pod;
 use bytemuck::Zeroable;

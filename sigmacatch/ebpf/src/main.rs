@@ -27,7 +27,16 @@ use aya_ebpf::{
 };
 #[allow(deprecated)]
 use aya_ebpf::helpers::bpf_probe_read_user_str;
-use sigmacatch_ebpf_common::{
+
+// Shared wire-format types: same single source as the userspace loader
+// (sigmacatch/src/ebpf_common.rs, included via #[path]). The probe only uses
+// the constants and struct layouts; the `from_bytes`/`*_str` accessors are
+// userspace-only, hence the targeted allow.
+#[path = "../../src/ebpf_common.rs"]
+#[allow(dead_code)]
+mod ebpf_common;
+
+use ebpf_common::{
     ARG0_LEN, DNS_PAYLOAD_LEN, EVENT_DNS, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_NET,
     DnsEvent, ExecEvent, ExitEvent, FileCreateEvent, IMAGE_LEN, NetEvent, PATH_LEN,
 };

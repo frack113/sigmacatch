@@ -6,8 +6,8 @@
 //!
 //! Resolution order:
 //! 1. `SIGMACATCH_EBPF_OBJECT` env override (prebuilt artifact);
-//! 2. build the standalone nightly crate `crates/sigmacatch-ebpf` if the
-//!    toolchain (nightly + rust-src + bpf-linker) is available;
+//! 2. build the standalone nightly crate `sigmacatch/ebpf` if the toolchain
+//!    (nightly + rust-src + bpf-linker) is available;
 //! 3. otherwise emit an empty placeholder — the loader will reject it at
 //!    startup and collection falls back to the legacy syslog tail.
 
@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const OBJECT_NAME: &str = "sigmacatch_ebpf.o";
-const PROBE_CRATE_DIR: &str = "../crates/sigmacatch-ebpf";
+const PROBE_CRATE_DIR: &str = "ebpf";
 const PROBE_ARTIFACT: &str = "target/bpfel-unknown-none/release/sigmacatch-ebpf";
 
 fn main() {
