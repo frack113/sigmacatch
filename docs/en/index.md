@@ -12,9 +12,9 @@ features and at runtime by the `--evtx` argument (one-shot EVTX), otherwise the
 live Winevt collector on Windows and every compiled, available Linux input in
 parallel.
 
-The project is a cargo workspace of 3 packages, plus 1 excluded nightly crate
-(`sigmacatch-ebpf`); the full tree and each crate's role are detailed in
-[architecture.md](architecture.md).
+The project is a single cargo workspace package (`sigmacatch`), plus a nested
+nightly-only eBPF probe crate (`sigmacatch/ebpf`); the full tree and each
+module's role are detailed in [architecture.md](architecture.md).
 
 ## Quick start
 

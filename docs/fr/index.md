@@ -12,9 +12,9 @@ par des features cargo et à l'exécution par l'argument `--evtx` (one-shot EVTX
 sinon Winevt live sur Windows et tous les inputs Linux compilés et disponibles
 en parallèle.
 
-Le projet est un cargo workspace de 3 packages, plus 1 crate nightly exclu
-(`sigmacatch-ebpf`) ; l'arborescence complète et les rôles de chaque crate sont
-détaillés dans [architecture.md](architecture.md).
+Le projet est un package cargo unique (`sigmacatch`), plus un crate eBPF
+nested nightly-only (`sigmacatch/ebpf`) ; l'arborescence complète et les rôles
+de chaque module sont détaillés dans [architecture.md](architecture.md).
 
 ## Démarrage rapide
 

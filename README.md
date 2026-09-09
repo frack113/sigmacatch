@@ -93,13 +93,12 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 
 ## Workspace
 
-The project is a cargo workspace of 3 packages, plus 1 excluded nightly crate (`sigmacatch-ebpf`):
+The project is a single cargo workspace package (`sigmacatch`), plus a nested nightly-only eBPF probe crate (`sigmacatch/ebpf`) excluded from the workspace:
 
 | Package | Purpose |
 |---|---|
-| `sigmacatch` | Main package: one library (`src/lib.rs`) + two binaries (`sigmacatch`, `regressiondata-check`). Inputs are cargo features: `winevt` (default), `evtx`, `auditd`, `builtin` (syslog), `sysmon` (legacy tail), `ebpf` (native probes). Modules inside: `runner` (shared pipeline), `config` (YAML + CLI), `rule` (rule loading/filtering), `detection` (engines + pipelines), `regression` (data generation + EVTX writer), `types` (shared types), `repo` (grit-lib wrapper), `evtx_reader` (EVTX parser), `inputs/*` (input adapters) |
-| `sigmacatch-ebpf-common` | Shared `no_std` types for eBPF ring buffer |
-| `sigmacatch-ebpf` | eBPF probe crate (excluded workspace, nightly, `bpfel-unknown-none`) |
+| `sigmacatch` | Main package: one library (`src/lib.rs`) + two binaries (`sigmacatch`, `regressiondata-check`). Inputs are cargo features: `winevt` (default), `evtx`, `auditd`, `builtin` (syslog), `sysmon` (legacy tail), `ebpf` (native probes). Modules inside: `runner` (shared pipeline), `config` (YAML + CLI), `rule` (rule loading/filtering), `detection` (engines + pipelines), `regression` (data generation + EVTX writer), `types` (shared types), `repo` (grit-lib wrapper), `evtx_reader` (EVTX parser), `ebpf_common` (shared eBPF ring-buffer types), `inputs/*` (input adapters) |
+| `sigmacatch/ebpf` | Nested eBPF probe crate (excluded workspace via `[workspace]` opt-out, nightly, `bpfel-unknown-none`). Shares `src/ebpf_common.rs` with the loader via `#[path]`. |
 
 ## Built with
 

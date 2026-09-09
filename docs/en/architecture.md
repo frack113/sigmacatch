@@ -2,7 +2,7 @@
 
 ## Cargo workspace
 
-The project is a cargo workspace of 3 packages, plus 1 excluded nightly crate (`sigmacatch-ebpf`):
+The project is a single cargo workspace package (`sigmacatch`), plus a nested nightly-only eBPF probe crate (`sigmacatch/ebpf`) excluded from the workspace:
 
 ```text
 sigmacatch/
@@ -10,7 +10,7 @@ sigmacatch/
 ├── sigmacatch/                   # Main package (library + two binaries)
 │   ├── Cargo.toml                # features: winevt (default), evtx, auditd, builtin, sysmon, ebpf
 │   ├── build.rs                  # eBPF object builder (Linux target + feature `ebpf` only)
-│   └── src/
+│   ├── src/
 │       ├── main.rs               # Dispatch: --evtx → evtx input; winevt on Windows; linux inputs on Linux
 │       ├── lib.rs                # Module declarations + re-exports (CollectorKind, run, bootstrap_repo_regression, DataFormat)
 │       ├── cli.rs                # Dispatch + diagnostic subcommands: check-filter, list-rules
@@ -19,6 +19,7 @@ sigmacatch/
 │       ├── config.rs             # Config, GitConfig, SigmaFilterConfig, LogConfig, CliArgs, parse_args, custom_channels.yaml
 │       ├── types.rs              # Event, Alert, RegressionHeader, Product, EventProducer, XML parsing, phf logsource tables
 │       ├── evtx_reader.rs        # EVTX file parsing → Event (cross-platform, used by both binaries)
+│       ├── ebpf_common.rs        # eBPF ring-buffer wire types (shared with the probe crate via #[path])
 │       ├── detection/            # DetectionEngine + per-platform pipelines + channel_resolver
 │       ├── rule/                 # SigmahqRules: load/filter/dedupe/remove_id + thresholds, attack, discover
 │       ├── repo/                 # grit-lib wrapper: SigmaRepo, plumbing/, porcelain, branch, signing, transport
@@ -40,10 +41,9 @@ sigmacatch/
 │       │   └── regressiondata-check.rs  # Standalone cross-platform binary: regression check (--json, --ignore, --fix, --path)
 │       └── tests/
 │           └── fixtures/           # Fixtures: sample.xml, sample.evtx, valid-single.evtx
-├── crates/
-│   ├── sigmacatch-ebpf/          # eBPF probes (excluded workspace, nightly, bpfel-unknown-none)
-│   │   └── src/main.rs           # 6 tracepoints: execve/exec/exit/connect/openat+exit/sendto+sendmsg
-│   └── sigmacatch-ebpf-common/   # Shared no_std types for eBPF ring buffer (ExecEvent, NetEvent, ...)
+│   └── ebpf/                       # Nested nightly eBPF probe crate (excluded via [workspace], bpfel-unknown-none)
+│       ├── .cargo/config.toml    #   bpfel target, bpf-linker, build-std=core
+│       └── src/main.rs           #   6 tracepoints: execve/exec/exit/connect/openat+exit/sendto+sendmsg
 ```
 
 ## Collectors
@@ -94,7 +94,7 @@ Each guarded by its source; no source available → bail:
 The `sysmon` and `ebpf` features add a dedicated collector:
 
 - **Sysmon eBPF (feature `ebpf`)** — embedded Aya probes
-  (`crates/sigmacatch-ebpf`, nightly+bpf-linker, excluded from workspace) covering EID 1
+  (`sigmacatch/ebpf`, nightly+bpf-linker, excluded from workspace) covering EID 1
   process_create, EID 3 network_connect, EID 5 process_terminate, EID 11 file_create and
   DNS extension (EID 22): events rendered as Sysmon XML identical to the syslog path then
   injected via the same pipeline (`inject_logsource_fields_for`). Runtime requirements:
