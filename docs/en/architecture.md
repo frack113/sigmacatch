@@ -62,7 +62,6 @@ cross-platform `regressiondata-check` (second binary of the `sigmacatch` package
 | builtin syslog | `sigmacatch/src/inputs/syslog.rs` | `builtin` | Central/authpriv/cron syslog tails (no root needed) |
 | sysmon (tail) | `sigmacatch/src/inputs/sysmon.rs` | `sysmon` (implies `builtin`) | Legacy Sysmon-for-Linux XML tail |
 | sysmon (ebpf) | `sigmacatch/src/inputs/ebpf.rs` | `ebpf` | Native eBPF probes (root or CAP_BPF+CAP_PERFMON required) |
-| regressiondata-check | `sigmacatch/src/bin/regressiondata-check.rs` | — | Cross-platform regression validation (EVTX + auditd + JSON); no collector |
 
 ### Windows logsource and PowerShell categories
 

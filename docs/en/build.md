@@ -36,7 +36,7 @@ cargo build --release -p sigmacatch --no-default-features --features auditd,buil
 cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,ebpf
 
 # Lint
-cargo clippy -p sigmacatch --no-default-features --features auditd,builtin,sysmon -- -W warnings
+cargo clippy -p sigmacatch --no-default-features --features auditd,builtin,sysmon,ebpf -- -W warnings
 ```
 
 It runs, in parallel, the **auditd** collector when `/var/log/audit/audit.log` exists and the

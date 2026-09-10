@@ -24,7 +24,7 @@ cargo build --release -p sigmacatch                          # Input Windows (fe
 # Linux — compile les inputs voulus (ex. auditd + syslog builtin) :
 cargo build --release -p sigmacatch --no-default-features --features auditd,builtin
 ./target/release/sigmacatch                                  # auditd + syslog builtin (Linux, pas de root)
-cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,sysmon,ebpf # + tail Sysmon + probes eBPF (root requis)
+cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,sysmon,ebpf # + tail Sysmon + probes eBPF (root + nightly requis)
 # One-shot EVTX, n'importe quelle plateforme :
 cargo build --release -p sigmacatch --no-default-features --features evtx
 ./target/release/sigmacatch --evtx /chemin/vers/dossier-evtx
