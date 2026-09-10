@@ -59,7 +59,7 @@ jobs:
             nightly: false
           - flavor: ebpf
             features: auditd,builtin,ebpf
-            mode: check
+            mode: build
             nightly: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -103,7 +103,7 @@ jobs:
           - flavor: winevt
             command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch
           - flavor: winevt-evtx
-            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch --features evtx
+            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch --features winevt,evtx
           - flavor: regressiondata-check
             command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch --bin regressiondata-check
     steps:
