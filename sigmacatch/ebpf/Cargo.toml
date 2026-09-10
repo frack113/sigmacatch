@@ -39,6 +39,12 @@ bytemuck = { version = "1", default-features = false, features = ["derive"] }
 name = "sigmacatch-ebpf"
 path = "src/main.rs"
 
+[package.metadata.cargo-machete]
+# bytemuck is only referenced from the feature-gated header ebpf_common.rs
+# (see [features] above). cargo-machete evaluates this excluded crate without
+# its default features, so it cannot see the usage — the sanctioned ignore.
+ignored = ["bytemuck"]
+
 [profile.release]
 strip = true
 debug = false
