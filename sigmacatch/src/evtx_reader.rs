@@ -13,6 +13,7 @@ use std::path::Path;
 
 use crate::types::{Event, EventProducer, ParseError, ProducerError, parse_winevt_xml_raw};
 use async_trait::async_trait;
+use tracing::warn;
 
 /// Errors produced while reading EVTX files.
 #[derive(Debug, thiserror::Error)]
@@ -118,12 +119,13 @@ impl EventProducer for EventCollector {
             if *stop.borrow() {
                 break;
             }
-            let events = Self::load_evtx(path).map_err(|e| {
-                ProducerError::Collector(Box::new(EvtxError::Parse(format!(
-                    "Failed to load EVTX {}: {e}",
-                    path.display()
-                ))))
-            })?;
+            let events = match Self::load_evtx(path) {
+                Ok(events) => events,
+                Err(e) => {
+                    warn!("Skipping EVTX {}: {e}", path.display());
+                    continue;
+                }
+            };
             for mut event in events {
                 if *stop.borrow() {
                     break;
@@ -176,4 +178,48 @@ pub fn parse_evtx_bytes(data: &[u8]) -> Result<Vec<Event>> {
     }
 
     Ok(events)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    /// A corrupt file is skipped with a warning, the remaining files are still
+    /// collected, and the producer completes successfully.
+    #[tokio::test]
+    async fn test_corrupt_file_is_skipped_others_still_collected() {
+        let dir = tempdir().unwrap();
+        let bad = dir.path().join("bad.evtx");
+        let good = dir.path().join("good.evtx");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.evtx");
+        if !fixture.exists() {
+            return; // fixture absent in some packaging contexts
+        }
+
+        fs::write(&bad, b"this is not an evtx file").unwrap();
+        fs::copy(&fixture, &good).unwrap();
+
+        let expected = parse_evtx_file(&good).unwrap().len();
+        assert!(expected > 0, "fixture should contain events");
+
+        let mut collector = EventCollector::new();
+        collector.add_file(bad);
+        collector.add_file(good);
+
+        let (tx, mut rx) = mpsc::channel::<Event>(256);
+        let (_stop_tx, stop_rx) = watch::channel(false);
+
+        Box::new(collector)
+            .run(tx, stop_rx)
+            .await
+            .expect("collector should complete despite corrupt file");
+
+        let mut got = 0usize;
+        while rx.recv().await.is_some() {
+            got += 1;
+        }
+        assert_eq!(got, expected);
+    }
 }
