@@ -20,7 +20,7 @@ license.workspace = true
 [features]
 default = ["winevt"]
 winevt = []
-evtx = []
+evtx = ["dep:walkdir"]
 auditd = []
 builtin = ["dep:regex"]
 sysmon = ["builtin"] # Sysmon-for-Linux legacy tail
@@ -60,11 +60,11 @@ tokio = { version = "1", features = [
   "time",
   "signal",
 ] }
-tracing = "0.1"
+tracing.workspace = true
 tracing-appender = "0.2"
 tracing-subscriber.workspace = true
 uuid = { version = "1", features = ["v4", "serde"] }
-walkdir = "2"
+walkdir = { version = "2", optional = true }
 zeroize = "1.9"
 
 [target.'cfg(windows)'.dependencies]

@@ -22,6 +22,15 @@ edition = "2021"
 description = "sigmacatch eBPF probes (bpf-el object)"
 license = "MIT"
 
+[features]
+# Mirrors the parent package's `ebpf` gate: the wire-format header
+# sigmacatch/src/ebpf_common.rs self-gates on `#[cfg(feature = "ebpf")]`, and
+# this probe includes it verbatim via `#[path]`. Enabled by default so the
+# build.rs subbuild (which reserves no features) always gets the full header;
+# without it the module collapses to an empty stub and the probe fails to link.
+default = ["ebpf"]
+ebpf = []
+
 [dependencies]
 aya-ebpf = "0.2"
 bytemuck = { version = "1", default-features = false, features = ["derive"] }
