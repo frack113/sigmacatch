@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+#
+# Standalone crate nested in the sigmacatch package, deliberately EXCLUDED
+# from the root workspace: it only builds with nightly + rust-src + bpf-linker
+# for the bpf-el target. The resulting object is embedded by
+# sigmacatch/src/build.rs (include_bytes!). The shared wire-format types come
+# from sigmacatch/src/ebpf_common.rs via `#[path]` (single source of truth).
+#
+# Sanctioned Linux `unsafe` zone: per project policy `unsafe` is reserved for
+# Windows FFI (winevt/EvtExportLog), but this crate's eBPF helpers are
+# inherently unsafe and are the sole allowed exception. It is excluded from
+# `cargo clippy --workspace`, so it does not fall under the `build.warnings`
+# gate; every other Linux/moteur crate remains `unsafe`-free.
+
+[workspace]
+
+[package]
+name = "sigmacatch-ebpf"
+version = "0.1.0"
+edition = "2021"
+description = "sigmacatch eBPF probes (bpf-el object)"
+license = "MIT"
+
+[features]
+# Mirrors the parent package's `ebpf` gate: the wire-format header
+# sigmacatch/src/ebpf_common.rs self-gates on `#[cfg(feature = "ebpf")]`, and
+# this probe includes it verbatim via `#[path]`. Enabled by default so the
+# build.rs subbuild (which reserves no features) always gets the full header;
+# without it the module collapses to an empty stub and the probe fails to link.
+default = ["ebpf"]
+ebpf = []
+
+[dependencies]
+aya-ebpf = "0.2"
+bytemuck = { version = "1", default-features = false, features = ["derive"] }
+
+[[bin]]
+name = "sigmacatch-ebpf"
+path = "src/main.rs"
+
+[package.metadata.cargo-machete]
+# bytemuck is only referenced from the feature-gated header ebpf_common.rs
+# (see [features] above). cargo-machete evaluates this excluded crate without
+# its default features, so it cannot see the usage — the sanctioned ignore.
+ignored = ["bytemuck"]
+
+[profile.release]
+strip = true
+debug = false
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[lints.clippy]
+correctness = "deny"
+suspicious = "deny"
+style = "warn"
+complexity = "warn"
+perf = "warn"

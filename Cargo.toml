@@ -4,28 +4,15 @@
 [workspace]
 resolver = "2"
 members = [
-    "sigmacatch-win",
-    "sigmacatch-lnx",
-    "crates/sigmacatch-runner",
-    "crates/sigmacatch-regression",
-    "crates/sigmacatch-detection",
-    "crates/sigmacatch-types",
-    "crates/sigmacatch-config",
-    "crates/input-windows-evtx",
-    "crates/sigmacatch-rule",
-    "crates/sigmacatch-repo",
-    "crates/sigmacatch-ebpf-common",
-    "regressiondata-check",
+    "sigmacatch",
 ]
 
-# Nightly-only bpf-el crate: built separately (see crates/sigmacatch-ebpf/Cargo.toml
-# and sigmacatch-lnx/build.rs), never as part of the stable workspace graph.
-exclude = [
-    "crates/sigmacatch-ebpf",
-]
-
+# The nightly-only bpf-el probe crate lives nested INSIDE the sigmacatch
+# package (sigmacatch/ebpf, its own `[workspace]` opt-out): it is built
+# separately by sigmacatch/src/build.rs, never as part of the stable
+# workspace graph.
 [workspace.package]
-version = "0.5.4"
+version = "0.6.0"
 edition = "2024"
 license = "MIT"
 

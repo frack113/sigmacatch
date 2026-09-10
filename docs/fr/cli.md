@@ -23,7 +23,7 @@ regressiondata-check [--json] [--ignore] [--fix] [--path <DIR>]
 **Fonction :** validation approfondie de toutes les données de régression dans le
 `regression_data/` de la racine sigma (`./sigma/regression_data` par défaut). Les
 entrées sont parses selon leur `LogType` : `.evtx` via
-`input_windows_evtx::parse_evtx_bytes`, `.log` via le parser auditd, lignes JSON directes.
+`evtx_reader::parse_evtx_bytes`, `.log` via le parser auditd, lignes JSON directes.
 Le logtype `Raw` est sauté (compté dans `Skipped`).
 
 ### Pipeline
@@ -122,27 +122,34 @@ elles n'entraînent jamais l'exit 1.
 
 ---
 
-## `sigmacatch-evtx` — générateur de régression EVTX statique (run unique)
+## `--evtx` — input EVTX one-shot (run unique)
 
-Binaire **non-live** autonome (feature `evtx` dans `sigmacatch-win`) : il scanne
-récursivement un dossier pour des fichiers `.evtx`, parse chaque event en pur Rust, les
-pousse à travers le moteur de détection, écrit les données de régression SigmaHQ pour chaque
-règle matchée (writer EVTX pur Rust — jamais `EvtExportLog`, car les events statiques ne sont
-pas dans le journal d'événements live), puis commit et push par règle vers `sigmacatch/<date>`
-sur le fork configuré. Il se termine après une passe : lecture → détection → génération →
-commit/push, sans boucle de collecte.
+Feature `evtx` : un `CollectorKind` avec `live_capture() = false` qui
+passe par le **même** pipeline `run()` que les collecteurs continus. Il scanne récursivement
+un dossier pour des fichiers `.evtx`, parse chaque event en pur Rust, les pousse à travers le
+moteur de détection, écrit les données de régression SigmaHQ pour chaque règle matchée (writer
+EVTX pur Rust — jamais `EvtExportLog`, car les events statiques ne sont pas dans le journal
+d'événements live), puis commit et push par règle vers `sigmacatch/<date>` sur le fork
+configuré. Comme `EventProducer::run()` se termine une fois tous les fichiers drainés, le
+sender tombe et la boucle partagée sort — une passe : lecture → détection → génération →
+commit/push, sans boucle de collecte. Un échec de l'upload final sort avec un statut non nul.
 
 **Utilisation :**
 
 ```text
-sigmacatch-evtx [OPTIONS]
+sigmacatch --evtx <EVTX_PATH> [OPTIONS]
 
       --evtx <EVTX_PATH>  Dossier de fichiers .evtx, scanné récursivement
                        (défaut : C:\Windows\System32\winevt\Logs)
-      --config <CONFIG>   Chemin vers config.yaml (défaut : config.yaml)
   -v, --verbose        Journalisation info sur stderr
   -h, --help           Affiche l'aide et quitte
 ```
+
+`--evtx` est parsé par le CLI partagé mais n'est utilisé que par l'input `evtx`. Comme
+toujours, la config est lue depuis le dossier de travail (`config.yaml` dans le CWD — pas
+de flag `--config`). Il supporte les flags communs ci-dessous (`-a`, `-c`, `-o`, `-v`,
+`-n`, `--author`) ; `-r/--max-runs` est accepté mais ignoré (auto-terminant), et `-n/--dry-run`
+garde sa sémantique lecture seule.
 
 Le repo sigma et la sortie de régression proviennent de la config
 (`git.sigma_repo_path`, chemins relatifs résolus depuis le dossier du fichier de config) ;
@@ -150,10 +157,9 @@ les données de régression sont écrites sous `<sigma_repo_path>/regression_dat
 
 ---
 
-## Flags des binaires de collecte
+## Flags de la binaire de collecte
 
-Les binaires `sigmacatch-channel`, `sigmacatch-linux`, `sigmacatch-linux-sysmon` et
-`sigmacatch-linux-ebpf` partagent les mêmes flags (parsing commun) :
+La binaire unique `sigmacatch` (quels que soient les inputs compilés) partage ces flags :
 
 ```text
 sigmacatch [OPTIONS]
@@ -166,6 +172,8 @@ sigmacatch [OPTIONS]
   -n, --dry-run       Vérification en lecture seule : charge les règles de ./sigma et
                       construit le moteur — aucune donnée écrite, aucune opération git/réseau
       --author <NOM>  Remplace l'auteur git du config.yaml pour ce run
+      --evtx <CHEMIN> Dossier de fichiers EVTX à traiter (input one-shot evtx ;
+                      demande la feature `evtx` si non compilée)
   --help, -h          Affiche l'aide et quitte
 ```
 
@@ -175,18 +183,18 @@ règles de `./sigma` + à la construction du moteur de détection.
 
 ---
 
-## Sous-commandes de diagnostic des binaires de collecte
+## Sous-commandes de diagnostic de la binaire
 
-Les commandes ci-dessous sont des sous-commandes des binaires, **toujours compilées**
+Les commandes ci-dessous sont des sous-commandes de `sigmacatch`, **toujours compilées**
 (la feature `tools` a été supprimée) :
 
 | Binaire | Sous-commandes |
 |---|---|
-| `sigmacatch-channel` (Windows) | `check-filter`, `list-rules` |
-| `sigmacatch-linux` (Linux) | `check-filter`, `list-rules` |
+| `sigmacatch` (toute plateforme) | `check-filter`, `list-rules` |
 
-Une sous-commande inconnue ou absente → le binaire démarre sa boucle de collecte normale.
-Les équivalentes Linux partagent la même logique avec le filtre produit `linux`.
+Une sous-commande inconnue ou absente → `sigmacatch` démarre sa boucle de collecte normale
+(ou, avec `--evtx`, la passe one-shot EVTX). La valeur de `filter.product` vient de la
+config.
 
 > **Prérequis commun :** chaque sous-commande charge `config.yaml` via `Config::load`, qui
 > exécute la validation **complète** (git.author/email/token compris) — pas seulement la
@@ -196,7 +204,7 @@ Les équivalentes Linux partagent la même logique avec le filtre produit `linux
 
 ## check-filter
 
-**Usage :** `sigmacatch-channel check-filter [--json]`
+**Usage :** `sigmacatch check-filter [--json]`
 
 **Fonction :** valide `SigmaFilterConfig` (product / status / level / author) contre le vrai jeu
 de règles Sigma. Aucun argument CLI — exécute toutes les combinaisons de filtres automatiquement.
@@ -215,14 +223,14 @@ directement depuis les règles brutes — donc un `stats()` auto-cohérent mais 
 ### Exemple
 
 ```bash
-sigmacatch-channel check-filter
+sigmacatch check-filter
 ```
 
 ---
 
 ## list-rules
 
-**Usage :** `sigmacatch-channel list-rules [--json] [--coverage]`
+**Usage :** `sigmacatch list-rules [--json] [--coverage]`
 
 **Fonction :** liste les règles chargées avec leur chemin. Avec `--coverage`, affiche aussi
 le ratio de règles ayant des données de régression locale (`with_data / total`, pas un
@@ -239,8 +247,8 @@ skip set sans être listés séparément.
 ### Exemple
 
 ```bash
-sigmacatch-channel list-rules
-sigmacatch-channel list-rules --json --coverage
+sigmacatch list-rules
+sigmacatch list-rules --json --coverage
 ```
 
 ---

@@ -1,0 +1,225 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+//! Parse EVTX files into [`Event`] objects for the detection engine.
+//!
+//! Pattern: producer → mpsc channel → detection engine
+
+//! `EventCollector` — file-based EVTX collector with internal FIFO.
+//!
+//! Pattern: collector → convert → FIFO (Event)
+
+use std::path::Path;
+
+use crate::types::{Event, EventProducer, ParseError, ProducerError, parse_winevt_xml_raw};
+use async_trait::async_trait;
+use tracing::warn;
+
+/// Errors produced while reading EVTX files.
+#[derive(Debug, thiserror::Error)]
+pub enum EvtxError {
+    /// Filesystem failure.
+    #[error("filesystem error: {0}")]
+    Io(#[from] std::io::Error),
+    /// The EVTX container or one of its records could not be decoded.
+    #[error("EVTX parse error: {0}")]
+    Parse(String),
+    /// A record's XML violated the Winevt event schema.
+    #[error("{0}")]
+    InvalidEvent(#[from] ParseError),
+}
+
+/// Crate-local result alias over [`EvtxError`].
+pub type Result<T> = std::result::Result<T, EvtxError>;
+use tokio::sync::{mpsc, watch};
+
+/// Re-export of the Winevt XML parser shared by the sigmacatch-types crate.
+pub use crate::types::parse_winevt_xml;
+
+/// EVTX file producer.
+///
+/// Loads `.evtx` files and sends parsed events into an `mpsc` channel.
+pub struct EventCollector {
+    files: Vec<std::path::PathBuf>,
+}
+
+impl EventCollector {
+    /// Create an empty producer.
+    pub fn new() -> Self {
+        Self { files: Vec::new() }
+    }
+
+    /// Add an EVTX file to be collected.
+    pub fn add_file(&mut self, path: impl Into<std::path::PathBuf>) {
+        self.files.push(path.into());
+    }
+
+    /// Load a single EVTX file into a buffer.
+    fn load_evtx(path: &Path) -> Result<Vec<Event>> {
+        let mut parser = evtx::EvtxParser::from_path(path).map_err(|e| {
+            EvtxError::Parse(format!("Failed to open EVTX {}: {e}", path.display()))
+        })?;
+
+        let mut events = Vec::new();
+
+        for record in parser.records() {
+            let record = record.map_err(|e| {
+                EvtxError::Parse(format!("EVTX record error in {}: {e}", path.display()))
+            })?;
+            let xml = std::str::from_utf8(record.data.as_bytes())
+                .map_err(|_| EvtxError::Parse("Invalid UTF-8 in EVTX record".to_string()))?;
+            let event_json_raw = parse_winevt_xml_raw(xml)?;
+            let event_json = parse_winevt_xml(xml)?;
+            let event_raw = record.data.as_bytes().to_vec();
+
+            let mut event = Event {
+                event_json_raw,
+                event_json,
+                event_raw,
+            };
+            event.inject_logsource_fields();
+            events.push(event);
+        }
+
+        Ok(events)
+    }
+}
+
+impl Default for EventCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Remove `Event.System.EventRecordID` from an event's JSON.
+///
+/// Events parsed from a static EVTX file are not present in the live Windows
+/// Event Log.  Without this strip, `write_evtx` would re-export via
+/// `EvtExportLog` (which queries the live log and finds nothing).  Stripping
+/// the record id forces the pure-Rust EVTX writer path instead.
+fn strip_record_id(event: &mut Event) {
+    if let Some(system) = event
+        .event_json
+        .get_mut("Event")
+        .and_then(|v| v.get_mut("System"))
+        .and_then(|v| v.as_object_mut())
+    {
+        system.remove("EventRecordID");
+    }
+}
+
+#[async_trait]
+impl EventProducer for EventCollector {
+    async fn run(
+        self: Box<Self>,
+        tx: mpsc::Sender<Event>,
+        stop: watch::Receiver<bool>,
+    ) -> std::result::Result<(), ProducerError> {
+        for path in &self.files {
+            if *stop.borrow() {
+                break;
+            }
+            let events = match Self::load_evtx(path) {
+                Ok(events) => events,
+                Err(e) => {
+                    warn!("Skipping EVTX {}: {e}", path.display());
+                    continue;
+                }
+            };
+            for mut event in events {
+                if *stop.borrow() {
+                    break;
+                }
+                strip_record_id(&mut event);
+                tx.send(event).await.map_err(|_| {
+                    ProducerError::Collector(Box::new(EvtxError::Parse(
+                        "Channel send failed — receiver dropped".to_string(),
+                    )))
+                })?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Parse a single EVTX file into a vector of `Event` objects.
+///
+/// Standalone function for backward compatibility.
+pub fn parse_evtx_file(path: &Path) -> Result<Vec<Event>> {
+    EventCollector::load_evtx(path)
+}
+
+/// Parse EVTX data from raw bytes into a vector of `Event` objects.
+///
+/// Useful for loading EVTX regression data from memory (e.g., regressiondata-check binary).
+pub fn parse_evtx_bytes(data: &[u8]) -> Result<Vec<Event>> {
+    let mut parser = evtx::EvtxParser::from_read_seek(std::io::Cursor::new(data)).map_err(|e| {
+        EvtxError::Parse(format!("Failed to create EVTX parser from raw bytes: {e}"))
+    })?;
+
+    let mut events = Vec::new();
+
+    for record in parser.records() {
+        let record =
+            record.map_err(|e| EvtxError::Parse(format!("EVTX record error in raw data: {e}")))?;
+        let xml = std::str::from_utf8(record.data.as_bytes())
+            .map_err(|_| EvtxError::Parse("Invalid UTF-8 in EVTX record".to_string()))?;
+        let event_json_raw = parse_winevt_xml_raw(xml)?;
+        let event_json = parse_winevt_xml(xml)?;
+        let event_raw = record.data.as_bytes().to_vec();
+
+        let mut event = Event {
+            event_json_raw,
+            event_json,
+            event_raw,
+        };
+        event.inject_logsource_fields();
+        events.push(event);
+    }
+
+    Ok(events)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    /// A corrupt file is skipped with a warning, the remaining files are still
+    /// collected, and the producer completes successfully.
+    #[tokio::test]
+    async fn test_corrupt_file_is_skipped_others_still_collected() {
+        let dir = tempdir().unwrap();
+        let bad = dir.path().join("bad.evtx");
+        let good = dir.path().join("good.evtx");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.evtx");
+        if !fixture.exists() {
+            return; // fixture absent in some packaging contexts
+        }
+
+        fs::write(&bad, b"this is not an evtx file").unwrap();
+        fs::copy(&fixture, &good).unwrap();
+
+        let expected = parse_evtx_file(&good).unwrap().len();
+        assert!(expected > 0, "fixture should contain events");
+
+        let mut collector = EventCollector::new();
+        collector.add_file(bad);
+        collector.add_file(good);
+
+        let (tx, mut rx) = mpsc::channel::<Event>(256);
+        let (_stop_tx, stop_rx) = watch::channel(false);
+
+        Box::new(collector)
+            .run(tx, stop_rx)
+            .await
+            .expect("collector should complete despite corrupt file");
+
+        let mut got = 0usize;
+        while rx.recv().await.is_some() {
+            got += 1;
+        }
+        assert_eq!(got, expected);
+    }
+}

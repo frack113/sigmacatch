@@ -1,24 +1,34 @@
 # Sigmacatch
 
-Headless tool that captures real Windows events via the **Windows Event Log API**
-(`winevt`), or Linux events via **auditd**, **builtin
-syslog** (central, authpriv and cron files) and **Sysmon-for-Linux**. It matches them
-against [SigmaHQ](https://github.com/SigmaHQ/sigma) rules and outputs structured
+Headless tool that captures real OS events: **Windows Event Log API**
+(`winevt`), **EVTX files** one-shot (cross-platform), and on Linux **auditd**,
+**builtin syslog** (central, authpriv and cron files), **Sysmon-for-Linux**
+(XML tail) and **native eBPF probes**. It matches them against
+[SigmaHQ](https://github.com/SigmaHQ/sigma) rules and outputs structured
 regression data ready for SigmaHQ PRs.
 
-The project is a cargo workspace of 13 packages, plus 1 excluded nightly crate (`sigmacatch-ebpf`);
-the full tree and each crate's role are detailed in [architecture.md](architecture.md).
+One binary named `sigmacatch`: the inputs are selected at compile time by cargo
+features and at runtime by the `--evtx` argument (one-shot EVTX), otherwise the
+live Winevt collector on Windows and every compiled, available Linux input in
+parallel.
+
+The project is a single cargo workspace package (`sigmacatch`), plus a nested
+nightly-only eBPF probe crate (`sigmacatch/ebpf`); the full tree and each
+module's role are detailed in [architecture.md](architecture.md).
 
 ## Quick start
 
 ```bash
-cargo build --release
-./target/release/sigmacatch-channel       # Winevt (Windows)
-./target/release/sigmacatch-linux         # auditd + syslog builtin (Linux, no root)
-./target/release/sigmacatch-linux-sysmon  # + tail Sysmon-for-Linux (Linux)
-./target/release/sigmacatch-linux-ebpf    # + native eBPF probes (Linux, root required)
-cargo build --release -p regressiondata-check # Cross-platform regression validation (Linux & Windows)
-cargo build --release --bin sigmacatch-evtx --no-default-features --features evtx # Static EVTX processor (single-run, cross-platform)
+cargo build --release -p sigmacatch                          # Windows input (default features)
+./target/release/sigmacatch                                  # Winevt (Windows)
+# Linux — build with the wanted inputs (e.g. auditd + builtin syslog):
+cargo build --release -p sigmacatch --no-default-features --features auditd,builtin
+./target/release/sigmacatch                                  # auditd + syslog builtin (Linux, no root)
+cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,sysmon,ebpf # + tail Sysmon + native eBPF (root + nightly required)
+# One-shot EVTX, any platform:
+cargo build --release -p sigmacatch --no-default-features --features evtx
+./target/release/sigmacatch --evtx /path/to/evtx/dir
+cargo build --release -p sigmacatch --bin regressiondata-check # Cross-platform regression validation (Linux & Windows)
 ```
 
 ## Documentation
