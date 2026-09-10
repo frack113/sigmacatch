@@ -10,7 +10,7 @@
 //! # Example
 //!
 //! ```rust
-//! use crate::types::{Event, Alert, Product};
+//! use sigmacatch::types::{Event, Alert, Product};
 //! use serde_json::json;
 //! use uuid::Uuid;
 //!

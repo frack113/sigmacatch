@@ -51,6 +51,15 @@ pub trait CollectorKind {
     fn live_capture(&self) -> bool {
         true
     }
+
+    /// Whether the runner should propagate the final-flush error to the caller
+    /// (exit with error code) or log it and exit cleanly. Defaults to
+    /// `!live_capture()`: one-shot collectors propagate, live collectors log.
+    /// Implementors may override if their error-handling strategy differs from
+    /// their collection mode.
+    fn propagate_final_flush_error(&self) -> bool {
+        !self.live_capture()
+    }
 }
 
 #[cfg(windows)]
@@ -367,17 +376,29 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
 
     if kind.live_capture() {
         // ── Live capture: generation at 30 s intervals ────────────────────
+        let mut dropped_while_generating = 0u64;
         loop {
             tokio::select! {
                 _ = shutdown_rx.changed() => {
                     info!("Shutting down…");
                     break;
                 }
-                Some(event) = rx.recv(), if pipeline_slot.is_some() => {
-                    if let Some(pipeline) = pipeline_slot.as_mut() {
-                        let product = event.event_json.get("product").map(|v| v.to_string());
-                        pipeline.engine.put_events(vec![event]);
-                        tracing::debug!("event received (product={:?})", product);
+                event = rx.recv() => {
+                    match event {
+                        Some(event) => {
+                            if let Some(pipeline) = pipeline_slot.as_mut() {
+                                let product = event.event_json.get("product").map(|v| v.to_string());
+                                pipeline.engine.put_events(vec![event]);
+                                tracing::debug!("event received (product={:?})", product);
+                            } else {
+                                // Pipeline is being generated; log and count dropped events.
+                                dropped_while_generating += 1;
+                                if dropped_while_generating == 1 {
+                                    warn!("Pipeline generation in progress — incoming events will be dropped until generation completes");
+                                }
+                            }
+                        }
+                        None => break, // channel closed (should not happen in live mode)
                     }
                 }
                 _ = generate_interval.as_mut().unwrap().tick() => {
@@ -389,6 +410,11 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
                             pipeline_slot = Some(returned);
                             runs_completed += 1;
                             info!("Cycle {} completed", runs_completed);
+
+                            if dropped_while_generating > 0 {
+                                warn!("Dropped {} events while pipeline was generating", dropped_while_generating);
+                                dropped_while_generating = 0;
+                            }
 
                             if !batches.is_empty() {
                                 let shutdown = shutdown_rx.clone();
@@ -410,29 +436,80 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
 
                     if let Some(limit) = max_runs
                         && runs_completed >= limit {
-                            info!("Reached max-runs limit ({}), shutting down", limit);
-                            let _ = shutdown_tx.send(true);
-                            break;
-                        }
+                        info!("Reached max-runs limit ({}), shutting down", limit);
+                        let _ = shutdown_tx.send(true);
+                        break;
+                    }
                 }
             }
         }
     } else {
         // ── One-shot (e.g. EVTX file input): run until channel closes ─────
+        // Generate periodically to bound memory usage.
+        let mut one_shot_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        one_shot_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        one_shot_interval.tick().await; // skip immediate first tick
+        let mut one_shot_runs: u32 = 0;
+        let mut dropped_while_generating = 0u64;
+
         loop {
             tokio::select! {
                 _ = shutdown_rx.changed() => {
                     info!("Shutting down…");
                     break;
                 }
-                event = rx.recv(), if pipeline_slot.is_some() => {
+                event = rx.recv() => {
                     match event {
                         Some(event) => {
                             if let Some(pipeline) = pipeline_slot.as_mut() {
                                 pipeline.engine.put_events(vec![event]);
+                            } else {
+                                dropped_while_generating += 1;
+                                if dropped_while_generating == 1 {
+                                    warn!("Pipeline generation in progress — incoming events will be dropped until generation completes");
+                                }
                             }
                         }
                         None => break, // collector finished (channel closed)
+                    }
+                }
+                _ = one_shot_interval.tick() => {
+                    let Some(taken) = pipeline_slot.take() else {
+                        continue;
+                    };
+                    match tokio::task::spawn_blocking(move || process_and_generate(taken)).await {
+                        Ok((returned, batches)) => {
+                            pipeline_slot = Some(returned);
+                            one_shot_runs += 1;
+                            info!("One-shot cycle {} completed", one_shot_runs);
+
+                            if dropped_while_generating > 0 {
+                                warn!("Dropped {} events while pipeline was generating", dropped_while_generating);
+                                dropped_while_generating = 0;
+                            }
+
+                            if !batches.is_empty() {
+                                let _ = upload_regression(
+                                    &sigma_repo,
+                                    batches,
+                                    &mut branch_pushed,
+                                    &push_branch,
+                                    &|| false,
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            error!("Generation task failed (panicked): {}", e);
+                            let _ = shutdown_tx.send(true);
+                            break;
+                        }
+                    }
+
+                    if let Some(limit) = max_runs
+                        && one_shot_runs >= limit {
+                        info!("Reached max-runs limit ({}), shutting down", limit);
+                        let _ = shutdown_tx.send(true);
+                        break;
                     }
                 }
             }
@@ -498,17 +575,10 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     };
     if !batches.is_empty() {
         // Final flush: never abort the promised last commit/push.
-        // Live mode: log errors and exit cleanly (no data loss on disk).
+        // Live mode: log errors and exit cleanly (generated files persist on disk;
+        // will be retried on next run if push failed).
         // One-shot mode: propagate to preserve the process exit code.
-        if kind.live_capture() {
-            let _ = upload_regression(
-                &sigma_repo,
-                batches,
-                &mut branch_pushed,
-                &push_branch,
-                &|| false,
-            );
-        } else {
+        if kind.propagate_final_flush_error() {
             upload_regression(
                 &sigma_repo,
                 batches,
@@ -516,6 +586,16 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
                 &push_branch,
                 &|| false,
             )?;
+        } else {
+            if let Err(e) = upload_regression(
+                &sigma_repo,
+                batches,
+                &mut branch_pushed,
+                &push_branch,
+                &|| false,
+            ) {
+                error!("Final flush failed to commit/push regression data: {}", e);
+            }
         }
     }
 
@@ -567,15 +647,23 @@ fn run_dry(config: &Config) -> Result<()> {
 /// diverge from the remote (which would cause `RejectNonFastForward` on the
 /// next run). The generated files remain on disk and are regenerated at next
 /// startup; without contrib the commits stay local.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PushStatus {
+    /// Branch was pushed to remote.
+    Pushed,
+    /// Only local commits were made (no push).
+    CommittedOnly,
+}
+
 fn upload_regression(
     sigma_repo: &SigmaRepo,
     batches: Vec<(Uuid, Vec<String>)>,
     branch_pushed: &mut bool,
     push_branch: &str,
     should_abort: &dyn Fn() -> bool,
-) -> Result<()> {
+) -> Result<PushStatus> {
     if batches.is_empty() {
-        return Ok(());
+        return Ok(PushStatus::CommittedOnly);
     }
 
     sigma_repo.upload_rule_batches(batches, should_abort)?;
@@ -585,8 +673,10 @@ fn upload_regression(
             "Branch '{}' pushed to origin. Next step: create PR at https://github.com/SigmaHQ/sigma/pulls",
             push_branch
         );
+        Ok(PushStatus::Pushed)
+    } else {
+        Ok(PushStatus::CommittedOnly)
     }
-    Ok(())
 }
 
 fn process_and_generate(mut pipeline: Pipeline) -> (Pipeline, Vec<(Uuid, Vec<String>)>) {

@@ -7,7 +7,6 @@ version.workspace = true
 edition.workspace = true
 description = "sigmacatch — Sigma regression collector (single binary, inputs via cargo features)"
 license.workspace = true
-build = "src/build.rs"
 
 # Inputs are selected with cargo features:
 #   Windows: winevt (live Event Log), evtx (one-shot EVTX files)

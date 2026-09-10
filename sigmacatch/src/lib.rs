@@ -51,7 +51,6 @@ pub mod evtx_reader;
 
 // Wire-format types for the eBPF ring buffer, shared with the probe crate
 // (`sigmacatch/ebpf`, which includes this file via `#[path]`).
-#[cfg(feature = "ebpf")]
 pub mod ebpf_common;
 
 // Input adapters. The whole `feature × platform` gate matrix lives in
