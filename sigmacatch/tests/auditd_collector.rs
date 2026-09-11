@@ -42,8 +42,8 @@ async fn run_collector(
     let (ready_tx, ready_rx) = oneshot::channel();
     let (tx, rx) = mpsc::channel(100);
     let (stop_tx, stop_rx) = watch::channel(false);
-    let collector = EventCollector::with_path(path.to_string())
-        .tail_options(options.with_ready(ready_tx));
+    let collector =
+        EventCollector::with_path(path.to_string()).tail_options(options.with_ready(ready_tx));
     tokio::spawn(async move {
         let _ = Box::new(collector).run(tx, stop_rx).await;
     });

@@ -52,7 +52,8 @@ fn main() {
     // empty object — never embeds the placeholder.
     let in_ci = env::var("GITHUB_ACTIONS").is_ok_and(|v| v == "true");
 
-    let subbuild_err: Option<String> = if let Some(prebuilt) = env::var_os("SIGMACATCH_EBPF_OBJECT") {
+    let subbuild_err: Option<String> = if let Some(prebuilt) = env::var_os("SIGMACATCH_EBPF_OBJECT")
+    {
         copy_object(Path::new(&prebuilt), &dest);
         None
     } else {
