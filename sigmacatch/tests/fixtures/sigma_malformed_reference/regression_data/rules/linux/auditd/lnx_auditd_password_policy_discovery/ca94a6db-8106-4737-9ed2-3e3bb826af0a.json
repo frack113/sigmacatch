@@ -1,0 +1,12 @@
+{
+  "stamp": {
+    "timestamp": 1788080493486,
+    "sequence": 1867
+  },
+  "type": "EXECVE",
+  "fields": {
+    "argc": "2",
+    "a0": "passwd",
+    "a1": "-S"
+  }
+}

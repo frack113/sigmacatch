@@ -119,3 +119,45 @@ jobs:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: ${{ matrix.command }}
+
+  regression-check:
+    name: Regression data validator (fixture)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Build regressiondata-check
+        run: cargo build --release --locked -p sigmacatch --bin regressiondata-check
+      - name: Happy path — committed fixture passes
+        run: |
+          out=$(./target/release/regressiondata-check --json --path sigmacatch/tests/fixtures/sigma)
+          printf '%s\n' "$out"
+          jq -e '.total == 2 and .failed_count == 0' <<<"$out"
+      - name: Negative — broken fixture fails (and --ignore must not mask it)
+        run: |
+          set +e
+          out=$(./target/release/regressiondata-check --json --path sigmacatch/tests/fixtures/sigma_negative)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -ne 0 ]
+          jq -e '.failed_count >= 1' <<<"$out"
+          set +e
+          out=$(./target/release/regressiondata-check --json --ignore --path sigmacatch/tests/fixtures/sigma_negative)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -ne 0 ]
+      - name: --fix reproduces the normalized reference on a throwaway copy
+        run: |
+          tmp="$RUNNER_TEMP/regress-malformed"
+          cp -r sigmacatch/tests/fixtures/sigma_malformed "$tmp"
+          ./target/release/regressiondata-check --fix --path "$tmp"
+          diff -r "$tmp" sigmacatch/tests/fixtures/sigma_malformed_reference
+          git diff --exit-code

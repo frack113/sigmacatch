@@ -1,0 +1,6 @@
+type=SYSCALL msg=audit(1788080493.486:1867): arch=c000003e syscall=59 success=yes exit=0 a0=562e6a1d0d40 a1=562e6a1c8c70 a2=562e6a1ceb90 a3=8 items=2 ppid=2156 pid=2157 auid=0 uid=1003 gid=1003 euid=1003 suid=1003 fsuid=1003 egid=1003 sgid=1003 fsgid=1003 tty=(none) ses=22 comm="passwd" exe="/usr/bin/passwd" subj=unconfined_u:unconfined_r:passwd_t:s0-s0:c0.c1023 key="exec"ARCH=x86_64 SYSCALL=execve AUID="root" UID="siguser1" GID="siguser1" EUID="siguser1" SUID="siguser1" FSUID="siguser1" EGID="siguser1" SGID="siguser1" FSGID="siguser1"
+type=EXECVE msg=audit(1788080493.486:1867): argc=2 a0="passwd" a1="-S"
+type=CWD msg=audit(1788080493.486:1867): cwd="/root"
+type=PATH msg=audit(1788080493.486:1867): item=0 name="/usr/bin/passwd" inode=146513 dev=fd:00 mode=0100755 ouid=0 ogid=0 rdev=00:00 obj=system_u:object_r:passwd_exec_t:s0 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PATH msg=audit(1788080493.486:1867): item=1 name="/lib64/ld-linux-x86-64.so.2" inode=141 dev=fd:00 mode=0100755 ouid=0 ogid=0 rdev=00:00 obj=system_u:object_r:ld_so_t:s0 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PROCTITLE msg=audit(1788080493.486:1867): proctitle=62617368002D6300706173737764202D53

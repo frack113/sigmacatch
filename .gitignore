@@ -9,6 +9,8 @@
 config.yaml
 /sigma/
 regression_data/
+!sigmacatch/tests/fixtures/**/regression_data/
+!sigmacatch/tests/fixtures/**/*.log
 evtx_logs/
 logs/
 rdp.sh
