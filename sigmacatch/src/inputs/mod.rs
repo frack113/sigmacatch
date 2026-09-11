@@ -33,6 +33,14 @@ pub mod syslog;
     any(feature = "auditd", feature = "builtin", feature = "sysmon")
 ))]
 mod tail;
+// Test hook, publicly reachable so integration tests can arm the injected
+// tail timing / READY barrier through the collector constructors. Only the
+// knob type is exposed — `TailState` stays private.
+#[cfg(all(
+    target_os = "linux",
+    any(feature = "auditd", feature = "builtin", feature = "sysmon")
+))]
+pub use tail::TailOptions;
 // Parsed by the `builtin` collector (not `sysmon`): the built-in syslog tail
 // must recognise Sysmon-for-Linux XML lines so it can hand them to `sysmon`.
 #[cfg(all(target_os = "linux", feature = "ebpf"))]

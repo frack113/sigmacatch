@@ -37,6 +37,8 @@ pub struct EventCollector {
     /// Pinned path, or `None` to discover the first existing default path.
     #[cfg(target_os = "linux")]
     path: Option<String>,
+    #[cfg(target_os = "linux")]
+    tail: crate::inputs::tail::TailOptions,
 }
 
 impl Default for EventCollector {
@@ -55,6 +57,8 @@ impl EventCollector {
         Self {
             #[cfg(target_os = "linux")]
             path,
+            #[cfg(target_os = "linux")]
+            tail: crate::inputs::tail::TailOptions::default(),
         }
     }
 
@@ -67,7 +71,23 @@ impl EventCollector {
         Self {
             #[cfg(target_os = "linux")]
             path,
+            #[cfg(target_os = "linux")]
+            tail: crate::inputs::tail::TailOptions::default(),
         }
+    }
+
+    /// Override the tail timing and READY barrier (tests). Production keeps
+    /// the 100 ms default and no barrier when this is not called.
+    pub fn tail_options(mut self, options: crate::inputs::tail::TailOptions) -> Self {
+        #[cfg(target_os = "linux")]
+        {
+            self.tail = options;
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = &options;
+        }
+        self
     }
 
     #[cfg(target_os = "linux")]
@@ -96,7 +116,7 @@ impl EventProducer for EventCollector {
                     "default syslog not found at {path}"
                 )));
             }
-            tail_loop(&path, tx, stop)
+            tail_loop(&path, tx, stop, self.tail)
                 .await
                 .map_err(|e| ProducerError::Collector(e.into()))
         }
@@ -114,12 +134,13 @@ async fn tail_loop(
     path: &str,
     tx: mpsc::Sender<Event>,
     stop: watch::Receiver<bool>,
+    options: crate::inputs::tail::TailOptions,
 ) -> anyhow::Result<()> {
     tracing::info!("sysmon collector starting (tail {path})");
     let path = path.to_string();
 
     let task = tokio::task::spawn_blocking(move || {
-        crate::inputs::tail::run(&path, SysmonHandler, tx, stop)
+        crate::inputs::tail::run(&path, SysmonHandler, tx, stop, options)
     });
 
     task.await
@@ -224,7 +245,17 @@ mod tests {
     #[cfg(all(test, target_os = "linux"))]
     mod tail {
         use super::*;
+        use crate::inputs::tail::TailOptions;
         use std::io::Write;
+        use tokio::sync::oneshot;
+        use tokio::sync::{mpsc, watch};
+
+        async fn await_ready(ready: oneshot::Receiver<()>) {
+            tokio::time::timeout(std::time::Duration::from_secs(5), ready)
+                .await
+                .expect("tail must signal READY within 5 s")
+                .expect("READY sender dropped before firing");
+        }
 
         #[tokio::test]
         async fn test_tail_emits_events_then_stops() {
@@ -237,10 +268,12 @@ mod tests {
 
             let (tx, mut rx) = mpsc::channel::<Event>(16);
             let (_stop_tx, stop_rx) = watch::channel(false);
-            let collector = EventCollector::with_path(Some(path.to_string_lossy()));
+            let (ready_tx, ready_rx) = oneshot::channel();
+            let collector = EventCollector::with_path(Some(path.to_string_lossy()))
+                .tail_options(TailOptions::default().with_ready(ready_tx));
 
             let handle = tokio::spawn(Box::new(collector).run(tx, stop_rx));
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            await_ready(ready_rx).await;
 
             let mut file = std::fs::OpenOptions::new()
                 .append(true)
@@ -249,7 +282,7 @@ mod tests {
             writeln!(file, "{}", String::from_utf8_lossy(PROCESS_CREATE)).unwrap();
             drop(file);
 
-            let event = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
                 .await
                 .expect("sysmon event must arrive")
                 .expect("channel open");
@@ -270,10 +303,12 @@ mod tests {
 
             let (tx, mut rx) = mpsc::channel::<Event>(16);
             let (stop_tx, stop_rx) = watch::channel(false);
-            let collector = EventCollector::with_path(Some(path.to_string_lossy()));
+            let (ready_tx, ready_rx) = oneshot::channel();
+            let collector = EventCollector::with_path(Some(path.to_string_lossy()))
+                .tail_options(TailOptions::default().with_ready(ready_tx));
 
             let handle = tokio::spawn(Box::new(collector).run(tx, stop_rx));
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            await_ready(ready_rx).await;
 
             let mut file = std::fs::OpenOptions::new()
                 .create(true)
@@ -284,7 +319,7 @@ mod tests {
             writeln!(file, "{}", String::from_utf8_lossy(DNS_QUERY)).unwrap();
             drop(file);
 
-            let event = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
                 .await
                 .expect("dns event must arrive after truncated line")
                 .expect("channel open");

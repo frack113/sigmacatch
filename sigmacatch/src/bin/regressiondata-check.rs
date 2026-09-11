@@ -576,8 +576,20 @@ fn parse_auditd_lines(raw: &[u8]) -> (Vec<Event>, usize) {
     };
 
     let mut dropped = 0usize;
-    let events: Vec<Event> = raw
-        .split(|b| *b == b'\n')
+    let mut chunks: Vec<&[u8]> = Vec::new();
+    let mut start = 0;
+    for (i, &b) in raw.iter().enumerate() {
+        if b == b'\n' {
+            chunks.push(&raw[start..=i]);
+            start = i + 1;
+        }
+    }
+    if start < raw.len() {
+        chunks.push(&raw[start..]);
+    }
+    let events: Vec<Event> = chunks
+        .iter()
+        .copied()
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
             let message = match parser.parse(line) {
@@ -1375,5 +1387,26 @@ mod tests {
         );
 
         fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn parse_auditd_lines_keeps_trailing_newline() {
+        let execve =
+            b"type=EXECVE msg=audit(1788080493.486:1867): argc=2 a0=\"passwd\" a1=\"-S\"\n";
+        let sycall = b"type=SYSCALL msg=audit(1788080493.486:1867): arch=c000003e syscall=59 success=yes exit=0 key=\"exec\"\x1dARCH=x86_64 SYSCALL=execve\n";
+        let raw = [&sycall[..], &execve[..]].concat();
+        let (events, dropped) = parse_auditd_lines(&raw);
+        assert_eq!(
+            dropped, 0,
+            "auditd lines must parse like the live tail collector feeds them"
+        );
+        assert_eq!(events.len(), 2);
+        let execve_event = events
+            .iter()
+            .find(|e| e.event_raw.starts_with(b"type=EXECVE"))
+            .expect("EXECVE event present");
+        let fields = &execve_event.event_json;
+        assert_eq!(fields.get("a0").and_then(|v| v.as_str()), Some("passwd"));
+        assert_eq!(fields.get("type").and_then(|v| v.as_str()), Some("EXECVE"));
     }
 }

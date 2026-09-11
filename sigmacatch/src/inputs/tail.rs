@@ -8,9 +8,29 @@
 //! turns whole lines into events and returns them — while this module owns the
 //! channel, the file handle and the poll/rotation lifecycle. Runs in a blocking
 //! task (callers use `spawn_blocking`).
+//!
+//! # Test contract (determinism by construction)
+//!
+//! - Tail starts at end-of-file: pre-existing content is never emitted.
+//! - Rotation is detected by `(dev, ino)` identity change and re-opens the
+//!   file at offset 0; the rotated file survives (smoke-checkable).
+//! - Complete lines are emitted in order; a partial trailing line stays
+//!   buffered until its newline arrives.
+//! - `on_idle` fires on every poll where no new byte and no partial line is
+//!   pending — this is the audited "record group complete" signal.
+//! - Stop is honoured within one tick of `stop` being set or the receiver
+//!   being dropped.
+//! - The `LineHandler` is pure: it never touches the channel or the file.
+//!
+//! Tests therefore wait on the one-shot [`TailOptions::ready`] after open +
+//! seek-to-EOF + first poll instead of a blind sleep (a write landing before
+//! the tail is attached is lost silently), narrow the semantic idle window to
+//! `with_poll_interval` when a record-group flush is under test, and wait on
+//! `timeout(…, rx.recv())` everywhere else. A deadline paired with a
+//! predicate is a bound; an unguarded `sleep` is a gamble.
 
 use crate::types::Event;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 
 /// Poll interval of the tail loop (how often new bytes are read from the file).
 const TAIL_POLL_MS: u64 = 100;
@@ -38,24 +58,84 @@ pub trait LineHandler {
     fn on_rotate(&mut self) {}
 }
 
+/// Tail-loop timing and test hook carried by [`run`].
+///
+/// [`Default`] is the historic production behaviour: a 100 ms poll/idle
+/// period and no readiness signal. The tick is product semantics — auditd
+/// flushes a record group on an idle poll — so it is a latency budget that
+/// tests *inject*, never a value this module removes. Tests use the one-shot
+/// barrier instead of sleeping blindly and narrow the idle window when the
+/// flush itself is under test.
+pub struct TailOptions {
+    /// How often new bytes are read from the file and, when the file is
+    /// idle, how long an aggregated record group waits before flush.
+    pub poll_interval: std::time::Duration,
+    /// One-shot fired once the file is open (at end-of-file) and the first
+    /// poll completed. `None` disables the barrier (production).
+    pub ready: Option<oneshot::Sender<()>>,
+}
+
+impl Default for TailOptions {
+    fn default() -> Self {
+        Self {
+            poll_interval: std::time::Duration::from_millis(TAIL_POLL_MS),
+            ready: None,
+        }
+    }
+}
+
+impl TailOptions {
+    /// Set the poll/idle period (default 100 ms). Shortening it only changes
+    /// the latency budget; it does not change what the semantics produce.
+    pub fn with_poll_interval(mut self, poll_interval: std::time::Duration) -> Self {
+        self.poll_interval = poll_interval;
+        self
+    }
+
+    /// Arm the READY barrier: await this one-shot before appending to the
+    /// file under test. After it fires the tail is attached (open + seek to
+    /// EOF + first poll), so the append cannot be lost to the start-up race.
+    pub fn with_ready(mut self, ready: oneshot::Sender<()>) -> Self {
+        self.ready = Some(ready);
+        self
+    }
+}
+
 /// Tail `path` in a blocking loop, driving `handler` with every new line.
 ///
 /// Starts at end-of-file, detects log rotation by (dev, ino) identity change,
 /// re-opens rotated files from offset 0, and exits when `stop` is set or the
-/// channel receiver is dropped.
+/// channel receiver is dropped. When [`TailOptions::ready`] is armed it is
+/// fired after the first poll (see the module-level test contract).
 pub fn run<H: LineHandler + Send>(
     path: &str,
     mut handler: H,
     tx: mpsc::Sender<Event>,
     stop: watch::Receiver<bool>,
+    options: TailOptions,
 ) -> anyhow::Result<()> {
     use std::fs::OpenOptions;
+
+    let TailOptions {
+        poll_interval,
+        ready,
+    } = options;
 
     let file = OpenOptions::new()
         .read(true)
         .open(path)
         .map_err(|e| anyhow::anyhow!("failed to open {path}: {e}"))?;
     let mut state = TailState::new(file, path.to_string());
+
+    // READY barrier: one poll after open+seek, then signal the test writer
+    // that the tail is attached. Any append after this point is guaranteed to
+    // be read, never lost to the start-up race.
+    let _ = state.poll(&mut handler, &tx);
+    if let Some(ready) = ready {
+        tracing::info!("tail attached to {path}");
+        let _ = ready.send(());
+    }
+
     loop {
         if *stop.borrow() || tx.is_closed() {
             break;
@@ -63,7 +143,7 @@ pub fn run<H: LineHandler + Send>(
         if let Err(e) = state.poll(&mut handler, &tx) {
             tracing::warn!("tail {path} error: {e}");
         }
-        std::thread::sleep(std::time::Duration::from_millis(TAIL_POLL_MS));
+        std::thread::sleep(poll_interval);
     }
     Ok(())
 }

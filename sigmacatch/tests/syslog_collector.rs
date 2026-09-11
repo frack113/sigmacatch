@@ -2,33 +2,53 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 //! Integration tests for the builtin syslog tail collector (Linux only).
+//!
+//! Deterministic by construction: every wait is a deadline paired with a
+//! predicate (`await_ready` then `timeout(…, rx.recv())`) — never a blind
+//! sleep. The READY barrier guarantees a write cannot land before the tail
+//! is attached (open + seek-to-EOF + first poll), which would lose it.
 
 #![cfg(all(target_os = "linux", feature = "builtin"))]
 
+use sigmacatch::inputs::TailOptions;
 use sigmacatch::inputs::syslog::EventCollector;
 use sigmacatch::types::EventProducer;
 use std::io::Write;
 use std::time::Duration;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 
 const SSHD: &[u8] =
     b"May 11 14:23:33 host123 sshd[12345]: Failed password for invalid user root from 1.2.3.4\n";
 const CRON: &[u8] = b"May 11 14:23:40 host123 CRON[90]: (root) CMD (run-pam)\n";
 const KERNEL: &[u8] = b"May 11 14:23:41 host123 kernel: [123456.789] EXT4-fs(sda1)\n";
 
+/// Spawn the collector on `path` and return the event side plus the READY
+/// barrier the tail fires once attached. The test awaits the barrier before
+/// appending any line.
 async fn run_collector(
     path: &str,
+    options: TailOptions,
 ) -> (
     mpsc::Receiver<sigmacatch::types::Event>,
     watch::Sender<bool>,
+    oneshot::Receiver<()>,
 ) {
+    let (ready_tx, ready_rx) = oneshot::channel();
     let (tx, rx) = mpsc::channel(100);
     let (stop_tx, stop_rx) = watch::channel(false);
-    let collector = EventCollector::with_path(Some(path.to_string()));
+    let collector = EventCollector::with_path(Some(path.to_string()))
+        .tail_options(options.with_ready(ready_tx));
     tokio::spawn(async move {
         let _ = Box::new(collector).run(tx, stop_rx).await;
     });
-    (rx, stop_tx)
+    (rx, stop_tx, ready_rx)
+}
+
+async fn await_ready(ready: oneshot::Receiver<()>) {
+    tokio::time::timeout(Duration::from_secs(5), ready)
+        .await
+        .expect("tail must signal READY within 5 s")
+        .expect("READY sender dropped before firing");
 }
 
 #[tokio::test]
@@ -37,8 +57,9 @@ async fn test_collector_emits_per_valid_line() {
     let path = dir.path().join("syslog");
     std::fs::File::create(&path).unwrap();
 
-    let (mut rx, stop_tx) = run_collector(path.to_str().unwrap()).await;
-    tokio::time::sleep(Duration::from_millis(250)).await;
+    let (mut rx, stop_tx, ready) =
+        run_collector(path.to_str().unwrap(), TailOptions::default()).await;
+    await_ready(ready).await;
 
     std::fs::OpenOptions::new()
         .append(true)
@@ -58,8 +79,6 @@ async fn test_collector_emits_per_valid_line() {
         .unwrap()
         .write_all(KERNEL)
         .unwrap();
-
-    tokio::time::sleep(Duration::from_millis(400)).await;
 
     let e1 = tokio::time::timeout(Duration::from_secs(2), rx.recv())
         .await
@@ -99,8 +118,9 @@ async fn test_collector_skips_non_matching_lines() {
     let path = dir.path().join("syslog");
     std::fs::File::create(&path).unwrap();
 
-    let (mut rx, stop_tx) = run_collector(path.to_str().unwrap()).await;
-    tokio::time::sleep(Duration::from_millis(250)).await;
+    let (mut rx, stop_tx, ready) =
+        run_collector(path.to_str().unwrap(), TailOptions::default()).await;
+    await_ready(ready).await;
 
     std::fs::OpenOptions::new()
         .append(true)
@@ -115,8 +135,6 @@ async fn test_collector_skips_non_matching_lines() {
         .write_all(SSHD)
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(400)).await;
-
     // Only the valid syslog line is emitted.
     let e = tokio::time::timeout(Duration::from_secs(2), rx.recv())
         .await
@@ -125,7 +143,7 @@ async fn test_collector_skips_non_matching_lines() {
     assert_eq!(e.event_json["service"], "sshd");
 
     // No spurious event follows (stop sent after: a closed channel would
-    // return Ok(None) instead of timing out).
+    // return Ok(None) instead of timing out). Bounded absence wait.
     let extra = tokio::time::timeout(Duration::from_millis(300), rx.recv()).await;
     assert!(extra.is_err(), "non-matching lines must be dropped");
     stop_tx.send(true).unwrap();
@@ -142,8 +160,9 @@ async fn test_collector_detects_rotation() {
         .open(&path)
         .unwrap();
 
-    let (mut rx, stop_tx) = run_collector(path.to_str().unwrap()).await;
-    tokio::time::sleep(Duration::from_millis(250)).await;
+    let (mut rx, stop_tx, ready) =
+        run_collector(path.to_str().unwrap(), TailOptions::default()).await;
+    await_ready(ready).await;
 
     // Simulate rsyslog rotation: rename + recreate the log.
     std::fs::rename(&path, dir.path().join("syslog.1")).unwrap();
@@ -154,8 +173,6 @@ async fn test_collector_detects_rotation() {
         .unwrap();
     new_file.write_all(SSHD).unwrap();
     new_file.flush().unwrap();
-
-    tokio::time::sleep(Duration::from_millis(400)).await;
 
     let event = tokio::time::timeout(Duration::from_secs(2), rx.recv())
         .await
@@ -177,10 +194,14 @@ async fn test_stop_returns_promptly() {
         .open(&path)
         .unwrap();
 
-    let (mut rx, stop_tx) = run_collector(path.to_str().unwrap()).await;
-    tokio::time::sleep(Duration::from_millis(250)).await;
+    let (mut rx, stop_tx, ready) =
+        run_collector(path.to_str().unwrap(), TailOptions::default()).await;
+    await_ready(ready).await;
     stop_tx.send(true).unwrap();
 
-    let _ = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await;
-    // Collector task exits on its own; nothing to assert beyond no panic.
+    // One tick after stop the tail exits and the channel closes.
+    let end = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .expect("collector must exit within one tick of stop");
+    assert!(end.is_none(), "channel must close when the tail stops");
 }

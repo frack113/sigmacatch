@@ -25,13 +25,16 @@ jobs:
   test:
     name: Test ${{ matrix.package }}${{ matrix.features != '' && format(' — {0}', matrix.features) || '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         include:
           - { package: sigmacatch, features: '' }
           - { package: sigmacatch, features: 'auditd,builtin,sysmon' }
-          - { package: sigmacatch, features: 'auditd,builtin,ebpf' }
+          # ebpf needs nightly + rust-src + bpf-linker (build.rs) or the leg
+          # would silently embed an empty placeholder object (false green).
+          - { package: sigmacatch, features: 'auditd,builtin,ebpf', nightly: true }
           - { package: sigmacatch, features: 'evtx' }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,6 +44,23 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install nightly + bpf-linker (ebpf only)
+        if: matrix.nightly
+        run: |
+          rustup toolchain install nightly --component rust-src
+          if [ ! -x "${{ runner.tool_cache }}/bpf-linker/bpf-linker" ]; then
+            curl -sL -o /tmp/bpf-linker.tar.zst \
+              "https://github.com/aya-rs/bpf-linker/releases/download/v0.11.0/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
+            mkdir -p "${{ runner.tool_cache }}/bpf-linker"
+            tar --zstd -xf /tmp/bpf-linker.tar.zst -C "${{ runner.tool_cache }}/bpf-linker"
+          fi
+          echo "${{ runner.tool_cache }}/bpf-linker" >> "$GITHUB_PATH"
+      - name: Cache bpf-linker
+        if: matrix.nightly
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.tool_cache }}/bpf-linker
+          key: bpf-linker-0.11.0
       - name: Test package
         run: |
           if [ -n "${{ matrix.features }}" ]; then

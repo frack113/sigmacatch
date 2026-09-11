@@ -25,7 +25,9 @@ const RING_POLL_MS: u64 = 100;
 
 /// Object embedded by `src/build.rs`: real probes when the nightly toolchain
 /// was available at build time, an empty placeholder otherwise (the loader
-/// rejects it and collection falls back to the legacy syslog tail).
+/// rejects it and collection falls back to the legacy syslog tail). On CI
+/// (`GITHUB_ACTIONS`) the build script refuses the placeholder — an empty
+/// object there is a hard build error, never a silent fallback.
 static PROBE_OBJECT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sigmacatch_ebpf.o"));
 
 const CAP_SYS_ADMIN: u64 = 1 << 21;

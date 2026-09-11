@@ -15,16 +15,16 @@ Sigmacatch captures real OS events, matches them against [SigmaHQ](https://githu
 | Linux | legacy Sysmon-for-Linux XML tail (`sysmon`) | no | need user return |
 | Linux | native eBPF probes — process/network/file/DNS (`ebpf`) | no | need user return |
 
-One binary named `sigmacatch`; the features you compile in determine which
-inputs run. At runtime `--evtx <PATH>` selects the one-shot EVTX input,
-Windows defaults to the live Winevt collector, and Linux runs every compiled,
-available input in parallel.
+One binary named `sigmacatch` (plus the standalone `regressiondata-check` validator);
+the features you compile in determine which inputs run. At runtime `--evtx <PATH>`
+selects the one-shot EVTX input, Windows defaults to the live Winevt collector, and
+Linux runs every compiled, available input in parallel.
 
 ## Requirements
 
 - **Windows** with [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) installed — required for rich events (ParentImage, CommandLine, hashes, etc.)
 - **Linux** with `auditd` running or a syslog source (`/var/log/messages` or `/var/log/syslog`, optionally authpriv/cron files) — `auditd`/`builtin` features; [Sysmon for Linux](https://github.com/SysmonForLinux/SysmonForLinux) optional via `sysmon`; native eBPF probes via `ebpf` (root or CAP_BPF+CAP_PERFMON at runtime, kernel 5.14+/BTF, nightly build toolchain)
-- Rust 2024 edition (1.85+)
+- Rust 2024 edition (1.95+ — MSRV imposed by rsigma 0.22)
 - Admin rights for the `Security` and `System` Event Log channels (Windows)
 
 ## Quick start
@@ -124,7 +124,20 @@ MIT
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.
 
-Current release: **v0.5.4** (2026-09-04)
+Current dev version: **0.6.0** (branch `release/0.6.0`, not yet tagged).
+Last release: **v0.5.4** (2026-09-04).
+
+Releases are cut by [the release workflow](.github/workflows/release.yml) when a
+`v*` tag matching the workspace version is pushed. It builds one binary per input
+flavour — Linux: `sigmacatch-linux` (`auditd,builtin`), `sigmacatch-sysmon`
+(`+sysmon`), `sigmacatch-ebpf` (`+ebpf`), plus `regressiondata-check`; Windows:
+`sigmacatch-winevt.exe` (default) and `sigmacatch-evtx.exe` (`+evtx`), plus
+`regressiondata-check.exe` — packages each platform as a tar.gz/zip with a
+per-platform `SHA256SUMS`, and signs both archives with Sigstore keyless:
+
+```bash
+cosign verify-blob --bundle <archive>.bundle <archive>
+```
 
 Recent tags:
 

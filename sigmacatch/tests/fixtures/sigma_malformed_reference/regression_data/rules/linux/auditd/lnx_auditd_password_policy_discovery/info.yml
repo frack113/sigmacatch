@@ -1,0 +1,13 @@
+id: c0646f61-29dc-4957-9a21-f71c3fe19c2a
+description: N/A
+date: 2026-09-11
+author: sigmacatch
+rule_metadata:
+    - id: ca94a6db-8106-4737-9ed2-3e3bb826af0a
+      title: Password Policy Discovery - Linux
+regression_tests_info:
+    - name: Positive Detection Test
+      type: log
+      provider: auditd
+      match_count: 1
+      path: regression_data/rules/linux/auditd/lnx_auditd_password_policy_discovery/ca94a6db-8106-4737-9ed2-3e3bb826af0a.log

@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Rust 2024 edition (1.85+)
+- Rust 2024 edition (1.95+ — MSRV imposed by rsigma 0.22)
 - For Windows cross-compilation from Linux: `cargo install cargo-xwin` (auto-downloads Windows SDK)
 
 ## Cargo features
@@ -32,11 +32,13 @@ cargo build --release -p sigmacatch --no-default-features --features auditd,buil
 cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,sysmon
 
 # + native eBPF probes (root/CAP_BPF+CAP_PERFMON required at runtime, kernel 5.14+/BTF,
-#   nightly toolchain + bpf-linker to build the probes — otherwise a placeholder falls back to the tail)
+#   nightly toolchain + bpf-linker to build the probes — otherwise a placeholder falls
+#   back to the tail locally; on CI the empty placeholder is a hard build error, never a fallback)
 cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,ebpf
 
-# Lint
-cargo clippy -p sigmacatch --no-default-features --features auditd,builtin,sysmon,ebpf -- -W warnings
+# Lint (separate flavours — sysmon and ebpf are never merged into a single build)
+cargo clippy -p sigmacatch --no-default-features --features auditd,builtin,sysmon -- -W warnings
+cargo clippy -p sigmacatch --no-default-features --features auditd,builtin,ebpf -- -W warnings
 ```
 
 It runs, in parallel, the **auditd** collector when `/var/log/audit/audit.log` exists and the
