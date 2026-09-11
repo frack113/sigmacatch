@@ -52,21 +52,17 @@ jobs:
           # feature build can no longer clobber an earlier-named bin in a
           # shared target dir (the reason the old job built them sequentially).
           - flavor: base
-            features: auditd,builtin
-            mode: build
+            command: cargo build --release --locked -p sigmacatch --no-default-features --features auditd,builtin
             nightly: false
           - flavor: sysmon
-            features: auditd,builtin,sysmon
-            mode: check
+            command: cargo check --release --locked -p sigmacatch --no-default-features --features auditd,builtin,sysmon
             nightly: false
           - flavor: ebpf
-            features: auditd,builtin,ebpf
-            mode: build
+            command: cargo build --release --locked -p sigmacatch --no-default-features --features auditd,builtin,ebpf
             nightly: true
           - flavor: regressiondata-check
-            mode: build
-            nightly: false
             command: cargo build --release --locked -p sigmacatch --bin regressiondata-check
+            nightly: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -93,13 +89,7 @@ jobs:
           key: bpf-linker-0.11.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Build / check flavour
-        run: |
-          if [ -n "${{ matrix.command }}" ]; then
-            ${{ matrix.command }}
-          else
-            cargo ${{ matrix.mode }} --release --locked -p sigmacatch --no-default-features \
-              --features ${{ matrix.features }}
-          fi
+        run: ${{ matrix.command }}
 
   windows:
     name: Windows — ${{ matrix.flavor }}
