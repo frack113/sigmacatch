@@ -33,7 +33,8 @@ cargo build --release -p sigmacatch --no-default-features --features auditd,buil
 cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,sysmon
 
 # + probes eBPF natifs (root/CAP_BPF+CAP_PERFMON requis au runtime, kernel 5.14+/BTF,
-#   toolchain nightly + bpf-linker pour compiler les probes — sinon placeholder replié sur le tail)
+#   toolchain nightly + bpf-linker pour compiler les probes — sinon placeholder replié sur
+#   le tail en local ; sur CI, le placeholder vide est une erreur de build, jamais un repli)
 cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,ebpf
 
 # Lint

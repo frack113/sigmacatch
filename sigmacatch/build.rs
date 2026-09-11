@@ -10,6 +10,12 @@
 //!    (nightly + rust-src + bpf-linker) is available;
 //! 3. otherwise emit an empty placeholder — the loader will reject it at
 //!    startup and collection falls back to the legacy syslog tail.
+//!
+//! The placeholder is for local development only. Under CI
+//! (`GITHUB_ACTIONS=true`) an empty object is a silent false green — the
+//! `ebpf` leg would test a degraded build — so both a failed subbuild and an
+//! empty object are hard build errors there (`panic!`, surfacing as a red
+//! job), never the placeholder.
 
 use std::env;
 use std::fs;
@@ -40,21 +46,45 @@ fn main() {
         return;
     }
     let dest = out_dir.join(OBJECT_NAME);
+    // A placeholder is a local-dev convenience; on CI it would certify a
+    // degraded build (loader rejects the empty object at startup → silent
+    // fallback to the syslog tail). So CI fails loudly on an unproducible or
+    // empty object — never embeds the placeholder.
+    let in_ci = env::var("GITHUB_ACTIONS").is_ok_and(|v| v == "true");
 
-    if let Some(prebuilt) = env::var_os("SIGMACATCH_EBPF_OBJECT") {
+    let subbuild_err: Option<String> = if let Some(prebuilt) = env::var_os("SIGMACATCH_EBPF_OBJECT") {
         copy_object(Path::new(&prebuilt), &dest);
+        None
+    } else {
+        build_probes(&manifest_dir.join(PROBE_CRATE_DIR), &out_dir)
+            .map(|artifact| copy_object(&artifact, &dest))
+            .err()
+    };
+
+    if in_ci {
+        if let Some(reason) = &subbuild_err {
+            panic!(
+                "ebpf feature requested on CI but the probe object could not be produced: {reason}\n\
+                 Refusing to embed an empty placeholder in a CI artifact. The ebpf leg must run \
+                 with a nightly toolchain + rust-src + bpf-linker on PATH (see \
+                 .github/workflows/test.yml), or set SIGMACATCH_EBPF_OBJECT to a prebuilt object."
+            );
+        }
+        if fs::metadata(&dest).ok().is_none_or(|m| m.len() == 0) {
+            panic!(
+                "ebpf object at {} is missing or empty — CI must embed a real probe object",
+                dest.display()
+            );
+        }
         return;
     }
 
-    match build_probes(&manifest_dir.join(PROBE_CRATE_DIR), &out_dir) {
-        Ok(artifact) => copy_object(&artifact, &dest),
-        Err(reason) => {
-            // Placeholder: the loader rejects it at startup and collection
-            // falls back to the legacy syslog tail ("built without nightly
-            // toolchain?" in the runtime error).
-            let _ = fs::write(out_dir.join("ebpf_build_failure.txt"), &reason);
-            fs::write(&dest, []).expect("write placeholder object");
-        }
+    if let Some(reason) = subbuild_err {
+        // Placeholder: the loader rejects it at startup and collection
+        // falls back to the legacy syslog tail ("built without nightly
+        // toolchain?" in the runtime error).
+        let _ = fs::write(out_dir.join("ebpf_build_failure.txt"), &reason);
+        fs::write(&dest, []).expect("write placeholder object");
     }
 }
 
