@@ -215,6 +215,8 @@ pub struct EventCollector {
     /// Pinned path, or `None` to discover the first existing default path.
     #[cfg(target_os = "linux")]
     path: Option<String>,
+    #[cfg(target_os = "linux")]
+    tail: crate::inputs::tail::TailOptions,
 }
 
 impl Default for EventCollector {
@@ -233,6 +235,8 @@ impl EventCollector {
         Self {
             #[cfg(target_os = "linux")]
             path,
+            #[cfg(target_os = "linux")]
+            tail: crate::inputs::tail::TailOptions::default(),
         }
     }
 
@@ -246,7 +250,23 @@ impl EventCollector {
         Self {
             #[cfg(target_os = "linux")]
             path,
+            #[cfg(target_os = "linux")]
+            tail: crate::inputs::tail::TailOptions::default(),
         }
+    }
+
+    /// Override the tail timing and READY barrier (tests). Production keeps
+    /// the 100 ms default and no barrier when this is not called.
+    pub fn tail_options(mut self, options: crate::inputs::tail::TailOptions) -> Self {
+        #[cfg(target_os = "linux")]
+        {
+            self.tail = options;
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = &options;
+        }
+        self
     }
 }
 
@@ -269,13 +289,30 @@ impl EventProducer for EventCollector {
             if sources.is_empty() {
                 return Err(ProducerError::Message("no syslog source found".to_string()));
             }
+            // A READY barrier can only be fired once: give it to the first
+            // source (tests pin a single path; production never arms it).
+            let crate::inputs::tail::TailOptions {
+                poll_interval,
+                ready,
+            } = self.tail;
+            let mut ready = ready;
             let mut tasks = Vec::with_capacity(sources.len());
-            for (path, kind) in sources {
+            for (index, (path, kind)) in sources.into_iter().enumerate() {
+                let ready = if index == 0 { ready.take() } else { None };
                 let tx = tx.clone();
                 let stop = stop.clone();
                 tasks.push(tokio::task::spawn_blocking(move || {
                     tracing::info!("builtin syslog collector starting (tail {path})");
-                    crate::inputs::tail::run(&path, SyslogHandler { kind }, tx, stop)
+                    crate::inputs::tail::run(
+                        &path,
+                        SyslogHandler { kind },
+                        tx,
+                        stop,
+                        crate::inputs::tail::TailOptions {
+                            poll_interval,
+                            ready,
+                        },
+                    )
                 }));
             }
             drop(tx);

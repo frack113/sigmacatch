@@ -101,6 +101,8 @@ fn value_to_json(value: &AuditValue<'_>) -> Option<JsonValue> {
 pub struct EventCollector {
     #[cfg(target_os = "linux")]
     path: String,
+    #[cfg(target_os = "linux")]
+    tail: crate::inputs::tail::TailOptions,
 }
 
 impl Default for EventCollector {
@@ -124,7 +126,23 @@ impl EventCollector {
         Self {
             #[cfg(target_os = "linux")]
             path,
+            #[cfg(target_os = "linux")]
+            tail: crate::inputs::tail::TailOptions::default(),
         }
+    }
+
+    /// Override the tail timing and READY barrier (tests). Production keeps
+    /// the 100 ms default and no barrier when this is not called.
+    pub fn tail_options(mut self, options: crate::inputs::tail::TailOptions) -> Self {
+        #[cfg(target_os = "linux")]
+        {
+            self.tail = options;
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = &options;
+        }
+        self
     }
 }
 
@@ -137,7 +155,7 @@ impl EventProducer for EventCollector {
     ) -> Result<(), ProducerError> {
         #[cfg(target_os = "linux")]
         {
-            tail_loop(&self.path, tx, stop)
+            tail_loop(&self.path, tx, stop, self.tail)
                 .await
                 .map_err(|e| ProducerError::Collector(e.into()))
         }
@@ -155,6 +173,7 @@ async fn tail_loop(
     path: &str,
     tx: mpsc::Sender<Event>,
     stop: watch::Receiver<bool>,
+    options: crate::inputs::tail::TailOptions,
 ) -> anyhow::Result<()> {
     use tracing::info;
 
@@ -162,7 +181,7 @@ async fn tail_loop(
     let path = path.to_string();
 
     let task = tokio::task::spawn_blocking(move || {
-        crate::inputs::tail::run(&path, AuditdHandler::new(), tx, stop)
+        crate::inputs::tail::run(&path, AuditdHandler::new(), tx, stop, options)
     });
 
     match task.await {
