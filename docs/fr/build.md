@@ -2,7 +2,7 @@
 
 ## Prérequis
 
-- Rust 2024 edition (1.85+)
+- Rust 2024 edition (1.95+ — MSRV imposée par rsigma 0.22)
 - Pour la compilation croisée Windows depuis Linux : `cargo install cargo-xwin` (télécharge automatiquement le Windows SDK)
 
 ## Features cargo
@@ -37,8 +37,9 @@ cargo build --release -p sigmacatch --no-default-features --features auditd,buil
 #   le tail en local ; sur CI, le placeholder vide est une erreur de build, jamais un repli)
 cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,ebpf
 
-# Lint
-cargo clippy -p sigmacatch --no-default-features --features auditd,builtin,sysmon,ebpf -- -W warnings
+# Lint (saveurs séparées — sysmon et ebpf ne sont jamais fusionnés en un seul build)
+cargo clippy -p sigmacatch --no-default-features --features auditd,builtin,sysmon -- -W warnings
+cargo clippy -p sigmacatch --no-default-features --features auditd,builtin,ebpf -- -W warnings
 ```
 
 Tournent en parallèle : le collecteur **auditd** si `/var/log/audit/audit.log` existe et les
