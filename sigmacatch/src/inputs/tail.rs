@@ -70,8 +70,8 @@ pub struct TailOptions {
     /// How often new bytes are read from the file and, when the file is
     /// idle, how long an aggregated record group waits before flush.
     pub poll_interval: std::time::Duration,
-    /// One-shot fired once the file is open, seeked to end-of-file and the
-    /// first poll completed. `None` disables the barrier (production).
+    /// One-shot fired once the file is open (at end-of-file) and the first
+    /// poll completed. `None` disables the barrier (production).
     pub ready: Option<oneshot::Sender<()>>,
 }
 
