@@ -41,18 +41,44 @@ jobs:
         # cache restore/save to avoid cache-poisoning (zizmor cache-poisoning).
         with:
           lookup-only: true
-      - name: Build sigmacatch (auditd + builtin + sysmon + ebpf)
+      # One binary per input flavour (docs/build.md): the base auditd+builtin
+      # build and the +sysmon / +ebpf variants must stay separate — ebpf needs
+      # nightly + bpf-linker and changes the execution path, it must never be
+      # merged with sysmon in a single artefact.
+      - name: Build sigmacatch (auditd + builtin)
         run: >
           cargo build --release --locked -p sigmacatch --no-default-features
-          --features auditd,builtin,sysmon,ebpf
+          --features auditd,builtin
+      - name: Rename base flavour
+        run: cp target/release/sigmacatch target/release/sigmacatch-linux
+      - name: Build sigmacatch (auditd + builtin + sysmon)
+        run: >
+          cargo build --release --locked -p sigmacatch --no-default-features
+          --features auditd,builtin,sysmon
+      - name: Rename sysmon flavour
+        run: cp target/release/sigmacatch target/release/sigmacatch-sysmon
+      - name: Build sigmacatch (auditd + builtin + ebpf)
+        run: >
+          cargo build --release --locked -p sigmacatch --no-default-features
+          --features auditd,builtin,ebpf
+      - name: Rename ebpf flavour
+        run: cp target/release/sigmacatch target/release/sigmacatch-ebpf
       - name: Build regressiondata-check (Linux)
         run: cargo build --release --locked -p sigmacatch --bin regressiondata-check
+      - name: Package Linux distribution archive
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp target/release/sigmacatch-linux target/release/sigmacatch-sysmon \
+             target/release/sigmacatch-ebpf target/release/regressiondata-check dist/
+          (cd dist && sha256sum *) > SHA256SUMS.linux
+          tar -czf sigmacatch-linux-x86_64.tar.gz -C dist .
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sigmacatch-linux-x86_64
           path: |
-            target/release/sigmacatch
-            target/release/regressiondata-check
+            sigmacatch-linux-x86_64.tar.gz
+            SHA256SUMS.linux
 
   build-windows:
     name: Build Windows executables
@@ -65,14 +91,42 @@ jobs:
         with:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
-      - run: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch --features evtx
-      - run: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch --bin regressiondata-check
+      # Two Windows flavours (docs/build.md): winevt (default feature) and the
+      # +evtx one-shot writer — never a merged build.
+      - name: Build sigmacatch (winevt)
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch
+      - name: Rename winevt flavour
+        shell: pwsh
+        run: |
+          Copy-Item target/x86_64-pc-windows-msvc/release/sigmacatch.exe `
+            target/x86_64-pc-windows-msvc/release/sigmacatch-winevt.exe -Force
+      - name: Build sigmacatch (winevt + evtx writer)
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch --features evtx
+      - name: Rename evtx flavour
+        shell: pwsh
+        run: |
+          Copy-Item target/x86_64-pc-windows-msvc/release/sigmacatch.exe `
+            target/x86_64-pc-windows-msvc/release/sigmacatch-evtx.exe -Force
+      - name: Build regressiondata-check (Windows)
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch --bin regressiondata-check
+      - name: Package Windows distribution zip
+        shell: pwsh
+        run: |
+          $dist = "dist"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/sigmacatch-winevt.exe $dist
+          Copy-Item target/x86_64-pc-windows-msvc/release/sigmacatch-evtx.exe $dist
+          Copy-Item target/x86_64-pc-windows-msvc/release/regressiondata-check.exe $dist
+          Get-FileHash -Algorithm SHA256 -Path "$dist/*" | ForEach-Object {
+            "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf)
+          } | Set-Content -Encoding ascii SHA256SUMS.windows
+          Compress-Archive -Path "$dist/*" -DestinationPath sigmacatch-x86_64-pc-windows-msvc.zip -Force
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sigmacatch-x86_64-pc-windows-msvc
           path: |
-            target/x86_64-pc-windows-msvc/release/sigmacatch.exe
-            target/x86_64-pc-windows-msvc/release/regressiondata-check.exe
+            sigmacatch-x86_64-pc-windows-msvc.zip
+            SHA256SUMS.windows
 
   github:
     name: Create GitHub release
@@ -80,6 +134,7 @@ jobs:
     needs: [build-linux, build-windows]
     permissions:
       contents: write
+      id-token: write # Sigstore keyless signing (cosign sign-blob)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -103,6 +158,17 @@ jobs:
           pattern: sigmacatch-*
           path: artifacts
           merge-multiple: true
+      # Keyless provenance via Sigstore on the distribution archives: each
+      # `.bundle` (signature + certificate + Rekor timestamp) is published
+      # next to its archive so users can verify with
+      # `cosign verify-blob --bundle <archive>.bundle <archive>`.
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign release archives (Sigstore keyless)
+        run: |
+          set -euo pipefail
+          for f in artifacts/*.tar.gz artifacts/*.zip; do
+            cosign sign-blob --yes --bundle "$f.bundle" "$f"
+          done
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
