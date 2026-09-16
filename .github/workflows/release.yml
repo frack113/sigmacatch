@@ -78,6 +78,7 @@ jobs:
           name: sigmacatch-linux-x86_64
           path: |
             sigmacatch-linux-x86_64.tar.gz
+            target/release/regressiondata-check
             SHA256SUMS.linux
 
   build-windows:

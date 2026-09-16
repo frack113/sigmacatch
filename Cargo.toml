@@ -12,7 +12,7 @@ members = [
 # separately by sigmacatch/src/build.rs, never as part of the stable
 # workspace graph.
 [workspace.package]
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 license = "MIT"
 

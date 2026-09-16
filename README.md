@@ -124,7 +124,7 @@ MIT
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.
 
-Current dev version: **0.6.0** (branch `release/0.6.0`, not yet tagged).
+Current dev version: **0.6.1** (branch `release/0.6.1`).
 Last release: **v0.5.4** (2026-09-04).
 
 Releases are cut by [the release workflow](.github/workflows/release.yml) when a
