@@ -124,8 +124,8 @@ MIT
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.
 
-Current dev version: **0.6.0** (branch `release/0.6.0`, not yet tagged).
-Last release: **v0.5.4** (2026-09-04).
+Current dev version: **0.6.1** (branch `release/0.6.1`).
+Last release: **v0.6.0** (2026-09-11).
 
 Releases are cut by [the release workflow](.github/workflows/release.yml) when a
 `v*` tag matching the workspace version is pushed. It builds one binary per input
@@ -139,8 +139,13 @@ per-platform `SHA256SUMS`, and signs both archives with Sigstore keyless:
 cosign verify-blob --bundle <archive>.bundle <archive>
 ```
 
+The Linux `regressiondata-check` binary is also published as a standalone release
+asset, for direct download by CI workflows (e.g. SigmaHQ/sigma):
+`https://github.com/frack113/sigmacatch/releases/download/<tag>/regressiondata-check`
+
 Recent tags:
 
+- v0.6.0 — single-package architecture, one-shot EVTX generator, Sigstore-signed release archives
 - v0.5.4 — JSONL support, lenient engine, info.yml validation, failed rules API
 - v0.5.3 — regressiondata-check rename, --fix/--json/--ignore flags
 - v0.5.2 — dependency updates

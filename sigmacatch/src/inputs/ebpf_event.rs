@@ -608,10 +608,15 @@ mod tests {
     use super::*;
     use crate::ebpf_common::{ARG0_LEN, EVENT_EXEC, EVENT_NET, IMAGE_LEN, NetEvent};
 
+    // PID that cannot belong to a real process: way past kernel pid_max
+    // (<= 4194304), so /proc/<pid> lookups always fall back to the
+    // kernel-captured fields — deterministic on any host, including CI.
+    pub(super) const FAKE_PID: u32 = u32::MAX;
+
     pub(super) fn sample_net(family: u16, port_be: u16, addr: [u8; 16]) -> NetEvent {
         NetEvent {
             kind: EVENT_NET,
-            pid: 4242,
+            pid: FAKE_PID,
             uid: 0,
             gid: 0,
             family,
@@ -643,7 +648,7 @@ mod tests {
     #[test]
     fn eid1_matches_golden_shape_and_order() {
         let mut builder = EventBuilder::new();
-        let event = builder.exec_event(&sample_exec(4242));
+        let event = builder.exec_event(&sample_exec(FAKE_PID));
         let xml = String::from_utf8(event.event_raw.clone()).expect("utf8 xml");
 
         // Golden structure markers.
@@ -711,7 +716,7 @@ mod tests {
     #[test]
     fn eid1_unknown_parent_renders_null_fields() {
         let mut builder = EventBuilder::new();
-        let event = builder.exec_event(&sample_exec(4242));
+        let event = builder.exec_event(&sample_exec(FAKE_PID));
         let xml = String::from_utf8(event.event_raw).expect("utf8");
         assert!(xml.contains(
             "<Data Name=\"ParentProcessGuid\">{00000000-0000-0000-0000-000000000000}</Data>"
@@ -722,7 +727,7 @@ mod tests {
 
     #[test]
     fn unreadable_image_falls_back_to_dash() {
-        let mut ev = sample_exec(4242);
+        let mut ev = sample_exec(FAKE_PID);
         let missing = b"/sigmacatch/no/such/binary\0";
         ev.image[..missing.len()].copy_from_slice(missing);
         let mut builder = EventBuilder::new();
@@ -759,8 +764,8 @@ mod tests {
     #[test]
     fn eid5_after_exec_carries_cached_image() {
         let mut builder = EventBuilder::new();
-        let _exec = builder.exec_event(&sample_exec(4242));
-        let event = builder.exit_event(4242).expect("known process exits");
+        let _exec = builder.exec_event(&sample_exec(FAKE_PID));
+        let event = builder.exit_event(FAKE_PID).expect("known process exits");
         let xml = String::from_utf8(event.event_raw).expect("utf8");
 
         assert!(xml.contains("<EventID>5</EventID>"));
@@ -774,7 +779,7 @@ mod tests {
 
     #[test]
     fn cmdline_is_xml_escaped() {
-        let mut ev = sample_exec(4242);
+        let mut ev = sample_exec(FAKE_PID);
         let evil = b"/bin/echo <script>&amp;\0";
         ev.arg0[..evil.len()].copy_from_slice(evil);
         // image stays clean; the escaped content must come from arg0.
@@ -790,14 +795,14 @@ mod tests {
 
 #[cfg(test)]
 mod net_tests {
-    use super::tests::{sample_exec, sample_net};
+    use super::tests::{FAKE_PID, sample_exec, sample_net};
     use super::*;
 
     #[test]
     fn eid3_ipv4_matches_golden_shape_and_order() {
         let mut builder = EventBuilder::new();
         // Seed the process cache so Image/ProcessGuid resolve.
-        let _ = builder.exec_event(&sample_exec(4242));
+        let _ = builder.exec_event(&sample_exec(FAKE_PID));
 
         let addr = [127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         let event = builder.net_event(&sample_net(2, 22u16.to_be(), addr));
@@ -870,7 +875,7 @@ mod net_tests {
 
 #[cfg(test)]
 mod file_tests {
-    use super::tests::sample_exec;
+    use super::tests::{FAKE_PID, sample_exec};
     use super::*;
     use crate::ebpf_common::{AT_FDCWD, EVENT_FILE, PATH_LEN};
 
@@ -893,8 +898,8 @@ mod file_tests {
     #[test]
     fn eid11_matches_golden_shape_and_order() {
         let mut builder = EventBuilder::new();
-        let _ = builder.exec_event(&sample_exec(4242));
-        let event = builder.file_create_event(&sample_file(4242));
+        let _ = builder.exec_event(&sample_exec(FAKE_PID));
+        let event = builder.file_create_event(&sample_file(FAKE_PID));
         let xml = String::from_utf8(event.event_raw).expect("utf8");
 
         assert!(xml.contains("<EventID>11</EventID>"));
@@ -964,7 +969,7 @@ mod file_tests {
 
 #[cfg(test)]
 mod dns_tests {
-    use super::tests::sample_exec;
+    use super::tests::{FAKE_PID, sample_exec};
     use super::*;
     use crate::ebpf_common::{DNS_PAYLOAD_LEN, DnsEvent, EVENT_DNS};
 
@@ -1025,8 +1030,10 @@ mod dns_tests {
     fn eid22_xml_fields_and_category() {
         let wire = dns_query_wire("story6.sigmacatch.test");
         let mut builder = EventBuilder::new();
-        let _ = builder.exec_event(&sample_exec(4242));
-        let event = builder.dns_event(&sample_dns(4242, &wire)).expect("valid");
+        let _ = builder.exec_event(&sample_exec(FAKE_PID));
+        let event = builder
+            .dns_event(&sample_dns(FAKE_PID, &wire))
+            .expect("valid");
 
         let xml = String::from_utf8(event.event_raw).expect("utf8");
         for field in [
@@ -1056,6 +1063,10 @@ mod dns_tests {
     fn non_query_payload_returns_none() {
         let mut builder = EventBuilder::new();
         // Truncated garbage (len < header).
-        assert!(builder.dns_event(&sample_dns(4242, &[1, 2, 3])).is_none());
+        assert!(
+            builder
+                .dns_event(&sample_dns(FAKE_PID, &[1, 2, 3]))
+                .is_none()
+        );
     }
 }

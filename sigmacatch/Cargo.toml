@@ -41,7 +41,7 @@ linux-audit-parser = "0.2"
 phf = { version = "0.14", features = ["macros"] }
 rayon = "1.12"
 regex = { version = "1", optional = true }
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "blocking"] }
 roxmltree = "0.21"
 rsigma-eval = { version = "0.22", features = ["daachorse-index"] }
 rsigma-parser = "0.22"
@@ -63,7 +63,7 @@ tokio = { version = "1", features = [
 tracing.workspace = true
 tracing-appender = "0.2"
 tracing-subscriber.workspace = true
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1.26.1", features = ["v4", "serde"] }
 walkdir = { version = "2", optional = true }
 zeroize = "1.9"
 
