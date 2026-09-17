@@ -97,6 +97,58 @@ fn value_to_json(value: &AuditValue<'_>) -> Option<JsonValue> {
     }
 }
 
+/// Extract raw key=value fields from audit log lines, preserving hex strings as-is.
+/// This avoids the hex decoding done by `linux_audit_parser` for regression fidelity.
+fn extract_raw_fields(lines: &[u8]) -> Map<String, JsonValue> {
+    let mut fields = Map::new();
+    for line in lines.split(|&b| b == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        // Find the body after "msg=audit(...): "
+        let Some(body_start) = line.iter().position(|&b| b == b':') else {
+            continue;
+        };
+        let body = &line[body_start + 1..];
+        if body.is_empty() || body[0] != b' ' {
+            continue;
+        }
+        let body = &body[1..]; // skip leading space
+        // Parse key=value pairs
+        let mut i = 0;
+        while i < body.len() {
+            // Skip spaces
+            while i < body.len() && body[i] == b' ' {
+                i += 1;
+            }
+            if i >= body.len() {
+                break;
+            }
+            // Find key (up to =)
+            let key_start = i;
+            while i < body.len() && body[i] != b'=' {
+                i += 1;
+            }
+            if i >= body.len() {
+                break;
+            }
+            let key = String::from_utf8_lossy(&body[key_start..i]).into_owned();
+            i += 1; // skip '='
+            if i >= body.len() {
+                break;
+            }
+            // Find value (until space or end)
+            let val_start = i;
+            while i < body.len() && body[i] != b' ' {
+                i += 1;
+            }
+            let value = String::from_utf8_lossy(&body[val_start..i]).into_owned();
+            fields.insert(key, JsonValue::String(value));
+        }
+    }
+    fields
+}
+
 /// Linux auditd event collector (implements `EventProducer` directly).
 pub struct EventCollector {
     #[cfg(target_os = "linux")]
@@ -259,11 +311,12 @@ impl crate::inputs::tail::LineHandler for AuditdHandler {
 
 /// Build the `Event` for a single audit record of a grouped audit event:
 /// - `event_json_raw`: structured `{stamp, type, node?, fields}` preserving
-///   the record and its audit event ID;
+///   the record and its audit event ID with raw (hex-preserved) field values;
 /// - `event_json` (detection): flat `{type, node?, fields…}` with logsource
 ///   `product: linux` + `service: auditd` injected;
 /// - `event_raw`: the complete original audit log lines of the event.
 pub fn record_to_event(lines: &[u8], record: &Record) -> Event {
+    let raw_fields = extract_raw_fields(lines);
     let json_raw = JsonValue::Object({
         let mut root = Map::new();
         root.insert(
@@ -279,7 +332,7 @@ pub fn record_to_event(lines: &[u8], record: &Record) -> Event {
         if let Some(node) = &record.node {
             root.insert("node".into(), JsonValue::String(node.clone()));
         }
-        root.insert("fields".into(), JsonValue::Object(record.fields.clone()));
+        root.insert("fields".into(), JsonValue::Object(raw_fields));
         root
     });
 
