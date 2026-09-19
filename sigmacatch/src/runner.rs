@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::config::{Config, parse_args};
+use crate::config::{CliArgs, Config, parse_args};
 use crate::detection::DetectionEngine;
 use crate::regression::{DataFormat, SigmahqRegression};
 use crate::repo::SigmaRepo;
@@ -163,8 +163,19 @@ pub async fn bootstrap_repo_regression(
 /// Run the sigmacatch pipeline with the given collector.
 pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     let cli = parse_args();
+    run_with_cli(kind, cli, PathBuf::from("config.yaml")).await
+}
 
-    let config_path = PathBuf::from("config.yaml");
+/// Run the sigmacatch pipeline with an explicit parsed CLI and config path.
+///
+/// Split from [`run`] so tests and embedders can drive the shared pipeline
+/// loop (AD-6) without touching the process argv — the winevt live input, the
+/// one-shot `--evtx` input and the Linux collectors all reach this code.
+pub async fn run_with_cli<C: CollectorKind>(
+    kind: &C,
+    cli: CliArgs,
+    config_path: PathBuf,
+) -> Result<()> {
     let mut config = if cli.dry_run {
         // Dry-run never creates config.yaml and skips git validation — only the
         // `./sigma` rules need to load, so no on-disk state is required.
