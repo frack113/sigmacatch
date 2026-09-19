@@ -3,9 +3,7 @@
 
 [workspace]
 resolver = "2"
-members = [
-    "sigmacatch",
-]
+members = ["sigmacatch"]
 
 # The nightly-only bpf-el probe crate lives nested INSIDE the sigmacatch
 # package (sigmacatch/ebpf, its own `[workspace]` opt-out): it is built

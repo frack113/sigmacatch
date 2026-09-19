@@ -8,6 +8,11 @@ edition.workspace = true
 description = "sigmacatch — Sigma regression collector (single binary, inputs via cargo features)"
 license.workspace = true
 
+# Library doc blocks may reference items by their old crate names; keep
+# doctests off (same policy as the merged crates had).
+[lib]
+doctest = false
+
 # Inputs are selected with cargo features:
 #   Windows: winevt (live Event Log), evtx (one-shot EVTX files)
 #   Linux:   auditd, builtin (system syslog), sysmon (Sysmon-for-Linux tail), ebpf (native probes)
@@ -23,14 +28,29 @@ winevt = []
 evtx = ["dep:walkdir"]
 auditd = []
 builtin = ["dep:regex"]
-sysmon = ["builtin"] # Sysmon-for-Linux legacy tail
+sysmon = ["builtin"]                          # Sysmon-for-Linux legacy tail
 ebpf = ["dep:aya", "dep:bytemuck", "dep:hex"]
+
+[target.'cfg(not(unix))'.dependencies]
+dunce = "1.0"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_System_Console",
+  "Win32_System_Com",
+  "Win32_System_EventLog",
+  "Win32_System_Threading",
+  "Win32_Security",
+] }
 
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
 aya = { version = "0.14", optional = true }
-bytemuck = { version = "1", default-features = false, features = ["derive"], optional = true }
+bytemuck = { version = "1", default-features = false, features = [
+  "derive",
+], optional = true }
 chrono = "0.4"
 crc32fast = "1.5"
 evtx = "0.12"
@@ -41,7 +61,10 @@ linux-audit-parser = "0.2"
 phf = { version = "0.14", features = ["macros"] }
 rayon = "1.12"
 regex = { version = "1", optional = true }
-reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "blocking"] }
+reqwest = { version = "0.13.5", default-features = false, features = [
+  "rustls",
+  "blocking",
+] }
 roxmltree = "0.21"
 rsigma-eval = { version = "0.22", features = ["daachorse-index"] }
 rsigma-parser = "0.22"
@@ -67,18 +90,8 @@ uuid = { version = "1.26.1", features = ["v4", "serde"] }
 walkdir = { version = "2", optional = true }
 zeroize = "1.9"
 
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = [
-  "Win32_Foundation",
-  "Win32_System_Console",
-  "Win32_System_Com",
-  "Win32_System_EventLog",
-  "Win32_System_Threading",
-  "Win32_Security",
-] }
-
-[target.'cfg(not(unix))'.dependencies]
-dunce = "1.0"
+[dev-dependencies]
+tempfile = "3"
 
 # Integration tests: each requires its input features compiled in.
 [[test]]
@@ -102,14 +115,6 @@ required-features = ["auditd", "builtin", "sysmon"]
 [[example]]
 name = "ebpf_parse_check"
 required-features = ["ebpf"]
-
-[dev-dependencies]
-tempfile = "3"
-
-# Library doc blocks may reference items by their old crate names; keep
-# doctests off (same policy as the merged crates had).
-[lib]
-doctest = false
 
 # Quality contract: inherit workspace lint tiers ([workspace.lints] in root Cargo.toml).
 [lints]
