@@ -570,7 +570,10 @@ mod tests {
         assert_eq!(raw["stamp"]["timestamp"], 1717056137482u64);
         assert_eq!(raw["stamp"]["sequence"], 90412);
         assert_eq!(raw["type"], "PATH");
-        assert_eq!(raw["fields"]["name"], "/etc/shadow");
+        // Raw-preserved fields mirror the log line verbatim (quotes included):
+        assert_eq!(raw["fields"]["name"], "\"/etc/shadow\"");
+        assert_eq!(raw["fields"]["item"], "1");
+        assert_eq!(raw["fields"]["nametype"], "NORMAL");
 
         let raw_text = String::from_utf8_lossy(&event.event_raw);
         assert!(raw_text.starts_with("type=PATH msg=audit("));
