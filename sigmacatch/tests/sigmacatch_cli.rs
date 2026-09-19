@@ -209,15 +209,15 @@ fn list_rules_prints_fixture_under_default_windows_filter() {
 }
 
 #[test]
-fn list_rules_json_with_coverage() {
+fn check_filter_bare_runs_human_summary() {
     let tmp = fixture();
-    let (code, out) = run_in(tmp.path(), &["--list-rules", "--json", "--coverage"]);
-    assert_eq!(code, 0, "json+coverage must exit 0: {out}");
-    assert!(out.contains("\"total_rules\": 2"), "{out}");
+    let (code, out) = run_in(tmp.path(), &["--check-filter"]);
+    assert_eq!(code, 0, "human output must exit 0: {out}");
     assert!(
-        out.contains("\"with_data\": 0"),
-        "no regression data on fixture: {out}"
+        out.contains("Passed: 7") && out.contains("Failed: 0"),
+        "{out}"
     );
+    assert!(out.contains("Loaded 4 total rules from sigma"), "{out}");
 }
 
 #[test]
@@ -230,4 +230,13 @@ fn list_rules_coverage_human() {
         out.contains("2 rule(s) without regression data"),
         "coverage summary line: {out}"
     );
+}
+
+#[test]
+fn list_rules_bare_runs_human_listing() {
+    let tmp = fixture();
+    let (code, out) = run_in(tmp.path(), &["--list-rules"]);
+    assert_eq!(code, 0, "bare list-rules must run, not print help: {out}");
+    assert!(out.contains("Windows Stable Critical"), "{out}");
+    assert!(out.contains("Loaded 2 rule(s)"), "{out}");
 }
