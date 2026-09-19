@@ -31,3 +31,20 @@ impl std::fmt::Display for LogType {
         f.write_str(self.as_str())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn as_str_and_display_match_sigma_logtype_spelling() {
+        for logtype in [LogType::Evtx, LogType::Json, LogType::Raw, LogType::Log] {
+            assert_eq!(logtype.to_string(), logtype.as_str());
+            assert!(logtype.as_str().is_ascii());
+        }
+        assert_eq!(LogType::Evtx.as_str(), "evtx");
+        assert_eq!(LogType::Json.as_str(), "json");
+        assert_eq!(LogType::Raw.as_str(), "raw");
+        assert_eq!(LogType::Log.as_str(), "log");
+    }
+}
