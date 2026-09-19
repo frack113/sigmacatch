@@ -471,13 +471,13 @@ impl RegressionData {
     /// later without orphaned files. The provider is resolved before any file
     /// is written so a malformed event fails fast.
     fn generate(&self) -> Result<()> {
-        if self.alerts.is_empty() {
+        let Some(first) = self.alerts.first() else {
             return Err(RegressionError::Invalid(format!(
                 "no matched event for rule {}",
                 self.header.rule_id
             )));
-        }
-        let provider = self.format.resolve_provider(self.alerts.first().unwrap())?;
+        };
+        let provider = self.format.resolve_provider(first)?;
 
         let rule_dir = self.rule_dir()?;
         let rule_dir = crate::regression::long_path::long_path(&rule_dir);

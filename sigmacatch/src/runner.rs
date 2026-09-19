@@ -368,14 +368,6 @@ pub async fn run_with_cli<C: CollectorKind>(
         }
     );
 
-    let mut generate_interval = if kind.live_capture() {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
-        interval.tick().await; // skip immediate first tick
-        Some(interval)
-    } else {
-        None
-    };
-
     let mut branch_pushed = false;
     let max_runs = cli.max_runs;
     let mut runs_completed: u32 = 0;
@@ -391,6 +383,8 @@ pub async fn run_with_cli<C: CollectorKind>(
 
     if kind.live_capture() {
         // ── Live capture: generation at 30 s intervals ────────────────────
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        interval.tick().await; // skip immediate first tick
         let mut dropped_while_generating = 0u64;
         loop {
             tokio::select! {
@@ -416,7 +410,7 @@ pub async fn run_with_cli<C: CollectorKind>(
                         None => break, // channel closed (should not happen in live mode)
                     }
                 }
-                _ = generate_interval.as_mut().unwrap().tick() => {
+                _ = interval.tick() => {
                     let Some(taken) = pipeline_slot.take() else {
                         continue;
                     };

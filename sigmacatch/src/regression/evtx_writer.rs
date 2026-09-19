@@ -181,7 +181,7 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
                 28
             }
         }
-        _ => unreachable!(),
+        _ => unreachable!("month is validated to 1..=12 above"),
     };
     if day == 0 || day > max_day {
         return Err(WriterError::Invalid(format!(
