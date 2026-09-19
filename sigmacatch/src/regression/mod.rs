@@ -500,8 +500,15 @@ impl RegressionData {
                 );
                 let mut file = std::fs::File::create(&raw_json_path)?;
                 for alert in &self.alerts {
-                    let line = serde_json::to_string(&alert.event_json_raw)?;
-                    writeln!(file, "{}", line)?;
+                    if let Some(all) = &alert.event_json_raw_all {
+                        for rec in all {
+                            let line = serde_json::to_string(rec)?;
+                            writeln!(file, "{}", line)?;
+                        }
+                    } else {
+                        let line = serde_json::to_string(&alert.event_json_raw)?;
+                        writeln!(file, "{}", line)?;
+                    }
                 }
                 written.push(raw_json_path);
             }
@@ -566,7 +573,11 @@ impl RegressionData {
             author,
             description,
             &TestConfig {
-                test_type: if self.add_json_output { "ndjson".to_string() } else { ext.to_string() },
+                test_type: if self.add_json_output {
+                    "ndjson".to_string()
+                } else {
+                    ext.to_string()
+                },
                 provider,
             },
         );
@@ -806,6 +817,7 @@ mod tests {
             event_json_raw: event.event_json_raw.clone(),
             event_json: event.event_json.clone(),
             event_raw: event.event_raw,
+            event_json_raw_all: None,
         }
     }
 
@@ -834,6 +846,7 @@ mod tests {
                 "service": "auditd"
             }),
             event_raw: raw_line.to_vec(),
+            event_json_raw_all: None,
         }
     }
 

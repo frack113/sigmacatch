@@ -207,6 +207,7 @@ mod tests {
             event_json_raw: serde_json::json!({}),
             event_json: serde_json::json!({}),
             event_raw,
+            event_json_raw_all: None,
         }
     }
 

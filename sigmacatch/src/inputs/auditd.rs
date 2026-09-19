@@ -20,7 +20,7 @@
 use crate::types::{Event, EventProducer, ProducerError};
 use async_trait::async_trait;
 use linux_audit_parser::{Parser, Value as AuditValue};
-use serde_json::{Map, Value as JsonValue};
+use serde_json::{Map, Value, Value as JsonValue};
 use tokio::sync::{mpsc, watch};
 
 /// Default path of the audit log.
@@ -105,11 +105,13 @@ fn extract_raw_fields(lines: &[u8]) -> Map<String, JsonValue> {
         if line.is_empty() {
             continue;
         }
-        // Find the body after "msg=audit(...): "
-        let Some(body_start) = line.iter().position(|&b| b == b':') else {
+        // Find the body after "msg=audit(...): " — the closing "): " pattern.
+        // The audit timestamp contains a colon (audit(ts:seq)), so we must find
+        // the closing parenthesis + colon, not the first colon.
+        let Some(body_start) = line.windows(2).position(|w| w == [b')', b':']) else {
             continue;
         };
-        let body = &line[body_start + 1..];
+        let body = &line[body_start + 2..]; // skip "):"
         if body.is_empty() || body[0] != b' ' {
             continue;
         }
@@ -274,8 +276,43 @@ impl AuditdHandler {
         let lines = std::mem::take(&mut self.group_lines);
         let records = std::mem::take(&mut self.group_records);
         self.group_seq = None;
+
+        // Build all per-record JSON raws for ndjson output (one per audit record)
+        let all_json_raw: Vec<Value> = records
+            .iter()
+            .map(|r| {
+                let record_line = lines
+                    .split(|&b| b == b'\n')
+                    .find(|line| {
+                        line.windows(r.ty.len() + 6).any(|w| {
+                            w.starts_with(b"type=") && &w[5..5 + r.ty.len()] == r.ty.as_bytes()
+                        })
+                    })
+                    .unwrap_or(&lines);
+                let raw_fields = extract_raw_fields(record_line);
+                let mut root = Map::new();
+                root.insert(
+                    "stamp".into(),
+                    JsonValue::Object({
+                        let mut stamp = Map::new();
+                        stamp.insert("timestamp".into(), JsonValue::from(r.id.timestamp));
+                        stamp.insert("sequence".into(), JsonValue::from(r.id.sequence));
+                        stamp
+                    }),
+                );
+                root.insert("type".into(), JsonValue::String(r.ty.clone()));
+                if let Some(node) = &r.node {
+                    root.insert("node".into(), JsonValue::String(node.clone()));
+                }
+                root.insert("fields".into(), JsonValue::Object(raw_fields));
+                JsonValue::Object(root)
+            })
+            .collect();
+
         for record in records {
-            out.push(record_to_event(&lines, &record));
+            let mut event = record_to_event(&lines, &record);
+            event.event_json_raw_all = Some(all_json_raw.clone());
+            out.push(event);
         }
     }
 }
@@ -316,7 +353,18 @@ impl crate::inputs::tail::LineHandler for AuditdHandler {
 ///   `product: linux` + `service: auditd` injected;
 /// - `event_raw`: the complete original audit log lines of the event.
 pub fn record_to_event(lines: &[u8], record: &Record) -> Event {
-    let raw_fields = extract_raw_fields(lines);
+    // Extract raw fields from ONLY this record's line, not all grouped lines.
+    // Find the line matching this record's type.
+    let record_line = lines
+        .split(|&b| b == b'\n')
+        .find(|line| {
+            line.windows(record.ty.len() + 6).any(|w| {
+                w.starts_with(b"type=") && &w[5..5 + record.ty.len()] == record.ty.as_bytes()
+            })
+        })
+        .unwrap_or(lines);
+
+    let raw_fields = extract_raw_fields(record_line);
     let json_raw = JsonValue::Object({
         let mut root = Map::new();
         root.insert(
