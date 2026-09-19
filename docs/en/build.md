@@ -59,7 +59,7 @@ cargo build --release -p sigmacatch --features evtx   # + one-shot EVTX
 The **winevt** collector uses the native Winevt API on the resolved channels; it requires
 admin rights for the `Security` and `System` channels. The **evtx** input (`live_capture() = false`)
 recursively scans a directory of `.evtx` files, matches the events against Sigma rules, generates
-SigmaHQ regression data, then commits/pushes to a `sigmacatch/<date>` branch and exits — no
+SigmaHQ regression data, then commits/pushes to the working branch (default `sigmacatch/<date>`) and exits — no
 Windows API, so it also builds and runs on Linux (`--no-default-features --features evtx`).
 
 ```bash

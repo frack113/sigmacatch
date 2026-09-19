@@ -128,7 +128,7 @@ through the **same** `run()` pipeline as the continuous collectors. It recursive
 directory for `.evtx` files, parses each event in pure Rust, pushes them through the
 detection engine, writes SigmaHQ regression data for every matched rule (pure-Rust EVTX
 writer — never `EvtExportLog`, since static events are not in the live Event Log), then
-commits and pushes per rule to `sigmacatch/<date>` on the configured fork. Because
+commits and pushes per rule to the configured working branch (default `sigmacatch/<date>`) on the configured fork. Because
 `EventProducer::run()` returns once every file is drained, the sender drops and the shared
 loop exits — one pass: read → detect → generate → commit/push, no collection loop. A failed
 final upload exits with a non-zero status.
@@ -138,16 +138,16 @@ final upload exits with a non-zero status.
 ```text
 sigmacatch --evtx <EVTX_PATH> [OPTIONS]
 
-      --evtx <EVTX_PATH>  Directory of .evtx files, scanned recursively
-                       (default: C:\Windows\System32\winevt\Logs)
-  -v, --verbose        Info-level logging on stderr
-  -h, --help           Print help and exit
+       --evtx <EVTX_PATH>  Directory of .evtx files, scanned recursively
+                        (default: C:\Windows\System32\winevt\Logs)
+   -v, --verbose        Info-level logging on stderr
+   -h, --help           Print help and exit
 ```
 
 `--evtx` is parsed by the shared CLI but used only by the `evtx` input. Like always the
 config file is read from the working directory (`config.yaml` in the CWD — there is no
 `--config` flag). It supports the common flags below (`-a`, `-c`, `-o`, `-v`, `-n`,
-`--author`); `-r/--max-runs` is accepted but ignored (self-terminating), and `-n/--dry-run`
+`--author`, `--branch`); `-r/--max-runs` is accepted but ignored (self-terminating), and `-n/--dry-run`
 keeps its read-only semantics.
 
 The sigma repository and the regression output are taken from the config
@@ -171,6 +171,7 @@ sigmacatch [OPTIONS]
   -n, --dry-run      Read-only check: load the ./sigma rules and build the engine —
                      no data written, no git/network operation
       --author <NAME> Override the git author from config.yaml for this run
+      --branch <NAME> Working branch name (default: sigmacatch/<today's date>)
       --evtx <PATH>   Directory of EVTX files to process (one-shot evtx input;
                       requests the `evtx` feature when not compiled in)
   --help, -h         Print help and exit
