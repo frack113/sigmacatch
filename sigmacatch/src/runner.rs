@@ -780,10 +780,8 @@ level: medium
         (tmp, sigma)
     }
 
-    #[allow(dead_code)]
     struct DummyKind;
 
-    #[allow(dead_code)]
     struct DummyProducer;
 
     #[async_trait]
