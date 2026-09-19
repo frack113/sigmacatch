@@ -129,7 +129,8 @@ passe par le **même** pipeline `run()` que les collecteurs continus. Il scanne 
 un dossier pour des fichiers `.evtx`, parse chaque event en pur Rust, les pousse à travers le
 moteur de détection, écrit les données de régression SigmaHQ pour chaque règle matchée (writer
 EVTX pur Rust — jamais `EvtExportLog`, car les events statiques ne sont pas dans le journal
-d'événements live), puis commit et push par règle vers `sigmacatch/<date>` sur le fork
+d'événements live), puis commit et push par règle vers la branche de travail configurée
+(defaut `sigmacatch/<date>`) sur le fork
 configuré. Comme `EventProducer::run()` se termine une fois tous les fichiers drainés, le
 sender tombe et la boucle partagée sort — une passe : lecture → détection → génération →
 commit/push, sans boucle de collecte. Un échec de l'upload final sort avec un statut non nul.
@@ -148,7 +149,7 @@ sigmacatch --evtx <EVTX_PATH> [OPTIONS]
 `--evtx` est parsé par le CLI partagé mais n'est utilisé que par l'input `evtx`. Comme
 toujours, la config est lue depuis le dossier de travail (`config.yaml` dans le CWD — pas
 de flag `--config`). Il supporte les flags communs ci-dessous (`-a`, `-c`, `-o`, `-v`,
-`-n`, `--author`) ; `-r/--max-runs` est accepté mais ignoré (auto-terminant), et `-n/--dry-run`
+`-n`, `--author`, `--branch`) ; `-r/--max-runs` est accepté mais ignoré (auto-terminant), et `-n/--dry-run`
 garde sa sémantique lecture seule.
 
 Le repo sigma et la sortie de régression proviennent de la config
@@ -172,6 +173,7 @@ sigmacatch [OPTIONS]
   -n, --dry-run       Vérification en lecture seule : charge les règles de ./sigma et
                       construit le moteur — aucune donnée écrite, aucune opération git/réseau
       --author <NOM>  Remplace l'auteur git du config.yaml pour ce run
+      --branch <NOM>  Nom de la branche de travail (défaut : sigmacatch/<date du jour>)
       --evtx <CHEMIN> Dossier de fichiers EVTX à traiter (input one-shot evtx ;
                       demande la feature `evtx` si non compilée)
   --help, -h          Affiche l'aide et quitte

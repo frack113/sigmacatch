@@ -73,6 +73,11 @@ pub struct GitConfig {
     /// Neutralized (forced to false) when offline is enabled.
     #[serde(default)]
     pub contrib: Option<bool>,
+    /// Optional working branch name (e.g. `sigmacatch/my-experiment`). When
+    /// empty or absent, the default `sigmacatch/<YYYYMMDD>` branch (today's
+    /// date) is used.
+    #[serde(default)]
+    pub working_branch: Option<String>,
 }
 
 fn default_sigma_repo_url() -> String {
@@ -112,6 +117,7 @@ impl Default for GitConfig {
             sigma_repo_path: default_sigma_repo_path(),
             offline: None,
             contrib: None,
+            working_branch: None,
         }
     }
 }
@@ -281,6 +287,9 @@ impl Config {
         if let Some(author) = &cli.author {
             config.git.author.clone_from(author);
         }
+        if let Some(branch) = &cli.branch {
+            config.git.working_branch = Some(branch.clone());
+        }
         if cli.offline {
             config.git.offline = Some(true);
         }
@@ -307,6 +316,9 @@ impl Config {
         };
         if let Some(author) = &cli.author {
             config.git.author.clone_from(author);
+        }
+        if let Some(branch) = &cli.branch {
+            config.git.working_branch = Some(branch.clone());
         }
         if cli.offline {
             config.git.offline = Some(true);
@@ -555,6 +567,9 @@ pub struct CliArgs {
     /// `--evtx <PATH>`: directory of EVTX files to process
     /// (one-shot `evtx` input; ignored otherwise).
     pub evtx_path: Option<PathBuf>,
+    /// `--branch <NAME>`: override the working branch name for this run
+    /// (empty → fall back to the default `sigmacatch/<YYYYMMDD>`).
+    pub branch: Option<String>,
 }
 
 const HELP: &str = "\
@@ -576,6 +591,7 @@ FLAGS:
 OPTIONS:
     --author <NAME>           Override GitHub username from config.yaml
     --evtx <PATH>             Directory of EVTX files to process (one-shot evtx input)
+    --branch <NAME>           Working branch name (empty = sigmacatch/<today's date>)
 ";
 
 /// Parse CLI arguments from environment.
@@ -600,6 +616,7 @@ fn parse_args_from(args: &[String]) -> CliArgs {
     let mut max_runs: Option<u32> = None;
     let mut dry_run = false;
     let mut evtx_path: Option<PathBuf> = None;
+    let mut branch = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -645,6 +662,16 @@ fn parse_args_from(args: &[String]) -> CliArgs {
                     }
                 }
             }
+            "--branch" => {
+                i += 1;
+                match args.get(i) {
+                    Some(v) if !v.starts_with('-') => branch = Some(v.clone()),
+                    _ => {
+                        eprintln!("Error: --branch requires a value");
+                        std::process::exit(1);
+                    }
+                }
+            }
             unknown => {
                 eprintln!("Error: unknown flag `{}`", unknown);
                 std::process::exit(1);
@@ -661,6 +688,7 @@ fn parse_args_from(args: &[String]) -> CliArgs {
         max_runs,
         dry_run,
         evtx_path,
+        branch,
     }
 }
 
@@ -726,6 +754,24 @@ mod cli_tests {
     fn test_parse_evtx_absent_is_none() {
         let parsed = parse_args_from(&args(&["--verbose"]));
         assert_eq!(parsed.evtx_path, None);
+    }
+
+    #[test]
+    fn test_parse_branch_takes_next_token() {
+        let parsed = parse_args_from(&args(&["--branch", "sigmacatch/my-experiment"]));
+        assert_eq!(parsed.branch.as_deref(), Some("sigmacatch/my-experiment"));
+    }
+
+    #[test]
+    fn test_parse_branch_empty_is_some_empty() {
+        let parsed = parse_args_from(&args(&["--branch", ""]));
+        assert_eq!(parsed.branch.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn test_parse_branch_absent_is_none() {
+        let parsed = parse_args_from(&args(&["--author", "bob"]));
+        assert_eq!(parsed.branch, None);
     }
 }
 /// Load custom channel mappings from a YAML file.

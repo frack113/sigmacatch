@@ -14,7 +14,11 @@ A `depth=1` would leave the ODB without the ancestors of the tips → broken pus
 
 `AuthHttpClient` (`transport.rs`) sends `version=2` → capability-only advertisement + `ls-refs` scoped to the ref-prefixes derived from the narrow refspecs (in v0/v1 GitHub serves ALL remote refs, huge on the big Sigma repo). The `sigmacatch/*` glob yields the ref-prefix `refs/heads/sigmacatch/` (truncated at the first `*`). SSH already uses v2.
 
-### Working branch `sigmacatch/<date>`
+### Working branch
+
+The working branch name is configurable via `git.working_branch` in `config.yaml` or the
+`--branch` CLI flag. When absent or empty, the default `sigmacatch/<YYYYMMDD>` (today's date)
+is used.
 
 Based on the remote ref if present (else HEAD) to keep fast-forward. The narrow pull does not update `refs/remotes/origin/sigmacatch/<date>` → fetch of the `sigmacatch/*` namespace (glob, single fetch, best-effort: network failure = `warn!` with a categorized cause — SSH key/ssh binary vs missing token vs network — and continue with the worktree only) before `create_branch`. Branch missing from the fork → no-op.
 

@@ -175,7 +175,7 @@ arguments manually and use `serde` for their JSON output (always compiled).
 3. ensure_dirs() → sigma repo dir + logs/
 4. SigmaRepo init: set_info_user/set_info_http|ssh (+ ensure_ssh_host_config when ssh+network),
    set_signing_key (if ssh_key_path), set_git_operations(offline, contrib),
-   set_remote_url(fork) → set_working_branch(sigmacatch/<date>) → check_remote_working_branch()
+   set_remote_url(fork) → set_working_branch(<branch>) → check_remote_working_branch()
    — fully no-op offline (no `.git` required, local files used as-is)
 5. SigmahqRegression::new() → set_author/max_failed_cycles/format(kind)/add_json_output
    └── existing_rules = regression.get_sigma_id() ∪ sigma_repo.pending_regression_rule_ids()

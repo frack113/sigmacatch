@@ -14,7 +14,11 @@ Un `depth=1` laisserait l'ODB sans les ancêtres des tips → push cassé après
 
 `AuthHttpClient` (`transport.rs`) envoie `version=2` → publicité capability-only + `ls-refs` scope aux ref-prefix dérivés des refspecs étroits (en v0/v1, GitHub sert **toutes** les remote refs, énorme sur le gros repo Sigma). Le glob `sigmacatch/*` produit le ref-prefix `refs/heads/sigmacatch/` (coupé au premier `*`). SSH utilise déjà v2.
 
-### Branche de travail `sigmacatch/<date>`
+### Branche de travail
+
+Le nom de la branche de travail est configurable via `git.working_branch` dans `config.yaml`
+ou le flag `--branch` en ligne de commande. En l'absence ou si vide, la branche par défaut
+`sigmacatch/<AAAAMMDD>` (date du jour) est utilisée.
 
 Basée sur la remote ref si présente (sinon HEAD) pour garder le fast-forward. Le pull étroit ne met pas à jour `refs/remotes/origin/sigmacatch/<date>` → fetch du namespace `sigmacatch/*` (glob, un fetch, best-effort : panne réseau = `warn!` avec cause catégorisée — clé SSH/ssh binaire vs token manquant vs réseau — et on continue avec le worktree uniquement) avant `create_branch`. Branche absente du fork → no-op.
 

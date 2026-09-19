@@ -93,7 +93,8 @@ struct Pipeline {
 }
 
 /// Bootstrap the sigma git repository and the shared regression handler
-/// (`sigmacatch/<date>` working branch, remote checks, repo + regression state).
+/// (working branch from `git.working_branch`/`--branch`, falling back to
+/// `sigmacatch/<date>`; remote checks, repo + regression state).
 ///
 /// Single source of truth for the bootstrap sequence shared by the continuous
 /// runner (`run`) and the one-shot `--evtx` input (AD-6). Returns the
@@ -140,7 +141,10 @@ pub async fn bootstrap_repo_regression(
         info!("No-contrib mode: push disabled — commits will be local only");
     }
 
-    let branch_name = format!("sigmacatch/{}", chrono::Local::now().format("%Y%m%d"));
+    let branch_name = match config.git.working_branch.as_deref() {
+        Some(name) if !name.trim().is_empty() => name.trim().to_string(),
+        _ => format!("sigmacatch/{}", chrono::Local::now().format("%Y%m%d")),
+    };
     info!("Branch name: {branch_name}");
 
     sigma_repo.set_remote_url(fork_url).await?;
