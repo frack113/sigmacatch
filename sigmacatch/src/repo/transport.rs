@@ -425,4 +425,239 @@ mod tests {
         let client = AuthHttpClient::new(None).unwrap();
         assert_eq!(client.git_protocol_header(), Some("version=2"));
     }
+
+    #[test]
+    fn test_transport_display() {
+        assert_eq!(GitTransport::Http.to_string(), "http");
+        assert_eq!(GitTransport::Ssh.to_string(), "ssh");
+        assert_eq!(GitTransport::default(), GitTransport::Http);
+    }
+
+    #[test]
+    fn test_https_to_ssh_url_accepts_user_repo() {
+        assert_eq!(
+            https_to_ssh_url("https://github.com/user/repo.git").as_deref(),
+            Some("git@github.com:user/repo.git")
+        );
+        // The `.git` suffix is normalized away and re-added.
+        assert_eq!(
+            https_to_ssh_url("https://github.com/user/repo").as_deref(),
+            Some("git@github.com:user/repo.git")
+        );
+    }
+
+    #[test]
+    fn test_https_to_ssh_url_accepts_subgroup() {
+        assert_eq!(
+            https_to_ssh_url("https://github.com/org/subgroup/repo.git").as_deref(),
+            Some("git@github.com:org/subgroup/repo.git")
+        );
+    }
+
+    #[test]
+    fn test_https_to_ssh_url_rejects_non_github() {
+        assert_eq!(https_to_ssh_url("https://gitlab.com/user/repo.git"), None);
+        assert_eq!(https_to_ssh_url("http://github.com/user/repo.git"), None);
+        assert_eq!(https_to_ssh_url("github.com/user/repo.git"), None);
+    }
+
+    #[test]
+    fn test_https_to_ssh_url_rejects_bad_slash_counts() {
+        // 0 slashes: not user/repo
+        assert_eq!(https_to_ssh_url("https://github.com/repo"), None);
+        // 3+ slashes: deeper nesting is not a valid repo path
+        assert_eq!(https_to_ssh_url("https://github.com/a/b/c/d"), None);
+    }
+
+    #[test]
+    fn test_https_to_ssh_url_rejects_traversal_and_whitespace() {
+        assert_eq!(https_to_ssh_url("https://github.com/user/../etc"), None);
+        assert_eq!(https_to_ssh_url("https://github.com/user/re po.git"), None);
+        assert_eq!(https_to_ssh_url("https://github.com/user/repo\t.git"), None);
+        assert_eq!(
+            https_to_ssh_url("https://github.com/user/repo\r\n.git"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_https_to_ssh_url_rejects_shell_metacharacters() {
+        for ch in ['\'', '"', '$', '`', '\\', '!', '&', '|', ';', '(', ')', '#'] {
+            let url = format!("https://github.com/user/re{ch}po.git");
+            assert_eq!(
+                https_to_ssh_url(&url),
+                None,
+                "must reject {ch:?} in {url:?}"
+            );
+        }
+    }
+
+    /// Serde round-trip keeps the lowercase wire format used in `config.yaml`.
+    #[test]
+    fn test_transport_serde_round_trip() {
+        let ssh: GitTransport = serde_yaml::from_str("ssh").unwrap();
+        assert_eq!(ssh, GitTransport::Ssh);
+        let http: GitTransport = serde_yaml::from_str("http").unwrap();
+        assert_eq!(http, GitTransport::Http);
+    }
+
+    #[test]
+    fn test_add_auth_prefixes_token_on_https_only() {
+        let no_token = AuthHttpClient::new(None).unwrap();
+        assert_eq!(
+            no_token.add_auth("https://github.com/u/r.git/info/refs"),
+            "https://github.com/u/r.git/info/refs"
+        );
+
+        let token = AuthHttpClient::new(Some(Zeroizing::new("tok123".to_string()))).unwrap();
+        assert_eq!(
+            token.add_auth("https://github.com/u/r.git/info/refs"),
+            "https://x-access-token:tok123@github.com/u/r.git/info/refs"
+        );
+        // Non-HTTPS URLs are never rewritten.
+        assert_eq!(
+            token.add_auth("http://localhost:4000/u/r.git"),
+            "http://localhost:4000/u/r.git"
+        );
+    }
+
+    /// Serializes every test that mutates process environment variables
+    /// (`GIT_SSH`, `HOME`, …): Rust test threads share one environment.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn test_build_ssh_shell_command_default_unix() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::remove_var("GIT_SSH");
+            std::env::remove_var("GIT_SSH_COMMAND");
+        }
+        let mode = build_ssh_shell_command(None);
+        #[cfg(not(windows))]
+        {
+            match &mode {
+                SshMode::ShellCommand(cmd) => {
+                    assert_eq!(cmd, "ssh -o StrictHostKeyChecking=no")
+                }
+                other => panic!("expected ShellCommand, got {other:?}"),
+            }
+        }
+        #[cfg(windows)]
+        {
+            assert!(matches!(mode, SshMode::Program(_)));
+        }
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_ssh_shell_command_escapes_key_path() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::remove_var("GIT_SSH") };
+        let mode = build_ssh_shell_command(Some("/tmp/a b/c's key"));
+        match &mode {
+            SshMode::ShellCommand(cmd) => {
+                assert_eq!(
+                    cmd,
+                    "ssh -o StrictHostKeyChecking=no -i '/tmp/a b/c'\\''s key'"
+                )
+            }
+            other => panic!("expected ShellCommand, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_build_ssh_shell_command_git_ssh_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("GIT_SSH", "/usr/bin/fake-ssh");
+        }
+        let mode = build_ssh_shell_command(Some("/some/key"));
+        match &mode {
+            SshMode::Program(args) => {
+                assert_eq!(args, &vec![std::ffi::OsString::from("/usr/bin/fake-ssh")]);
+            }
+            other => panic!("expected Program, got {other:?}"),
+        }
+        unsafe { std::env::remove_var("GIT_SSH") };
+    }
+
+    #[test]
+    fn test_ensure_ssh_host_config_writes_and_is_idempotent() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe {
+            std::env::set_var("USERPROFILE", tmp.path());
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let config = tmp.path().join(".ssh").join("config");
+        ensure_ssh_host_config(None).unwrap();
+        assert!(config.exists(), "fresh home must gain a .ssh/config");
+        let first = std::fs::read_to_string(&config).unwrap();
+        assert!(first.contains("StrictHostKeyChecking no"), "got:\n{first}");
+        #[cfg(not(windows))]
+        assert!(
+            first.contains("UserKnownHostsFile /dev/null"),
+            "got:\n{first}"
+        );
+        #[cfg(windows)]
+        assert!(first.contains("UserKnownHostsFile NUL"), "got:\n{first}");
+
+        // Idempotent: a second call with the same arguments rewrites nothing.
+        ensure_ssh_host_config(None).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&config).unwrap(),
+            first,
+            "idempotent call must not rewrite the config"
+        );
+
+        // A new key path forces a rewrite that carries the IdentityFile.
+        let key = tmp.path().join("id_ed25519");
+        std::fs::write(&key, b"key").unwrap();
+        ensure_ssh_host_config(Some(key.to_str().unwrap())).unwrap();
+        let with_key = std::fs::read_to_string(&config).unwrap();
+        assert!(
+            with_key.contains(&format!("IdentityFile {}", key.display())),
+            "got:\n{with_key}"
+        );
+        // And now that call is idempotent too.
+        ensure_ssh_host_config(Some(key.to_str().unwrap())).unwrap();
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), with_key);
+    }
+
+    #[test]
+    fn test_ensure_ssh_host_config_preserves_existing_content() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe {
+            std::env::set_var("USERPROFILE", tmp.path());
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let ssh_dir = tmp.path().join(".ssh");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        let config = ssh_dir.join("config");
+        // A pre-existing config without the required directives must be
+        // preserved (appended to), not clobbered.
+        std::fs::write(&config, "Host github.com\n    Port 22\n").unwrap();
+        ensure_ssh_host_config(None).unwrap();
+        let content = std::fs::read_to_string(&config).unwrap();
+        assert!(
+            content.starts_with("Host github.com\n    Port 22"),
+            "got:\n{content}"
+        );
+        assert!(
+            content.contains("StrictHostKeyChecking no"),
+            "got:\n{content}"
+        );
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_shell_escape() {
+        assert_eq!(shell_escape("/tmp/key"), "'/tmp/key'");
+        assert_eq!(shell_escape("/a b/c"), "'/a b/c'");
+        assert_eq!(shell_escape("/a'b/c"), "'/a'\\''b/c'");
+        assert_eq!(shell_escape("/a\\b/c"), "'/a\\\\b/c'");
+    }
 }

@@ -50,3 +50,61 @@ pub fn clone_repo(http_client: &dyn HttpClient, url: &str, dest: &Path) -> Resul
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FailClient;
+
+    impl HttpClient for FailClient {
+        fn get(&self, _url: &str, _git_protocol: Option<&str>) -> grit_lib::error::Result<Vec<u8>> {
+            Err(grit_lib::error::Error::Message(
+                "no network in tests".into(),
+            ))
+        }
+
+        fn post(
+            &self,
+            _url: &str,
+            _content_type: &str,
+            _accept: &str,
+            _body: &[u8],
+            _git_protocol: Option<&str>,
+        ) -> grit_lib::error::Result<Vec<u8>> {
+            Err(grit_lib::error::Error::Message(
+                "no network in tests".into(),
+            ))
+        }
+    }
+
+    /// A pre-existing `.git` short-circuits the clone without touching the remote.
+    #[test]
+    fn clone_repo_skips_when_git_dir_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+
+        clone_repo(&FailClient, "https://example.com/sigma.git", tmp.path()).unwrap();
+    }
+
+    /// A failed fetch must remove the half-initialized `.git` so the next run
+    /// starts clean instead of hitting the "already exists" short-circuit.
+    #[test]
+    fn clone_repo_cleans_up_on_fetch_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path();
+        let git_dir = dest.join(".git");
+
+        let err = clone_repo(&FailClient, "https://example.com/sigma.git", dest)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("no network in tests"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            !git_dir.exists(),
+            "half-initialized .git must be removed after a failed fetch"
+        );
+    }
+}

@@ -302,4 +302,146 @@ ZfG1KaT0PtFDJ/XFSqtiAAAAEHVzZXJAZXhhbXBsZS5jb20BAgMEBQ==
             "unsigned commit bytes must match grit's serialize_commit exactly"
         );
     }
+
+    /// `commit_tree` with a symbolic HEAD must advance the branch ref and
+    /// record the previous HEAD as the new commit's parent.
+    #[test]
+    fn test_commit_tree_unsigned_advances_symbolic_ref() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (git_dir, work_tree) = setup_repo(tmp.path());
+        let odb = open_odb(&git_dir);
+        let old_head = resolve_head(&git_dir).unwrap();
+
+        std::fs::write(work_tree.join("new.txt"), "hello\n").unwrap();
+        let mut index = grit_lib::index::Index::new();
+        crate::repo::plumbing::add_file_to_index(
+            &git_dir,
+            &work_tree.join("new.txt"),
+            &work_tree,
+            &mut index,
+        )
+        .unwrap();
+        write_index(&git_dir, &index).unwrap();
+        let tree = write_tree_from_index(&odb, &index, "").unwrap();
+
+        commit_tree(
+            &git_dir,
+            &odb,
+            tree,
+            "test: advance",
+            "testuser",
+            "t@example.com",
+            None,
+        )
+        .unwrap();
+
+        let new_head = resolve_head(&git_dir).unwrap();
+        assert_ne!(new_head, old_head, "HEAD must advance");
+
+        let obj = odb.read(&new_head).unwrap();
+        let raw = String::from_utf8(obj.data).unwrap();
+        assert!(
+            raw.contains(&format!("parent {old_head}")),
+            "new commit must have the old HEAD as parent, got:\n{raw}"
+        );
+        assert!(
+            !raw.contains("gpgsig "),
+            "unsigned commit must carry no gpgsig header"
+        );
+    }
+
+    /// `commit_tree` with a signing key must insert a `gpgsig` header between
+    /// the committer line and the blank line (pure-Rust path, no git binary).
+    #[test]
+    fn test_commit_tree_signed_inserts_gpgsig_header() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (git_dir, work_tree) = setup_repo(tmp.path());
+        let key = tmp.path().join("id_ed25519");
+        std::fs::write(&key, TEST_KEY).unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        std::fs::write(work_tree.join("signed.txt"), "signed\n").unwrap();
+        let mut index = grit_lib::index::Index::new();
+        crate::repo::plumbing::add_file_to_index(
+            &git_dir,
+            &work_tree.join("signed.txt"),
+            &work_tree,
+            &mut index,
+        )
+        .unwrap();
+        write_index(&git_dir, &index).unwrap();
+        let odb = open_odb(&git_dir);
+        let tree = write_tree_from_index(&odb, &index, "").unwrap();
+
+        commit_tree(
+            &git_dir,
+            &odb,
+            tree,
+            "test: signed",
+            "testuser",
+            "t@example.com",
+            Some(&key),
+        )
+        .unwrap();
+
+        let head = resolve_head(&git_dir).unwrap();
+        let obj = odb.read(&head).unwrap();
+        let raw = String::from_utf8(obj.data).unwrap();
+
+        let committer_idx = raw.find("committer ").expect("missing committer line");
+        let blank_idx = raw.find("\n\n").expect("missing blank line");
+        let sig_idx = raw.find("gpgsig ").expect("missing gpgsig header");
+        assert!(
+            committer_idx < sig_idx && sig_idx < blank_idx,
+            "gpgsig must sit between the committer line and the blank line:\n{raw}"
+        );
+        assert!(raw.contains("BEGIN SSH SIGNATURE"), "got:\n{raw}");
+    }
+
+    /// With a detached HEAD, `commit_tree` writes the new commit oid straight
+    /// into `HEAD` (no branch ref involved).
+    #[test]
+    fn test_commit_tree_detached_head_writes_head_directly() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (git_dir, work_tree) = setup_repo(tmp.path());
+        let odb = open_odb(&git_dir);
+        let old_head = resolve_head(&git_dir).unwrap();
+        // Detach HEAD on the initial commit.
+        std::fs::write(git_dir.join("HEAD"), format!("{old_head}\n")).unwrap();
+
+        std::fs::write(work_tree.join("detached.txt"), "detached\n").unwrap();
+        let mut index = grit_lib::index::Index::new();
+        crate::repo::plumbing::add_file_to_index(
+            &git_dir,
+            &work_tree.join("detached.txt"),
+            &work_tree,
+            &mut index,
+        )
+        .unwrap();
+        write_index(&git_dir, &index).unwrap();
+        let tree = write_tree_from_index(&odb, &index, "").unwrap();
+
+        commit_tree(
+            &git_dir,
+            &odb,
+            tree,
+            "test: detached",
+            "testuser",
+            "t@example.com",
+            None,
+        )
+        .unwrap();
+
+        let head_file = std::fs::read_to_string(git_dir.join("HEAD")).unwrap();
+        assert_ne!(head_file.trim(), old_head.to_string(), "HEAD must move");
+        let new_head = resolve_head(&git_dir).unwrap();
+        assert_eq!(new_head.to_string(), head_file.trim());
+        let obj = odb.read(&new_head).unwrap();
+        assert!(
+            String::from_utf8(obj.data)
+                .unwrap()
+                .contains(&format!("parent {old_head}"))
+        );
+    }
 }

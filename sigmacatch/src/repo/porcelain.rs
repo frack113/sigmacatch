@@ -185,3 +185,118 @@ pub(crate) fn git_commit(
 
     commit_tree(git_dir, &odb, tree_oid, msg, author, email, signing_key)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repo::plumbing::init::init_repo;
+    use grit_lib::objects::{CommitData, ObjectKind};
+
+    /// Minimal repo: one commit on `main`, HEAD symbolic, origin in config.
+    fn setup_repo(tmp: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf, String) {
+        let git_dir = tmp.join(".git");
+        init_repo(&git_dir, tmp, "https://example.com/sigma.git").unwrap();
+
+        let commit = CommitData {
+            tree: grit_lib::objects::ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
+                .unwrap(),
+            parents: Vec::new(),
+            author: "test <t@example.com> 0 +0000".to_string(),
+            committer: "test <t@example.com> 0 +0000".to_string(),
+            message: "initial\n".to_string(),
+            encoding: None,
+            author_raw: Vec::new(),
+            committer_raw: Vec::new(),
+            raw_message: None,
+        };
+        let odb = open_odb(&git_dir);
+        let raw = grit_lib::objects::serialize_commit(&commit);
+        let commit_oid = odb.write(ObjectKind::Commit, &raw).unwrap();
+        std::fs::create_dir_all(git_dir.join("refs/heads")).unwrap();
+        std::fs::write(git_dir.join("refs/heads/main"), format!("{commit_oid}\n")).unwrap();
+        std::fs::write(git_dir.join("HEAD"), b"ref: refs/heads/main\n").unwrap();
+
+        (git_dir, tmp.to_path_buf(), commit_oid.to_string())
+    }
+
+    #[test]
+    fn current_branch_name_symbolic_and_detached() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (git_dir, _, oid) = setup_repo(tmp.path());
+
+        assert_eq!(
+            current_branch_name(&git_dir).unwrap().as_deref(),
+            Some("main")
+        );
+
+        std::fs::write(git_dir.join("HEAD"), format!("{oid}\n")).unwrap();
+        assert_eq!(current_branch_name(&git_dir).unwrap(), None);
+    }
+
+    #[test]
+    fn git_pull_without_origin_is_actionable_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = tmp.path().join(".git");
+        // HEAD only — no config, hence no origin remote.
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::fs::write(git_dir.join("HEAD"), b"ref: refs/heads/main\n").unwrap();
+
+        let err = git_pull(&git_dir, None).unwrap_err().to_string();
+        assert!(err.contains("origin"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn git_pull_detached_head_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (git_dir, _, oid) = setup_repo(tmp.path());
+        std::fs::write(git_dir.join("HEAD"), format!("{oid}\n")).unwrap();
+
+        let err = git_pull(&git_dir, None).unwrap_err().to_string();
+        assert!(err.contains("detached"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn git_pull_ssh_detached_head_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (git_dir, _, oid) = setup_repo(tmp.path());
+        std::fs::write(git_dir.join("HEAD"), format!("{oid}\n")).unwrap();
+
+        let err = git_pull_ssh(&git_dir, None).unwrap_err().to_string();
+        assert!(err.contains("detached"), "unexpected error: {err}");
+    }
+
+    /// A pre-existing `.git` short-circuits the SSH clone without touching ssh.
+    #[test]
+    fn git_clone_ssh_skips_when_git_dir_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+
+        git_clone_ssh("git@github.com:u/r.git", tmp.path(), None).unwrap();
+    }
+
+    #[test]
+    fn git_add_missing_path_is_skipped_but_index_written() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (git_dir, work_tree, _) = setup_repo(tmp.path());
+
+        git_add(&git_dir, &work_tree, &["does-not-exist.txt"]).unwrap();
+        assert!(
+            git_dir.join("index").exists(),
+            "git_add must still write the (empty) index"
+        );
+    }
+
+    #[test]
+    fn git_commit_without_index_is_state_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (git_dir, work_tree, _) = setup_repo(tmp.path());
+
+        let err = git_commit(&git_dir, &work_tree, "m", "a", "e@example.com", None)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("No index to commit"),
+            "unexpected error: {err}"
+        );
+    }
+}
