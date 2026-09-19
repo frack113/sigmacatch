@@ -68,3 +68,29 @@ jobs:
           else
             cargo test --locked -p ${{ matrix.package }}
           fi
+
+  # Anti-regression coverage gate (Q7.3): fails the build when line coverage of
+  # the Linux-compilable input set drops below the threshold. `winevt` is a
+  # no-op stub on Linux and `ebpf` needs nightly + bpf-linker (its own test
+  # leg), so the gate runs on the rest of the feature matrix.
+  coverage:
+    name: Coverage gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-llvm-cov
+      - name: Coverage gate (auditd+builtin+sysmon+evtx)
+        run: |
+          cargo llvm-cov --locked --workspace --all-targets \
+            --no-default-features --features auditd,builtin,sysmon,evtx \
+            --fail-under 78
