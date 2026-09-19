@@ -108,7 +108,7 @@ fn extract_raw_fields(lines: &[u8]) -> Map<String, JsonValue> {
         // Find the body after "msg=audit(...): " — the closing "): " pattern.
         // The audit timestamp contains a colon (audit(ts:seq)), so we must find
         // the closing parenthesis + colon, not the first colon.
-        let Some(body_start) = line.windows(2).position(|w| w == [b')', b':']) else {
+        let Some(body_start) = line.windows(2).position(|w| w == *b"):") else {
             continue;
         };
         let body = &line[body_start + 2..]; // skip "):"
