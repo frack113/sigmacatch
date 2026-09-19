@@ -16,6 +16,8 @@
 //! # }
 //! ```
 
+use std::io::Write;
+
 mod evtx;
 mod evtx_writer;
 mod format;
@@ -469,10 +471,13 @@ impl RegressionData {
     /// later without orphaned files. The provider is resolved before any file
     /// is written so a malformed event fails fast.
     fn generate(&self) -> Result<()> {
-        let alert = self.alerts.first().ok_or_else(|| {
-            RegressionError::Invalid(format!("no matched event for rule {}", self.header.rule_id))
-        })?;
-        let provider = self.format.resolve_provider(alert)?;
+        if self.alerts.is_empty() {
+            return Err(RegressionError::Invalid(format!(
+                "no matched event for rule {}",
+                self.header.rule_id
+            )));
+        }
+        let provider = self.format.resolve_provider(self.alerts.first().unwrap())?;
 
         let rule_dir = self.rule_dir()?;
         let rule_dir = crate::regression::long_path::long_path(&rule_dir);
@@ -487,21 +492,56 @@ impl RegressionData {
         let ext = self.format.ext();
         let mut written: Vec<PathBuf> = Vec::new();
         let result = (|| -> Result<()> {
+            // Create rule dir inside the closure so it gets cleaned up on failure
+            std::fs::create_dir_all(&rule_dir)?;
             if self.add_json_output {
                 let raw_json_path = crate::regression::long_path::long_path(
                     &rule_dir.join(format!("{rule_id}.json")),
                 );
-                let mut raw_json =
-                    serde_json::to_string_pretty(&alert.event_json_raw).map_err(|e| {
-                        RegressionError::Invalid(format!("failed to serialize raw event json: {e}"))
-                    })?;
-                raw_json.push('\n');
-                std::fs::write(&raw_json_path, raw_json)?;
+                let mut file = std::fs::File::create(&raw_json_path)?;
+                for alert in &self.alerts {
+                    if let Some(all) = &alert.event_json_raw_all {
+                        for rec in all {
+                            let line = serde_json::to_string(rec)?;
+                            writeln!(file, "{}", line)?;
+                        }
+                    } else {
+                        let line = serde_json::to_string(&alert.event_json_raw)?;
+                        writeln!(file, "{}", line)?;
+                    }
+                }
                 written.push(raw_json_path);
             }
             let data_path =
                 crate::regression::long_path::long_path(&rule_dir.join(format!("{rule_id}.{ext}")));
-            self.format.write(alert, &data_path)?;
+            // For Log (auditd), write all alerts concatenated.
+            // For Evtx, write only the first alert (binary format).
+            match self.format {
+                DataFormat::Log => {
+                    let mut data_file = std::fs::File::create(&data_path)?;
+                    for alert in &self.alerts {
+                        if alert.event_raw.len() > self.format.max_blob_size() {
+                            return Err(RegressionError::Invalid(format!(
+                                "audit event exceeds {} MiB — refusing to write {}",
+                                self.format.max_blob_size() / 1024 / 1024,
+                                data_path.display()
+                            )));
+                        }
+                        data_file.write_all(&alert.event_raw)?;
+                    }
+                }
+                DataFormat::Evtx => {
+                    let alert = &self.alerts[0];
+                    if alert.event_raw.len() > self.format.max_blob_size() {
+                        return Err(RegressionError::Invalid(format!(
+                            "event exceeds {} MiB — refusing to write {}",
+                            self.format.max_blob_size() / 1024 / 1024,
+                            data_path.display()
+                        )));
+                    }
+                    self.format.write(alert, &data_path)?;
+                }
+            }
             written.push(data_path);
             Ok(())
         })();
@@ -509,6 +549,8 @@ impl RegressionData {
             for path in &written {
                 let _ = std::fs::remove_file(path);
             }
+            // Clean up rule directory if it was created but generation failed
+            let _ = std::fs::remove_dir_all(&rule_dir);
             return Err(e);
         }
 
@@ -526,12 +568,16 @@ impl RegressionData {
         let info = InfoYml::new(
             rule_id,
             &self.header.rule_title,
-            1,
+            self.alerts.len(),
             &sigma_data_path,
             author,
             description,
             &TestConfig {
-                test_type: ext.to_string(),
+                test_type: if self.add_json_output {
+                    "ndjson".to_string()
+                } else {
+                    ext.to_string()
+                },
                 provider,
             },
         );
@@ -539,8 +585,9 @@ impl RegressionData {
         info.save(&info_path)?;
 
         tracing::info!(
-            "Generated regression data ({ext}) for rule {:?}",
-            self.header.rule_id
+            "Generated regression data ({ext}) for rule {:?} ({} events)",
+            self.header.rule_id,
+            self.alerts.len()
         );
         Ok(())
     }
@@ -552,8 +599,11 @@ pub enum RegressionError {
     /// Filesystem failure.
     #[error("filesystem error: {0}")]
     Io(#[from] std::io::Error),
+    /// JSON serialization/deserialization failure.
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
     /// YAML could not be parsed or serialized.
-    #[error("YAML error: {0}")]
+    #[error("yaml error: {0}")]
     Yaml(String),
     /// Structural contract violated by the data itself.
     #[error("{0}")]
@@ -767,6 +817,7 @@ mod tests {
             event_json_raw: event.event_json_raw.clone(),
             event_json: event.event_json.clone(),
             event_raw: event.event_raw,
+            event_json_raw_all: None,
         }
     }
 
@@ -795,6 +846,7 @@ mod tests {
                 "service": "auditd"
             }),
             event_raw: raw_line.to_vec(),
+            event_json_raw_all: None,
         }
     }
 

@@ -20,7 +20,7 @@
 use crate::types::{Event, EventProducer, ProducerError};
 use async_trait::async_trait;
 use linux_audit_parser::{Parser, Value as AuditValue};
-use serde_json::{Map, Value as JsonValue};
+use serde_json::{Map, Value, Value as JsonValue};
 use tokio::sync::{mpsc, watch};
 
 /// Default path of the audit log.
@@ -95,6 +95,60 @@ fn value_to_json(value: &AuditValue<'_>) -> Option<JsonValue> {
         AuditValue::Literal(s) => Some(JsonValue::String((*s).to_string())),
         AuditValue::Segments(_) | AuditValue::Skipped(_) => None,
     }
+}
+
+/// Extract raw key=value fields from audit log lines, preserving hex strings as-is.
+/// This avoids the hex decoding done by `linux_audit_parser` for regression fidelity.
+fn extract_raw_fields(lines: &[u8]) -> Map<String, JsonValue> {
+    let mut fields = Map::new();
+    for line in lines.split(|&b| b == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        // Find the body after "msg=audit(...): " — the closing "): " pattern.
+        // The audit timestamp contains a colon (audit(ts:seq)), so we must find
+        // the closing parenthesis + colon, not the first colon.
+        let Some(body_start) = line.windows(2).position(|w| w == [b')', b':']) else {
+            continue;
+        };
+        let body = &line[body_start + 2..]; // skip "):"
+        if body.is_empty() || body[0] != b' ' {
+            continue;
+        }
+        let body = &body[1..]; // skip leading space
+        // Parse key=value pairs
+        let mut i = 0;
+        while i < body.len() {
+            // Skip spaces
+            while i < body.len() && body[i] == b' ' {
+                i += 1;
+            }
+            if i >= body.len() {
+                break;
+            }
+            // Find key (up to =)
+            let key_start = i;
+            while i < body.len() && body[i] != b'=' {
+                i += 1;
+            }
+            if i >= body.len() {
+                break;
+            }
+            let key = String::from_utf8_lossy(&body[key_start..i]).into_owned();
+            i += 1; // skip '='
+            if i >= body.len() {
+                break;
+            }
+            // Find value (until space or end)
+            let val_start = i;
+            while i < body.len() && body[i] != b' ' {
+                i += 1;
+            }
+            let value = String::from_utf8_lossy(&body[val_start..i]).into_owned();
+            fields.insert(key, JsonValue::String(value));
+        }
+    }
+    fields
 }
 
 /// Linux auditd event collector (implements `EventProducer` directly).
@@ -222,8 +276,43 @@ impl AuditdHandler {
         let lines = std::mem::take(&mut self.group_lines);
         let records = std::mem::take(&mut self.group_records);
         self.group_seq = None;
+
+        // Build all per-record JSON raws for ndjson output (one per audit record)
+        let all_json_raw: Vec<Value> = records
+            .iter()
+            .map(|r| {
+                let record_line = lines
+                    .split(|&b| b == b'\n')
+                    .find(|line| {
+                        line.windows(r.ty.len() + 6).any(|w| {
+                            w.starts_with(b"type=") && &w[5..5 + r.ty.len()] == r.ty.as_bytes()
+                        })
+                    })
+                    .unwrap_or(&lines);
+                let raw_fields = extract_raw_fields(record_line);
+                let mut root = Map::new();
+                root.insert(
+                    "stamp".into(),
+                    JsonValue::Object({
+                        let mut stamp = Map::new();
+                        stamp.insert("timestamp".into(), JsonValue::from(r.id.timestamp));
+                        stamp.insert("sequence".into(), JsonValue::from(r.id.sequence));
+                        stamp
+                    }),
+                );
+                root.insert("type".into(), JsonValue::String(r.ty.clone()));
+                if let Some(node) = &r.node {
+                    root.insert("node".into(), JsonValue::String(node.clone()));
+                }
+                root.insert("fields".into(), JsonValue::Object(raw_fields));
+                JsonValue::Object(root)
+            })
+            .collect();
+
         for record in records {
-            out.push(record_to_event(&lines, &record));
+            let mut event = record_to_event(&lines, &record);
+            event.event_json_raw_all = Some(all_json_raw.clone());
+            out.push(event);
         }
     }
 }
@@ -259,11 +348,23 @@ impl crate::inputs::tail::LineHandler for AuditdHandler {
 
 /// Build the `Event` for a single audit record of a grouped audit event:
 /// - `event_json_raw`: structured `{stamp, type, node?, fields}` preserving
-///   the record and its audit event ID;
+///   the record and its audit event ID with raw (hex-preserved) field values;
 /// - `event_json` (detection): flat `{type, node?, fields…}` with logsource
 ///   `product: linux` + `service: auditd` injected;
 /// - `event_raw`: the complete original audit log lines of the event.
 pub fn record_to_event(lines: &[u8], record: &Record) -> Event {
+    // Extract raw fields from ONLY this record's line, not all grouped lines.
+    // Find the line matching this record's type.
+    let record_line = lines
+        .split(|&b| b == b'\n')
+        .find(|line| {
+            line.windows(record.ty.len() + 6).any(|w| {
+                w.starts_with(b"type=") && &w[5..5 + record.ty.len()] == record.ty.as_bytes()
+            })
+        })
+        .unwrap_or(lines);
+
+    let raw_fields = extract_raw_fields(record_line);
     let json_raw = JsonValue::Object({
         let mut root = Map::new();
         root.insert(
@@ -279,7 +380,7 @@ pub fn record_to_event(lines: &[u8], record: &Record) -> Event {
         if let Some(node) = &record.node {
             root.insert("node".into(), JsonValue::String(node.clone()));
         }
-        root.insert("fields".into(), JsonValue::Object(record.fields.clone()));
+        root.insert("fields".into(), JsonValue::Object(raw_fields));
         root
     });
 
@@ -469,7 +570,10 @@ mod tests {
         assert_eq!(raw["stamp"]["timestamp"], 1717056137482u64);
         assert_eq!(raw["stamp"]["sequence"], 90412);
         assert_eq!(raw["type"], "PATH");
-        assert_eq!(raw["fields"]["name"], "/etc/shadow");
+        // Raw-preserved fields mirror the log line verbatim (quotes included):
+        assert_eq!(raw["fields"]["name"], "\"/etc/shadow\"");
+        assert_eq!(raw["fields"]["item"], "1");
+        assert_eq!(raw["fields"]["nametype"], "NORMAL");
 
         let raw_text = String::from_utf8_lossy(&event.event_raw);
         assert!(raw_text.starts_with("type=PATH msg=audit("));

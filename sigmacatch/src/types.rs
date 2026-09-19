@@ -94,6 +94,11 @@ pub struct Event {
     /// Raw wire bytes as collected (XML for Winevt/sysmon paths, RFC3164 line
     /// for Linux collectors) — written verbatim to regression `.log` data.
     pub event_raw: Vec<u8>,
+    /// All grouped records as individual JSON objects for ndjson regression output.
+    /// For auditd: one entry per audit record in the grouped event (SYSCALL, EXECVE, PATH, etc.).
+    /// For Winevt: single entry (the original event).
+    /// Populated by collectors that group multiple records (e.g., auditd).
+    pub event_json_raw_all: Option<Vec<Value>>,
 }
 
 impl Event {
@@ -103,6 +108,7 @@ impl Event {
             event_json_raw,
             event_json,
             event_raw,
+            event_json_raw_all: None,
         }
     }
 
@@ -116,6 +122,7 @@ impl Event {
             event_json_raw: json_raw,
             event_json: json,
             event_raw: raw,
+            event_json_raw_all: None,
         })
     }
 
@@ -1078,6 +1085,11 @@ pub struct Alert {
     pub event_json: Value,
     /// Raw wire bytes as collected (see [`Event::event_raw`]).
     pub event_raw: Vec<u8>,
+    /// All grouped records as individual JSON objects for ndjson regression output.
+    /// For auditd: one entry per audit record in the grouped event (SYSCALL, EXECVE, PATH, etc.).
+    /// For Winevt: single entry (the original event).
+    /// Populated by collectors that group multiple records (e.g., auditd).
+    pub event_json_raw_all: Option<Vec<Value>>,
 }
 
 impl Alert {
@@ -1950,6 +1962,7 @@ mod tests {
             event_json_raw: event.event_json_raw.clone(),
             event_json: event.event_json.clone(),
             event_raw: event.event_raw,
+            event_json_raw_all: None,
         };
 
         assert!(

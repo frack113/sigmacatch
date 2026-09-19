@@ -483,6 +483,7 @@ impl DetectionEngine {
                     event_json_raw: event.event_json_raw.clone(),
                     event_json: event.event_json.clone(),
                     event_raw: event.event_raw.clone(),
+                    event_json_raw_all: event.event_json_raw_all.clone(),
                 };
                 self.alerts.push(alert);
             }
