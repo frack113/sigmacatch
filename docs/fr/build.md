@@ -37,15 +37,14 @@ cargo build --release -p sigmacatch --no-default-features --features auditd,buil
 #   le tail en local ; sur CI, le placeholder vide est une erreur de build, jamais un repli)
 cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,ebpf
 
-# Lint (saveurs séparées — sysmon et ebpf ne sont jamais fusionnés en un seul build)
+# Lint (variantes séparées — sysmon et ebpf ne sont jamais fusionnés en un seul build)
 cargo clippy -p sigmacatch --no-default-features --features auditd,builtin,sysmon -- -W warnings
 cargo clippy -p sigmacatch --no-default-features --features auditd,builtin,ebpf -- -W warnings
 ```
 
-Tournent en parallèle : le collecteur **auditd** si `/var/log/audit/audit.log` existe et les
-collecteurs **syslog builtin** (chaque fichier existant parmi central `/var/log/messages`,
-`/var/log/syslog` ; authpriv `/var/log/secure`, `/var/log/auth.log` ; cron `/var/log/cron`,
-`/var/log/cron.log`). Spécification complète des collecteurs : [architecture.md](architecture.md).
+Tournent en parallèle : le collecteur **auditd** (si `/var/log/audit/audit.log` existe) et les
+collecteurs **syslog builtin** (central, authpriv, cron — chaque fichier existant).
+Spécification complète des collecteurs et des chemins : [architecture.md](architecture.md).
 
 La feature `winevt` (défaut) est compilée sur Linux comme stubs no-op : commuter vers un
 build Linux se fait toujours avec `--no-default-features`.
@@ -59,7 +58,7 @@ cargo build --release -p sigmacatch --features evtx   # + one-shot EVTX
 
 Le collecteur **winevt** utilise l'API Winevt native sur les channels résolus ; nécessite
 les droits admin pour les channels `Security` et `System`. L'input **evtx** (`live_capture() = false`)
-scanne récursivement un dossier de `.evtx`, matche les events contre les règles Sigma, génère
+scanne récursivement un dossier de `.evtx`, matche les événements contre les règles Sigma, génère
 les données de régression SigmaHQ, puis commit/push vers la branche de travail (défaut `sigmacatch/<date>`) et sort —
 sans API Windows, donc il se compile et tourne aussi sous Linux (`--no-default-features --features evtx`).
 

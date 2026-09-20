@@ -52,11 +52,11 @@ plugins:
           default: true
           build: true
         - locale: fr
-          name: Francais
+          name: Français
           default: false
           build: true
           nav_translations:
-            Accueil: Home
+            Home: Accueil
             Overview: Aperçu
             Build: Build
             CLI: CLI

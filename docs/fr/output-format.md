@@ -18,7 +18,7 @@ La sortie vit toujours dans le repo sigma, sous `regression_data/` :
     └── <rule_id>.evtx       # ou <rule_id>.log côté Linux
 ```
 
-Le répertoire miroir le chemin de la règle sous `rules/`. Par exemple :
+Le répertoire reflète le chemin de la règle sous `rules/`. Par exemple :
 
 ```text
 sigma/rules/windows/builtin/security/win_security_foo.yml
@@ -36,8 +36,8 @@ sigma/rules/windows/builtin/security/win_security_foo.yml
 
 ### EVTX (Windows)
 
-`<rule_id>.evtx` est produit par `EvtExportLog` (re-query de l'event par RecordID depuis le
-log live, retries à backoff court) ou, pour les events sans record id, par le writer
+`<rule_id>.evtx` est produit par `EvtExportLog` (re-query de l'événement par RecordID depuis le
+log live, retries à backoff court) ou, pour les événements sans record id, par le writer
 EVTX pur Rust (module `evtx_writer` de `sigmacatch::regression`, déterministe, sans retry). Le fichier exporté est
 **validé** (re-parse ≥ 1 record) ; un export vide/corrompu (événement purgé entre collecte
 et export) est une erreur : le pipeline saute alors la règle ce cycle (pas de commit) et la
@@ -46,8 +46,9 @@ recapture plus tard.
 ### JSON auxiliaire
 
 Le `.json` porte les données réelles pour le matching Sigma (`event_json_raw`). Sa forme
-dépend du producteur : imbriquée et miroir fidèle du XML Winevt pour les events Windows,
-plate (`{message, program, host, service}`) pour les events Linux. Le pipeline écrit un
+dépend du producteur : imbriquée et miroir fidèle du XML Winevt pour les événements Windows,
+plate (`{message, program, host?}`, `host` optionnel) pour syslog et structurée
+(`{stamp, type, node?, fields}`) pour auditd côté Linux. Le pipeline écrit un
 seul objet JSON terminé par exactement une fin de ligne ; le validateur
 (`regressiondata-check`) accepte aussi du JSONL (un objet par ligne). Voir
 [regression-data-format.md](regression-data-format.md) pour les exemples.

@@ -39,11 +39,11 @@ sigmacatch/
 │       │   └── ebpf_event.rs     #   eBPF → Sysmon XML synthesis + tests
 │       ├── bin/
 │       │   └── regressiondata-check.rs  # Standalone cross-platform binary: regression check (--json, --ignore, --fix, --path)
-│       └── tests/
-│           └── fixtures/           # Fixtures: sample.xml, sample.evtx, valid-single.evtx
+│       └── tests/                  # 16 integration tests (runner, cli, collectors, e2e)
+│           └── fixtures/           # sample.xml, sample.evtx, valid-single.evtx + sigma{,_malformed,_malformed_reference,_negative}/ fixtures
 │   └── ebpf/                       # Nested nightly eBPF probe crate (excluded via [workspace], bpfel-unknown-none)
 │       ├── .cargo/config.toml    #   bpfel target, bpf-linker, build-std=core
-│       └── src/main.rs           #   6 tracepoints: execve/exec/exit/connect/openat+exit/sendto+sendmsg
+│       └── src/main.rs           #   8 tracepoints: execve, exec, exit, connect, openat (enter+exit), sendto, sendmsg
 ```
 
 ## Collectors
@@ -229,13 +229,11 @@ All generation runs in `spawn_blocking` (the `Pipeline` state is moved out and r
 
 ### One-shot variant: `--evtx`
 
-Everything above describes the shared `run()` pipeline. The `evtx` input
-(`live_capture() = false`) is the one-shot analogue: its `EventCollector` is preloaded with
-the enumerated `.evtx` files and `EventProducer::run()` emits every parsed event then returns
-— the mpsc sender drops, `rx.recv()` yields `None`, and the shared loop breaks. There is no
-`channels()`, no `generate_interval`, no stop-file poller, and `--max-runs` is ignored
-(`-r 0` semantics). Ctrl+C still aborts the pass (the runner always registers it); any
-in-flight cycle is dropped and the push of what was not yet committed is skipped.
+The `evtx` input (`live_capture() = false`) reuses the shared `run()` pipeline: the enumeration
+of `.evtx` files exhausts itself (mpsc sender dropped → `rx.recv()` yields `None`), with no
+`channels()`, no `generate_interval`, no stop-file poller, and `--max-runs` ignored
+(`-r 0` semantics). Ctrl+C still aborts the pass: any in-flight cycle is dropped and the push
+of what was not yet committed is skipped.
 
 ## Design notes
 

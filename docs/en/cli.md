@@ -172,8 +172,8 @@ sigmacatch [OPTIONS]
                      no data written, no git/network operation
       --author <NAME> Override the git author from config.yaml for this run
       --branch <NAME> Working branch name (default: sigmacatch/<today's date>)
-      --evtx <PATH>   Directory of EVTX files to process (one-shot evtx input;
-                      requests the `evtx` feature when not compiled in)
+       --evtx <PATH>   Directory of EVTX files to process (one-shot evtx input;
+                       fails if the `evtx` feature is not compiled in)
   --help, -h         Print help and exit
 ```
 
@@ -205,7 +205,7 @@ An unknown or absent subcommand → `sigmacatch` starts its normal collection lo
 **Usage:** `sigmacatch check-filter [--json]`
 
 **Purpose:** validates `SigmaFilterConfig` (product / status / level / author) against the real
-Sigma rule set. No CLI args — runs every filter combination automatically.
+Sigma rule set. No CLI args beyond `--json` — runs every filter combination automatically.
 
 ### Pipeline
 
