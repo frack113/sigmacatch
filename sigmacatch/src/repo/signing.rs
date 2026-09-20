@@ -87,20 +87,18 @@ mod tests {
     use super::*;
     use ssh_key::PublicKey;
 
-    /// Private key from ssh-key's own docs; its public key:
-    /// `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqti`
-    const TEST_KEY: &str = r#"-----BEGIN OPENSSH PRIVATE KEY-----
-b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
-QyNTUxOQAAACCzPq7zfqLffKoBDe/eo04kH2XxtSmk9D7RQyf1xUqrYgAAAJgAIAxdACAM
-XQAAAAtzc2gtZWQyNTUxOQAAACCzPq7zfqLffKoBDe/eo04kH2XxtSmk9D7RQyf1xUqrYg
-AAAEC2BsIi0QwW2uFscKTUUXNHLsYX4FxlaSDSblbAj7WR7bM+rvN+ot98qgEN796jTiQf
-ZfG1KaT0PtFDJ/XFSqtiAAAAEHVzZXJAZXhhbXBsZS5jb20BAgMEBQ==
------END OPENSSH PRIVATE KEY-----
-"#;
+    /// Throwaway ed25519 key generated at runtime (no private key committed).
+    fn test_key() -> String {
+        use rand_core::OsRng;
+        let mut rng = OsRng;
+        let key = PrivateKey::random(&mut rng, ssh_key::Algorithm::Ed25519).unwrap();
+        let armored = key.to_openssh(ssh_key::LineEnding::LF).unwrap();
+        (*armored).clone()
+    }
 
     fn write_test_key(dir: &std::path::Path) -> std::path::PathBuf {
         let path = dir.join("id_ed25519");
-        std::fs::write(&path, TEST_KEY).unwrap();
+        std::fs::write(&path, test_key()).unwrap();
         path
     }
 

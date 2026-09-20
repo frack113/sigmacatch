@@ -3012,6 +3012,7 @@ dependencies = [
  "hex",
  "linux-audit-parser",
  "phf",
+ "rand_core 0.6.4",
  "rayon",
  "regex",
  "reqwest",
