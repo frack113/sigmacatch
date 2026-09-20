@@ -93,4 +93,4 @@ jobs:
         run: |
           cargo llvm-cov --locked --workspace --all-targets \
             --no-default-features --features auditd,builtin,sysmon,evtx \
-            --fail-under 78
+            --fail-under-lines 78
