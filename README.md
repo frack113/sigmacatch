@@ -82,20 +82,4 @@ MIT
 
 ## Releases
 
-Releases are cut by [the release workflow](.github/workflows/release.yml) when a
-`v*` tag matching the workspace version is pushed. It builds one binary per input
-flavour — Linux: `sigmacatch-linux` (`auditd,builtin`), `sigmacatch-sysmon`
-(`+sysmon`), `sigmacatch-ebpf` (`+ebpf`), plus `regressiondata-check`; Windows:
-`sigmacatch-winevt.exe` (default) and `sigmacatch-evtx.exe` (`+evtx`), plus
-`regressiondata-check.exe` — packages each platform as a tar.gz/zip with a
-per-platform `SHA256SUMS`, and signs both archives with Sigstore keyless:
-
-```bash
-cosign verify-blob --bundle <archive>.bundle <archive>
-```
-
-The Linux `regressiondata-check` binary is also published as a standalone release
-asset, for direct download by CI workflows (e.g. SigmaHQ/sigma):
-`https://github.com/frack113/sigmacatch/releases/download/<tag>/regressiondata-check`
-
-Version history (per-release changes): see [CHANGELOG.md](CHANGELOG.md).
+Version history see [CHANGELOG.md](CHANGELOG.md).
