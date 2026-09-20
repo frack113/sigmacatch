@@ -42,50 +42,15 @@ cargo build --release -p sigmacatch --no-default-features --features evtx
 
 On first run a `config.yaml` is created with placeholder defaults, and the run stops (`exit 1`)
 until you edit it — `author: sigmacatch` (placeholder, rejected by validation) and an empty
-`email` both bail:
+`email` both bail. The full reference (every field, defaults, and validation) is in the
+[Configuration reference](docs/en/config.md).
 
-```yaml
-git:
-  author: "sigmacatch"      # PLACEHOLDER — replace with your GitHub username before the next run
-  email: ""                 # required (any non-empty value)
-  github_token: ""          # GitHub token (or set GITHUB_TOKEN env var) — required for HTTP transport when network is active
-  transport: http           # http or ssh
-  ssh_key_path: ""          # path to SSH private key (optional, only needed for SSH)
-  sigma_repo_url: "https://github.com/SigmaHQ/sigma.git"
-  sigma_repo_path: "sigma"  # keep the default — generation writes to ./sigma/regression_data
-  offline: false            # true = zero git operations (no pull/clone/commit/push; on-disk files used as-is, .git optional)
-  contrib: false            # true = push commits to remote fork. Default: false (local commits only)
-log:
-  level_file: "debug"
-filter:
-  product: windows          # windows, linux, or macos
-  # min_status: stable      # optional — load rules with status >= this threshold (unset = no filter)
-  # min_level: critical     # optional — load rules with level >= this threshold (unset = no filter)
-  author: ""                # filter rules by author (optional, empty = no filter)
-  max_rule_size: 1048576    # bytes (1MB default)
-regression:
-  max_failed_cycles: 3      # block a rule (no more re-capture) after N consecutive failure cycles
-  add_json_output: false    # true = also write auxiliary <rule_id>.json alongside the data file
-```
-
-**Contrib is opt-in** (`git.contrib: true` or `--contrib`): pushes regression commits to your fork. By default (`false`) commits stay local. The GitHub token is only required when a network operation is active (`offline: false` or `contrib: true`). **`offline: true` neutralizes `contrib`** (forced to `false`, `warn!`): no push in offline mode.
+**Contrib is opt-in** (`git.contrib: true` or `--contrib`): pushes regression commits to your fork. By default (`false`) commits stay local. The GitHub token is only required when a network operation is active (`offline: false` or `contrib: true`). **`offline: true` neutralizes `contrib`** (forced to `false`): no push in offline mode.
 
 ## CLI
 
-| Flag | Description |
-|------|-------------|
-| `--author <name>` | Override detected username |
-| `-a`, `--all-rules` | Load all rules — skip set is disabled |
-| `-c`, `--contrib` | Enable push to the remote fork for this run |
-| `-o`, `--offline` | Skip all git operations (use on-disk files as-is; no commit/push) |
-| `-r`, `--max-runs <N>` | Exit after N collection cycles (final flush included) |
-| `-v`, `--verbose` | Show info-level logs on stderr (default: errors only) |
-| `--evtx <PATH>` | One-shot EVTX input: process the directory, generate regression data, exit (needs `evtx` feature) |
-| `--help`, `-h` | Print help and exit |
-
-Diagnostics subcommands (`check-filter`, `list-rules`) are always compiled into
-the `sigmacatch` binary; regression validation is the standalone cross-platform
-`regressiondata-check` binary — see [docs/en/cli.md](docs/en/cli.md).
+Flags, the `check-filter`/`list-rules` diagnostics subcommands, and the standalone
+`regressiondata-check` validator are documented in [docs/en/cli.md](docs/en/cli.md).
 
 ## Documentation
 
@@ -93,12 +58,7 @@ A built version of this documentation is published to GitHub Pages: **https://fr
 
 ## Workspace
 
-The project is a single cargo workspace package (`sigmacatch`), plus a nested nightly-only eBPF probe crate (`sigmacatch/ebpf`) excluded from the workspace:
-
-| Package | Purpose |
-|---|---|
-| `sigmacatch` | Main package: one library (`src/lib.rs`) + two binaries (`sigmacatch`, `regressiondata-check`). Inputs are cargo features: `winevt` (default), `evtx`, `auditd`, `builtin` (syslog), `sysmon` (legacy tail), `ebpf` (native probes). Modules inside: `runner` (shared pipeline), `config` (YAML + CLI), `rule` (rule loading/filtering), `detection` (engines + pipelines), `regression` (data generation + EVTX writer), `types` (shared types), `repo` (grit-lib wrapper), `evtx_reader` (EVTX parser), `ebpf_common` (shared eBPF ring-buffer types), `inputs/*` (input adapters) |
-| `sigmacatch/ebpf` | Nested eBPF probe crate (excluded workspace via `[workspace]` opt-out, nightly, `bpfel-unknown-none`). Shares `src/ebpf_common.rs` with the loader via `#[path]`. |
+A single cargo workspace package (`sigmacatch`), plus a nested nightly-only eBPF probe crate (`sigmacatch/ebpf`) excluded from the workspace. The full layout — directory tree, cargo features, and the two binaries — is in [docs/en/architecture.md](docs/en/architecture.md).
 
 ## Built with
 

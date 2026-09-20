@@ -42,6 +42,7 @@ A built version of this documentation is published to GitHub Pages:
 |---|---|---|
 | Architecture | [FR](fr/architecture/) | [EN](architecture.md) |
 | Build | [FR](fr/build/) | [EN](build.md) |
+| Configuration | [FR](fr/config/) | [EN](config.md) |
 | CLI | [FR](fr/cli/) | [EN](cli.md) |
 | Git | [FR](fr/git/) | [EN](git.md) |
 | Output format | [FR](fr/output-format/) | [EN](output-format.md) |
