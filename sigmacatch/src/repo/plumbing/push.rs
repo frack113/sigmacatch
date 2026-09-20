@@ -177,3 +177,144 @@ pub fn push_branch_ssh(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repo::plumbing::init::init_repo;
+    use grit_lib::objects::{CommitData, ObjectKind};
+
+    /// HttpClient whose every request fails fast — keeps tests off the network
+    /// while still exercising the pre-push validation and call sites.
+    struct FailClient;
+
+    impl HttpClient for FailClient {
+        fn get(&self, _url: &str, _git_protocol: Option<&str>) -> grit_lib::error::Result<Vec<u8>> {
+            Err(grit_lib::error::Error::Message(
+                "no network in tests".into(),
+            ))
+        }
+
+        fn post(
+            &self,
+            _url: &str,
+            _content_type: &str,
+            _accept: &str,
+            _body: &[u8],
+            _git_protocol: Option<&str>,
+        ) -> grit_lib::error::Result<Vec<u8>> {
+            Err(grit_lib::error::Error::Message(
+                "no network in tests".into(),
+            ))
+        }
+    }
+
+    /// Minimal repo with one commit on `branch`, HEAD symbolic.
+    fn setup_repo(tmp: &std::path::Path, branch: &str) -> std::path::PathBuf {
+        let git_dir = tmp.join(".git");
+        init_repo(&git_dir, tmp, "https://example.com/sigma.git").unwrap();
+
+        let commit = CommitData {
+            tree: grit_lib::objects::ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
+                .unwrap(),
+            parents: Vec::new(),
+            author: "test <t@example.com> 0 +0000".to_string(),
+            committer: "test <t@example.com> 0 +0000".to_string(),
+            message: "initial\n".to_string(),
+            encoding: None,
+            author_raw: Vec::new(),
+            committer_raw: Vec::new(),
+            raw_message: None,
+        };
+        let odb = crate::repo::plumbing::checkout::open_odb(&git_dir);
+        let raw = grit_lib::objects::serialize_commit(&commit);
+        let commit_oid = odb.write(ObjectKind::Commit, &raw).unwrap();
+        let ref_path = git_dir.join("refs").join("heads").join(branch);
+        if let Some(parent) = ref_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&ref_path, format!("{commit_oid}\n")).unwrap();
+        std::fs::write(git_dir.join("HEAD"), format!("ref: refs/heads/{branch}\n")).unwrap();
+        git_dir
+    }
+
+    #[test]
+    fn describe_push_rejection_covers_every_status() {
+        use grit_lib::push_report::PushRefStatus as S;
+        assert!(describe_push_rejection(&S::RejectNonFastForward).contains("git pull"));
+        assert!(describe_push_rejection(&S::RejectAlreadyExists).contains("already exists"));
+        assert!(describe_push_rejection(&S::RejectFetchFirst).contains("git pull"));
+        assert!(describe_push_rejection(&S::RejectNeedsForce).contains("--force"));
+        assert!(describe_push_rejection(&S::RejectStale).contains("stale"));
+        assert!(describe_push_rejection(&S::RemoteRejected).contains("rejected"));
+        assert!(describe_push_rejection(&S::AtomicPushFailed).contains("atomic"));
+        // Wildcard arm: non-rejection statuses fall back to the debug name.
+        assert_eq!(describe_push_rejection(&S::Ok), "Ok");
+        assert_eq!(describe_push_rejection(&S::UpToDate), "UpToDate");
+    }
+
+    #[test]
+    fn push_branch_missing_local_branch_is_state_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = setup_repo(tmp.path(), "main");
+
+        let err = push_branch(
+            &FailClient,
+            &git_dir,
+            "https://example.com/sigma.git",
+            "feature",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("not found locally"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn push_branch_valid_branch_reaches_transport() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = setup_repo(tmp.path(), "main");
+
+        let err = push_branch(
+            &FailClient,
+            &git_dir,
+            "https://example.com/sigma.git",
+            "main",
+        )
+        .unwrap_err()
+        .to_string();
+        // The FailClient's error surfaces through map_grit.
+        assert!(
+            err.contains("no network in tests"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn push_branch_ssh_missing_local_branch_is_state_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = setup_repo(tmp.path(), "main");
+        let mode = SshMode::Program(vec![std::ffi::OsString::from("/nonexistent/ssh")]);
+
+        let err = push_branch_ssh(&git_dir, "git@github.com:u/r.git", "feature", &mode)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not found locally"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn push_branch_ssh_valid_branch_fails_at_connect() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = setup_repo(tmp.path(), "main");
+        // A nonexistent ssh binary fails immediately — no real process, no network.
+        let mode = SshMode::Program(vec![std::ffi::OsString::from("/nonexistent/ssh")]);
+
+        let err = push_branch_ssh(&git_dir, "git@github.com:u/r.git", "main", &mode)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            !err.contains("not found locally"),
+            "unexpected error: {err}"
+        );
+        assert!(!err.contains("Invalid OID"), "unexpected error: {err}");
+    }
+}

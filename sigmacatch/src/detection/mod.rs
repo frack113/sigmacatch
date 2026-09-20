@@ -1353,4 +1353,137 @@ detection:
         // The bad rule is at some index; verify it's captured
         assert!(*idx < rules.len());
     }
+
+    const BAD_RULE_YAML: &str = r#"title: Bad Rule
+id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb
+status: experimental
+level: low
+author: Test
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  selection:
+    Image|contains|fieldref: "foo"
+  condition: selection
+"#;
+
+    fn rules_from(entries: &[(&str, &str)]) -> SigmahqRules {
+        let dir = tempfile::tempdir().unwrap();
+        let rules_dir = dir.path().join("sigma").join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        for (name, body) in entries {
+            fs::write(rules_dir.join(name), body).unwrap();
+        }
+        SigmahqRules::new_from_path(&dir.path().join("sigma")).unwrap()
+    }
+
+    #[test]
+    fn test_new_returns_add_rules_error_for_bad_rules() {
+        let rules = rules_from(&[("bad.yml", BAD_RULE_YAML)]);
+        let err = match DetectionEngine::new(&rules) {
+            Ok(_) => panic!("DetectionEngine::new must fail for an uncompilable rule"),
+            Err(e) => e,
+        };
+        assert!(matches!(
+            err,
+            DetectionError::AddRules { count: 1, total: 1 }
+        ));
+    }
+
+    #[test]
+    fn test_reload_rules_tolerates_bad_rules() {
+        let good = rules_from(&[("good.yml", MINIMAL_RULE_YAML)]);
+        let mut engine = DetectionEngine::new(&good).unwrap();
+        assert_eq!(engine.rule_count(), 1);
+
+        // Strict `new` would reject bad rules; `reload_rules` is lenient
+        // (warn per rule, keep the compilable ones).
+        let with_bad = rules_from(&[("good.yml", MINIMAL_RULE_YAML), ("bad.yml", BAD_RULE_YAML)]);
+        engine.reload_rules(&with_bad).unwrap();
+        assert_eq!(engine.rule_count(), 1);
+    }
+
+    #[test]
+    fn test_new_with_hir_cache_write_failure_is_warned() {
+        // A directory is not a writable cache file: fs::write must fail, and
+        // engine construction must still succeed (warn, not abort).
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().join("not-a-file");
+        fs::create_dir(&cache_dir).unwrap();
+
+        let rules = rules_from(&[("good.yml", MINIMAL_RULE_YAML)]);
+        let engine = DetectionEngine::new_with_hir_cache(&rules, Some(cache_dir)).unwrap();
+        assert_eq!(engine.rule_count(), 1);
+    }
+
+    #[test]
+    fn test_save_load_hir_roundtrip_and_accessors() {
+        let rules = rules_from(&[("good.yml", MINIMAL_RULE_YAML)]);
+        let mut engine = DetectionEngine::new(&rules).unwrap();
+        assert_eq!(engine.rule_count(), 1);
+
+        let blob = engine.save_hir().unwrap();
+        assert!(!blob.is_empty());
+
+        let mut other = DetectionEngine::new(&rules).unwrap();
+        other.load_hir(&blob).unwrap();
+
+        // Accessors.
+        assert_eq!(engine.engine().rule_count(), 1);
+        assert_eq!(engine.engine_mut().rule_count(), 1);
+        assert_eq!(engine.stats().events_processed, 0);
+
+        // No-op: rules already loaded, but the FIFO getter must drain.
+        engine.put_events(vec![Event::new(
+            serde_json::json!({}),
+            serde_json::json!({}),
+            Vec::new(),
+        )]);
+        assert_eq!(engine.get_events().len(), 1);
+        assert!(engine.get_events().is_empty());
+    }
+
+    #[test]
+    fn test_load_hir_cache_missing_broken_and_valid() {
+        let rules = rules_from(&[("good.yml", MINIMAL_RULE_YAML)]);
+        let dir = tempfile::tempdir().unwrap();
+
+        // Missing cache → empty engine.
+        let engine_fresh = DetectionEngine::load_hir_cache(dir.path().join("missing.hir"));
+        assert_eq!(engine_fresh.rule_count(), 0);
+
+        // Corrupt cache → warn + empty engine.
+        let corrupt = dir.path().join("corrupt.hir");
+        fs::write(&corrupt, b"not a hir blob").unwrap();
+        let engine_corrupt = DetectionEngine::load_hir_cache(&corrupt);
+        assert_eq!(engine_corrupt.rule_count(), 0);
+
+        // Valid cache written by an engine.
+        let mut engine = DetectionEngine::new(&rules).unwrap();
+        let cache = dir.path().join("valid.hir");
+        engine.set_hir_cache(&cache);
+        let blob = engine.save_hir().unwrap();
+        fs::write(&cache, blob).unwrap();
+        let loaded = DetectionEngine::load_hir_cache(&cache);
+        assert_eq!(loaded.rule_count(), 1);
+    }
+
+    #[test]
+    fn test_explain_rule_known_and_unknown() {
+        let rules = rules_from(&[("good.yml", MINIMAL_RULE_YAML)]);
+        let engine = DetectionEngine::new(&rules).unwrap();
+
+        let known = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+        let unknown = Uuid::new_v4();
+
+        let event_json = serde_json::json!({"event_id": 1});
+        let event = Event::new(event_json.clone(), event_json, Vec::new());
+
+        // Unknown rule → None.
+        assert!(engine.explain_rule(&unknown, &event).is_none());
+        // Known rule + matching event → explanation.
+        let explanation = engine.explain_rule(&known, &event).unwrap();
+        assert!(explanation.is_object());
+    }
 }

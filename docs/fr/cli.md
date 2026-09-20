@@ -5,7 +5,7 @@
 `check` n'est plus une sous-commande des binaires de collecte : c'est un binaire
 standalone, **`regressiondata-check`**, compilé pour Linux et Windows, sans collector. Il
 charge les règles Sigma et les données de régression, rejoue chaque
-event stocké dans le moteur de détection, et vérifie que la règle attendue matche encore.
+événement stocké dans le moteur de détection, et vérifie que la règle attendue matche encore.
 
 **Usage :**
 
@@ -14,7 +14,7 @@ regressiondata-check [--json] [--ignore] [--fix] [--path <DIR>]
 ```
 
 - `--json` — sortie en JSON au lieu du texte lisible.
-- `--ignore` — saute les entrées invalides (entrée/données brutes absentes, events vides)
+- `--ignore` — saute les entrées invalides (entrée/données brutes absentes, événements vides)
   sans les compter comme échecs.
 - `--fix` — normalise les fins de ligne JSON et l'indentation `info.yml`.
 - `--path <DIR>` — racine du repo sigma (défaut : `./sigma`).
@@ -43,8 +43,8 @@ Le logtype `Raw` est sauté (compté dans `Skipped`).
      avec `--ignore`)
    - Valide le `.json` auxiliaire s'il est présent : JSON **ou JSONL** (un objet par
      ligne) valide, exactement une fin de ligne
-   - Charge la donnée brute selon le `logtype` (`.evtx`, `.log`, lignes JSON), parse les events
-   - Évalue les events contre la règle
+   - Charge la donnée brute selon le `logtype` (`.evtx`, `.log`, lignes JSON), parse les événements
+   - Évalue les événements contre la règle
    - Valide : la règle DOIT matcher (test de détection positive)
    - Quand un `.json` auxiliaire est présent, valide le `match_count` déclaré contre le
      nombre réel de hits (incohérence de match_count = échec)
@@ -126,11 +126,11 @@ elles n'entraînent jamais l'exit 1.
 
 Feature `evtx` : un `CollectorKind` avec `live_capture() = false` qui
 passe par le **même** pipeline `run()` que les collecteurs continus. Il scanne récursivement
-un dossier pour des fichiers `.evtx`, parse chaque event en pur Rust, les pousse à travers le
+un dossier pour des fichiers `.evtx`, parse chaque événement en pur Rust, les pousse à travers le
 moteur de détection, écrit les données de régression SigmaHQ pour chaque règle matchée (writer
-EVTX pur Rust — jamais `EvtExportLog`, car les events statiques ne sont pas dans le journal
+EVTX pur Rust — jamais `EvtExportLog`, car les événements statiques ne sont pas dans le journal
 d'événements live), puis commit et push par règle vers la branche de travail configurée
-(defaut `sigmacatch/<date>`) sur le fork
+(défaut `sigmacatch/<date>`) sur le fork
 configuré. Comme `EventProducer::run()` se termine une fois tous les fichiers drainés, le
 sender tombe et la boucle partagée sort — une passe : lecture → détection → génération →
 commit/push, sans boucle de collecte. Un échec de l'upload final sort avec un statut non nul.
@@ -158,9 +158,9 @@ les données de régression sont écrites sous `<sigma_repo_path>/regression_dat
 
 ---
 
-## Flags de la binaire de collecte
+## Flags du binaire de collecte
 
-La binaire unique `sigmacatch` (quels que soient les inputs compilés) partage ces flags :
+Le binaire unique `sigmacatch` (quels que soient les inputs compilés) partage ces flags :
 
 ```text
 sigmacatch [OPTIONS]
@@ -174,8 +174,8 @@ sigmacatch [OPTIONS]
                       construit le moteur — aucune donnée écrite, aucune opération git/réseau
       --author <NOM>  Remplace l'auteur git du config.yaml pour ce run
       --branch <NOM>  Nom de la branche de travail (défaut : sigmacatch/<date du jour>)
-      --evtx <CHEMIN> Dossier de fichiers EVTX à traiter (input one-shot evtx ;
-                      demande la feature `evtx` si non compilée)
+       --evtx <CHEMIN> Dossier de fichiers EVTX à traiter (input one-shot evtx ;
+                       échoue si la feature `evtx` n'est pas compilée)
   --help, -h          Affiche l'aide et quitte
 ```
 
@@ -185,7 +185,7 @@ règles de `./sigma` + à la construction du moteur de détection.
 
 ---
 
-## Sous-commandes de diagnostic de la binaire
+## Sous-commandes de diagnostic du binaire
 
 Les commandes ci-dessous sont des sous-commandes de `sigmacatch`, **toujours compilées**
 (la feature `tools` a été supprimée) :
@@ -209,7 +209,7 @@ config.
 **Usage :** `sigmacatch check-filter [--json]`
 
 **Fonction :** valide `SigmaFilterConfig` (product / status / level / author) contre le vrai jeu
-de règles Sigma. Aucun argument CLI — exécute toutes les combinaisons de filtres automatiquement.
+de règles Sigma. Aucun argument CLI au-delà de `--json` — exécute toutes les combinaisons de filtres automatiquement.
 
 ### Pipeline
 

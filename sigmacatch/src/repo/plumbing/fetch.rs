@@ -183,4 +183,84 @@ mod tests {
             "must never fetch the full refs/heads/* namespace"
         );
     }
+
+    struct FailClient;
+
+    impl HttpClient for FailClient {
+        fn get(&self, _url: &str, _git_protocol: Option<&str>) -> grit_lib::error::Result<Vec<u8>> {
+            Err(grit_lib::error::Error::Message(
+                "no network in tests".into(),
+            ))
+        }
+
+        fn post(
+            &self,
+            _url: &str,
+            _content_type: &str,
+            _accept: &str,
+            _body: &[u8],
+            _git_protocol: Option<&str>,
+        ) -> grit_lib::error::Result<Vec<u8>> {
+            Err(grit_lib::error::Error::Message(
+                "no network in tests".into(),
+            ))
+        }
+    }
+
+    /// Side-band progress bytes are `\r`-delimited and may carry invalid UTF-8
+    /// mid-transfer — the logging path must survive both without panicking.
+    #[test]
+    fn log_progress_survives_crlf_and_invalid_utf8() {
+        let mut progress = LogProgress;
+        progress.message(b"Enumerating objects: 42\rCompressing objects\r\r");
+        progress.message(b"bad \xff\xfe bytes\r");
+        progress.message(b"\r");
+        progress.message(b"");
+    }
+
+    #[test]
+    fn fetch_remote_http_error_is_mapped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = tmp.path().join(".git");
+        crate::repo::plumbing::init::init_repo(
+            &git_dir,
+            tmp.path(),
+            "https://example.com/sigma.git",
+        )
+        .unwrap();
+
+        let opts = fetch_options_for_branches(&["main"]);
+        let err = fetch_remote(
+            &FailClient,
+            &git_dir,
+            "https://example.com/sigma.git",
+            &opts,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("no network in tests"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn fetch_remote_ssh_fails_at_connect_with_missing_binary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = tmp.path().join(".git");
+        crate::repo::plumbing::init::init_repo(
+            &git_dir,
+            tmp.path(),
+            "https://example.com/sigma.git",
+        )
+        .unwrap();
+
+        // A nonexistent ssh binary fails immediately — no real process, no network.
+        let mode = SshMode::Program(vec![std::ffi::OsString::from("/nonexistent/ssh")]);
+        let opts = fetch_options_for_branches(&["main"]);
+        let err = fetch_remote_ssh(&git_dir, "git@github.com:u/r.git", &mode, &opts)
+            .unwrap_err()
+            .to_string();
+        assert!(!err.is_empty());
+    }
 }

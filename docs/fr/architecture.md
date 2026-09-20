@@ -30,7 +30,7 @@ sigmacatch/
 │       │   ├── evtx.rs           #   EvtxCollector (fichiers EVTX one-shot, feature `evtx`)
 │       │   ├── channels.rs       #   Collecteur Winevt (EvtQueryW/EvtNext/EvtRender, multi-channel)
 │       │   ├── linux.rs          #   LinuxCollector + run() (toute feature Linux)
-│       │   ├── auditd.rs         #   Collecteur auditd (LineHandler, groupement par event id, via tail)
+│       │   ├── auditd.rs         #   Collecteur auditd (LineHandler, groupement par identifiant d'événement, via tail)
 │       │   ├── syslog.rs         #   Collecteur syslog builtin (LineHandler par fichier, via tail)
 │       │   ├── sysmon.rs         #   Collecteur Sysmon-for-Linux (LineHandler, via tail, feature `sysmon`)
 │       │   ├── tail.rs           #   Driver tail partagé (trait LineHandler + détection rotation)
@@ -39,16 +39,16 @@ sigmacatch/
 │       │   └── ebpf_event.rs     #   Synthèse XML eBPF → format Sysmon + tests
 │       └── bin/
 │           └── regressiondata-check.rs  # Binaire standalone cross-platform : validation régression (--json, --ignore, --fix, --path)
-│       └── tests/
-│           └── fixtures/           # Fixtures : sample.xml, sample.evtx, valid-single.evtx
+│       └── tests/                  # 16 tests d'intégration (runner, cli, collecteurs, e2e)
+│           └── fixtures/           # sample.xml, sample.evtx, valid-single.evtx + fixtures sigma{,_malformed,_malformed_reference,_negative}/
 │   └── ebpf/                       # Crate eBPF probe nested nightly (exclu via [workspace], bpfel-unknown-none)
 │       ├── .cargo/config.toml    #   cible bpfel, bpf-linker, build-std=core
-│       └── src/main.rs           #   6 tracepoints : execve/exec/exit/connect/openat+exit/sendto+sendmsg
+│       └── src/main.rs           #   8 tracepoints : execve, exec, exit, connect, openat (enter+exit), sendto, sendmsg
 ```
 
 ## Collecteurs
 
-Une seule binaire `sigmacatch` est produite par le package `sigmacatch`. Les features cargo
+Un seul binaire `sigmacatch` est produit par le package `sigmacatch`. Les features cargo
 sélectionnent quels inputs sont compilés, et `main.rs` choisit l'input au runtime : le
 collecteur one-shot EVTX quand `--evtx` est présent, le collecteur Winevt live sur Windows,
 ou l'ensemble des inputs Linux compilés et disponibles. S'y ajoute le binaire standalone
@@ -60,7 +60,7 @@ cross-platform `regressiondata-check` (deuxième binaire du package `sigmacatch`
 | evtx | `sigmacatch/src/inputs/evtx.rs` | `evtx` | Collecteur one-shot `.evtx` (`live_capture() = false`) : parse → détection → génération régression (writer EVTX pur Rust) → commit/push, puis sortie |
 | auditd | `sigmacatch/src/inputs/auditd.rs` | `auditd` | tail auditd (pas de root requis) |
 | syslog builtin | `sigmacatch/src/inputs/syslog.rs` | `builtin` | tails syslog central/authpriv/cron (pas de root requis) |
-| sysmon (tail) | `sigmacatch/src/inputs/sysmon.rs` | `sysmon` (implique `builtin`) | tail XML Sysmon-for-Linux |
+| sysmon (tail) | `sigmacatch/src/inputs/sysmon.rs` | `sysmon` (implique `builtin`) | tail XML Sysmon-for-Linux (Legacy) |
 | sysmon (ebpf) | `sigmacatch/src/inputs/ebpf.rs` | `ebpf` | probes eBPF natifs (root ou CAP_BPF+CAP_PERFMON requis) |
 
 ### Logsource Windows et catégories PowerShell
@@ -70,10 +70,10 @@ Les règles Windows sont contraintes par la pipeline `1_win_logsource.yml`
 PowerShell sont bornées à leurs EventID — `ps_module` (4103), `ps_script` (4104) vers
 `service: powershell` ; `ps_classic_start` (400), `ps_classic_provider_start` (600) et
 `ps_classic_script` (800) vers `service: powershell-classic`. Sans champ `category` injecté
-sur l'event, le `LogSourceExtractor` d'rsigma évalue chaque event fail-open contre toutes
+sur l'événement, le `LogSourceExtractor` d'rsigma évalue chaque événement fail-open contre toutes
 les règles.
 
-Les events PowerShell classique (400/600/800 …) émettent des `<Data>` **sans** attribut
+Les événements PowerShell classique (400/600/800 …) émettent des `<Data>` **sans** attribut
 `Name` : le parseur les expose sous des clés positionnelles (`Data0`, `Data1`, …), et
 `inject_logsource_fields_for` surface le contenu `EventData` sous le champ Sigma générique
 `Data` pour que `Data|contains` fonctionne (rsigma n'a pas de mapping de champ dédié
@@ -84,7 +84,7 @@ Les events PowerShell classique (400/600/800 …) émettent des `<Data>` **sans*
 Chacun gardé par sa source ; aucune source disponible → bail :
 
 - **auditd** — si `/var/log/audit/audit.log` existe : tail, parsing linux-audit-parser,
-  groupement par event id `timestamp:sequence`, logsource `product:linux, service:auditd`.
+   groupement par identifiant d'événement `timestamp:sequence`, logsource `product:linux, service:auditd`.
 - **syslog builtin** — tail de chaque fichier existant parmi central (`/var/log/messages`,
   `/var/log/syslog`), authpriv (`/var/log/secure`, `/var/log/auth.log`) et cron
   (`/var/log/cron`, `/var/log/cron.log`) : lignes RFC3164, service dérivé du program tag
@@ -96,7 +96,7 @@ Les features `sysmon` et `ebpf` ajoutent un collecteur dédié :
 - **Sysmon eBPF (feature `ebpf`)** — probes Aya embarquées
   (`sigmacatch/ebpf`, nightly+bpf-linker, exclue du workspace) couvrant EID 1
   process_create, EID 3 network_connect, EID 5 process_terminate, EID 11 file_create et
-  l'extension DNS (EID 22) : events rendus en XML Sysmon identique au chemin syslog puis
+   l'extension DNS (EID 22) : événements rendus en XML Sysmon identique au chemin syslog puis
   injectés via le même pipeline (`inject_logsource_fields_for`). Prérequis runtime :
   root ou CAP_BPF+CAP_PERFMON (refus de démarrer sinon — `linux.rs` bail) + kernel avec BTF.
   Le hachage SHA256 des images est calculé userspace avec cache (chemin,mtime). Un échec de
@@ -125,20 +125,20 @@ renvoie `None`.
 `tail.rs` est le driver tail partagé des collecteurs fichier Linux (auditd, syslog builtin,
 sysmon) : il possède le handle fichier, la boucle de poll 100 ms, la détection de rotation
 (changement dev/ino → réouverture depuis offset 0) et le channel, et pilote un `LineHandler`
-pur par collecteur. Chaque `LineHandler` transforme des lignes complètes en events (auditd
-groupe les records par event id et flush au changement de séquence ou sur poll idle ; syslog
-émet un event par ligne RFC3164 en excluant les lignes `sysmon` ; sysmon parse les corps XML
+pur par collecteur. Chaque `LineHandler` transforme des lignes complètes en événements (auditd
+groupe les records par identifiant d'événement et flush au changement de séquence ou sur poll idle ; syslog
+émet un événement par ligne RFC3164 en excluant les lignes `sysmon` ; sysmon parse les corps XML
 en sautant les tronqués). Gate par les features qui font du tail.
 
 L'input `evtx` (feature `evtx`) est un `CollectorKind` avec `live_capture() = false` : il
 passe par le **même** pipeline partagé `run()` que les collecteurs continus, en mode one-shot —
-énumérer les fichiers `.evtx`, parser chaque event (`evtx_reader`), alimenter la
+énumérer les fichiers `.evtx`, parser chaque événement (`evtx_reader`), alimenter la
 `DetectionEngine`, puis réutiliser la machinerie partagée `SigmahqRegression` + `SigmaRepo`
 pour écrire les données de régression `DataFormat::Evtx` (toujours via le writer EVTX pur
 Rust, jamais `EvtExportLog`) et les commit/push vers le fork. Comme `EventProducer::run()` se
 termine quand tous les fichiers sont épuisés, le processus s'arrête de lui-même. Pas de
 `channels()`, pas d'interval, pas de poller stop-file. Le champ `EventRecordID` est retiré par
-event (l'event 4688 exige son absence pour déclencher la règle d'imagerie). Comme il est
+événement (l'événement 4688 exige son absence pour déclencher la règle d'imagerie). Comme il est
 100 % pur Rust, il se compile et tourne aussi sous Linux.
 
 ## Graphe de dépendances
@@ -195,16 +195,16 @@ manuel des arguments et utilisent `serde` pour leurs sorties JSON (toujours comp
 9. Handlers d'arrêt (watch channel) : Ctrl+C, plus poller stop-file (500 ms) si live_capture()
    ; output_base = <sigma_repo_path>/regression_data ; clean_partial_artifacts()
 10. collector = kind.build(&cycle_channels) → tokio::spawn(collector.run(tx, stop))
-    ├── sigmacatch --evtx (one-shot) → EvtxCollector.run(tx, stop) : énumère les fichiers, envoie chaque event parsé,
+     ├── sigmacatch --evtx (one-shot) → EvtxCollector.run(tx, stop) : énumère les fichiers, envoie chaque événement parsé,
     │                                  se termine à épuisement → sender tombé
     ├── sigmacatch (winevt, Windows)  → EventCollector::new(cycle_channels).run(tx, stop)
     └── sigmacatch (Linux)            → MultiCollector (tous les tails compilés et disponibles en parallèle, rotation détectée)
 11. Boucle : tokio::select!
     ├── shutdown_rx (Ctrl+C, ou stop file / --max-runs atteint si live_capture()) → break
-    ├── event depuis rx → engine.put_events(vec![event])
+     ├── événement depuis rx → engine.put_events(vec![event])
     ├── generate_interval (30s, live_capture seulement) → spawn_blocking(process_and_generate) → upload_regression() si fichiers
     └── [one-shot seulement] rx.recv() → None (sender tombé, collecteur terminé) → break
-12. Flush final : arrêt collector (timeout 10s, abort sinon) → drain des events restants (timeout 5s)
+12. Flush final : arrêt collector (timeout 10s, abort sinon) → drain des événements restants (timeout 5s)
     → process_and_generate() → upload_regression() (commit par règle) → push unique si contrib
     — one-shot propage l'erreur de l'upload final (code de sortie non nul) ; live mode log et continue
 ```
@@ -235,13 +235,11 @@ s'accumuler dans le canal mpsc).
 
 ### Variante one-shot : `--evtx`
 
-Tout ce qui précède décrit le pipeline partagé `run()`. L'input `evtx`
-(`live_capture() = false`) en est l'analogue one-shot : son `EventCollector` est préchargé
-avec les fichiers `.evtx` énumérés et `EventProducer::run()` émet chaque event parsé puis se
-termine — le sender mpsc tombe, `rx.recv()` renvoie `None`, et la boucle partagée sort. Pas de
-`channels()`, pas de `generate_interval`, pas de poller stop-file, et `--max-runs` est ignoré
-(sémantique `-r 0`). Ctrl+C avorte toujours la passe (le runner l'enregistre toujours) ;
-tout cycle en vol est abandonné et le push de ce qui n'a pas encore été commité est sauté.
+L'input `evtx` (`live_capture() = false`) réutilise le pipeline partagé `run()` : l'énumération
+des fichiers `.evtx` s'épuise d'elle-même (sender mpsc tombé → `rx.recv()` renvoie `None`), sans
+`channels()`, sans `generate_interval` ni poller stop-file, et `--max-runs` est ignoré
+(sémantique `-r 0`). Ctrl+C avorte toujours la passe : tout cycle en vol est abandonné et le
+push de ce qui n'a pas encore été commité est sauté.
 
 ## Notes de conception
 
@@ -257,13 +255,13 @@ tout cycle en vol est abandonné et le push de ce qui n'a pas encore été commi
   Les règles dont les données commitées sont invalides (EVTX cassé / texte vide) sont exclues du skip set → régénérées.
 - **Output toujours dans le repo sigma** : `<sigma_repo_path>/regression_data/<rule_rel_path>/`
   (`info.yml` + fichier de données `.evtx`/`.log`, `.json` optionnel), commité sur le fork si `contrib` (commits locaux sinon).
-  Le chemin de la règle est miroité par rapport au `sigma_repo_path` configuré (relatif ou
-  absolu) — le commit par règle embarque aussi la règle mise à jour avec
+   Le chemin de la règle est reproduit sous `regression_data/` (par rapport au `sigma_repo_path`
+   configuré, relatif ou absolu) — le commit par règle embarque aussi la règle mise à jour avec
   `regression_tests_path: regression_data/<rule_rel_path>/info.yml`.
 - **Collecteur observable** : le collecteur exclut une fois pour toutes les channels
   inexistants dès `ERROR_EVT_CHANNEL_NOT_FOUND` (un seul `error!`) ; chaque channel vivant
   journalise « initial query OK » puis un heartbeat « still alive » (60s) ; `warn!` quand des
-  events sont récupérés mais perdus au rendu/parsing. Les collecteurs Linux détectent la
+   événements sont récupérés mais perdus au rendu/parsing. Les collecteurs Linux détectent la
   rotation du fichier tailé (changement d'inode) et rouvrent le fichier ; le collecteur syslog
   exclut les lignes taggées `sysmon` pour éviter les doubles événements (pris en charge par le
   collecteur sysmon dédié).

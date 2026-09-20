@@ -8,7 +8,7 @@ Un jeu de régression se compose par règle d'un fichier `info.yml` (métadonné
 
 ## Arborescence
 
-La sortie miroir la hiérarchie SigmaHQ sous `rules/`, `rules-emerging-threats/` et
+La sortie reflète la hiérarchie SigmaHQ sous `rules/`, `rules-emerging-threats/` et
 `rules-threat-hunting/` :
 
 ```text
@@ -99,7 +99,7 @@ regression_tests_info:
 
 ### Exemples `.log` (Linux)
 
-**auditd (`type: log`, provider de repli `auditd` — event en texte brut sans XML) :**
+**auditd (`type: log`, provider de repli `auditd` — événement en texte brut sans XML) :**
 
 ```yaml
 id: 60ff02c2-a649-436c-972d-7c6fe6af8711
@@ -117,7 +117,7 @@ regression_tests_info:
     path: regression_data/rules/linux/auditd/execve/lnx_auditd_susp_cmds/1543ae20-cbdf-4ec1-8d12-7664d667a825.log
 ```
 
-**Sysmon-for-Linux (`type: log`, provider extrait du XML de l'event) :**
+**Sysmon-for-Linux (`type: log`, provider extrait du XML de l'événement) :**
 
 ```yaml
 id: 8f2a5c31-9d64-4b7e-a1c2-3f5d8e90b7aa
@@ -205,7 +205,7 @@ auditd groupés par `timestamp:sequence`, lignes syslog RFC3164, ou XML Sysmon-f
 Sur les hôtes qui transfèrent les records audit vers syslog (audisp/rsyslog), les deux
 pipelines capturent la même activité : une règle basée sur auditd et une règle basée sur
 syslog peuvent toutes deux produire des données de régression à partir d'elle. Le provider
-écrit dans `info.yml` provient du XML de l'event quand il existe (`Linux-Sysmon` pour les
+écrit dans `info.yml` provient du XML de l'événement quand il existe (`Linux-Sysmon` pour les
 événements Sysmon-for-Linux), avec repli sur `auditd` pour les événements en texte brut.
 
 ### Emerging Threats

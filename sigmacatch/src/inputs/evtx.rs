@@ -150,4 +150,87 @@ mod tests {
         let files = find_evtx_files(dir.path()).unwrap();
         assert_eq!(files.len(), 2);
     }
+
+    #[test]
+    fn test_evtx_path_or_default() {
+        let explicit = PathBuf::from("/tmp/evtx");
+        assert_eq!(evtx_path_or_default(Some(explicit.clone())), explicit);
+        assert_eq!(evtx_path_or_default(None), PathBuf::from(DEFAULT_EVTX_PATH));
+    }
+
+    #[test]
+    fn test_evtx_collector_trait_methods() {
+        let collector = EvtxCollector {
+            files: vec![PathBuf::from("a.evtx")],
+        };
+        assert_eq!(collector.name(), "sigmacatch");
+        assert!(collector.mode().contains("one-shot"));
+        let engine = DetectionEngine::new(&crate::rule::SigmahqRules::default()).unwrap();
+        assert!(collector.channels(&engine, &Default::default()).is_none());
+        assert!(!collector.live_capture());
+        assert!(matches!(collector.regression_format(), DataFormat::Evtx));
+    }
+
+    /// `build()` must produce a collector that replays every event of the
+    /// configured EVTX files.
+    #[tokio::test]
+    async fn test_evtx_collector_build_replays_fixture() {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.evtx");
+        if !fixture.exists() {
+            return; // fixture absent in some packaging contexts
+        }
+        let expected = crate::evtx_reader::parse_evtx_file(&fixture).unwrap().len();
+        assert!(expected > 0, "fixture should contain events");
+
+        let collector = EvtxCollector {
+            files: vec![fixture.clone()],
+        };
+        let producer = collector.build(&[]);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::types::Event>(256);
+        let (_stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+
+        producer.run(tx, stop_rx).await.unwrap();
+
+        let mut got = 0usize;
+        while rx.recv().await.is_some() {
+            got += 1;
+        }
+        assert_eq!(got, expected);
+    }
+
+    #[tokio::test]
+    async fn test_run_missing_path_bails() {
+        let err = run(Some(PathBuf::from("/nonexistent/evtx/dir")))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("Path does not exist"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_file_not_dir_bails() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("not-a-dir.txt");
+        fs::write(&file, b"").unwrap();
+
+        let err = run(Some(file)).await.unwrap_err().to_string();
+        assert!(err.contains("not a directory"), "unexpected error: {err}");
+    }
+
+    #[tokio::test]
+    async fn test_run_dir_without_evtx_bails() {
+        let dir = tempdir().unwrap();
+
+        let err = run(Some(dir.path().to_path_buf()))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("No EVTX files found"),
+            "unexpected error: {err}"
+        );
+    }
 }

@@ -37,6 +37,7 @@ nav:
   - English:
     - Overview: architecture.md
     - Build: build.md
+    - Configuration: config.md
     - CLI: cli.md
     - Git: git.md
     - Output Format: output-format.md
@@ -52,13 +53,14 @@ plugins:
           default: true
           build: true
         - locale: fr
-          name: Francais
+          name: Français
           default: false
           build: true
           nav_translations:
-            Accueil: Home
+            Home: Accueil
             Overview: Aperçu
             Build: Build
+            Configuration: Configuration
             CLI: CLI
             Git: Git
             Output Format: Format de Sortie

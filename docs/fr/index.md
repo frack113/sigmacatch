@@ -12,25 +12,26 @@ par des features cargo et à l'exécution par l'argument `--evtx` (one-shot EVTX
 sinon Winevt live sur Windows et tous les inputs Linux compilés et disponibles
 en parallèle.
 
-Le projet est un package cargo unique (`sigmacatch`), plus un crate eBPF
-nested nightly-only (`sigmacatch/ebpf`) ; l'arborescence complète et les rôles
+Le projet est un workspace cargo à un seul package (`sigmacatch`), plus un crate
+eBPF nested nightly-only (`sigmacatch/ebpf`) ; l'arborescence principale et les rôles
 de chaque module sont détaillés dans [architecture.md](architecture.md).
 
 ## Démarrage rapide
 
 ```bash
-cargo build --release -p sigmacatch                          # Input Windows (features par défaut)
-./target/release/sigmacatch                                  # Winevt (Windows)
-# Linux — compile les inputs voulus (ex. auditd + syslog builtin) :
+# Windows (features par défaut) :
+cargo build --release -p sigmacatch
+./target/release/sigmacatch            # Winevt live
+# Linux (auditd + syslog builtin, pas de root) :
 cargo build --release -p sigmacatch --no-default-features --features auditd,builtin
-./target/release/sigmacatch                                  # auditd + syslog builtin (Linux, pas de root)
-cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,sysmon     # + tail Sysmon (Linux)
-cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,ebpf       # + probes eBPF (root + nightly requis — build séparé, jamais fusionné avec sysmon)
-# One-shot EVTX, n'importe quelle plateforme :
+./target/release/sigmacatch            # auditd + syslog builtin
+# One-shot EVTX (cross-platform) :
 cargo build --release -p sigmacatch --no-default-features --features evtx
 ./target/release/sigmacatch --evtx /chemin/vers/dossier-evtx
-cargo build --release -p sigmacatch --bin regressiondata-check                # Validation de régression cross-platform (Linux & Windows)
 ```
+
+La matrice complète des features (`sysmon`, `ebpf`), le binaire de validation
+`regressiondata-check` et les commandes de build/test sont dans [build.md](build.md).
 
 ## Documentation
 
@@ -39,12 +40,13 @@ Une version compilée de cette documentation est publiée sur GitHub Pages :
 
 | | English | Français |
 |---|---|---|
-| Architecture | [EN](../en/architecture.md) | [FR](architecture.md) |
-| Build | [EN](../en/build.md) | [FR](build.md) |
-| CLI | [EN](../en/cli.md) | [FR](cli.md) |
-| Git | [EN](../en/git.md) | [FR](git.md) |
-| Output format | [EN](../en/output-format.md) | [FR](output-format.md) |
-| Regression data format | [EN](../en/regression-data-format.md) | [FR](regression-data-format.md) |
+| Architecture | [EN](../architecture/) | [FR](architecture.md) |
+| Build | [EN](../build/) | [FR](build.md) |
+| Configuration | [EN](../config/) | [FR](config.md) |
+| CLI | [EN](../cli/) | [FR](cli.md) |
+| Git | [EN](../git/) | [FR](git.md) |
+| Output format | [EN](../output-format/) | [FR](output-format.md) |
+| Regression data format | [EN](../regression-data-format/) | [FR](regression-data-format.md) |
 
 ## Licence
 

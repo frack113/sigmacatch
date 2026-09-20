@@ -8,16 +8,6 @@ use std::thread::sleep;
 #[cfg(windows)]
 use std::time::Duration;
 
-/// EVTX file header magic ("ElfFile\0").
-#[allow(dead_code)]
-const EVTX_MAGIC: &[u8; 8] = b"ElfFile\x00";
-/// Chunk header magic ("ElfChnk\0").
-#[allow(dead_code)]
-const EVTX_CHUNK_MAGIC: &[u8; 8] = b"ElfChnk\x00";
-/// Minimum valid EVTX: 4096-byte header + 64 KiB chunk.
-#[allow(dead_code)]
-const MIN_EVTX_SIZE: u64 = 4096 + 64 * 1024;
-
 /// Total `EvtExportLog` attempts (initial + retries) before giving up.
 #[cfg(windows)]
 const EVTX_EXPORT_MAX_ATTEMPTS: u32 = 4;

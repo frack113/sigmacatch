@@ -32,7 +32,7 @@ pub fn dispatch() -> Option<i32> {
     match args[1].as_str() {
         "--check-filter" | "check-filter" => {
             let rest = &args[2..];
-            if rest.is_empty() || (rest.len() == 1 && (rest[0] == "--help" || rest[0] == "-h")) {
+            if rest.len() == 1 && (rest[0] == "--help" || rest[0] == "-h") {
                 print_check_filter_help();
                 Some(0)
             } else {
@@ -41,7 +41,7 @@ pub fn dispatch() -> Option<i32> {
         }
         "--list-rules" | "list-rules" => {
             let rest = &args[2..];
-            if rest.is_empty() || (rest.len() == 1 && (rest[0] == "--help" || rest[0] == "-h")) {
+            if rest.len() == 1 && (rest[0] == "--help" || rest[0] == "-h") {
                 print_list_rules_help();
                 Some(0)
             } else {

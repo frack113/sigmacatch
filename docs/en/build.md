@@ -36,15 +36,14 @@ cargo build --release -p sigmacatch --no-default-features --features auditd,buil
 #   back to the tail locally; on CI the empty placeholder is a hard build error, never a fallback)
 cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,ebpf
 
-# Lint (separate flavours — sysmon and ebpf are never merged into a single build)
+# Lint (separate variants — sysmon and ebpf are never merged into a single build)
 cargo clippy -p sigmacatch --no-default-features --features auditd,builtin,sysmon -- -W warnings
 cargo clippy -p sigmacatch --no-default-features --features auditd,builtin,ebpf -- -W warnings
 ```
 
-It runs, in parallel, the **auditd** collector when `/var/log/audit/audit.log` exists and the
-**builtin syslog** collectors (every existing file among central `/var/log/messages`,
-`/var/log/syslog`; authpriv `/var/log/secure`, `/var/log/auth.log`; cron `/var/log/cron`,
-`/var/log/cron.log`). Full specification of the collectors: [architecture.md](architecture.md).
+It runs, in parallel, the **auditd** collector (when `/var/log/audit/audit.log` exists) and the
+**builtin syslog** collectors (central, authpriv, cron — every existing file).
+Full specification of the collectors and paths: [architecture.md](architecture.md).
 
 The `winevt` feature (default) compiles as no-op stubs on Linux: toggling to a Linux
 build always uses `--no-default-features`.

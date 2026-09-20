@@ -5,7 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.0]
+## [0.6.1]
+
+### Added
+
+- Configurable working branch: `--branch` flag and `git.working_branch` config option control which git branch regression commits target (#89)
+- Configuration reference (FR + EN) in the docs: every `config.yaml` field, defaults, and validation rules
+
+### Changed
+
+- Restore the standalone Linux `regressiondata-check` release asset for direct download by CI workflows (#87)
+- README `Releases` section deduplicated against CHANGELOG (release process kept, version history centralized in CHANGELOG); version dates corrected
+- Documentation: factual/grammar drift corrected across FR/EN, cross-language links repaired; CLI/Workspace content deduped into docs
+- CI: anti-regression coverage gate added, and the coverage-gate flag corrected to `--fail-under-lines`
+- Broad test-coverage additions (runner pipeline loop, detection-engine error/HIR branches, repo plumbing + EVTX input, logging init); signing test key is now generated at runtime instead of a committed private key
+
+### Fixed
+
+- auditd regression data: per-record NDJSON fidelity preserved (#88)
+- Bare `check-filter` / `list-rules` invocations now run in human mode instead of printing help
+- Quality fixes: unwrap-free live interval, empty-alerts guard, unreachable invariant (Q2.1/Q2.4)
+
+## [0.6.0] - 2026-09-11
 
 ### Added
 
@@ -57,7 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `new_lenient` now returns failed rules programmatically for caller inspection
 - Added test coverage for `new_lenient` behavior
 
-## [0.5.3] - 2026-08-XX
+## [0.5.3] - 2026-09-02
 
 ### Added
 

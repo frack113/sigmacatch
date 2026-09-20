@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::config::{Config, parse_args};
+use crate::config::{CliArgs, Config, parse_args};
 use crate::detection::DetectionEngine;
 use crate::regression::{DataFormat, SigmahqRegression};
 use crate::repo::SigmaRepo;
@@ -163,8 +163,19 @@ pub async fn bootstrap_repo_regression(
 /// Run the sigmacatch pipeline with the given collector.
 pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
     let cli = parse_args();
+    run_with_cli(kind, cli, PathBuf::from("config.yaml")).await
+}
 
-    let config_path = PathBuf::from("config.yaml");
+/// Run the sigmacatch pipeline with an explicit parsed CLI and config path.
+///
+/// Split from [`run`] so tests and embedders can drive the shared pipeline
+/// loop (AD-6) without touching the process argv — the winevt live input, the
+/// one-shot `--evtx` input and the Linux collectors all reach this code.
+pub async fn run_with_cli<C: CollectorKind>(
+    kind: &C,
+    cli: CliArgs,
+    config_path: PathBuf,
+) -> Result<()> {
     let mut config = if cli.dry_run {
         // Dry-run never creates config.yaml and skips git validation — only the
         // `./sigma` rules need to load, so no on-disk state is required.
@@ -357,14 +368,6 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
         }
     );
 
-    let mut generate_interval = if kind.live_capture() {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
-        interval.tick().await; // skip immediate first tick
-        Some(interval)
-    } else {
-        None
-    };
-
     let mut branch_pushed = false;
     let max_runs = cli.max_runs;
     let mut runs_completed: u32 = 0;
@@ -380,6 +383,8 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
 
     if kind.live_capture() {
         // ── Live capture: generation at 30 s intervals ────────────────────
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        interval.tick().await; // skip immediate first tick
         let mut dropped_while_generating = 0u64;
         loop {
             tokio::select! {
@@ -405,7 +410,7 @@ pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
                         None => break, // channel closed (should not happen in live mode)
                     }
                 }
-                _ = generate_interval.as_mut().unwrap().tick() => {
+                _ = interval.tick() => {
                     let Some(taken) = pipeline_slot.take() else {
                         continue;
                     };
@@ -736,4 +741,243 @@ fn process_and_generate(mut pipeline: Pipeline) -> (Pipeline, Vec<(Uuid, Vec<Str
         "batch complete"
     );
     (pipeline, batches)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{EventProducer, ProducerError};
+    use async_trait::async_trait;
+    use tempfile::tempdir;
+
+    /// sigma/rules/linux/builtin/sshd/lnx_sshd_susp_ssh.yml (keyword list kept
+    /// verbatim; unused keywords trimmed to keep the fixture readable).
+    const SSHD_RULE: &str = r#"title: Suspicious OpenSSH Daemon Error
+id: e76b413a-83d0-4b94-8e4c-85db4a5b8bdc
+status: test
+description: Detects suspicious SSH / SSHD error messages that indicate a fatal or suspicious error that could be caused by exploiting attempts
+references:
+    - https://github.com/openssh/openssh-portable/blob/c483a5c0fb8e8b8915fad85c5f6113386a4341ca/ssherr.c
+author: Florian Roth (Nextron Systems)
+date: 2017-06-30
+tags:
+    - attack.initial-access
+    - attack.t1190
+logsource:
+    product: linux
+    service: sshd
+detection:
+    keywords:
+        - 'Corrupted MAC on input'
+        - 'bad client public DH value'
+    condition: keywords
+falsepositives:
+    - Unknown
+level: medium
+"#;
+
+    fn make_rule_dir() -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempdir().unwrap();
+        let sigma = tmp.path().join("sigma");
+        let rules_dir = sigma.join("rules");
+        std::fs::create_dir_all(&rules_dir).unwrap();
+        std::fs::write(rules_dir.join("rule.yml"), SSHD_RULE).unwrap();
+        (tmp, sigma)
+    }
+
+    struct DummyKind;
+
+    struct DummyProducer;
+
+    #[async_trait]
+    impl EventProducer for DummyProducer {
+        async fn run(
+            self: Box<Self>,
+            _tx: mpsc::Sender<Event>,
+            _stop: tokio::sync::watch::Receiver<bool>,
+        ) -> Result<(), ProducerError> {
+            Ok(())
+        }
+    }
+
+    impl CollectorKind for DummyKind {
+        fn name(&self) -> &'static str {
+            "dummy"
+        }
+        fn mode(&self) -> String {
+            "test".to_string()
+        }
+        fn channels(
+            &self,
+            _engine: &DetectionEngine,
+            _custom_map: &HashMap<String, String>,
+        ) -> Option<Vec<String>> {
+            Some(Vec::new())
+        }
+        fn build(&self, _channels: &[String]) -> Box<dyn EventProducer> {
+            Box::new(DummyProducer)
+        }
+    }
+
+    /// Defaults are the contract for the Windows (Evtx/live) and one-shot
+    /// (Evtx/one-shot) collectors: wrong values here silently corrupt the
+    /// contribution format or the final-flush exit code.
+    #[test]
+    fn collector_kind_defaults() {
+        let (_tmp, sigma) = make_rule_dir();
+        let rules = SigmahqRules::new_from_path(&sigma).unwrap();
+        let engine = DetectionEngine::new(&rules).unwrap();
+        let custom = HashMap::new();
+
+        let kind = DummyKind;
+        assert_eq!(kind.name(), "dummy");
+        assert_eq!(kind.mode(), "test");
+        assert_eq!(
+            kind.channels(&engine, &custom),
+            Some(Vec::<String>::new()),
+            "dummy channels resolve to nothing to collect"
+        );
+        assert_eq!(kind.regression_format(), DataFormat::Evtx);
+        assert!(kind.live_capture());
+        assert!(!kind.propagate_final_flush_error());
+    }
+
+    #[test]
+    fn upload_regression_empty_batches_is_noop() {
+        let mut pushed = false;
+        let status =
+            upload_regression(&SigmaRepo::new(), Vec::new(), &mut pushed, "br", &|| false).unwrap();
+        assert_eq!(status, PushStatus::CommittedOnly);
+        assert!(!pushed);
+    }
+
+    #[tokio::test]
+    async fn run_dry_validates_rules_without_writing() {
+        let (_tmp, sigma) = make_rule_dir();
+        let mut config = Config::default();
+        config.git.sigma_repo_path = sigma.display().to_string();
+        config.filter.product = "linux".to_string();
+
+        run_dry(&config).expect("linux sshd rule must pass dry-run");
+
+        let mut too_restrictive = Config::default();
+        too_restrictive.git.sigma_repo_path = sigma.display().to_string();
+        too_restrictive.filter.product = "windows".to_string();
+        assert!(
+            run_dry(&too_restrictive).is_err(),
+            "0 rules loaded after filtering must bail"
+        );
+    }
+
+    #[tokio::test]
+    async fn bootstrap_repo_regression_offline_resolves_branch() {
+        let (_tmp, sigma) = make_rule_dir();
+        std::fs::create_dir_all(sigma.join("regression_data")).unwrap();
+
+        let mut config = Config::default();
+        config.git.sigma_repo_path = sigma.display().to_string();
+        config.git.author = "runner-test".to_string();
+        config.git.email = "runner-test@example.com".to_string();
+        config.git.offline = Some(true);
+        config.git.working_branch = Some("sigmacatch/runner-test".to_string());
+
+        let (repo, branch, regression) = bootstrap_repo_regression(&config, &sigma)
+            .await
+            .expect("offline bootstrap");
+        assert_eq!(branch, "sigmacatch/runner-test");
+        assert!(regression.is_empty());
+        let _ = repo;
+    }
+
+    #[cfg(feature = "builtin")]
+    mod tests_sigma {
+        use super::*;
+        use crate::inputs::syslog;
+
+        const SSHD_LINE: &[u8] =
+            b"Aug 23 10:00:03 sigmacatch-linux sshd[123]: fatal: Corrupted MAC on input from 192.168.122.1";
+
+        /// Full cycle: syslog event → engine → process_and_generate writes the
+        /// regression batch and retires the rule from the returned pipeline.
+        #[tokio::test]
+        async fn process_and_generate_writes_batch_for_matching_event() {
+            let (_tmp, sigma) = make_rule_dir();
+            std::fs::create_dir_all(sigma.join("regression_data")).unwrap();
+
+            let rules = SigmahqRules::new_from_path(&sigma).unwrap();
+            assert_eq!(rules.len(), 1);
+
+            let mut engine = DetectionEngine::new(&rules).unwrap();
+            let record = syslog::parse_line(SSHD_LINE).expect("fixture line must parse");
+            let event = syslog::record_to_event(SSHD_LINE, &record);
+            assert_eq!(event.event_json["service"], "sshd");
+            engine.put_events(vec![event]);
+            engine.process_events();
+            assert_eq!(
+                engine.stats().events_processed,
+                1,
+                "the fixture line must be processed by the engine"
+            );
+
+            let mut regression =
+                SigmahqRegression::new_from_path(&sigma.join("regression_data")).unwrap();
+            regression.set_format(DataFormat::Log);
+            regression.set_author("runner-test".to_string());
+
+            let pipeline = Pipeline {
+                engine,
+                rules,
+                regression,
+            };
+            let (returned, batches) = process_and_generate(pipeline);
+
+            assert_eq!(batches.len(), 1, "one matching rule → one batch");
+            let (rule_id, files) = &batches[0];
+            assert_eq!(files.len(), 3, "data file + info.yml + rule yaml");
+            for f in files {
+                assert!(
+                    sigma.join(f).exists(),
+                    "generated file {} must exist on disk",
+                    f
+                );
+            }
+
+            assert!(
+                returned.rules.get_rule_path(rule_id).is_none(),
+                "rule must be retired from the returned pipeline"
+            );
+
+            let (_returned2, batches2) = process_and_generate(returned);
+            assert!(
+                batches2.is_empty(),
+                "no further alerts → no further batches (rule already captured)"
+            );
+        }
+
+        #[tokio::test]
+        async fn process_and_generate_without_alerts_returns_no_batches() {
+            let (_tmp, sigma) = make_rule_dir();
+            std::fs::create_dir_all(sigma.join("regression_data")).unwrap();
+
+            let rules = SigmahqRules::new_from_path(&sigma).unwrap();
+            let mut engine = DetectionEngine::new(&rules).unwrap();
+
+            let benign: &[u8] = b"Aug 23 10:00:03 sigmacatch-linux cron[999]: (root) CMD (run-parts /etc/cron.daily)";
+            let record = syslog::parse_line(benign).expect("benign line must parse");
+            let event = syslog::record_to_event(benign, &record);
+            engine.put_events(vec![event]);
+            engine.process_events();
+            assert!(engine.get_alerts().is_empty(), "benign line must not match");
+
+            let regression =
+                SigmahqRegression::new_from_path(&sigma.join("regression_data")).unwrap();
+            let pipeline = Pipeline {
+                engine,
+                rules,
+                regression,
+            };
+            let (_returned, batches) = process_and_generate(pipeline);
+            assert!(batches.is_empty());
+        }
+    }
 }
