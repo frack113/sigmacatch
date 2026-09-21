@@ -332,7 +332,6 @@ impl DetectionEngine {
         lnx_field: &Pipeline,
     ) -> Result<Engine, DetectionError> {
         let mut engine = Engine::new();
-        engine.set_include_event(true);
 
         // Enable cross-rule Aho-Corasick prefilter (daachorse-index feature).
         // For rule sets > 5K rules with many shared substring patterns,
@@ -343,6 +342,11 @@ impl DetectionEngine {
         // (Contains, StartsWith, EndsWith) when the field value cannot possibly
         // match based on trigram extraction. ~1µs per field probe.
         engine.set_bloom_prefilter(true);
+
+        // Raise the bloom index budget: the rsigma-eval default (1 MB, shared
+        // across per-field filters) starts evicting useful filters on large
+        // rule sets. 16 MB keeps the full SigmaHQ catalogue protected.
+        engine.set_bloom_max_bytes(16 * 1024 * 1024);
 
         // Enable logsource pruning: extracts product/service/category from the
         // event JSON and skips rules whose logsource conflicts. Fails open —
