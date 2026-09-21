@@ -37,10 +37,23 @@ mod attack;
 // Note: init_from_sigma_path was removed; use SigmahqRules::new() for production,
 // SigmahqRules::new_from_path() for tests with custom directories.
 
+use sha1::{Digest, Sha1};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use uuid::Uuid;
+
+/// Lowercase hex encoding (no allocation surprises): parent of the sha1
+/// digests used by the rule-set fingerprint.
+fn to_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
+}
 
 /// Rule loading filters. All fields are optional — `None` means no filtering.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -326,6 +339,33 @@ impl SigmahqRules {
         let mut collection = SigmaCollection::new();
         collection.rules = self.rules.clone();
         collection
+    }
+
+    /// Stable, order-independent fingerprint of the loaded rule set.
+    ///
+    /// Computed from the serialized form of each rule, sorted before the final
+    /// hash, so it is invariant to `read_dir` traversal order and to which of
+    /// two identical-id sources wins the dedup, while changing with any rule
+    /// content. Used to key the HIR persistence cache.
+    pub fn fingerprint(&self) -> String {
+        let mut digests: Vec<String> = self
+            .rules
+            .iter()
+            .map(|rule| {
+                let json = serde_json::to_vec(rule).unwrap_or_default();
+                let mut hasher = Sha1::new();
+                hasher.update(&json);
+                to_hex(&hasher.finalize())
+            })
+            .collect();
+        digests.sort();
+        let mut hasher = Sha1::new();
+        hasher.update(b"sigmacatch-ruleset-v1");
+        for digest in &digests {
+            hasher.update(digest.as_bytes());
+            hasher.update(b"\n");
+        }
+        to_hex(&hasher.finalize())
     }
 }
 
@@ -797,5 +837,53 @@ detection:
         };
         config.normalize();
         assert_eq!(config.author, None);
+    }
+
+    #[test]
+    fn test_fingerprint_stable_across_file_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sigma = tmp.path().join("sigma");
+        let rules_dir = sigma.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        write_rules(&rules_dir, &[("win.yml", MINIMAL_RULE)]);
+
+        let first = SigmahqRules::new_from_path(&sigma).unwrap();
+
+        // Same rule content under a different file name: fingerprint identical.
+        let sigma2 = tmp.path().join("sigma2");
+        let rules2 = sigma2.join("rules");
+        fs::create_dir_all(&rules2).unwrap();
+        write_rules(&rules2, &[("renamed.yml", MINIMAL_RULE)]);
+        let second = SigmahqRules::new_from_path(&sigma2).unwrap();
+
+        assert_eq!(first.fingerprint(), second.fingerprint());
+
+        // Changing rule content rotates the fingerprint.
+        let changed = MINIMAL_RULE.replace("level: critical", "level: low");
+        write_rules(&rules2, &[("renamed.yml", &changed)]);
+        let third = SigmahqRules::new_from_path(&sigma2).unwrap();
+        assert_ne!(first.fingerprint(), third.fingerprint());
+    }
+
+    #[test]
+    fn test_fingerprint_order_independent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sigma = tmp.path().join("sigma");
+        let rules_dir = sigma.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+
+        let other = MINIMAL_RULE
+            .replace(
+                "id: 11111111-1111-1111-1111-111111111111",
+                "id: 22222222-2222-2222-2222-222222222222",
+            )
+            .replace("level: critical", "level: low");
+        write_rules(&rules_dir, &[("a.yml", MINIMAL_RULE), ("b.yml", &other)]);
+        let forward = SigmahqRules::new_from_path(&sigma).unwrap().fingerprint();
+
+        write_rules(&rules_dir, &[("b.yml", &other), ("a.yml", MINIMAL_RULE)]);
+        let backward = SigmahqRules::new_from_path(&sigma).unwrap().fingerprint();
+
+        assert_eq!(forward, backward);
     }
 }
