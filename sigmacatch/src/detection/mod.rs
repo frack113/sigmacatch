@@ -42,11 +42,23 @@ use crate::types::{Alert, Event};
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::pipeline::{Pipeline, parse_pipeline};
 use rsigma_eval::{Engine, LogSourceExtractor};
+use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
+
+/// Lowercase hex encoding for the sha1 digests used by the cache key.
+fn to_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
+}
 
 /// Windows logsource add_condition + change_logsource transformations.
 pub const WIN_LOGSOURCE_PIPELINE: &str = include_str!("./pipelines/1_win_logsource.yml");
@@ -61,6 +73,58 @@ pub const LNX_LOGSOURCE_PIPELINE: &str = include_str!("./pipelines/3_lnx_logsour
 pub const LNX_FIELD_PIPELINE: &str = include_str!("./pipelines/4_lnx_field_name.yml");
 
 mod channel_resolver;
+
+/// Version tag of the HIR cache file format. Bump whenever the cache key
+/// derivation or the on-disk layout changes.
+const HIR_CACHE_VERSION: &str = "sigmacatch-hir-cache-v1";
+
+/// Derive the cache key for a rule set.
+///
+/// Versioned tag + the four embedded pipelines (their content feeds the
+/// lowered HIR stored in the blob) + the rule-set fingerprint. rsigma-eval
+/// additionally rejects blobs whose schema version differs from the current
+/// build (`decode_rules`), so a toolchain upgrade invalidates the cache even
+/// if this key would still match.
+fn hir_cache_key(rules: &SigmahqRules) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(HIR_CACHE_VERSION.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(WIN_LOGSOURCE_PIPELINE.as_bytes());
+    hasher.update(WIN_FIELD_PIPELINE.as_bytes());
+    hasher.update(LNX_LOGSOURCE_PIPELINE.as_bytes());
+    hasher.update(LNX_FIELD_PIPELINE.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(rules.fingerprint().as_bytes());
+    to_hex(&hasher.finalize())
+}
+
+/// Read a versioned HIR cache file: `key\n` + blob. Returns the blob when the
+/// file exists and its first line matches `key`, `None` otherwise.
+fn read_hir_cache(path: &Path, key: &str) -> Option<Vec<u8>> {
+    let bytes = std::fs::read(path).ok()?;
+    let newline = bytes.iter().position(|&b| b == b'\n')?;
+    if &bytes[..newline] != key.as_bytes() {
+        tracing::info!(
+            "HIR cache {} key mismatch (cached {}, expected {}) — recompiling",
+            path.display(),
+            std::str::from_utf8(&bytes[..newline]).unwrap_or("<non-utf8>"),
+            key
+        );
+        return None;
+    }
+    Some(bytes[newline + 1..].to_vec())
+}
+
+/// Write a versioned HIR cache file (`key\n` + blob), warning on failure.
+fn write_hir_cache(path: &Path, key: &str, blob: &[u8]) {
+    let mut data = Vec::with_capacity(key.len() + 1 + blob.len());
+    data.extend_from_slice(key.as_bytes());
+    data.push(b'\n');
+    data.extend_from_slice(blob);
+    if let Err(e) = std::fs::write(path, &data) {
+        tracing::warn!("Failed to write HIR cache to {}: {}", path.display(), e);
+    }
+}
 
 /// Sigma evaluation engine wrapper: compiled rule set + per-platform
 /// pipelines + a small FIFO of pending events and alerts.
@@ -149,6 +213,13 @@ impl DetectionEngine {
 
     /// Compile `rules` and load the embedded platform pipelines,
     /// with optional HIR cache path for persisting the compiled engine.
+    ///
+    /// When the cache file exists and its key matches the current rule set
+    /// (same pipelines + same rules fingerprint), the stored HIR blob is
+    /// loaded straight into the engine instead of re-lowering and
+    /// re-compiling each rule — the dominant startup cost on large rule sets.
+    /// A missing, outdated, or corrupt cache falls back to a full compile and
+    /// overwrites the file.
     pub fn new_with_hir_cache(
         rules: &SigmahqRules,
         hir_cache_path: Option<PathBuf>,
@@ -156,33 +227,54 @@ impl DetectionEngine {
         let (mut engine, win_logsource, win_field, lnx_logsource, lnx_field) =
             Self::create_engine_with_pipelines()?;
 
-        // add_rules (&[SigmaRule]) instead of add_collection avoids cloning the
-        // whole Vec; indexes are rebuilt once at the end.
-        let errors = engine.add_rules(rules.rules());
-        if !errors.is_empty() {
-            for (idx, err) in &errors {
-                tracing::error!("Rule at index {idx} failed to compile: {err}");
+        // Warm start: the loaded blob must be applied to a throwaway engine so
+        // a mid-blob failure cannot leave the main engine half-populated (which
+        // would then duplicate rules in the cold path below).
+        let mut loaded = false;
+        if let Some(ref cache_path) = hir_cache_path
+            && let Some(blob) = read_hir_cache(cache_path, &hir_cache_key(rules))
+        {
+            let mut cached =
+                Self::create_engine(&win_logsource, &win_field, &lnx_logsource, &lnx_field)?;
+            match cached.load_hir(&blob) {
+                Ok(()) => {
+                    engine = cached;
+                    loaded = true;
+                    tracing::info!("Loaded HIR cache from {}", cache_path.display());
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "HIR cache {} rejected by engine ({e}) — recompiling",
+                        cache_path.display()
+                    );
+                }
             }
-            return Err(DetectionError::AddRules {
-                count: errors.len(),
-                total: rules.len(),
-            });
+        }
+
+        if !loaded {
+            // add_rules (&[SigmaRule]) instead of add_collection avoids cloning
+            // the whole Vec; indexes are rebuilt once at the end.
+            let errors = engine.add_rules(rules.rules());
+            if !errors.is_empty() {
+                for (idx, err) in &errors {
+                    tracing::error!("Rule at index {idx} failed to compile: {err}");
+                }
+                return Err(DetectionError::AddRules {
+                    count: errors.len(),
+                    total: rules.len(),
+                });
+            }
+
+            // Persist HIR cache after first compilation.
+            if let Some(ref cache_path) = hir_cache_path
+                && let Ok(hir) = engine.save_hir()
+            {
+                write_hir_cache(cache_path, &hir_cache_key(rules), &hir);
+            }
         }
 
         let rule_paths = Arc::new(rules.rule_paths().clone());
         let rule_id_map = Self::build_rule_id_map(&rule_paths);
-
-        // Persist HIR cache after first compilation.
-        if let Some(ref cache_path) = hir_cache_path
-            && let Ok(hir) = engine.save_hir()
-            && let Err(e) = std::fs::write(cache_path, &hir)
-        {
-            tracing::warn!(
-                "Failed to write HIR cache to {}: {}",
-                cache_path.display(),
-                e
-            );
-        }
 
         Ok(Self {
             engine,
@@ -269,16 +361,11 @@ impl DetectionEngine {
         self.rule_id_map = Self::build_rule_id_map(&rule_paths);
         self.rule_paths = Arc::new(rule_paths);
 
-        // Persist HIR cache after re-compilation.
+        // Persist HIR cache after re-compilation, keyed by the fresh rule set.
         if let Some(ref cache_path) = self.hir_cache_path
             && let Ok(hir) = self.engine.save_hir()
-            && let Err(e) = std::fs::write(cache_path, &hir)
         {
-            tracing::warn!(
-                "Failed to write HIR cache to {}: {}",
-                cache_path.display(),
-                e
-            );
+            write_hir_cache(cache_path, &hir_cache_key(rules), &hir);
         }
         Ok(())
     }
@@ -332,8 +419,24 @@ impl DetectionEngine {
         lnx_field: &Pipeline,
     ) -> Result<Engine, DetectionError> {
         let mut engine = Engine::new();
-        engine.set_include_event(true);
 
+        // Toggles that are NOT serialized by save_hir: applying them on the
+        // warm path matters, because load_hir → rebuild_index reads them.
+        Self::configure_optimizations(&mut engine);
+
+        engine.add_pipeline(win_logsource.clone());
+        engine.add_pipeline(win_field.clone());
+        engine.add_pipeline(lnx_logsource.clone());
+        engine.add_pipeline(lnx_field.clone());
+
+        Ok(engine)
+    }
+
+    /// Apply the performance-critical engine toggles. Must run before
+    /// `load_hir` on the warm path, since `rebuild_index` builds the bloom
+    /// index with `bloom_max_bytes` and gates the cross-rule AC index on
+    /// `cross_rule_ac_enabled`.
+    fn configure_optimizations(engine: &mut Engine) {
         // Enable cross-rule Aho-Corasick prefilter (daachorse-index feature).
         // For rule sets > 5K rules with many shared substring patterns,
         // this dramatically reduces the number of rules evaluated per event.
@@ -344,17 +447,15 @@ impl DetectionEngine {
         // match based on trigram extraction. ~1µs per field probe.
         engine.set_bloom_prefilter(true);
 
+        // Raise the bloom index budget: the rsigma-eval default (1 MB, shared
+        // across per-field filters) starts evicting useful filters on large
+        // rule sets. 16 MB keeps the full SigmaHQ catalogue protected.
+        engine.set_bloom_max_bytes(16 * 1024 * 1024);
+
         // Enable logsource pruning: extracts product/service/category from the
         // event JSON and skips rules whose logsource conflicts. Fails open —
         // an event without logsource fields evaluates all rules.
         engine.set_logsource_extractor(Some(LogSourceExtractor::new()));
-
-        engine.add_pipeline(win_logsource.clone());
-        engine.add_pipeline(win_field.clone());
-        engine.add_pipeline(lnx_logsource.clone());
-        engine.add_pipeline(lnx_field.clone());
-
-        Ok(engine)
     }
 
     /// Number of compiled rules currently loaded.
@@ -525,6 +626,19 @@ logsource:
 detection:
   selection:
     event_id: 1
+  condition: selection
+"#;
+
+    const SECOND_RULE_YAML: &str = r#"title: Second Rule
+id: 22222222-2222-2222-2222-222222222222
+status: stable
+description: A second test rule
+author: Test Author
+logsource:
+  product: windows
+detection:
+  selection:
+    event_id: 2
   condition: selection
 "#;
 
@@ -1415,6 +1529,95 @@ detection:
         let rules = rules_from(&[("good.yml", MINIMAL_RULE_YAML)]);
         let engine = DetectionEngine::new_with_hir_cache(&rules, Some(cache_dir)).unwrap();
         assert_eq!(engine.rule_count(), 1);
+    }
+
+    #[test]
+    fn test_new_with_hir_cache_warm_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("rules.hir");
+        let rules = rules_from(&[("good.yml", MINIMAL_RULE_YAML)]);
+
+        // Cold start: compiles and persists a versioned cache file.
+        let cold = DetectionEngine::new_with_hir_cache(&rules, Some(cache.clone())).unwrap();
+        assert_eq!(cold.rule_count(), 1);
+        let cached_bytes = std::fs::read(&cache).unwrap();
+        assert!(
+            cached_bytes.contains(&b'\n'),
+            "cache file must be key + newline + blob"
+        );
+
+        // Warm start: same ruleset + pipeline key → loads the blob, does not
+        // rewrite the file, and still matches events like a fresh engine.
+        let warm = DetectionEngine::new_with_hir_cache(&rules, Some(cache.clone())).unwrap();
+        assert_eq!(warm.rule_count(), 1);
+        assert_eq!(
+            std::fs::read(&cache).unwrap(),
+            cached_bytes,
+            "warm start must not rewrite the cache file"
+        );
+
+        let event_json = serde_json::json!({"event_id": 1});
+        let mut cold = cold;
+        let mut warm = warm;
+        cold.put_events(vec![Event::new(event_json.clone(), event_json, Vec::new())]);
+        let warm_json = serde_json::json!({"event_id": 1});
+        warm.put_events(vec![Event::new(warm_json.clone(), warm_json, Vec::new())]);
+        cold.process_events();
+        warm.process_events();
+        assert_eq!(cold.get_alerts().len(), warm.get_alerts().len());
+    }
+
+    #[test]
+    fn test_new_with_hir_cache_invalidates_on_rule_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("rules.hir");
+        let rules = rules_from(&[("good.yml", MINIMAL_RULE_YAML)]);
+        DetectionEngine::new_with_hir_cache(&rules, Some(cache.clone())).unwrap();
+        let cached_bytes = std::fs::read(&cache).unwrap();
+
+        // Different rule set → key mismatch → recompiles and overwrites.
+        let more = rules_from(&[
+            ("good.yml", MINIMAL_RULE_YAML),
+            ("other.yml", SECOND_RULE_YAML),
+        ]);
+        let engine = DetectionEngine::new_with_hir_cache(&more, Some(cache.clone())).unwrap();
+        assert_eq!(engine.rule_count(), 2);
+        assert_ne!(
+            std::fs::read(&cache).unwrap(),
+            cached_bytes,
+            "rule change must rewrite the cache file"
+        );
+    }
+
+    #[test]
+    fn test_warm_start_after_reload_rewrite() {
+        // Mirrors the live flow: cold compile of a rule set, then a mid-run
+        // reload (rules retired) rewrites the cache keyed on the remaining
+        // set, then a fresh process re-parses just those rules and must
+        // cold-load from the rewritten key.
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("rules.hir");
+        let b_id = Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap();
+        let mut remaining =
+            rules_from(&[("a.yml", MINIMAL_RULE_YAML), ("b.yml", SECOND_RULE_YAML)]);
+
+        let mut engine =
+            DetectionEngine::new_with_hir_cache(&remaining, Some(cache.clone())).unwrap();
+        assert_eq!(engine.rule_count(), 2);
+
+        remaining.remove_id(&b_id);
+        engine.reload_rules(&remaining).unwrap();
+        let reload_bytes = std::fs::read(&cache).unwrap();
+        drop(engine);
+
+        let fresh = rules_from(&[("a.yml", MINIMAL_RULE_YAML)]);
+        let engine2 = DetectionEngine::new_with_hir_cache(&fresh, Some(cache.clone())).unwrap();
+        assert_eq!(engine2.rule_count(), 1);
+        assert_eq!(
+            std::fs::read(&cache).unwrap(),
+            reload_bytes,
+            "re-parse of the remaining set must warm-start from the reload-rewritten key"
+        );
     }
 
     #[test]

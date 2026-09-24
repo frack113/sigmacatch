@@ -288,7 +288,8 @@ pub async fn run_with_cli<C: CollectorKind>(
 
     let custom_map =
         crate::config::load_custom_channel_mapping(PathBuf::from("custom_channels.yaml").as_path());
-    let engine = DetectionEngine::new(&rules)?;
+    let engine =
+        DetectionEngine::new_with_hir_cache(&rules, config.hir_cache.as_ref().map(PathBuf::from))?;
     let cycle_channels = match kind.channels(&engine, &custom_map) {
         Some(channels) => {
             if channels.is_empty() {

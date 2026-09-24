@@ -37,10 +37,23 @@ mod attack;
 // Note: init_from_sigma_path was removed; use SigmahqRules::new() for production,
 // SigmahqRules::new_from_path() for tests with custom directories.
 
+use sha1::{Digest, Sha1};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use uuid::Uuid;
+
+/// Lowercase hex encoding (no allocation surprises): parent of the sha1
+/// digests used by the rule-set fingerprint.
+fn to_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
+}
 
 /// Rule loading filters. All fields are optional — `None` means no filtering.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -326,6 +339,93 @@ impl SigmahqRules {
         let mut collection = SigmaCollection::new();
         collection.rules = self.rules.clone();
         collection
+    }
+
+    /// Canonical JSON serialization of any rule (sub)value.
+    ///
+    /// The rule's named detection selections and custom attributes are
+    /// `HashMap`s whose iteration order is randomized per process, and
+    /// `serde_json` here is built with the `preserve_order` feature (its `Map`
+    /// is `IndexMap`-backed), so even `to_value(...)` keeps that order. To get
+    /// a digest that is reproducible across processes, every object's entries
+    /// are recursively sorted by key before serialization.
+    fn canonical_json_bytes(value: &impl serde::Serialize) -> Vec<u8> {
+        let value = serde_json::to_value(value).unwrap_or_default();
+        serde_json::to_vec(&Self::sort_json_keys(value)).unwrap_or_default()
+    }
+
+    /// Recursively sort object entries by key for stable serialization.
+    fn sort_json_keys(value: serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(map) => {
+                let mut entries: Vec<(String, serde_json::Value)> = map.into_iter().collect();
+                entries.sort_by(|a, b| a.0.cmp(&b.0));
+                serde_json::Value::Object(
+                    entries
+                        .into_iter()
+                        .map(|(key, value)| (key, Self::sort_json_keys(value)))
+                        .collect(),
+                )
+            }
+            serde_json::Value::Array(items) => {
+                serde_json::Value::Array(items.into_iter().map(Self::sort_json_keys).collect())
+            }
+            other => other,
+        }
+    }
+
+    /// Stable, order-independent fingerprint of the loaded rule set.
+    ///
+    /// Computed from the serialized form of each rule, sorted before the final
+    /// hash, so it is invariant to `read_dir` traversal order and to which of
+    /// two identical-id sources wins the dedup, while changing with any rule
+    /// content. Used to key the HIR persistence cache.
+    ///
+    /// The collector annotates each matched rule's YAML on disk with a
+    /// `regression_tests_path:` key (see `update_regression_tests_path`). That
+    /// annotation is surfaced as a rule `custom_attribute` and serialized, but
+    /// it never affects detection — so it is stripped here to keep the
+    /// fingerprint stable across runs that only mutated that annotation.
+    ///
+    /// Both `custom_attributes` and the rule's named `detection` selections are
+    /// `HashMap`s, whose iteration order is randomized per process (and
+    /// preserved by `serde_json`'s `preserve_order` `Map`). Every rule is
+    /// therefore serialized with object keys recursively sorted
+    /// (`canonical_json_bytes`), and surviving custom attributes are hashed
+    /// separately in key-sorted order, so identical rule content always yields
+    /// the same fingerprint no matter which process computes it.
+    pub fn fingerprint(&self) -> String {
+        let mut digests: Vec<String> = self
+            .rules
+            .iter()
+            .map(|rule| {
+                let mut sanitized = rule.clone();
+                sanitized.custom_attributes.clear();
+                let mut hasher = Sha1::new();
+                hasher.update(Self::canonical_json_bytes(&sanitized));
+                let mut attrs: Vec<(String, Vec<u8>)> = rule
+                    .custom_attributes
+                    .iter()
+                    .filter(|(k, _)| k.as_str() != "regression_tests_path")
+                    .map(|(k, v)| (k.clone(), Self::canonical_json_bytes(v)))
+                    .collect();
+                attrs.sort_by(|a, b| a.0.cmp(&b.0));
+                for (key, value) in attrs {
+                    hasher.update(key.as_bytes());
+                    hasher.update([0]);
+                    hasher.update(&value);
+                }
+                to_hex(&hasher.finalize())
+            })
+            .collect();
+        digests.sort();
+        let mut hasher = Sha1::new();
+        hasher.update(b"sigmacatch-ruleset-v1");
+        for digest in &digests {
+            hasher.update(digest.as_bytes());
+            hasher.update(b"\n");
+        }
+        to_hex(&hasher.finalize())
     }
 }
 
@@ -797,5 +897,106 @@ detection:
         };
         config.normalize();
         assert_eq!(config.author, None);
+    }
+
+    #[test]
+    fn test_fingerprint_stable_across_file_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sigma = tmp.path().join("sigma");
+        let rules_dir = sigma.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        write_rules(&rules_dir, &[("win.yml", MINIMAL_RULE)]);
+
+        let first = SigmahqRules::new_from_path(&sigma).unwrap();
+
+        // Same rule content under a different file name: fingerprint identical.
+        let sigma2 = tmp.path().join("sigma2");
+        let rules2 = sigma2.join("rules");
+        fs::create_dir_all(&rules2).unwrap();
+        write_rules(&rules2, &[("renamed.yml", MINIMAL_RULE)]);
+        let second = SigmahqRules::new_from_path(&sigma2).unwrap();
+
+        assert_eq!(first.fingerprint(), second.fingerprint());
+
+        // Changing rule content rotates the fingerprint.
+        let changed = MINIMAL_RULE.replace("level: critical", "level: low");
+        write_rules(&rules2, &[("renamed.yml", &changed)]);
+        let third = SigmahqRules::new_from_path(&sigma2).unwrap();
+        assert_ne!(first.fingerprint(), third.fingerprint());
+    }
+
+    #[test]
+    fn test_fingerprint_ignores_regression_tests_path_annotation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sigma = tmp.path().join("sigma");
+        let rules_dir = sigma.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        write_rules(&rules_dir, &[("win.yml", MINIMAL_RULE)]);
+        let before = SigmahqRules::new_from_path(&sigma).unwrap().fingerprint();
+
+        // The collector appends a non-standard `regression_tests_path:` line to
+        // matched rules on disk. It is surfaced as a rule custom_attribute and
+        // serialized, but must not rotate the fingerprint.
+        let annotated =
+            format!("{MINIMAL_RULE}regression_tests_path: regression_data/tests/info.yml\n");
+        write_rules(&rules_dir, &[("win.yml", &annotated)]);
+        let after = SigmahqRules::new_from_path(&sigma).unwrap().fingerprint();
+
+        assert_eq!(
+            before, after,
+            "the regression_tests_path annotation must not change the fingerprint"
+        );
+
+        // Any detection-relevant change still rotates it.
+        let changed = annotated.replace("level: critical", "level: low");
+        write_rules(&rules_dir, &[("win.yml", &changed)]);
+        let mutated = SigmahqRules::new_from_path(&sigma).unwrap().fingerprint();
+        assert_ne!(
+            before, mutated,
+            "detection content change must rotate the fingerprint"
+        );
+    }
+
+    #[test]
+    fn test_fingerprint_stable_across_parses_of_annotated_rule() {
+        // HIR cache correctness relies on the fingerprint being reproducible
+        // across processes. custom_attribute serialization must therefore not
+        // depend on HashMap iteration order (random per instance/process).
+        let tmp = tempfile::tempdir().unwrap();
+        let sigma = tmp.path().join("sigma");
+        let rules_dir = sigma.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        let annotated =
+            format!("{MINIMAL_RULE}regression_tests_path: regression_data/tests/info.yml\n");
+        write_rules(&rules_dir, &[("win.yml", &annotated)]);
+
+        let first = SigmahqRules::new_from_path(&sigma).unwrap().fingerprint();
+        let second = SigmahqRules::new_from_path(&sigma).unwrap().fingerprint();
+        assert_eq!(
+            first, second,
+            "fingerprint must be deterministic for identical rule content"
+        );
+    }
+
+    #[test]
+    fn test_fingerprint_order_independent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sigma = tmp.path().join("sigma");
+        let rules_dir = sigma.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+
+        let other = MINIMAL_RULE
+            .replace(
+                "id: 11111111-1111-1111-1111-111111111111",
+                "id: 22222222-2222-2222-2222-222222222222",
+            )
+            .replace("level: critical", "level: low");
+        write_rules(&rules_dir, &[("a.yml", MINIMAL_RULE), ("b.yml", &other)]);
+        let forward = SigmahqRules::new_from_path(&sigma).unwrap().fingerprint();
+
+        write_rules(&rules_dir, &[("b.yml", &other), ("a.yml", MINIMAL_RULE)]);
+        let backward = SigmahqRules::new_from_path(&sigma).unwrap().fingerprint();
+
+        assert_eq!(forward, backward);
     }
 }

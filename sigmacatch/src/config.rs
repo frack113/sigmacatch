@@ -229,6 +229,11 @@ pub struct Config {
     /// against the working directory. Default: `.sigmacatch.stop`.
     #[serde(default = "default_stop_file")]
     pub stop_file: String,
+    /// Optional path to a persistent HIR cache file. When set, the compiled
+    /// detection engine is persisted after each rule change and warm-started
+    /// on the next run, skipping rule recompilation. `None` compiles every run.
+    #[serde(default)]
+    pub hir_cache: Option<String>,
 }
 
 impl Default for Config {
@@ -239,6 +244,7 @@ impl Default for Config {
             git: GitConfig::default(),
             regression: RegressionConfig::default(),
             stop_file: default_stop_file(),
+            hir_cache: None,
         }
     }
 }
@@ -295,6 +301,9 @@ impl Config {
         }
         if cli.contrib {
             config.git.contrib = Some(true);
+        }
+        if let Some(cache) = &cli.hir_cache {
+            config.hir_cache = Some(cache.to_string_lossy().to_string());
         }
         config.normalize_git();
         config.validate()?;
@@ -570,6 +579,9 @@ pub struct CliArgs {
     /// `--branch <NAME>`: override the working branch name for this run
     /// (empty → fall back to the default `sigmacatch/<YYYYMMDD>`).
     pub branch: Option<String>,
+    /// `--hir-cache <PATH>`: persistent HIR cache file to warm-start the
+    /// detection engine on the next run (skips rule recompilation).
+    pub hir_cache: Option<PathBuf>,
 }
 
 const HELP: &str = "\
@@ -592,6 +604,8 @@ OPTIONS:
     --author <NAME>           Override GitHub username from config.yaml
     --evtx <PATH>             Directory of EVTX files to process (one-shot evtx input)
     --branch <NAME>           Working branch name (empty = sigmacatch/<today's date>)
+    --hir-cache <PATH>        Persistent HIR cache file (warm-start: skip rule
+                              recompilation on next run; None = compile every run)
 ";
 
 /// Parse CLI arguments from environment.
@@ -617,6 +631,7 @@ fn parse_args_from(args: &[String]) -> CliArgs {
     let mut dry_run = false;
     let mut evtx_path: Option<PathBuf> = None;
     let mut branch = None;
+    let mut hir_cache: Option<PathBuf> = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -672,6 +687,16 @@ fn parse_args_from(args: &[String]) -> CliArgs {
                     }
                 }
             }
+            "--hir-cache" => {
+                i += 1;
+                match args.get(i) {
+                    Some(v) if !v.starts_with('-') => hir_cache = Some(PathBuf::from(v)),
+                    _ => {
+                        eprintln!("Error: --hir-cache requires a value");
+                        std::process::exit(1);
+                    }
+                }
+            }
             unknown => {
                 eprintln!("Error: unknown flag `{}`", unknown);
                 std::process::exit(1);
@@ -689,6 +714,7 @@ fn parse_args_from(args: &[String]) -> CliArgs {
         dry_run,
         evtx_path,
         branch,
+        hir_cache,
     }
 }
 
