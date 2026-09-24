@@ -104,6 +104,12 @@ fn read_hir_cache(path: &Path, key: &str) -> Option<Vec<u8>> {
     let bytes = std::fs::read(path).ok()?;
     let newline = bytes.iter().position(|&b| b == b'\n')?;
     if &bytes[..newline] != key.as_bytes() {
+        tracing::info!(
+            "HIR cache {} key mismatch (cached {}, expected {}) — recompiling",
+            path.display(),
+            std::str::from_utf8(&bytes[..newline]).unwrap_or("<non-utf8>"),
+            key
+        );
         return None;
     }
     Some(bytes[newline + 1..].to_vec())
@@ -230,10 +236,18 @@ impl DetectionEngine {
         {
             let mut cached =
                 Self::create_engine(&win_logsource, &win_field, &lnx_logsource, &lnx_field)?;
-            if cached.load_hir(&blob).is_ok() {
-                engine = cached;
-                loaded = true;
-                tracing::info!("Loaded HIR cache from {}", cache_path.display());
+            match cached.load_hir(&blob) {
+                Ok(()) => {
+                    engine = cached;
+                    loaded = true;
+                    tracing::info!("Loaded HIR cache from {}", cache_path.display());
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "HIR cache {} rejected by engine ({e}) — recompiling",
+                        cache_path.display()
+                    );
+                }
             }
         }
 
@@ -1528,7 +1542,7 @@ detection:
         assert_eq!(cold.rule_count(), 1);
         let cached_bytes = std::fs::read(&cache).unwrap();
         assert!(
-            cached_bytes.iter().any(|&b| b == b'\n'),
+            cached_bytes.contains(&b'\n'),
             "cache file must be key + newline + blob"
         );
 
@@ -1572,6 +1586,37 @@ detection:
             std::fs::read(&cache).unwrap(),
             cached_bytes,
             "rule change must rewrite the cache file"
+        );
+    }
+
+    #[test]
+    fn test_warm_start_after_reload_rewrite() {
+        // Mirrors the live flow: cold compile of a rule set, then a mid-run
+        // reload (rules retired) rewrites the cache keyed on the remaining
+        // set, then a fresh process re-parses just those rules and must
+        // cold-load from the rewritten key.
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("rules.hir");
+        let b_id = Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap();
+        let mut remaining =
+            rules_from(&[("a.yml", MINIMAL_RULE_YAML), ("b.yml", SECOND_RULE_YAML)]);
+
+        let mut engine =
+            DetectionEngine::new_with_hir_cache(&remaining, Some(cache.clone())).unwrap();
+        assert_eq!(engine.rule_count(), 2);
+
+        remaining.remove_id(&b_id);
+        engine.reload_rules(&remaining).unwrap();
+        let reload_bytes = std::fs::read(&cache).unwrap();
+        drop(engine);
+
+        let fresh = rules_from(&[("a.yml", MINIMAL_RULE_YAML)]);
+        let engine2 = DetectionEngine::new_with_hir_cache(&fresh, Some(cache.clone())).unwrap();
+        assert_eq!(engine2.rule_count(), 1);
+        assert_eq!(
+            std::fs::read(&cache).unwrap(),
+            reload_bytes,
+            "re-parse of the remaining set must warm-start from the reload-rewritten key"
         );
     }
 
