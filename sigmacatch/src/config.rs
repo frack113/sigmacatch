@@ -86,6 +86,10 @@ pub struct GitConfig {
     /// Default: true (minimal disk I/O). Set to false for full worktree checkout.
     #[serde(default = "default_sparse_checkout")]
     pub sparse_checkout: bool,
+    /// Use partial clone with blobless filter (--filter=blob:none) for initial clone.
+    /// Default: false (uses shallow clone). Set to true to enable partial clone.
+    #[serde(default)]
+    pub partial_clone: bool,
     /// Overall clone timeout in seconds.
     #[serde(default = "default_clone_timeout")]
     pub clone_timeout_secs: u64,
@@ -132,6 +136,10 @@ fn default_max_retries() -> u32 {
     3
 }
 
+fn default_partial_clone() -> bool {
+    false
+}
+
 impl GitConfig {
     /// Returns true if offline mode is enabled (all git operations skipped).
     pub fn is_offline(&self) -> bool {
@@ -164,6 +172,7 @@ impl Default for GitConfig {
             working_branch: None,
             shallow_clone: default_shallow_clone(),
             sparse_checkout: default_sparse_checkout(),
+            partial_clone: default_partial_clone(),
             clone_timeout_secs: default_clone_timeout(),
             fetch_timeout_secs: default_fetch_timeout(),
             http_timeout_secs: default_http_timeout(),

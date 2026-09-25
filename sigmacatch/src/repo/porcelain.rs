@@ -50,6 +50,23 @@ pub(crate) fn git_clone_shallow(
     crate::repo::plumbing::clone_repo_shallow(&http_client, url, dest, sparse_checkout)
 }
 
+/// Clone a repository using token auth with partial clone (--filter=blob:none --depth=1).
+/// Uses git CLI for the initial clone since grit-lib doesn't yet support --filter.
+pub(crate) fn git_clone_partial(
+    url: &str,
+    dest: &Path,
+    token: Option<&str>,
+    sparse_checkout: bool,
+    http_timeout_secs: u64,
+) -> Result<()> {
+    let http_client = AuthHttpClient::with_timeouts(
+        token.map(|s| zeroize::Zeroizing::new(s.to_string())),
+        http_timeout_secs,
+        30, // connect timeout
+    )?;
+    crate::repo::plumbing::clone_repo_partial(&http_client, url, dest, sparse_checkout)
+}
+
 /// Clone a repository using SSH transport (full history).
 pub(crate) fn git_clone_ssh(url: &str, dest: &Path, ssh_key_path: Option<&str>) -> Result<()> {
     let git_dir = dest.join(".git");

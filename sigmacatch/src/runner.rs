@@ -132,6 +132,7 @@ pub async fn bootstrap_repo_regression(
     sigma_repo.set_clone_optimizations(
         config.git.shallow_clone,
         config.git.sparse_checkout,
+        config.git.partial_clone,
         config.git.clone_timeout_secs,
         config.git.fetch_timeout_secs,
         config.git.http_timeout_secs,

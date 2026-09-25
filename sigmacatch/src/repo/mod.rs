@@ -45,8 +45,8 @@ use uuid::Uuid;
 
 use crate::repo::branch::{create_branch, switch_head};
 use crate::repo::porcelain::{
-    git_add, git_clone, git_clone_shallow, git_clone_ssh, git_clone_ssh_shallow, git_commit,
-    git_pull, git_pull_ssh, git_unshallow, git_unshallow_ssh,
+    git_add, git_clone, git_clone_partial, git_clone_shallow, git_clone_ssh, git_clone_ssh_shallow,
+    git_commit, git_pull, git_pull_ssh, git_unshallow, git_unshallow_ssh,
 };
 pub use crate::repo::transport::GitTransport;
 use crate::repo::transport::{AuthHttpClient, https_to_ssh_url, sanitize_url};
@@ -133,6 +133,7 @@ pub struct SigmaRepo {
     // Clone/fetch optimization settings
     shallow_clone: bool,
     sparse_checkout: bool,
+    partial_clone: bool,
     // Timeout and retry settings
     clone_timeout_secs: u64,
     fetch_timeout_secs: u64,
@@ -159,6 +160,7 @@ impl SigmaRepo {
             contrib: false,
             shallow_clone: true,
             sparse_checkout: true,
+            partial_clone: false,
             clone_timeout_secs: 600,
             fetch_timeout_secs: 300,
             http_timeout_secs: 120,
@@ -216,14 +218,17 @@ impl SigmaRepo {
     /// Configure clone optimization settings.
     /// - `shallow_clone`: use depth=1 for initial clone, unshallow before push
     /// - `sparse_checkout`: use cone-mode sparse checkout (only rules/, rules-emerging-threats/, regression_data/)
+    /// - `partial_clone`: use blobless filter (--filter=blob:none) for initial clone
     /// - `clone_timeout_secs`: overall clone timeout in seconds
     /// - `fetch_timeout_secs`: fetch/pull timeout in seconds
     /// - `http_timeout_secs`: per-request HTTP timeout in seconds
     /// - `max_retries`: maximum retry attempts for transient failures
+    #[allow(clippy::too_many_arguments)]
     pub fn set_clone_optimizations(
         &mut self,
         shallow_clone: bool,
         sparse_checkout: bool,
+        partial_clone: bool,
         clone_timeout_secs: u64,
         fetch_timeout_secs: u64,
         http_timeout_secs: u64,
@@ -231,6 +236,7 @@ impl SigmaRepo {
     ) {
         self.shallow_clone = shallow_clone;
         self.sparse_checkout = sparse_checkout;
+        self.partial_clone = partial_clone;
         self.clone_timeout_secs = clone_timeout_secs;
         self.fetch_timeout_secs = fetch_timeout_secs;
         self.http_timeout_secs = http_timeout_secs;
@@ -321,7 +327,9 @@ impl SigmaRepo {
         // Retry repo_exists check a few times to handle filesystem race conditions
         // after external clean commands (e.g., rmdir on Windows).
         let repo_exists = (0..3).fold(false, |acc, _| {
-            if acc { return true; }
+            if acc {
+                return true;
+            }
             std::thread::sleep(Duration::from_millis(200));
             git_dir.exists()
         });
@@ -385,7 +393,10 @@ impl SigmaRepo {
                 }
             }
         } else {
-            info!("Fresh clone — skipping pull (shallow={}, sparse={})", self.shallow_clone, self.sparse_checkout);
+            info!(
+                "Fresh clone — skipping pull (shallow={}, sparse={})",
+                self.shallow_clone, self.sparse_checkout
+            );
             let clone_start = std::time::Instant::now();
             self.clone_repo().await?;
             info!("Clone completed in {:.2?}", clone_start.elapsed());
@@ -828,19 +839,29 @@ impl SigmaRepo {
             let ssh_key_path = self.ssh_key_path.clone();
             let shallow = self.shallow_clone;
             let sparse = self.sparse_checkout;
+            let partial = self.partial_clone;
             let http_timeout = self.http_timeout_secs;
 
             info!(
-                "Cloning Sigma repository from {}... (shallow={}, sparse={})",
+                "Cloning Sigma repository from {}... (shallow={}, sparse={}, partial={})",
                 sanitize_url(&url),
                 self.shallow_clone,
-                self.sparse_checkout
+                self.sparse_checkout,
+                self.partial_clone
             );
             let clone_start = std::time::Instant::now();
 
             let outcome = match transport {
                 GitTransport::Http => tokio::task::spawn_blocking(move || {
-                    if shallow {
+                    if partial {
+                        git_clone_partial(
+                            &url,
+                            &path,
+                            token.as_ref().map(|t| t.as_str()),
+                            sparse,
+                            http_timeout,
+                        )
+                    } else if shallow {
                         git_clone_shallow(
                             &url,
                             &path,
@@ -859,7 +880,11 @@ impl SigmaRepo {
                         RepoError::Transport(format!("Cannot convert URL to SSH format: {}", url))
                     })?;
                     tokio::task::spawn_blocking(move || {
-                        if shallow {
+                        if partial {
+                            // For SSH, fall back to shallow clone since git CLI partial clone
+                            // with SSH requires additional setup
+                            git_clone_ssh_shallow(&ssh_url, &path, ssh_key_path.as_deref(), sparse)
+                        } else if shallow {
                             git_clone_ssh_shallow(&ssh_url, &path, ssh_key_path.as_deref(), sparse)
                         } else {
                             git_clone_ssh(&ssh_url, &path, ssh_key_path.as_deref())
@@ -1131,6 +1156,7 @@ impl Default for SigmaRepo {
             contrib: false,
             shallow_clone: true,
             sparse_checkout: true,
+            partial_clone: false,
             clone_timeout_secs: 600,
             fetch_timeout_secs: 300,
             http_timeout_secs: 120,
