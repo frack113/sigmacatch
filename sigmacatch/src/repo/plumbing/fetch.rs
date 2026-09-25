@@ -74,6 +74,36 @@ pub(crate) fn fetch_options_for_sigmacatch_namespace() -> FetchOptions {
     }
 }
 
+/// Fetch options for shallow clone (depth=1).
+/// Used for initial clone when `git.shallow_clone = true`.
+pub(crate) fn fetch_options_for_shallow_clone(branches: &[&str]) -> FetchOptions {
+    let refspecs = branches
+        .iter()
+        .map(|b| format!("+refs/heads/{}:refs/remotes/origin/{}", b, b))
+        .collect();
+    FetchOptions {
+        refspecs,
+        tags: TagMode::None,
+        depth: Some(1),
+        ..Default::default()
+    }
+}
+
+/// Fetch options for unshallow (fetch full history).
+/// Used before push when repo was cloned shallow.
+pub(crate) fn fetch_options_for_unshallow(branches: &[&str]) -> FetchOptions {
+    let refspecs = branches
+        .iter()
+        .map(|b| format!("+refs/heads/{}:refs/remotes/origin/{}", b, b))
+        .collect();
+    FetchOptions {
+        refspecs,
+        tags: TagMode::None,
+        unshallow: true,
+        ..Default::default()
+    }
+}
+
 /// Fetch from remote via smart HTTP.
 pub fn fetch_remote(
     http_client: &dyn HttpClient,

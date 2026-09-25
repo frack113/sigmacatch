@@ -129,6 +129,14 @@ pub async fn bootstrap_repo_regression(
     }
 
     sigma_repo.set_git_operations(config.git.is_offline(), config.git.is_contrib());
+    sigma_repo.set_clone_optimizations(
+        config.git.shallow_clone,
+        config.git.sparse_checkout,
+        config.git.clone_timeout_secs,
+        config.git.fetch_timeout_secs,
+        config.git.http_timeout_secs,
+        config.git.max_retries,
+    );
 
     if config.git.is_offline() {
         info!(

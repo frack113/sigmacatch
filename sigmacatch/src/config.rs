@@ -78,6 +78,26 @@ pub struct GitConfig {
     /// date) is used.
     #[serde(default)]
     pub working_branch: Option<String>,
+    /// Use shallow clone (depth=1) for initial clone, then unshallow before push.
+    /// Default: true (fast first run). Set to false for full history clone.
+    #[serde(default = "default_shallow_clone")]
+    pub shallow_clone: bool,
+    /// Use cone-mode sparse checkout (only rules/, rules-emerging-threats/, regression_data/).
+    /// Default: true (minimal disk I/O). Set to false for full worktree checkout.
+    #[serde(default = "default_sparse_checkout")]
+    pub sparse_checkout: bool,
+    /// Overall clone timeout in seconds.
+    #[serde(default = "default_clone_timeout")]
+    pub clone_timeout_secs: u64,
+    /// Fetch/pull timeout in seconds.
+    #[serde(default = "default_fetch_timeout")]
+    pub fetch_timeout_secs: u64,
+    /// Per-request HTTP timeout in seconds.
+    #[serde(default = "default_http_timeout")]
+    pub http_timeout_secs: u64,
+    /// Maximum retry attempts for transient network failures.
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
 }
 
 fn default_sigma_repo_url() -> String {
@@ -86,6 +106,30 @@ fn default_sigma_repo_url() -> String {
 
 fn default_sigma_repo_path() -> String {
     "sigma".to_string()
+}
+
+fn default_shallow_clone() -> bool {
+    true
+}
+
+fn default_sparse_checkout() -> bool {
+    true
+}
+
+fn default_clone_timeout() -> u64 {
+    600
+}
+
+fn default_fetch_timeout() -> u64 {
+    300
+}
+
+fn default_http_timeout() -> u64 {
+    120
+}
+
+fn default_max_retries() -> u32 {
+    3
 }
 
 impl GitConfig {
@@ -118,6 +162,12 @@ impl Default for GitConfig {
             offline: None,
             contrib: None,
             working_branch: None,
+            shallow_clone: default_shallow_clone(),
+            sparse_checkout: default_sparse_checkout(),
+            clone_timeout_secs: default_clone_timeout(),
+            fetch_timeout_secs: default_fetch_timeout(),
+            http_timeout_secs: default_http_timeout(),
+            max_retries: default_max_retries(),
         }
     }
 }
@@ -511,6 +561,47 @@ impl Config {
             return Err(ConfigError::Invalid(format!(
                 "config: 'git.sigma_repo_path' contains '..' path traversal, got {:?}",
                 self.git.sigma_repo_path
+            )));
+        }
+
+        // Validate git timeout fields — must be positive and reasonable
+        if self.git.clone_timeout_secs == 0 {
+            return Err(ConfigError::Invalid(
+                "config: 'git.clone_timeout_secs' must be > 0".to_string(),
+            ));
+        }
+        if self.git.clone_timeout_secs > 3600 {
+            return Err(ConfigError::Invalid(format!(
+                "config: 'git.clone_timeout_secs' exceeds maximum (3600s), got {}",
+                self.git.clone_timeout_secs
+            )));
+        }
+        if self.git.fetch_timeout_secs == 0 {
+            return Err(ConfigError::Invalid(
+                "config: 'git.fetch_timeout_secs' must be > 0".to_string(),
+            ));
+        }
+        if self.git.fetch_timeout_secs > 1800 {
+            return Err(ConfigError::Invalid(format!(
+                "config: 'git.fetch_timeout_secs' exceeds maximum (1800s), got {}",
+                self.git.fetch_timeout_secs
+            )));
+        }
+        if self.git.http_timeout_secs == 0 {
+            return Err(ConfigError::Invalid(
+                "config: 'git.http_timeout_secs' must be > 0".to_string(),
+            ));
+        }
+        if self.git.http_timeout_secs > 600 {
+            return Err(ConfigError::Invalid(format!(
+                "config: 'git.http_timeout_secs' exceeds maximum (600s), got {}",
+                self.git.http_timeout_secs
+            )));
+        }
+        if self.git.max_retries > 10 {
+            return Err(ConfigError::Invalid(format!(
+                "config: 'git.max_retries' exceeds maximum (10), got {}",
+                self.git.max_retries
             )));
         }
 
