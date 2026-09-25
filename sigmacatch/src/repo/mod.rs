@@ -318,7 +318,13 @@ impl SigmaRepo {
             std::fs::remove_dir_all(&git_dir)?;
         }
 
-        let repo_exists = git_dir.exists();
+        // Retry repo_exists check a few times to handle filesystem race conditions
+        // after external clean commands (e.g., rmdir on Windows).
+        let repo_exists = (0..3).fold(false, |acc, _| {
+            if acc { return true; }
+            std::thread::sleep(Duration::from_millis(200));
+            git_dir.exists()
+        });
 
         if repo_exists {
             if !self.is_head_on_working_branch() {
@@ -379,7 +385,10 @@ impl SigmaRepo {
                 }
             }
         } else {
+            info!("Fresh clone — skipping pull (shallow={}, sparse={})", self.shallow_clone, self.sparse_checkout);
+            let clone_start = std::time::Instant::now();
             self.clone_repo().await?;
+            info!("Clone completed in {:.2?}", clone_start.elapsed());
             // Start background unshallow if shallow clone was used
             self.start_unshallow_background();
         }
@@ -827,6 +836,7 @@ impl SigmaRepo {
                 self.shallow_clone,
                 self.sparse_checkout
             );
+            let clone_start = std::time::Instant::now();
 
             let outcome = match transport {
                 GitTransport::Http => tokio::task::spawn_blocking(move || {
@@ -861,7 +871,10 @@ impl SigmaRepo {
             };
 
             match outcome {
-                Ok(()) => break,
+                Ok(()) => {
+                    info!("Clone completed in {:.2?}", clone_start.elapsed());
+                    break;
+                }
                 Err(e) if attempt < max_retries && is_transient_error(&e) => {
                     warn!(
                         "Clone attempt {} failed (transient): {} — retrying in {:.1}s",
