@@ -9,9 +9,10 @@ use tracing::{info, warn};
 
 use crate::repo::plumbing::{
     add_directory_to_index, add_file_to_index, add_tree_to_index, checkout_main_branch,
-    commit_tree, fast_forward_branch, fetch_options_for_branches, fetch_remote, fetch_remote_ssh,
-    init_repo, open_odb, read_remote_url_from_config, resolve_head, set_head_after_fetch,
-    symbolic_ref_target, write_index,
+    commit_tree, fast_forward_branch, fetch_options_for_branches, fetch_options_for_shallow_clone,
+    fetch_options_for_unshallow, fetch_remote, fetch_remote_ssh, init_repo, open_odb,
+    read_remote_url_from_config, resolve_head, set_head_after_fetch, symbolic_ref_target,
+    write_index,
 };
 use crate::repo::transport::{AuthHttpClient, build_ssh_shell_command, https_to_ssh_url};
 
@@ -26,14 +27,47 @@ fn current_branch_name(git_dir: &Path) -> Result<Option<String>> {
         .and_then(|target| target.strip_prefix("refs/heads/").map(String::from)))
 }
 
-/// Clone a repository using token auth.
+/// Clone a repository using token auth (full history).
 /// Wraps `clone_repo` by creating an `AuthHttpClient` from token.
 pub(crate) fn git_clone(url: &str, dest: &Path, token: Option<&str>) -> Result<()> {
     let http_client = AuthHttpClient::new(token.map(|s| zeroize::Zeroizing::new(s.to_string())))?;
     crate::repo::plumbing::clone_repo(&http_client, url, dest)
 }
 
-/// Clone a repository using SSH transport.
+/// Clone a repository using token auth with shallow clone and optional sparse checkout.
+pub(crate) fn git_clone_shallow(
+    url: &str,
+    dest: &Path,
+    token: Option<&str>,
+    sparse_checkout: bool,
+    http_timeout_secs: u64,
+) -> Result<()> {
+    let http_client = AuthHttpClient::with_timeouts(
+        token.map(|s| zeroize::Zeroizing::new(s.to_string())),
+        http_timeout_secs,
+        30, // connect timeout
+    )?;
+    crate::repo::plumbing::clone_repo_shallow(&http_client, url, dest, sparse_checkout)
+}
+
+/// Clone a repository using token auth with partial clone (--filter=blob:none --depth=1).
+/// Uses git CLI for the initial clone since grit-lib doesn't yet support --filter.
+pub(crate) fn git_clone_partial(
+    url: &str,
+    dest: &Path,
+    token: Option<&str>,
+    sparse_checkout: bool,
+    http_timeout_secs: u64,
+) -> Result<()> {
+    let http_client = AuthHttpClient::with_timeouts(
+        token.map(|s| zeroize::Zeroizing::new(s.to_string())),
+        http_timeout_secs,
+        30, // connect timeout
+    )?;
+    crate::repo::plumbing::clone_repo_partial(&http_client, url, dest, sparse_checkout)
+}
+
+/// Clone a repository using SSH transport (full history).
 pub(crate) fn git_clone_ssh(url: &str, dest: &Path, ssh_key_path: Option<&str>) -> Result<()> {
     let git_dir = dest.join(".git");
     if git_dir.exists() {
@@ -64,6 +98,96 @@ pub(crate) fn git_clone_ssh(url: &str, dest: &Path, ssh_key_path: Option<&str>) 
     checkout_main_branch(&git_dir, dest)?;
 
     crate::repo::plumbing::pack_loose_objects(&git_dir)?;
+
+    Ok(())
+}
+
+/// Clone a repository using SSH transport with shallow clone and optional sparse checkout.
+pub(crate) fn git_clone_ssh_shallow(
+    url: &str,
+    dest: &Path,
+    ssh_key_path: Option<&str>,
+    sparse_checkout: bool,
+) -> Result<()> {
+    let git_dir = dest.join(".git");
+    if git_dir.exists() {
+        info!("Repository already exists at {:?}, skipping clone", dest);
+        return Ok(());
+    }
+
+    info!(
+        "Cloning via SSH into {:?} (shallow, sparse={})",
+        dest, sparse_checkout
+    );
+    init_repo(&git_dir, dest, url)?;
+
+    // Configure sparse checkout before fetch if requested
+    if sparse_checkout {
+        crate::repo::plumbing::clone::setup_sparse_checkout(&git_dir)?;
+    }
+
+    let opts = fetch_options_for_shallow_clone(DEFAULT_BRANCHES);
+    let ssh_mode = build_ssh_shell_command(ssh_key_path);
+    let (count, default_branch) = match fetch_remote_ssh(&git_dir, url, &ssh_mode, &opts) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&git_dir);
+            return Err(e);
+        }
+    };
+    if count == 0 {
+        let _ = std::fs::remove_dir_all(&git_dir);
+        return Err(RepoError::State(
+            "No refs fetched from remote via SSH — empty or unreachable repository".to_string(),
+        ));
+    }
+
+    set_head_after_fetch(&git_dir, default_branch.as_deref());
+
+    checkout_main_branch(&git_dir, dest)?;
+
+    crate::repo::plumbing::pack_loose_objects(&git_dir)?;
+
+    Ok(())
+}
+
+/// Unshallow a shallow repository (fetch full history).
+/// Used before push when repo was cloned with shallow_clone=true.
+pub(crate) fn git_unshallow(git_dir: &Path, token: Option<&str>) -> Result<()> {
+    let http_client = AuthHttpClient::new(token.map(|s| zeroize::Zeroizing::new(s.to_string())))?;
+    let remote_url = read_remote_url_from_config(git_dir, "origin")?;
+    let branch = current_branch_name(git_dir)?
+        .ok_or_else(|| RepoError::State("Cannot unshallow — HEAD is detached".to_string()))?;
+    let opts = fetch_options_for_unshallow(&[branch.as_str()]);
+
+    fetch_remote(&http_client, git_dir, &remote_url, &opts)?;
+    crate::repo::plumbing::pack_loose_objects(git_dir)?;
+
+    // Re-checkout worktree to reflect full history
+    let work_tree = git_dir
+        .parent()
+        .ok_or_else(|| RepoError::State("Cannot determine worktree from git_dir".to_string()))?;
+    checkout_main_branch(git_dir, work_tree)?;
+
+    Ok(())
+}
+
+/// Unshallow a shallow repository via SSH.
+pub(crate) fn git_unshallow_ssh(git_dir: &Path, ssh_key_path: Option<&str>) -> Result<()> {
+    let remote_url = read_remote_url_from_config(git_dir, "origin")?;
+    let ssh_url = https_to_ssh_url(&remote_url).unwrap_or(remote_url);
+    let ssh_mode = build_ssh_shell_command(ssh_key_path);
+    let branch = current_branch_name(git_dir)?
+        .ok_or_else(|| RepoError::State("Cannot unshallow — HEAD is detached".to_string()))?;
+    let opts = fetch_options_for_unshallow(&[branch.as_str()]);
+
+    fetch_remote_ssh(git_dir, &ssh_url, &ssh_mode, &opts)?;
+    crate::repo::plumbing::pack_loose_objects(git_dir)?;
+
+    let work_tree = git_dir
+        .parent()
+        .ok_or_else(|| RepoError::State("Cannot determine worktree from git_dir".to_string()))?;
+    checkout_main_branch(git_dir, work_tree)?;
 
     Ok(())
 }

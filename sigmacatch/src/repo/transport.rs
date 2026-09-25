@@ -213,11 +213,21 @@ pub struct AuthHttpClient {
 }
 
 impl AuthHttpClient {
+    /// Create with default timeouts (backward compatible)
     pub fn new(token: Option<Zeroizing<String>>) -> Result<Self> {
+        Self::with_timeouts(token, 120, 30)
+    }
+
+    /// Create with custom timeouts
+    pub fn with_timeouts(
+        token: Option<Zeroizing<String>>,
+        http_timeout_secs: u64,
+        connect_timeout_secs: u64,
+    ) -> Result<Self> {
         let client = reqwest::blocking::Client::builder()
             .user_agent("sigmacatch/0.3.0")
-            .timeout(std::time::Duration::from_secs(120))
-            .connect_timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(http_timeout_secs))
+            .connect_timeout(std::time::Duration::from_secs(connect_timeout_secs))
             .redirect(reqwest::redirect::Policy::limited(10))
             .build()
             .map_err(|e| RepoError::Transport(format!("http client build: {e}")))?;
