@@ -83,9 +83,7 @@ fn is_transient_error(e: &RepoError) -> bool {
                 || msg.contains("EOF")
                 || msg.contains("unexpected")
         }
-        RepoError::State(msg) => {
-            msg.contains("timeout") || msg.contains("panicked")
-        }
+        RepoError::State(msg) => msg.contains("timeout") || msg.contains("panicked"),
         _ => false,
     }
 }
@@ -343,13 +341,11 @@ impl SigmaRepo {
                 let token = self.token.clone();
                 let ssh_key_path = self.ssh_key_path.clone();
                 let outcome = match transport {
-                    GitTransport::Http => {
-                        tokio::task::spawn_blocking(move || {
-                            git_pull(&git_dir_clone, token.as_ref().map(|t| t.as_str()))
-                        })
-                        .await
-                        .map_err(|e| RepoError::State(format!("Pull task panicked: {}", e)))?
-                    }
+                    GitTransport::Http => tokio::task::spawn_blocking(move || {
+                        git_pull(&git_dir_clone, token.as_ref().map(|t| t.as_str()))
+                    })
+                    .await
+                    .map_err(|e| RepoError::State(format!("Pull task panicked: {}", e)))?,
                     GitTransport::Ssh => {
                         let result = tokio::task::spawn_blocking(move || {
                             git_pull_ssh(&git_dir_clone, ssh_key_path.as_deref())
@@ -382,7 +378,6 @@ impl SigmaRepo {
                     Err(e) => return Err(e),
                 }
             }
-
         } else {
             self.clone_repo().await?;
             // Start background unshallow if shallow clone was used
@@ -430,16 +425,16 @@ impl SigmaRepo {
             )
         })?;
         let git_dir = self.repo_path.join(".git");
-        
+
         // Fetch sigmacatch/* namespace (for pending PR skip set)
         self.fetch_sigmacatch_branches(&git_dir)?;
-        
+
         // If working branch doesn't match sigmacatch/*, also fetch it explicitly
         // so create_branch can base it on the fork's tip instead of local HEAD
         if !branch_name.starts_with("sigmacatch/") {
             self.fetch_working_branch(&git_dir, &branch_name)?;
         }
-        
+
         create_branch(&git_dir, &branch_name)?;
         crate::repo::plumbing::checkout_main_branch(&git_dir, &self.repo_path)?;
         Ok(())
@@ -464,7 +459,8 @@ impl SigmaRepo {
                     crate::repo::plumbing::fetch_remote(&http_client, git_dir, &remote_url, &opts)
                 }
                 GitTransport::Ssh => {
-                    let ssh_url = https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
+                    let ssh_url =
+                        https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
                     let ssh_mode =
                         crate::repo::transport::build_ssh_shell_command(ssh_key_path.as_deref());
                     crate::repo::plumbing::fetch_remote_ssh(git_dir, &ssh_url, &ssh_mode, &opts)
@@ -537,7 +533,8 @@ impl SigmaRepo {
                     crate::repo::plumbing::fetch_remote(&http_client, git_dir, &remote_url, &opts)
                 }
                 GitTransport::Ssh => {
-                    let ssh_url = https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
+                    let ssh_url =
+                        https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
                     let ssh_mode =
                         crate::repo::transport::build_ssh_shell_command(ssh_key_path.as_deref());
                     crate::repo::plumbing::fetch_remote_ssh(git_dir, &ssh_url, &ssh_mode, &opts)
@@ -832,17 +829,21 @@ impl SigmaRepo {
             );
 
             let outcome = match transport {
-                GitTransport::Http => {
-                    tokio::task::spawn_blocking(move || {
-                        if shallow {
-                            git_clone_shallow(&url, &path, token.as_ref().map(|t| t.as_str()), sparse, http_timeout)
-                        } else {
-                            git_clone(&url, &path, token.as_ref().map(|t| t.as_str()))
-                        }
-                    })
-                    .await
-                    .map_err(|e| RepoError::State(format!("Clone task panicked: {}", e)))?
-                }
+                GitTransport::Http => tokio::task::spawn_blocking(move || {
+                    if shallow {
+                        git_clone_shallow(
+                            &url,
+                            &path,
+                            token.as_ref().map(|t| t.as_str()),
+                            sparse,
+                            http_timeout,
+                        )
+                    } else {
+                        git_clone(&url, &path, token.as_ref().map(|t| t.as_str()))
+                    }
+                })
+                .await
+                .map_err(|e| RepoError::State(format!("Clone task panicked: {}", e)))?,
                 GitTransport::Ssh => {
                     let ssh_url = https_to_ssh_url(&url).ok_or_else(|| {
                         RepoError::Transport(format!("Cannot convert URL to SSH format: {}", url))

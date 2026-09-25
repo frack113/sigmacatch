@@ -9,11 +9,10 @@ use tracing::{info, warn};
 
 use crate::repo::plumbing::{
     add_directory_to_index, add_file_to_index, add_tree_to_index, checkout_main_branch,
-    commit_tree, fast_forward_branch,
-    fetch_options_for_branches, fetch_options_for_shallow_clone,
-    fetch_options_for_unshallow, fetch_remote, fetch_remote_ssh,
-    init_repo, open_odb, read_remote_url_from_config, resolve_head, set_head_after_fetch,
-    symbolic_ref_target, write_index,
+    commit_tree, fast_forward_branch, fetch_options_for_branches, fetch_options_for_shallow_clone,
+    fetch_options_for_unshallow, fetch_remote, fetch_remote_ssh, init_repo, open_odb,
+    read_remote_url_from_config, resolve_head, set_head_after_fetch, symbolic_ref_target,
+    write_index,
 };
 use crate::repo::transport::{AuthHttpClient, build_ssh_shell_command, https_to_ssh_url};
 
@@ -99,7 +98,10 @@ pub(crate) fn git_clone_ssh_shallow(
         return Ok(());
     }
 
-    info!("Cloning via SSH into {:?} (shallow, sparse={})", dest, sparse_checkout);
+    info!(
+        "Cloning via SSH into {:?} (shallow, sparse={})",
+        dest, sparse_checkout
+    );
     init_repo(&git_dir, dest, url)?;
 
     // Configure sparse checkout before fetch if requested

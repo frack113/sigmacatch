@@ -23,11 +23,8 @@ pub(crate) use clone::{clone_repo, clone_repo_shallow, setup_sparse_checkout};
 pub(crate) use commit::commit_tree;
 #[allow(unused_imports)]
 pub(crate) use fetch::{
-    fetch_options_for_branches,
-    fetch_options_for_shallow_clone,
-    fetch_options_for_unshallow,
-    fetch_options_for_sigmacatch_namespace,
-    fetch_remote,
+    fetch_options_for_branches, fetch_options_for_shallow_clone,
+    fetch_options_for_sigmacatch_namespace, fetch_options_for_unshallow, fetch_remote,
     fetch_remote_ssh,
 };
 pub(crate) use index::{add_directory_to_index, add_file_to_index, add_tree_to_index, write_index};
