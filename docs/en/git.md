@@ -4,15 +4,25 @@ All git operations go through **grit-lib** (pure Rust) via the `repo` module of 
 
 ## Invariants
 
-### Full-history, never shallow
+### Full-history by default; shallow clone with deferred unshallow (configurable)
 
-`fetch_options_for_branches()` (`plumbing/fetch.rs`) never sets `depth`, and uses per-branch refspecs (never `+refs/heads/*`, except the namespace glob `+refs/heads/sigmacatch/*`).
+`fetch_options_for_branches()` (`plumbing/fetch.rs`) uses per-branch refspecs (never `+refs/heads/*`, except the namespace glob `+refs/heads/sigmacatch/*`).
 
-A `depth=1` would leave the ODB without the ancestors of the tips → broken push after the remote advances (`object not found: <parent oid>`).
+By default (`git.shallow_clone: true`), the initial clone uses `depth=1` (only the tip commit) for a fast first run. Before any push, the repository is automatically unshallowed (full history fetched) in the background. This avoids the push ancestry issue while keeping first-run fast.
+
+Set `git.shallow_clone: false` in `config.yaml` to disable shallow clone and fetch full history immediately.
 
 ### HTTP fetch protocol v2
 
 `AuthHttpClient` (`transport.rs`) sends `version=2` → capability-only advertisement + `ls-refs` scoped to the ref-prefixes derived from the narrow refspecs (in v0/v1 GitHub serves ALL remote refs, huge on the big Sigma repo). The `sigmacatch/*` glob yields the ref-prefix `refs/heads/sigmacatch/` (truncated at the first `*`). SSH already uses v2.
+
+### Retry with exponential backoff
+
+All network operations (clone, fetch, pull) retry on transient failures with exponential backoff (5s → 10s → 20s → 40s → 60s max). Configurable via `git.max_retries` (default 3) and timeout fields (`clone_timeout_secs`, `fetch_timeout_secs`, `http_timeout_secs`).
+
+### Sparse checkout (cone mode)
+
+When `git.sparse_checkout: true` (default), a cone-mode sparse checkout is configured after clone, materializing only `rules/`, `rules-emerging-threats/`, `regression_data/`. This avoids writing the full Sigma repo (~500MB+ docs/tools/tests) to disk.
 
 ### Working branch
 
@@ -21,6 +31,8 @@ The working branch name is configurable via `git.working_branch` in `config.yaml
 is used.
 
 Based on the remote ref if present (else HEAD) to keep fast-forward. The narrow pull does not update `refs/remotes/origin/sigmacatch/<date>` → fetch of the `sigmacatch/*` namespace (glob, single fetch, best-effort: network failure = `warn!` with a categorized cause — SSH key/ssh binary vs missing token vs network — and continue with the worktree only) before `create_branch`. Branch missing from the fork → no-op.
+
+**Working branch outside `sigmacatch/*` (fixes #95)**: If the working branch name doesn't match the `sigmacatch/*` pattern (e.g., `feature/my-test`), it is now explicitly fetched from the fork before `create_branch`, so the local branch is based on the fork's tip instead of local `HEAD`/`master`. This ensures same-day re-runs or custom branch names stay in sync with the remote.
 
 **Master-switch skip (same-day re-run)**: `is_head_on_working_branch()` inspects the HEAD target (`symbolic_ref_target`) before `switch_to_tracking_branch()`. If HEAD is already on `refs/heads/sigmacatch/<date>`, the master → working-branch round-trip is skipped (avoids a needless round-trip, fixes Windows without ssh). A same-day re-run therefore stays on the working branch directly.
 

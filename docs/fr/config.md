@@ -21,6 +21,12 @@ git:
   offline: false                # true = zéro opération git (pas de pull/clone/commit/push)
   contrib: false                # true = pousser les commits vers votre fork distant
   working_branch: ""            # branche de travail optionnelle ; défaut sigmacatch/<AAAAJJMM>
+  shallow_clone: true           # clone initial depth=1 (rapide), unshallow avant push (défaut true)
+  sparse_checkout: true         # sparse checkout mode cône : rules/, rules-emerging-threats/, regression_data/ (défaut true)
+  clone_timeout_secs: 600       # timeout global du clone (secondes)
+  fetch_timeout_secs: 300       # timeout fetch/pull (secondes)
+  http_timeout_secs: 120        # timeout HTTP par requête (secondes)
+  max_retries: 3                # max tentatives de retry pour échecs transitoires
 log:
   level_file: debug             # debug | info | warn | error
 filter:
@@ -49,6 +55,12 @@ stop_file: ".sigmacatch.stop"   # créez ce fichier pour arrêter proprement un 
 | `offline` | `false` | Ignore toutes les opérations git (pas de pull/clone/commit/push). Les fichiers sur disque sont utilisés tels quels (`.git` optionnel). **Neutralise `contrib`** (forcé à `false`). |
 | `contrib` | `false` | Pousse les commits vers votre fork distant. Neutralisé par `offline: true`. |
 | `working_branch` | *(défaut)* | Nom de la branche de travail. Quand vide, la branche par défaut `sigmacatch/<AAAAJJMM>` est utilisée. |
+| `shallow_clone` | `true` | Clone initial depth=1 (rapide), unshallow avant push. Mettre `false` pour historique complet. |
+| `sparse_checkout` | `true` | Sparse checkout mode cône : rules/, rules-emerging-threats/, regression_data/. `false` = worktree complet. |
+| `clone_timeout_secs` | `600` | Timeout global du clone en secondes. Doit être >0 et ≤3600. |
+| `fetch_timeout_secs` | `300` | Timeout fetch/pull en secondes. Doit être >0 et ≤1800. |
+| `http_timeout_secs` | `120` | Timeout HTTP par requête en secondes. Doit être >0 et ≤600. |
+| `max_retries` | `3` | Max tentatives de retry pour échecs transitoires. Doit être ≤10. |
 
 ## log
 

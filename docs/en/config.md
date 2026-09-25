@@ -20,6 +20,12 @@ git:
   offline: false                # true = zero git operations (no pull/clone/commit/push)
   contrib: false                # true = push commits to your remote fork
   working_branch: ""            # optional working branch; default sigmacatch/<YYYYMMDD>
+  shallow_clone: true           # depth=1 initial clone, unshallow before push (default true)
+  sparse_checkout: true         # cone-mode sparse checkout: rules/, rules-emerging-threats/, regression_data/ (default true)
+  clone_timeout_secs: 600       # overall clone timeout (seconds)
+  fetch_timeout_secs: 300       # fetch/pull timeout (seconds)
+  http_timeout_secs: 120        # per-request HTTP timeout (seconds)
+  max_retries: 3                # max retry attempts for transient failures
 log:
   level_file: debug             # debug | info | warn | error
 filter:
@@ -48,6 +54,12 @@ stop_file: ".sigmacatch.stop"   # create this file to gracefully stop a continuo
 | `offline` | `false` | Skip all git operations (no pull/clone/commit/push). On-disk files are used as-is (`.git` optional). **Neutralizes `contrib`** (forced to `false`). |
 | `contrib` | `false` | Push commits to your remote fork. Neutralized by `offline: true`. |
 | `working_branch` | *(unset)* | Working branch name. When empty, the default `sigmacatch/<YYYYMMDD>` branch is used. |
+| `shallow_clone` | `true` | Initial clone uses depth=1 (fast); unshallow runs before push. Set `false` for full history. |
+| `sparse_checkout` | `true` | Cone-mode sparse checkout: only `rules/`, `rules-emerging-threats/`, `regression_data/` materialize. Set `false` for full worktree. |
+| `clone_timeout_secs` | `600` | Overall clone timeout in seconds. Must be >0 and ≤3600. |
+| `fetch_timeout_secs` | `300` | Fetch/pull timeout in seconds. Must be >0 and ≤1800. |
+| `http_timeout_secs` | `120` | Per-request HTTP timeout in seconds. Must be >0 and ≤600. |
+| `max_retries` | `3` | Max retry attempts for transient network failures. Must be ≤10. |
 
 ## log
 
