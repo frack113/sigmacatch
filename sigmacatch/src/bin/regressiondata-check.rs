@@ -371,12 +371,15 @@ fn main() -> anyhow::Result<()> {
         // Validate the declared match_count against the actual hit count when a
         // JSON auxiliary file is present alongside the data. The JSON mirrors
         // the raw event, so its hit count must equal info.yml's match_count.
+        // Presence is decided by a successful parse of either export layout
+        // (one document or ndjson) — a whole-file `from_str` would report a
+        // multi-record export as absent and silently skip this cross-check.
         let expected = regression
             .get_info(idx)
             .and_then(|info| info.regression_tests_info.first())
             .map(|t| t.match_count)
             .unwrap_or(0);
-        let json_present = regression.get_json_data(idx).is_some();
+        let json_present = regression.get_json_records(idx).is_some();
         if json_present && expected > 0 && rule_alert_count != expected {
             total += 1;
             let msg = format!(

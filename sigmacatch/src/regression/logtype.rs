@@ -24,6 +24,19 @@ impl LogType {
             Self::Log => "log",
         }
     }
+
+    /// Parse a declared `type` (or a data-file extension). `None` for anything
+    /// outside the four known spellings so callers can tell "unknown" from a
+    /// real `json` entry instead of silently accepting a typo.
+    pub fn from_declared(declared: &str) -> Option<Self> {
+        match declared {
+            "evtx" => Some(Self::Evtx),
+            "json" => Some(Self::Json),
+            "raw" => Some(Self::Raw),
+            "log" => Some(Self::Log),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for LogType {
