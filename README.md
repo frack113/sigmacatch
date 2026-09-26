@@ -47,6 +47,12 @@ until you edit it — `author: sigmacatch` (placeholder, rejected by validation)
 
 **Contrib is opt-in** (`git.contrib: true` or `--contrib`): pushes regression commits to your fork. By default (`false`) commits stay local. The GitHub token is only required when a network operation is active (`offline: false` or `contrib: true`). **`offline: true` neutralizes `contrib`** (forced to `false`): no push in offline mode.
 
+**Performance options** (config.yaml):
+
+- `git.shallow_clone: true` (default) — depth=1 initial clone, unshallow before push
+- `git.partial_clone: false` — blobless filter (`--filter=blob:none`) for smaller clone; requires git CLI
+- `hir_cache: ""` — persistent HIR cache path to warm-start the detection engine (skip rule recompilation); also via `--hir-cache <PATH>` CLI flag
+
 ## CLI
 
 Flags, the `check-filter`/`list-rules` diagnostics subcommands, and the standalone

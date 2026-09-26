@@ -173,7 +173,9 @@ sigmacatch [OPTIONS]
       --author <NAME> Override the git author from config.yaml for this run
       --branch <NAME> Working branch name (default: sigmacatch/<today's date>)
        --evtx <PATH>   Directory of EVTX files to process (one-shot evtx input;
-                       fails if the `evtx` feature is not compiled in)
+                        fails if the `evtx` feature is not compiled in)
+      --hir-cache <PATH> Persistent HIR cache file (warm-start: skip rule
+                        recompilation on next run; empty = compile every run)
   --help, -h         Print help and exit
 ```
 

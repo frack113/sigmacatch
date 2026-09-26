@@ -22,6 +22,7 @@ git:
   working_branch: ""            # optional working branch; default sigmacatch/<YYYYMMDD>
   shallow_clone: true           # depth=1 initial clone, unshallow before push (default true)
   sparse_checkout: true         # cone-mode sparse checkout: rules/, rules-emerging-threats/, regression_data/ (default true)
+  partial_clone: false          # blobless filter (--filter=blob:none) for initial clone (default false)
   clone_timeout_secs: 600       # overall clone timeout (seconds)
   fetch_timeout_secs: 300       # fetch/pull timeout (seconds)
   http_timeout_secs: 120        # per-request HTTP timeout (seconds)
@@ -37,6 +38,7 @@ filter:
 regression:
   max_failed_cycles: 3          # block a rule after N consecutive failure cycles
   add_json_output: false        # also write the auxiliary <rule_id>.json alongside the data file
+hir_cache: ""                   # path to persistent HIR cache file (warm-start engine; empty = compile every run)
 stop_file: ".sigmacatch.stop"   # create this file to gracefully stop a continuous (-r 0) run
 ```
 
@@ -56,6 +58,7 @@ stop_file: ".sigmacatch.stop"   # create this file to gracefully stop a continuo
 | `working_branch` | *(unset)* | Working branch name. When empty, the default `sigmacatch/<YYYYMMDD>` branch is used. |
 | `shallow_clone` | `true` | Initial clone uses depth=1 (fast); unshallow runs before push. Set `false` for full history. |
 | `sparse_checkout` | `true` | Cone-mode sparse checkout: only `rules/`, `rules-emerging-threats/`, `regression_data/` materialize. Set `false` for full worktree. |
+| `partial_clone` | `false` | Blobless filter (`--filter=blob:none --depth=1`) for initial clone. Requires git CLI. Falls back to shallow clone with warning. |
 | `clone_timeout_secs` | `600` | Overall clone timeout in seconds. Must be >0 and ≤3600. |
 | `fetch_timeout_secs` | `300` | Fetch/pull timeout in seconds. Must be >0 and ≤1800. |
 | `http_timeout_secs` | `120` | Per-request HTTP timeout in seconds. Must be >0 and ≤600. |
@@ -88,6 +91,12 @@ All filters are optional; unset means no filtering.
 |---|---|---|
 | `max_failed_cycles` | `3` | After N consecutive failed capture cycles a rule is blocked (logged, removed from the skip set, no more re-capture). Min 1. |
 | `add_json_output` | `false` | Also write the auxiliary `<rule_id>.json` (raw event) next to the data file. See [Output Format](output-format.md). |
+
+## hir_cache
+
+| Key | Default | Description |
+|---|---|---|
+| `hir_cache` | `""` | Path to a persistent HIR cache file. When set, the compiled detection engine is persisted after each rule change and warm-started on the next run, skipping rule recompilation. Empty = compile every run. Can also be set via `--hir-cache <PATH>` CLI flag. |
 
 ## stop_file
 

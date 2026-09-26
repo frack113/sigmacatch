@@ -175,7 +175,9 @@ sigmacatch [OPTIONS]
       --author <NOM>  Remplace l'auteur git du config.yaml pour ce run
       --branch <NOM>  Nom de la branche de travail (défaut : sigmacatch/<date du jour>)
        --evtx <CHEMIN> Dossier de fichiers EVTX à traiter (input one-shot evtx ;
-                       échoue si la feature `evtx` n'est pas compilée)
+                        échoue si la feature `evtx` n'est pas compilée)
+      --hir-cache <CHEMIN> Fichier de cache HIR persistant (warm-start : saute la
+                        recompilation des règles au run suivant ; vide = recompilation à chaque run)
   --help, -h          Affiche l'aide et quitte
 ```
 
