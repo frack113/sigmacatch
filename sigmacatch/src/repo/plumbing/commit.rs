@@ -185,7 +185,6 @@ mod tests {
     /// git as a "Good SSH signature". This is the ground-truth check: if git
     /// rejects it, the header layout or signed payload is wrong.
     #[test]
-    #[ignore = "requires git binary on PATH"]
     fn test_signed_commit_accepted_by_real_git() {
         let tmp = tempfile::tempdir().unwrap();
         let (git_dir, work_tree) = setup_repo(tmp.path());
