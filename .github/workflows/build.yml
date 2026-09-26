@@ -48,21 +48,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Each flavour runs on its own runner + target dir, so a superset
-          # feature build can no longer clobber an earlier-named bin in a
-          # shared target dir (the reason the old job built them sequentially).
+          # base + regressiondata-check built together with --all-targets
           - flavor: base
-            command: cargo build --release --locked -p sigmacatch --no-default-features --features auditd,builtin
+            features: --no-default-features --features auditd,builtin
             nightly: false
+            build_bins: true
           - flavor: sysmon
-            command: cargo check --release --locked -p sigmacatch --no-default-features --features auditd,builtin,sysmon
+            features: --no-default-features --features auditd,builtin,sysmon
             nightly: false
+            build_bins: false
           - flavor: ebpf
-            command: cargo build --release --locked -p sigmacatch --no-default-features --features auditd,builtin,ebpf
+            features: --no-default-features --features auditd,builtin,ebpf
             nightly: true
-          - flavor: regressiondata-check
-            command: cargo build --release --locked -p sigmacatch --bin regressiondata-check
-            nightly: false
+            build_bins: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -88,8 +86,15 @@ jobs:
           path: ${{ runner.tool_cache }}/bpf-linker
           key: bpf-linker-0.11.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - name: Build / check flavour
-        run: ${{ matrix.command }}
+        with:
+          key: linux-${{ matrix.flavor }}-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build flavour
+        run: |
+          if [ "${{ matrix.build_bins }}" = "true" ]; then
+            cargo build --release --locked -p sigmacatch ${{ matrix.features }} --all-targets
+          else
+            cargo build --release --locked -p sigmacatch ${{ matrix.features }}
+          fi
 
   windows:
     name: Windows — ${{ matrix.flavor }}
@@ -99,14 +104,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Each flavour on its own Windows runner + target dir so the
-          # sequential recompiles (full / per-feature / check) run in parallel.
+          # winevt + regressiondata-check built together
           - flavor: winevt
-            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch
+            features: ""
+            build_bins: true
           - flavor: winevt-evtx
-            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch --features winevt,evtx
-          - flavor: regressiondata-check
-            command: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch --bin regressiondata-check
+            features: --features winevt,evtx
+            build_bins: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -116,12 +120,21 @@ jobs:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: ${{ matrix.command }}
+        with:
+          key: windows-${{ matrix.flavor }}-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build flavour
+        run: |
+          if [ "${{ matrix.build_bins }}" = "true" ]; then
+            cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch ${{ matrix.features }} --all-targets
+          else
+            cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch ${{ matrix.features }}
+          fi
 
   regression-check:
     name: Regression data validator (fixture)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: [linux]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -130,10 +143,11 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - name: Build regressiondata-check
-        run: cargo build --release --locked -p sigmacatch --bin regressiondata-check
-      - name: Happy path — committed fixture passes
+        with:
+          key: linux-base-${{ hashFiles('**/Cargo.lock') }}
+      - name: Run regression checks
         run: |
+          ./target/release/regressiondata-check --json --path sigmacatch/tests/fixtures/sigma
           out=$(./target/release/regressiondata-check --json --path sigmacatch/tests/fixtures/sigma)
           printf '%s\n' "$out"
           jq -e '.total == 2 and .failed_count == 0' <<<"$out"

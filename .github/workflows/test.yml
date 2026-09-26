@@ -30,12 +30,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { package: sigmacatch, features: '' }
-          - { package: sigmacatch, features: 'auditd,builtin,sysmon' }
+          - { package: sigmacatch, features: '', cache_key: default }
+          - { package: sigmacatch, features: 'auditd,builtin,sysmon', cache_key: sysmon }
           # ebpf needs nightly + rust-src + bpf-linker (build.rs) or the leg
           # would silently embed an empty placeholder object (false green).
-          - { package: sigmacatch, features: 'auditd,builtin,ebpf', nightly: true }
-          - { package: sigmacatch, features: 'evtx' }
+          - { package: sigmacatch, features: 'auditd,builtin,ebpf', nightly: true, cache_key: ebpf }
+          - { package: sigmacatch, features: 'evtx', cache_key: evtx }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,6 +44,8 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: test-${{ matrix.cache_key }}-${{ hashFiles('**/Cargo.lock') }}
       - name: Install nightly + bpf-linker (ebpf only)
         if: matrix.nightly
         run: |
@@ -87,6 +89,8 @@ jobs:
           toolchain: stable
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: coverage-stable-${{ hashFiles('**/Cargo.lock') }}
       - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
         with:
           tool: cargo-llvm-cov
@@ -133,7 +137,7 @@ jobs:
           echo "${{ runner.tool_cache }}/bpf-linker" >> "$GITHUB_PATH"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: coverage-ebpf
+          key: coverage-ebpf-${{ hashFiles('**/Cargo.lock') }}
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.tool_cache }}/bpf-linker

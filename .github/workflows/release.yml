@@ -45,10 +45,10 @@ jobs:
       # build and the +sysmon / +ebpf variants must stay separate — ebpf needs
       # nightly + bpf-linker and changes the execution path, it must never be
       # merged with sysmon in a single artefact.
-      - name: Build sigmacatch (auditd + builtin)
+      - name: Build sigmacatch (auditd + builtin) + regressiondata-check
         run: >
           cargo build --release --locked -p sigmacatch --no-default-features
-          --features auditd,builtin
+          --features auditd,builtin --all-targets
       - name: Rename base flavour
         run: cp target/release/sigmacatch target/release/sigmacatch-linux
       - name: Build sigmacatch (auditd + builtin + sysmon)
@@ -63,8 +63,6 @@ jobs:
           --features auditd,builtin,ebpf
       - name: Rename ebpf flavour
         run: cp target/release/sigmacatch target/release/sigmacatch-ebpf
-      - name: Build regressiondata-check (Linux)
-        run: cargo build --release --locked -p sigmacatch --bin regressiondata-check
       - name: Package Linux distribution archive
         run: |
           set -euo pipefail
@@ -94,8 +92,8 @@ jobs:
           targets: x86_64-pc-windows-msvc
       # Two Windows flavours (docs/build.md): winevt (default feature) and the
       # +evtx one-shot writer — never a merged build.
-      - name: Build sigmacatch (winevt)
-        run: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch
+      - name: Build sigmacatch (winevt) + regressiondata-check
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch --all-targets
       - name: Rename winevt flavour
         shell: pwsh
         run: |
@@ -108,8 +106,6 @@ jobs:
         run: |
           Copy-Item target/x86_64-pc-windows-msvc/release/sigmacatch.exe `
             target/x86_64-pc-windows-msvc/release/sigmacatch-evtx.exe -Force
-      - name: Build regressiondata-check (Windows)
-        run: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch --bin regressiondata-check
       - name: Package Windows distribution zip
         shell: pwsh
         run: |
