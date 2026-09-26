@@ -77,25 +77,59 @@ impl RegressionEntry {
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_string();
-        let logtype = info
-            .regression_tests_info
-            .first()
-            .map(|t| match t.test_type.as_str() {
-                "evtx" => LogType::Evtx,
-                "json" => LogType::Json,
-                "raw" => LogType::Raw,
-                "log" => LogType::Log,
-                other => {
-                    warn!("Unknown logtype '{other}', defaulting to Json");
-                    LogType::Json
+        let logtype = match info.regression_tests_info.first() {
+            None => LogType::Json,
+            Some(t) => match LogType::from_declared(t.test_type.as_str()) {
+                Some(known) => {
+                    if let Some(actual) = Self::logtype_of_data_file(info_path, rule_id)
+                        && actual != known
+                    {
+                        warn!(
+                            "{}: type '{}' disagrees with the data file ('{actual}')",
+                            info_path.display(),
+                            t.test_type
+                        );
+                    }
+                    known
                 }
-            })
-            .unwrap_or(LogType::Json);
+                // An unrecognised `type` must not decide how the data file is
+                // parsed. Older sigmacatch emitted "ndjson" here for the
+                // auxiliary export while `path` named a `.evtx` file; taking
+                // that at face value parses an EVTX blob as JSON, yields no
+                // events, and the entry fails with a misleading "EMPTY".
+                // The file on disk is the ground truth.
+                None => {
+                    let actual = Self::logtype_of_data_file(info_path, rule_id);
+                    warn!(
+                        "{}: unknown type '{}'{} — using '{}' from the data file",
+                        info_path.display(),
+                        t.test_type,
+                        if actual.is_some() {
+                            ""
+                        } else {
+                            ", no data file"
+                        },
+                        actual.map(|l| l.as_str()).unwrap_or("json"),
+                    );
+                    actual.unwrap_or(LogType::Json)
+                }
+            },
+        };
         Self {
             rule_id,
             rule_name,
             logtype,
         }
+    }
+
+    /// Log type implied by the data file actually present next to `info.yml`,
+    /// or `None` when no known data file exists.
+    fn logtype_of_data_file(info_path: &Path, rule_id: Uuid) -> Option<LogType> {
+        let ext = resolve_data_file(info_path.parent()?, &rule_id)?
+            .extension()?
+            .to_str()?
+            .to_string();
+        LogType::from_declared(&ext)
     }
 }
 
@@ -303,17 +337,27 @@ impl SigmahqRegression {
         }
     }
 
-    /// Read the committed raw event JSON (`<rule_id>.json`), if present.
-    pub fn get_json_data(&self, index: usize) -> Option<serde_json::Value> {
+    /// Read the committed auxiliary event export (`<rule_id>.json`), if
+    /// present. Accepts both layouts the writer produces: a single JSON
+    /// document (pretty-printed or compact) and newline-delimited JSON.
+    ///
+    /// Returns every record so callers can tell a one-event export from a
+    /// multi-event one. A plain `from_str` would only accept the former and
+    /// would make a multi-record export look absent.
+    pub fn get_json_records(&self, index: usize) -> Option<Vec<serde_json::Value>> {
         let (info_path, info, _) = self.entries.get(index)?;
         let rule_id = info.rule_metadata.first()?.id;
         let dir = info_path.parent()?;
-        let json_path = dir.join(format!("{}.json", rule_id));
-        if !json_path.exists() {
-            return None;
-        }
-        let content = std::fs::read_to_string(json_path).ok()?;
-        serde_json::from_str(&content).ok()
+        let json_path =
+            crate::regression::long_path::long_path(&dir.join(format!("{rule_id}.json")));
+        let bytes = std::fs::read(json_path).ok()?;
+        parse_json_stream(&bytes)
+    }
+
+    /// First record of the committed auxiliary event export, if present. See
+    /// [`Self::get_json_records`] for the accepted layouts.
+    pub fn get_json_data(&self, index: usize) -> Option<serde_json::Value> {
+        self.get_json_records(index)?.into_iter().next()
     }
 
     /// Record a match: write/refresh the rule's regression data. Returns the
@@ -491,66 +535,10 @@ impl RegressionData {
         let rule_id = &self.header.rule_id;
         let ext = self.format.ext();
         let mut written: Vec<PathBuf> = Vec::new();
-        let result = (|| -> Result<()> {
-            // Create rule dir inside the closure so it gets cleaned up on failure
-            std::fs::create_dir_all(&rule_dir)?;
-            if self.add_json_output {
-                let raw_json_path = crate::regression::long_path::long_path(
-                    &rule_dir.join(format!("{rule_id}.json")),
-                );
-                let mut file = std::fs::File::create(&raw_json_path)?;
-                for alert in &self.alerts {
-                    if let Some(all) = &alert.event_json_raw_all {
-                        for rec in all {
-                            let line = serde_json::to_string(rec)?;
-                            writeln!(file, "{}", line)?;
-                        }
-                    } else {
-                        let line = serde_json::to_string(&alert.event_json_raw)?;
-                        writeln!(file, "{}", line)?;
-                    }
-                }
-                written.push(raw_json_path);
-            }
-            let data_path =
-                crate::regression::long_path::long_path(&rule_dir.join(format!("{rule_id}.{ext}")));
-            // For Log (auditd), write all alerts concatenated.
-            // For Evtx, write only the first alert (binary format).
-            match self.format {
-                DataFormat::Log => {
-                    let mut data_file = std::fs::File::create(&data_path)?;
-                    for alert in &self.alerts {
-                        if alert.event_raw.len() > self.format.max_blob_size() {
-                            return Err(RegressionError::Invalid(format!(
-                                "audit event exceeds {} MiB — refusing to write {}",
-                                self.format.max_blob_size() / 1024 / 1024,
-                                data_path.display()
-                            )));
-                        }
-                        data_file.write_all(&alert.event_raw)?;
-                    }
-                }
-                DataFormat::Evtx => {
-                    let alert = &self.alerts[0];
-                    if alert.event_raw.len() > self.format.max_blob_size() {
-                        return Err(RegressionError::Invalid(format!(
-                            "event exceeds {} MiB — refusing to write {}",
-                            self.format.max_blob_size() / 1024 / 1024,
-                            data_path.display()
-                        )));
-                    }
-                    self.format.write(alert, &data_path)?;
-                }
-            }
-            written.push(data_path);
-            Ok(())
-        })();
+
+        let result = self.write_data_files(&rule_dir, rule_id, ext, &mut written);
         if let Err(e) = result {
-            for path in &written {
-                let _ = std::fs::remove_file(path);
-            }
-            // Clean up rule directory if it was created but generation failed
-            let _ = std::fs::remove_dir_all(&rule_dir);
+            self.cleanup_on_failure(&written, &rule_dir);
             return Err(e);
         }
 
@@ -573,11 +561,7 @@ impl RegressionData {
             author,
             description,
             &TestConfig {
-                test_type: if self.add_json_output {
-                    "ndjson".to_string()
-                } else {
-                    ext.to_string()
-                },
+                test_type: ext.to_string(),
                 provider,
             },
         );
@@ -590,6 +574,96 @@ impl RegressionData {
             self.alerts.len()
         );
         Ok(())
+    }
+
+    fn write_data_files(
+        &self,
+        rule_dir: &Path,
+        rule_id: &Uuid,
+        ext: &str,
+        written: &mut Vec<PathBuf>,
+    ) -> Result<()> {
+        std::fs::create_dir_all(rule_dir)?;
+
+        if self.add_json_output {
+            self.write_json_output(rule_dir, rule_id, written)?;
+        }
+
+        let data_path =
+            crate::regression::long_path::long_path(&rule_dir.join(format!("{rule_id}.{ext}")));
+        self.write_primary_data(&data_path)?;
+        written.push(data_path);
+        Ok(())
+    }
+
+    fn write_json_output(
+        &self,
+        rule_dir: &Path,
+        rule_id: &Uuid,
+        written: &mut Vec<PathBuf>,
+    ) -> Result<()> {
+        let raw_json_path =
+            crate::regression::long_path::long_path(&rule_dir.join(format!("{rule_id}.json")));
+        let mut file = std::fs::File::create(&raw_json_path)?;
+        let records: Vec<&serde_json::Value> = self
+            .alerts
+            .iter()
+            .flat_map(|alert| match &alert.event_json_raw_all {
+                Some(all) => all.iter().collect::<Vec<_>>(),
+                None => vec![&alert.event_json_raw],
+            })
+            .collect();
+        // A lone record is a plain `.json` document: pretty-print it so
+        // it stays reviewable in a diff. Several records must stay
+        // newline-delimited — one compact document per line — or the
+        // file is no longer valid ndjson.
+        if records.len() == 1 {
+            let doc = serde_json::to_string_pretty(records[0])?;
+            writeln!(file, "{doc}")?;
+        } else {
+            for rec in records {
+                writeln!(file, "{}", serde_json::to_string(rec)?)?;
+            }
+        }
+        written.push(raw_json_path);
+        Ok(())
+    }
+
+    fn write_primary_data(&self, data_path: &Path) -> Result<()> {
+        match self.format {
+            DataFormat::Log => {
+                let mut data_file = std::fs::File::create(data_path)?;
+                for alert in &self.alerts {
+                    if alert.event_raw.len() > self.format.max_blob_size() {
+                        return Err(RegressionError::Invalid(format!(
+                            "audit event exceeds {} MiB — refusing to write {}",
+                            self.format.max_blob_size() / 1024 / 1024,
+                            data_path.display()
+                        )));
+                    }
+                    data_file.write_all(&alert.event_raw)?;
+                }
+            }
+            DataFormat::Evtx => {
+                let alert = &self.alerts[0];
+                if alert.event_raw.len() > self.format.max_blob_size() {
+                    return Err(RegressionError::Invalid(format!(
+                        "event exceeds {} MiB — refusing to write {}",
+                        self.format.max_blob_size() / 1024 / 1024,
+                        data_path.display()
+                    )));
+                }
+                self.format.write(alert, data_path)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn cleanup_on_failure(&self, written: &[PathBuf], rule_dir: &Path) {
+        for path in written {
+            let _ = std::fs::remove_file(path);
+        }
+        let _ = std::fs::remove_dir_all(rule_dir);
     }
 }
 
@@ -635,6 +709,19 @@ fn resolve_data_file(dir: &Path, rule_id: &Uuid) -> Option<PathBuf> {
         .iter()
         .map(|ext| dir.join(format!("{rule_id}.{ext}")))
         .find(|candidate| candidate.exists())
+}
+
+/// Parse a JSON export that is either a single document or newline-delimited
+/// JSON. `serde_json`'s stream deserializer walks concatenated values, so one
+/// document (pretty-printed across many lines, or compact on one) and N
+/// one-line documents are both accepted. Returns `None` if the bytes hold no
+/// value or any value is malformed.
+fn parse_json_stream(bytes: &[u8]) -> Option<Vec<serde_json::Value>> {
+    let values: Vec<serde_json::Value> = serde_json::Deserializer::from_slice(bytes)
+        .into_iter()
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .ok()?;
+    (!values.is_empty()).then_some(values)
 }
 
 pub(crate) fn update_regression_tests_path(rule_yaml_path: &Path, tests_path: &str) {
@@ -1094,6 +1181,226 @@ mod tests {
         assert_eq!(
             json["Event"]["EventData"]["CommandLine"],
             "cmd.exe /c whoami"
+        );
+    }
+
+    /// The auxiliary export is a review artifact, not the regression data file:
+    /// `type` must keep describing the data file named by `path:` (`.evtx`
+    /// here), whatever `add_json_output` does. Regression data committed to
+    /// SigmaHQ with `type: ndjson` over an `.evtx` path is rejected.
+    #[test]
+    fn test_json_output_does_not_change_test_type() {
+        for add_json in [false, true] {
+            let tmp = tempfile::tempdir().unwrap();
+            let base = tmp.path().join("regression_data");
+            let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
+            reg.set_add_json_output(add_json);
+            let rule_id = Uuid::new_v4();
+
+            reg.add(&synthetic_noid_alert(rule_id))
+                .expect("data generated");
+
+            let rule_dir = base.join("rules").join(rule_id.to_string());
+            let info = InfoYml::load(&rule_dir.join("info.yml")).unwrap();
+            assert_eq!(
+                info.regression_tests_info[0].test_type, "evtx",
+                "add_json_output={add_json}: type must match the .evtx data file"
+            );
+            assert!(
+                info.regression_tests_info[0].path.ends_with(".evtx"),
+                "add_json_output={add_json}: path must point at the .evtx data file"
+            );
+        }
+    }
+
+    /// A lone captured event is exported as a plain, human-readable `.json`
+    /// document — the convention the SigmaHQ repo reviews against. Several
+    /// grouped records stay newline-delimited: one compact document per line,
+    /// which is what ndjson actually requires.
+    #[test]
+    fn test_json_export_layout_follows_record_count() {
+        // One record → pretty-printed multi-line document.
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("regression_data");
+        let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
+        reg.set_add_json_output(true);
+        let rule_id = Uuid::new_v4();
+        reg.add(&synthetic_noid_alert(rule_id))
+            .expect("data generated");
+
+        let text = std::fs::read_to_string(
+            base.join("rules")
+                .join(rule_id.to_string())
+                .join(format!("{rule_id}.json")),
+        )
+        .unwrap();
+        assert!(
+            text.lines().count() > 1,
+            "a single record must be pretty-printed, not one line: {text}"
+        );
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&text).is_ok(),
+            "the pretty-printed document must still parse as one JSON value"
+        );
+
+        // Several records → one compact document per line.
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("regression_data");
+        let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
+        reg.set_format(DataFormat::Log);
+        reg.set_add_json_output(true);
+        let rule_id = Uuid::new_v4();
+        let alert = synthetic_log_alert(rule_id);
+        let grouped = Alert {
+            event_json_raw_all: Some(vec![
+                serde_json::json!({ "type": "EXECVE", "a0": "passwd" }),
+                serde_json::json!({ "type": "EXECVE", "a0": "whoami" }),
+                serde_json::json!({ "type": "EXECVE", "a0": "id" }),
+            ]),
+            ..alert
+        };
+        reg.add(&grouped).expect("data generated");
+
+        let text = std::fs::read_to_string(
+            base.join("rules")
+                .join(rule_id.to_string())
+                .join(format!("{rule_id}.json")),
+        )
+        .unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3, "one line per record: {text}");
+        for line in lines {
+            assert!(
+                serde_json::from_str::<serde_json::Value>(line).is_ok(),
+                "each ndjson line must be a standalone JSON document: {line}"
+            );
+        }
+    }
+
+    /// The auxiliary export is readable in both layouts the writer produces.
+    /// A whole-file `from_str` accepted only the single-document one, which made
+    /// a multi-record export look absent and silently disabled the caller's
+    /// `match_count` cross-check.
+    #[test]
+    fn test_get_json_records_reads_both_export_layouts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("regression_data");
+        let dir = base.join("rules").join("win").join("both_layouts");
+        std::fs::create_dir_all(&dir).unwrap();
+        let rule_id = Uuid::new_v4();
+        InfoYml::new(
+            &rule_id,
+            "Both Layouts",
+            1,
+            "regression_data/rules/win/both_layouts/data.evtx",
+            "tester",
+            "N/A",
+            &TestConfig {
+                test_type: "evtx".to_string(),
+                provider: "Microsoft-Windows-Sysmon".to_string(),
+            },
+        )
+        .save(&dir.join("info.yml"))
+        .unwrap();
+        std::fs::write(dir.join(format!("{rule_id}.evtx")), b"ElfFile\0rest").unwrap();
+
+        let json_path = dir.join(format!("{rule_id}.json"));
+
+        // One pretty-printed document (what the writer emits for a lone event).
+        std::fs::write(
+            &json_path,
+            serde_json::to_string_pretty(&serde_json::json!({ "Event": { "n": 1 } })).unwrap()
+                + "\n",
+        )
+        .unwrap();
+        let reg = SigmahqRegression::new_from_path(&base).unwrap();
+        let records = reg.get_json_records(0).expect("pretty document readable");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["Event"]["n"], 1);
+
+        // Several newline-delimited documents (a grouped capture).
+        std::fs::write(&json_path, "{\"n\":1}\n{\"n\":2}\n{\"n\":3}\n").unwrap();
+        let reg = SigmahqRegression::new_from_path(&base).unwrap();
+        let records = reg.get_json_records(0).expect("ndjson readable");
+        assert_eq!(records.len(), 3, "one record per line: {records:?}");
+
+        // Absent file, and malformed bytes, both read as absent.
+        std::fs::remove_file(&json_path).unwrap();
+        let reg = SigmahqRegression::new_from_path(&base).unwrap();
+        assert!(reg.get_json_records(0).is_none());
+        std::fs::write(&json_path, "{\"n\":1}\n{oops}\n").unwrap();
+        let reg = SigmahqRegression::new_from_path(&base).unwrap();
+        assert!(
+            reg.get_json_records(0).is_none(),
+            "a malformed export must not read as a valid one"
+        );
+    }
+
+    /// Regression data already committed to SigmaHQ carries `type: ndjson` over
+    /// an `.evtx` path (older sigmacatch wrote the auxiliary export's shape into
+    /// the data file's `type`). Reading that at face value parses an EVTX blob
+    /// as JSON and fails the entry with a misleading "EMPTY". The data file on
+    /// disk decides instead.
+    #[test]
+    fn test_unknown_test_type_falls_back_to_data_file_extension() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("regression_data");
+        let dir = base.join("rules").join("win").join("legacy_ndjson_type");
+        std::fs::create_dir_all(&dir).unwrap();
+        let rule_id = Uuid::new_v4();
+        InfoYml::new(
+            &rule_id,
+            "Legacy ndjson Type",
+            1,
+            "regression_data/rules/win/legacy_ndjson_type/data.evtx",
+            "tester",
+            "N/A",
+            &TestConfig {
+                test_type: "ndjson".to_string(),
+                provider: "Microsoft-Windows-Sysmon".to_string(),
+            },
+        )
+        .save(&dir.join("info.yml"))
+        .unwrap();
+        std::fs::write(dir.join(format!("{rule_id}.evtx")), b"ElfFile\0rest").unwrap();
+
+        let reg = SigmahqRegression::new_from_path(&base).unwrap();
+        assert_eq!(
+            reg.get_entry(0).expect("entry loaded").logtype,
+            LogType::Evtx,
+            "an .evtx data file must be read as EVTX whatever `type` claims"
+        );
+    }
+
+    /// A recognised `type` still wins — the extension only rescues unknown or
+    /// disagreeing metadata, it does not override a deliberate `type`.
+    #[test]
+    fn test_known_test_type_is_authoritative() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("regression_data");
+        let dir = base.join("rules").join("win").join("json_data");
+        std::fs::create_dir_all(&dir).unwrap();
+        let rule_id = Uuid::new_v4();
+        InfoYml::new(
+            &rule_id,
+            "Json Data",
+            1,
+            "regression_data/rules/win/json_data/data.json",
+            "tester",
+            "N/A",
+            &TestConfig {
+                test_type: "json".to_string(),
+                provider: "auditd".to_string(),
+            },
+        )
+        .save(&dir.join("info.yml"))
+        .unwrap();
+        std::fs::write(dir.join(format!("{rule_id}.json")), "{\"a\":1}\n").unwrap();
+
+        let reg = SigmahqRegression::new_from_path(&base).unwrap();
+        assert_eq!(
+            reg.get_entry(0).expect("entry loaded").logtype,
+            LogType::Json
         );
     }
 

@@ -426,134 +426,167 @@ impl Config {
 
     /// Reject placeholder/inconsistent values before first run.
     pub fn validate(&self) -> Result<()> {
+        self.validate_git_credentials()?;
+        self.validate_ssh_key()?;
+        self.validate_github_token()?;
+        self.validate_filter_settings()?;
+        self.validate_regression_settings()?;
+        self.validate_sigma_repo_path()?;
+        self.validate_git_timeouts()?;
+        self.warn_restrictive_filters();
+        Ok(())
+    }
+
+    fn validate_git_credentials(&self) -> Result<()> {
         // Skip author/email validation in offline mode — no git operations needed
-        if !self.git.is_offline() {
-            if self.git.author == "sigmacatch" {
-                return Err(ConfigError::Invalid(
-                    "config: 'git.author' is the placeholder 'sigmacatch'. \
-                     Set 'author' to your GitHub username in config.yaml"
-                        .to_string(),
-                ));
-            }
-            if !self.git.author.is_empty()
-                && !self
-                    .git
-                    .author
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '-')
-            {
-                return Err(ConfigError::Invalid(format!(
-                    "config: 'git.author' must be a valid GitHub username (alphanumeric + hyphens), got {:?}",
-                    self.git.author
-                )));
-            }
-            if self.git.email.is_empty() {
-                return Err(ConfigError::Invalid(
-                    "config: 'git.email' is required".to_string(),
-                ));
-            }
-            if !self.git.email.contains('@') {
-                return Err(ConfigError::Invalid(format!(
-                    "config: 'git.email' must contain '@', got {:?}",
-                    self.git.email
-                )));
-            }
+        if self.git.is_offline() {
+            return Ok(());
         }
+        if self.git.author == "sigmacatch" {
+            return Err(ConfigError::Invalid(
+                "config: 'git.author' is the placeholder 'sigmacatch'. \
+                 Set 'author' to your GitHub username in config.yaml"
+                    .to_string(),
+            ));
+        }
+        if !self.git.author.is_empty()
+            && !self
+                .git
+                .author
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            return Err(ConfigError::Invalid(format!(
+                "config: 'git.author' must be a valid GitHub username (alphanumeric + hyphens), got {:?}",
+                self.git.author
+            )));
+        }
+        if self.git.email.is_empty() {
+            return Err(ConfigError::Invalid(
+                "config: 'git.email' is required".to_string(),
+            ));
+        }
+        if !self.git.email.contains('@') {
+            return Err(ConfigError::Invalid(format!(
+                "config: 'git.email' must contain '@', got {:?}",
+                self.git.email
+            )));
+        }
+        Ok(())
+    }
+
+    fn validate_ssh_key(&self) -> Result<()> {
         // Validate SSH key path if configured. Skipped offline: no network op
         // can use the key, so a stale path must not block an offline startup.
-        if self.git.needs_network()
-            && let Some(ref key_path) = self.git.ssh_key_path
-            && !key_path.is_empty()
+        if !self.git.needs_network() {
+            return Ok(());
+        }
+        let Some(ref key_path) = self.git.ssh_key_path else {
+            return Ok(());
+        };
+        if key_path.is_empty() {
+            return Ok(());
+        }
+        let path = std::path::Path::new(key_path);
+        if !path.is_absolute() {
+            return Err(ConfigError::Invalid(format!(
+                "config: SSH key path '{}' is not absolute (transport={}); \
+                 use a full path like /home/user/.ssh/id or C:\\Users\\user\\.ssh\\id",
+                key_path, self.git.transport
+            )));
+        }
+        let meta = std::fs::metadata(key_path).map_err(|_| {
+            ConfigError::Invalid(format!(
+                "config: SSH key path '{}' does not exist (transport={}); \
+                 remove ssh_key_path from config or switch to transport = http",
+                key_path, self.git.transport
+            ))
+        })?;
+        if !meta.is_file() {
+            return Err(ConfigError::Invalid(format!(
+                "config: SSH key path '{}' is not a file (transport={}); \
+                 remove ssh_key_path from config or switch to transport = http",
+                key_path, self.git.transport
+            )));
+        }
+        #[cfg(unix)]
         {
-            let path = std::path::Path::new(key_path);
-            if !path.is_absolute() {
-                return Err(ConfigError::Invalid(format!(
-                    "config: SSH key path '{}' is not absolute (transport={}); \
-                             use a full path like /home/user/.ssh/id or C:\\Users\\user\\.ssh\\id",
-                    key_path, self.git.transport
-                )));
+            let mode = meta.permissions().mode() & 0o777;
+            if mode & 0o077 != 0 {
+                // Pre-logging warning: validate() runs before the runner
+                // initialises tracing, so tracing events would be dropped here.
+                eprintln!(
+                    "WARNING: config: SSH key '{}' has overly permissive mode 0{:o} — should be 0600. \
+                     SSH may refuse to use it. Run: chmod 600 {}",
+                    key_path, mode, key_path
+                );
             }
-            let meta = std::fs::metadata(key_path).map_err(|_| {
-                ConfigError::Invalid(format!(
-                    "config: SSH key path '{}' does not exist (transport={}); \
-                             remove ssh_key_path from config or switch to transport = http",
-                    key_path, self.git.transport
-                ))
-            })?;
-            if !meta.is_file() {
-                return Err(ConfigError::Invalid(format!(
-                    "config: SSH key path '{}' is not a file (transport={}); \
-                             remove ssh_key_path from config or switch to transport = http",
-                    key_path, self.git.transport
-                )));
-            }
-            #[cfg(unix)]
-            {
-                let mode = meta.permissions().mode() & 0o777;
-                if mode & 0o077 != 0 {
-                    // Pre-logging warning: validate() runs before the runner
-                    // initialises tracing, so tracing events would be dropped here.
-                    eprintln!(
-                        "WARNING: config: SSH key '{}' has overly permissive mode 0{:o} — should be 0600. \
-                         SSH may refuse to use it. Run: chmod 600 {}",
-                        key_path, mode, key_path
-                    );
-                }
-                // Also check that the key is readable by the current user
-                if mode & 0o400 == 0 {
-                    eprintln!(
-                        "WARNING: config: SSH key '{}' is not readable by the owner (mode 0{:o}). \
-                         SSH will reject it. Run: chmod 400 {}",
-                        key_path, mode, key_path
-                    );
-                }
+            // Also check that the key is readable by the current user
+            if mode & 0o400 == 0 {
+                eprintln!(
+                    "WARNING: config: SSH key '{}' is not readable by the owner (mode 0{:o}). \
+                     SSH will reject it. Run: chmod 400 {}",
+                    key_path, mode, key_path
+                );
             }
         }
+        Ok(())
+    }
 
+    fn validate_github_token(&self) -> Result<()> {
         // Token is only required for HTTP transport when a network operation
         // is enabled (pull or push). Fully offline mode needs no token.
-        if self.git.transport == GitTransport::Http && self.git.needs_network() {
-            let has_config_token = !self.git.github_token.trim().is_empty();
-            let has_env_token = std::env::var("GITHUB_TOKEN")
-                .map(|t| !t.trim().is_empty())
-                .unwrap_or(false);
-            if !has_config_token && !has_env_token {
-                return Err(ConfigError::Invalid("config: 'git.github_token' is required for HTTP transport when offline=false or contrib=true. \
-                     Set git.github_token in config.yaml or GITHUB_TOKEN env var. \
-                     Create a token at https://github.com/settings/tokens. \
-                     Alternatively, set offline: true and contrib: false for fully offline mode (no network).".to_string()));
-            }
-            if has_config_token {
-                let trimmed = self.git.github_token.trim();
-                if trimmed.contains(char::is_whitespace) {
-                    return Err(ConfigError::Invalid(
-                        "config: 'git.github_token' contains whitespace — trim it".to_string(),
-                    ));
-                }
+        if self.git.transport != GitTransport::Http || !self.git.needs_network() {
+            return Ok(());
+        }
+        let has_config_token = !self.git.github_token.trim().is_empty();
+        let has_env_token = std::env::var("GITHUB_TOKEN")
+            .map(|t| !t.trim().is_empty())
+            .unwrap_or(false);
+        if !has_config_token && !has_env_token {
+            return Err(ConfigError::Invalid("config: 'git.github_token' is required for HTTP transport when offline=false or contrib=true. \
+                 Set git.github_token in config.yaml or GITHUB_TOKEN env var. \
+                 Create a token at https://github.com/settings/tokens. \
+                 Alternatively, set offline: true and contrib: false for fully offline mode (no network).".to_string()));
+        }
+        if has_config_token {
+            let trimmed = self.git.github_token.trim();
+            if trimmed.contains(char::is_whitespace) {
+                return Err(ConfigError::Invalid(
+                    "config: 'git.github_token' contains whitespace — trim it".to_string(),
+                ));
             }
         }
+        Ok(())
+    }
 
+    fn validate_filter_settings(&self) -> Result<()> {
         if self.filter.max_rule_size < 1024 {
             return Err(ConfigError::Invalid(format!(
                 "config: 'filter.max_rule_size' must be at least 1024 bytes, got {}",
                 self.filter.max_rule_size
             )));
         }
-
         if self.filter.max_rule_size > 10 * 1024 * 1024 {
             return Err(ConfigError::Invalid(format!(
                 "config: 'filter.max_rule_size' exceeds maximum allowed value (10MB), got {}",
                 self.filter.max_rule_size
             )));
         }
+        Ok(())
+    }
 
+    fn validate_regression_settings(&self) -> Result<()> {
         if self.regression.max_failed_cycles < 1 {
             return Err(ConfigError::Invalid(format!(
                 "config: 'regression.max_failed_cycles' must be at least 1, got {}",
                 self.regression.max_failed_cycles
             )));
         }
+        Ok(())
+    }
 
+    fn validate_sigma_repo_path(&self) -> Result<()> {
         // Validate sigma_repo_path — reject empty and path traversal. Absolute
         // (full) paths are allowed; consumers resolve relative paths against
         // the config file's directory.
@@ -572,7 +605,10 @@ impl Config {
                 self.git.sigma_repo_path
             )));
         }
+        Ok(())
+    }
 
+    fn validate_git_timeouts(&self) -> Result<()> {
         // Validate git timeout fields — must be positive and reasonable
         if self.git.clone_timeout_secs == 0 {
             return Err(ConfigError::Invalid(
@@ -613,7 +649,10 @@ impl Config {
                 self.git.max_retries
             )));
         }
+        Ok(())
+    }
 
+    fn warn_restrictive_filters(&self) {
         if let Some(status) = self
             .filter
             .min_status
@@ -635,7 +674,6 @@ impl Config {
                 "WARNING: filter.min_level = {level} — very restrictive, only {level} and higher rules will be loaded"
             );
         }
-        Ok(())
     }
 
     /// Ensure required directories exist.

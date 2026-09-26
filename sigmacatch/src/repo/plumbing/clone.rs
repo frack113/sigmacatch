@@ -153,13 +153,19 @@ fn clone_via_git_cli(
     _http_timeout: u64,
 ) -> Result<()> {
     // Try to find git executable
-    let git_exe = find_git_executable();
-    if git_exe.is_none() {
-        warn!("git executable not found in PATH, falling back to shallow clone via grit-lib");
-        return clone_repo_inner_impl(http_client, url, dest, true, false);
-    }
+    let Some(git_exe) = find_git_executable() else {
+        warn!(
+            "git executable not found in PATH, falling back to shallow clone via grit-lib \
+             (blobless filter --filter=blob:none is unavailable; depth-1 shallow is kept)"
+        );
+        // The caller's `sparse_checkout` is forwarded, not dropped: this fallback
+        // supports it, and `sparse_checkout` defaults to true. Not covered by a
+        // test because both failure branches below `remove_dir_all` the evidence
+        // (the sparse-checkout file lives under `.git`).
+        return clone_repo_inner_impl(http_client, url, dest, true, sparse_checkout);
+    };
 
-    let mut cmd = Command::new(git_exe.unwrap());
+    let mut cmd = Command::new(git_exe);
     cmd.arg("clone");
     cmd.arg("--filter=blob:none");
     if shallow {
@@ -224,14 +230,27 @@ fn find_git_executable() -> Option<PathBuf> {
     // Try PATH
     if let Ok(output) = Command::new("where").arg("git").output()
         && output.status.success()
+        && let Some(exe) = first_executable_path(&output.stdout)
     {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            return Some(PathBuf::from(path.lines().next().unwrap()));
-        }
+        return Some(exe);
     }
 
     None
+}
+
+/// Extract the first usable path from `where git` output.
+///
+/// `where` prints one path per line, so the contract is: return the first
+/// non-empty trimmed line, or `None` when there is none. Returning `None` is
+/// what lets the caller fall back to the grit-lib path; returning an empty path
+/// would instead fail opaquely inside `Command::new`. The invariant is pinned by
+/// the `first_executable_path_*` tests below.
+fn first_executable_path(stdout: &[u8]) -> Option<PathBuf> {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Internal implementation shared by both clone paths
@@ -375,5 +394,34 @@ mod tests {
             !git_dir.exists(),
             "half-initialized .git must be removed after a failed fetch"
         );
+    }
+
+    /// `where git` can print several paths; the first usable one wins.
+    #[test]
+    fn first_executable_path_takes_first_non_empty_line() {
+        let out = b"C:\\Program Files\\Git\\bin\\git.exe\r\nC:\\other\\git.exe\r\n";
+        assert_eq!(
+            first_executable_path(out),
+            Some(PathBuf::from(r"C:\Program Files\Git\bin\git.exe"))
+        );
+    }
+
+    /// A leading blank line must not yield an empty path: `Command::new("")`
+    /// would fail opaquely instead of letting the caller fall back.
+    #[test]
+    fn first_executable_path_skips_leading_blank_lines() {
+        let out = b"\r\n   \r\nC:\\Program Files\\Git\\bin\\git.exe\r\n";
+        assert_eq!(
+            first_executable_path(out),
+            Some(PathBuf::from(r"C:\Program Files\Git\bin\git.exe"))
+        );
+    }
+
+    /// Blank output means "git not found" — the caller must be able to fall
+    /// back, so this must stay `None` rather than an empty path.
+    #[test]
+    fn first_executable_path_returns_none_when_blank() {
+        assert_eq!(first_executable_path(b""), None);
+        assert_eq!(first_executable_path(b"\r\n \r\n"), None);
     }
 }

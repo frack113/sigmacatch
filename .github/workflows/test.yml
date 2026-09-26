@@ -71,8 +71,9 @@ jobs:
 
   # Anti-regression coverage gate (Q7.3): fails the build when line coverage of
   # the Linux-compilable input set drops below the threshold. `winevt` is a
-  # no-op stub on Linux and `ebpf` needs nightly + bpf-linker (its own test
-  # leg), so the gate runs on the rest of the feature matrix.
+  # no-op stub on Linux, so the gate runs on the rest of the stable feature
+  # matrix. The `ebpf` half of the feature matrix needs nightly + bpf-linker
+  # and is gated separately by `coverage-ebpf` below.
   coverage:
     name: Coverage gate
     runs-on: ubuntu-latest
@@ -94,3 +95,54 @@ jobs:
           cargo llvm-cov --locked --workspace --all-targets \
             --no-default-features --features auditd,builtin,sysmon,evtx \
             --fail-under-lines 78
+
+  # Companion gate for the `ebpf` input (Q7.3). Without it, inputs/ebpf.rs and
+  # inputs/ebpf_event.rs sit outside every coverage number in the project.
+  #
+  # Scope, stated precisely so the number is not over-read:
+  #   - This measures the *host-side* ebpf code only (1 341 lines). The nested
+  #     `sigmacatch/ebpf` kernel probe is a separate workspace built for
+  #     `bpfel-unknown-none`, and llvm-cov cannot instrument those objects — it
+  #     does not appear in the report. Closing that last 478 lines would need
+  #     in-kernel verification, not a coverage gate.
+  #   - `inputs/ebpf.rs` (62.9%) and `ebpf_common.rs` (32.8%) need a privileged
+  #     kernel to exercise the attach path, so they drag the average down; the
+  #     parsers in `inputs/ebpf_event.rs` sit at 96.8%.
+  #   - Measured 78.43% on 2026-09-26. The bar is 77, not the stable gate's 78,
+  #     to absorb line-count drift between nightly releases.
+  coverage-ebpf:
+    name: Coverage gate (ebpf)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
+        with:
+          toolchain: stable
+      - name: Install nightly + bpf-linker
+        run: |
+          rustup toolchain install nightly --component rust-src
+          if [ ! -x "${{ runner.tool_cache }}/bpf-linker/bpf-linker" ]; then
+            curl -sL -o /tmp/bpf-linker.tar.zst \
+              "https://github.com/aya-rs/bpf-linker/releases/download/v0.11.0/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
+            mkdir -p "${{ runner.tool_cache }}/bpf-linker"
+            tar --zstd -xf /tmp/bpf-linker.tar.zst -C "${{ runner.tool_cache }}/bpf-linker"
+          fi
+          echo "${{ runner.tool_cache }}/bpf-linker" >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: coverage-ebpf
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.tool_cache }}/bpf-linker
+          key: bpf-linker-0.11.0
+      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
+        with:
+          tool: cargo-llvm-cov
+      - name: Coverage gate (auditd+builtin+ebpf)
+        run: |
+          cargo +nightly llvm-cov --locked --workspace --all-targets \
+            --no-default-features --features auditd,builtin,ebpf \
+            --fail-under-lines 77

@@ -160,80 +160,10 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
             ))),
         }
     };
-    let year = (u32::from(read_u16(0)?) * 100 + u32::from(read_u16(2)?)) as i64;
-    let month = u32::from(read_u16(5)?);
-    let day = u32::from(read_u16(8)?);
-    let hour = u32::from(read_u16(11)?);
-    let minute = u32::from(read_u16(14)?);
-    let second = u32::from(read_u16(17)?);
-    if !(1..=12).contains(&month) || hour > 23 || minute > 59 || second > 59 {
-        return Err(WriterError::Invalid(format!(
-            "malformed SystemTime: {system_time} (leap second not supported)"
-        )));
-    }
-    let max_day = match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => {
-            if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
-                29
-            } else {
-                28
-            }
-        }
-        _ => unreachable!("month is validated to 1..=12 above"),
-    };
-    if day == 0 || day > max_day {
-        return Err(WriterError::Invalid(format!(
-            "malformed SystemTime: {system_time}"
-        )));
-    }
+    let (year, month, day, hour, minute, second) = parse_datetime_components(bytes, &read_u16)?;
+    let fraction_ns = parse_fraction_ns(bytes);
+    let (offset_secs, tz_end) = parse_timezone(bytes, &read_u16)?;
 
-    let mut fraction_ns: u32 = 0;
-    let mut frac_digits: u32 = 0;
-    if bytes.len() > 19 && bytes[19] == b'.' {
-        for &b in bytes[20..].iter().take(9) {
-            if !b.is_ascii_digit() {
-                break;
-            }
-            fraction_ns = fraction_ns * 10 + u32::from(b - b'0');
-            frac_digits += 1;
-        }
-        if frac_digits < 9 {
-            fraction_ns *= 10u32.pow(9 - frac_digits);
-        }
-    }
-
-    let mut offset_secs: i64 = 0;
-    let tz_start = bytes.iter().position(|&b| b == b'T').unwrap_or(bytes.len());
-    let mut tz_end = tz_start;
-    for (i, &b) in bytes[tz_start..].iter().enumerate() {
-        let i = i + tz_start;
-        if b == b'Z' || b == b'z' {
-            tz_end = i + 1;
-            break;
-        }
-        if b == b'+' || b == b'-' {
-            if bytes.len() < i + 6 || bytes[i + 3] != b':' {
-                return Err(WriterError::Invalid(format!(
-                    "malformed SystemTime timezone: {system_time}"
-                )));
-            }
-            let off_h = read_u16(i + 1)? as i64;
-            let off_m = read_u16(i + 4)? as i64;
-            if off_h > 23 || off_m > 59 {
-                return Err(WriterError::Invalid(format!(
-                    "malformed SystemTime timezone: {system_time}"
-                )));
-            }
-            offset_secs = off_h * 3600 + off_m * 60;
-            if b == b'-' {
-                offset_secs = -offset_secs;
-            }
-            tz_end = i + 6;
-            break;
-        }
-    }
     if tz_end != bytes.len() {
         return Err(WriterError::Invalid(format!(
             "trailing garbage after timezone in SystemTime: {system_time}"
@@ -242,9 +172,9 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
 
     // Days since 1970-01-01 (Howard Hinnant's algorithm), then UNIX seconds,
     // then FILETIME epoch offset + 100ns ticks.
-    let year = year - if month <= 2 { 1 } else { 0 };
-    let era = year.div_euclid(400);
-    let yoe = year - era * 400;
+    let year_adj = year - if month <= 2 { 1 } else { 0 };
+    let era = year_adj.div_euclid(400);
+    let yoe = year_adj - era * 400;
     let mp = month as i64 + if month > 2 { -3 } else { 9 };
     let doy = (153 * mp + 2) / 5 + day as i64 - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
@@ -260,6 +190,91 @@ fn system_time_to_filetime(system_time: &str) -> Result<u64> {
         )));
     }
     Ok(filetime as u64)
+}
+
+fn parse_datetime_components(
+    _bytes: &[u8],
+    read_u16: &impl Fn(usize) -> Result<u16>,
+) -> Result<(i64, u32, u32, u32, u32, u32)> {
+    let year = (u32::from(read_u16(0)?) * 100 + u32::from(read_u16(2)?)) as i64;
+    let month = u32::from(read_u16(5)?);
+    let day = u32::from(read_u16(8)?);
+    let hour = u32::from(read_u16(11)?);
+    let minute = u32::from(read_u16(14)?);
+    let second = u32::from(read_u16(17)?);
+    if !(1..=12).contains(&month) || hour > 23 || minute > 59 || second > 59 {
+        return Err(WriterError::Invalid(
+            "malformed SystemTime (leap second not supported)".to_string(),
+        ));
+    }
+    let max_day = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => unreachable!("month is validated to 1..=12 above"),
+    };
+    if day == 0 || day > max_day {
+        return Err(WriterError::Invalid("malformed SystemTime".to_string()));
+    }
+    Ok((year, month, day, hour, minute, second))
+}
+
+fn parse_fraction_ns(bytes: &[u8]) -> u32 {
+    let mut fraction_ns: u32 = 0;
+    let mut frac_digits: u32 = 0;
+    if bytes.len() > 19 && bytes[19] == b'.' {
+        for &b in bytes[20..].iter().take(9) {
+            if !b.is_ascii_digit() {
+                break;
+            }
+            fraction_ns = fraction_ns * 10 + u32::from(b - b'0');
+            frac_digits += 1;
+        }
+        if frac_digits < 9 {
+            fraction_ns *= 10u32.pow(9 - frac_digits);
+        }
+    }
+    fraction_ns
+}
+
+fn parse_timezone(bytes: &[u8], read_u16: &impl Fn(usize) -> Result<u16>) -> Result<(i64, usize)> {
+    let mut offset_secs: i64 = 0;
+    let tz_start = bytes.iter().position(|&b| b == b'T').unwrap_or(bytes.len());
+    let mut tz_end = tz_start;
+    for (i, &b) in bytes[tz_start..].iter().enumerate() {
+        let i = i + tz_start;
+        if b == b'Z' || b == b'z' {
+            tz_end = i + 1;
+            break;
+        }
+        if b == b'+' || b == b'-' {
+            if bytes.len() < i + 6 || bytes[i + 3] != b':' {
+                return Err(WriterError::Invalid(
+                    "malformed SystemTime timezone".to_string(),
+                ));
+            }
+            let off_h = read_u16(i + 1)? as i64;
+            let off_m = read_u16(i + 4)? as i64;
+            if off_h > 23 || off_m > 59 {
+                return Err(WriterError::Invalid(
+                    "malformed SystemTime timezone".to_string(),
+                ));
+            }
+            offset_secs = off_h * 3600 + off_m * 60;
+            if b == b'-' {
+                offset_secs = -offset_secs;
+            }
+            tz_end = i + 6;
+            break;
+        }
+    }
+    Ok((offset_secs, tz_end))
 }
 
 fn build_file_header(record_id: u64) -> [u8; FILE_HEADER_SIZE] {
