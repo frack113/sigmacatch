@@ -535,75 +535,10 @@ impl RegressionData {
         let rule_id = &self.header.rule_id;
         let ext = self.format.ext();
         let mut written: Vec<PathBuf> = Vec::new();
-        let result = (|| -> Result<()> {
-            // Create rule dir inside the closure so it gets cleaned up on failure
-            std::fs::create_dir_all(&rule_dir)?;
-            if self.add_json_output {
-                let raw_json_path = crate::regression::long_path::long_path(
-                    &rule_dir.join(format!("{rule_id}.json")),
-                );
-                let mut file = std::fs::File::create(&raw_json_path)?;
-                let records: Vec<&serde_json::Value> = self
-                    .alerts
-                    .iter()
-                    .flat_map(|alert| match &alert.event_json_raw_all {
-                        Some(all) => all.iter().collect::<Vec<_>>(),
-                        None => vec![&alert.event_json_raw],
-                    })
-                    .collect();
-                // A lone record is a plain `.json` document: pretty-print it so
-                // it stays reviewable in a diff. Several records must stay
-                // newline-delimited — one compact document per line — or the
-                // file is no longer valid ndjson.
-                if records.len() == 1 {
-                    let doc = serde_json::to_string_pretty(records[0])?;
-                    writeln!(file, "{doc}")?;
-                } else {
-                    for rec in records {
-                        writeln!(file, "{}", serde_json::to_string(rec)?)?;
-                    }
-                }
-                written.push(raw_json_path);
-            }
-            let data_path =
-                crate::regression::long_path::long_path(&rule_dir.join(format!("{rule_id}.{ext}")));
-            // For Log (auditd), write all alerts concatenated.
-            // For Evtx, write only the first alert (binary format).
-            match self.format {
-                DataFormat::Log => {
-                    let mut data_file = std::fs::File::create(&data_path)?;
-                    for alert in &self.alerts {
-                        if alert.event_raw.len() > self.format.max_blob_size() {
-                            return Err(RegressionError::Invalid(format!(
-                                "audit event exceeds {} MiB — refusing to write {}",
-                                self.format.max_blob_size() / 1024 / 1024,
-                                data_path.display()
-                            )));
-                        }
-                        data_file.write_all(&alert.event_raw)?;
-                    }
-                }
-                DataFormat::Evtx => {
-                    let alert = &self.alerts[0];
-                    if alert.event_raw.len() > self.format.max_blob_size() {
-                        return Err(RegressionError::Invalid(format!(
-                            "event exceeds {} MiB — refusing to write {}",
-                            self.format.max_blob_size() / 1024 / 1024,
-                            data_path.display()
-                        )));
-                    }
-                    self.format.write(alert, &data_path)?;
-                }
-            }
-            written.push(data_path);
-            Ok(())
-        })();
+
+        let result = self.write_data_files(&rule_dir, rule_id, ext, &mut written);
         if let Err(e) = result {
-            for path in &written {
-                let _ = std::fs::remove_file(path);
-            }
-            // Clean up rule directory if it was created but generation failed
-            let _ = std::fs::remove_dir_all(&rule_dir);
+            self.cleanup_on_failure(&written, &rule_dir);
             return Err(e);
         }
 
@@ -639,6 +574,96 @@ impl RegressionData {
             self.alerts.len()
         );
         Ok(())
+    }
+
+    fn write_data_files(
+        &self,
+        rule_dir: &Path,
+        rule_id: &Uuid,
+        ext: &str,
+        written: &mut Vec<PathBuf>,
+    ) -> Result<()> {
+        std::fs::create_dir_all(rule_dir)?;
+
+        if self.add_json_output {
+            self.write_json_output(rule_dir, rule_id, written)?;
+        }
+
+        let data_path =
+            crate::regression::long_path::long_path(&rule_dir.join(format!("{rule_id}.{ext}")));
+        self.write_primary_data(&data_path)?;
+        written.push(data_path);
+        Ok(())
+    }
+
+    fn write_json_output(
+        &self,
+        rule_dir: &Path,
+        rule_id: &Uuid,
+        written: &mut Vec<PathBuf>,
+    ) -> Result<()> {
+        let raw_json_path =
+            crate::regression::long_path::long_path(&rule_dir.join(format!("{rule_id}.json")));
+        let mut file = std::fs::File::create(&raw_json_path)?;
+        let records: Vec<&serde_json::Value> = self
+            .alerts
+            .iter()
+            .flat_map(|alert| match &alert.event_json_raw_all {
+                Some(all) => all.iter().collect::<Vec<_>>(),
+                None => vec![&alert.event_json_raw],
+            })
+            .collect();
+        // A lone record is a plain `.json` document: pretty-print it so
+        // it stays reviewable in a diff. Several records must stay
+        // newline-delimited — one compact document per line — or the
+        // file is no longer valid ndjson.
+        if records.len() == 1 {
+            let doc = serde_json::to_string_pretty(records[0])?;
+            writeln!(file, "{doc}")?;
+        } else {
+            for rec in records {
+                writeln!(file, "{}", serde_json::to_string(rec)?)?;
+            }
+        }
+        written.push(raw_json_path);
+        Ok(())
+    }
+
+    fn write_primary_data(&self, data_path: &Path) -> Result<()> {
+        match self.format {
+            DataFormat::Log => {
+                let mut data_file = std::fs::File::create(data_path)?;
+                for alert in &self.alerts {
+                    if alert.event_raw.len() > self.format.max_blob_size() {
+                        return Err(RegressionError::Invalid(format!(
+                            "audit event exceeds {} MiB — refusing to write {}",
+                            self.format.max_blob_size() / 1024 / 1024,
+                            data_path.display()
+                        )));
+                    }
+                    data_file.write_all(&alert.event_raw)?;
+                }
+            }
+            DataFormat::Evtx => {
+                let alert = &self.alerts[0];
+                if alert.event_raw.len() > self.format.max_blob_size() {
+                    return Err(RegressionError::Invalid(format!(
+                        "event exceeds {} MiB — refusing to write {}",
+                        self.format.max_blob_size() / 1024 / 1024,
+                        data_path.display()
+                    )));
+                }
+                self.format.write(alert, data_path)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn cleanup_on_failure(&self, written: &[PathBuf], rule_dir: &Path) {
+        for path in written {
+            let _ = std::fs::remove_file(path);
+        }
+        let _ = std::fs::remove_dir_all(rule_dir);
     }
 }
 
