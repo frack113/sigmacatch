@@ -20,13 +20,14 @@
 //! regressiondata-check --path ./sigma --ignore
 //! ```
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::{Map, Value as JsonValue};
 use sigmacatch::detection::DetectionEngine;
 use sigmacatch::regression::SigmahqRegression;
+use sigmacatch::regression::logtype::{SIGMA_SPEC_TYPES, is_sigma_spec_type};
 use sigmacatch::rule::SigmahqRules;
 use sigmacatch::types::Event;
 use uuid::Uuid;
@@ -145,6 +146,20 @@ fn main() -> anyhow::Result<()> {
             }
             warnings.push(msg);
         }
+    }
+
+    // Report the spec gap, never fail on it: sigmacatch-only `type` values are
+    // valid here even though the upstream runner skips them.
+    for (declared, count) in out_of_spec_types(&regression) {
+        let msg = format!(
+            "{count} test(s) declare type '{declared}', a sigmacatch extension outside the \
+             SigmaHQ regression spec ({}); the upstream runner skips them",
+            SIGMA_SPEC_TYPES.join("/")
+        );
+        if !json_output {
+            eprintln!("[WARN] {msg}");
+        }
+        warnings.push(msg);
     }
 
     let (mut engine, failed_rules) = DetectionEngine::new_lenient(&rules)?;
@@ -568,6 +583,26 @@ fn validate_regression_paths(
         missing_path,
         mismatched_path,
     }
+}
+
+/// Count the declared `type` values that the SigmaHQ regression spec does not
+/// accept, keyed by type.
+///
+/// sigmacatch records line-oriented Linux data as `log` and unprocessed Cisco
+/// output as `raw`. Both are sigmacatch extensions: such entries validate and
+/// replay here, but the upstream runner skips them as an unknown test type.
+/// Grouping by type keeps a Linux run — hundreds of `log` entries — down to
+/// one warning line instead of burying the real failures.
+fn out_of_spec_types(regression: &SigmahqRegression) -> BTreeMap<&str, usize> {
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for (_info_path, info, _entry) in regression.iter_entries() {
+        for t in &info.regression_tests_info {
+            if !is_sigma_spec_type(&t.test_type) {
+                *counts.entry(t.test_type.as_str()).or_default() += 1;
+            }
+        }
+    }
+    counts
 }
 
 fn parse_auditd_lines(raw: &[u8]) -> (Vec<Event>, usize) {
@@ -1270,6 +1305,53 @@ mod tests {
         // Unrelated file within a known entry dir is still a JSON file whose
         // trailing newline is normalized (only files outside known dirs are skipped).
         assert_eq!(fs::read(&unrelated_path).unwrap(), expected);
+
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn out_of_spec_types_flags_extensions_and_ignores_spec_types() {
+        let tmp = std::env::temp_dir().join("regressiondata-check-test-spec-type");
+        let _ = fs::remove_dir_all(&tmp);
+
+        let reg_dir = tmp.join("sigma").join("regression_data");
+
+        for (dir, id, ty) in [
+            ("log_entry", "aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa", "log"),
+            ("raw_entry", "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb", "raw"),
+            ("evtx_entry", "cccccccc-cccc-4ccc-9ccc-cccccccccccc", "evtx"),
+            ("json_entry", "dddddddd-dddd-4ddd-9ddd-dddddddddddd", "json"),
+            (
+                "ndjson_entry",
+                "eeeeeeee-eeee-4eee-9eee-eeeeeeeeeeee",
+                "ndjson",
+            ),
+        ] {
+            let d = reg_dir.join("rules").join("test").join(dir);
+            fs::create_dir_all(&d).unwrap();
+            write_file(
+                &d.join("info.yml"),
+                &format!(
+                    "id: {id}\ndescription: test\ndate: 2026-01-01\nauthor: test\n\
+                     rule_metadata:\n  - id: {id}\n    title: Test Rule\n\
+                     regression_tests_info:\n  - name: test\n    type: {ty}\n    path: dummy\n"
+                ),
+            );
+            write_evtx(&d, id);
+        }
+
+        let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
+        let counts = out_of_spec_types(&regression);
+
+        assert_eq!(counts.get("log"), Some(&1), "log is a sigmacatch extension");
+        assert_eq!(counts.get("raw"), Some(&1), "raw is a sigmacatch extension");
+        assert!(!counts.contains_key("evtx"));
+        assert!(!counts.contains_key("json"));
+        assert!(
+            !counts.contains_key("ndjson"),
+            "ndjson is in the spec even though from_declared rejects it"
+        );
+        assert_eq!(counts.len(), 2, "only the two extensions: {counts:?}");
 
         fs::remove_dir_all(&tmp).unwrap();
     }
