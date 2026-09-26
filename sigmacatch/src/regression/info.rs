@@ -61,6 +61,10 @@ pub struct RegressionTestInfo {
     /// Optional pipeline field-mapping files (JSON entries only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipelines: Option<Vec<String>>,
+    /// Optional Sigma filter files applied during conversion (JSON entries
+    /// only). Modelled so a `filters:` key is not silently dropped on load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filters: Option<Vec<String>>,
     /// Relative path to the data file.
     pub path: String,
 }
@@ -118,6 +122,7 @@ impl InfoYml {
                 provider: test_config.provider.clone(),
                 match_count: event_count,
                 pipelines: None,
+                filters: None,
                 path: sigma_data_path.to_string(),
             }],
         }
@@ -136,27 +141,75 @@ impl InfoYml {
         Ok(())
     }
 
-    /// Convert yaml_serde output (0-indent list style) to the 4-space SigmaHQ style.
+    /// Convert `serde_yaml` output (which never indents block sequences) to
+    /// SigmaHQ's canonical 4-space layout: a sequence item sits 4 columns under
+    /// the key that owns it, and the item's own keys 2 columns further in.
+    ///
+    /// `serde_yaml` emits a `pipelines:` key and its `- item` lines at the *same*
+    /// column. A flat per-line lookup cannot tell that pair from an ordinary
+    /// key/value pair, so it collapses the sequence onto its key — the +0 form
+    /// seen in some committed SigmaHQ files. Tracking the open key is what
+    /// produces the +4 form the SigmaHQ README documents.
     pub fn to_sigma_indent(yaml: &str) -> String {
-        yaml.lines()
-            .map(|line| {
-                let trimmed = line.trim_start();
-                let spaces = line.len() - trimmed.len();
-                if spaces == 0 {
-                    if trimmed.starts_with("- ") {
-                        return format!("    {trimmed}");
-                    }
-                    return line.to_string();
+        let mut out: Vec<String> = Vec::with_capacity(yaml.lines().count());
+        // Source and canonical column of the innermost open bare key.
+        let mut open_key: Option<(usize, usize)> = None;
+
+        for line in yaml.lines() {
+            let trimmed = line.trim_start();
+            let spaces = line.len() - trimmed.len();
+
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                out.push(line.to_string());
+                continue;
+            }
+
+            let is_item = trimmed == "-" || trimmed.starts_with("- ");
+            let new_spaces = if is_item {
+                // A sequence under an open key is indented one level (4
+                // columns) below that key. The key stays open across the whole
+                // sequence, so every item lands on the same column.
+                match open_key {
+                    Some((key_src, key_col)) if key_src == spaces => key_col + 4,
+                    _ if spaces == 0 => 4,
+                    _ => match spaces {
+                        2 => 6,
+                        n => n + 4,
+                    },
                 }
-                let new_spaces = match spaces {
+            } else {
+                match spaces {
+                    0 => 0,
                     2 => 6,
                     n if n >= 4 => n + 4,
-                    _ => spaces,
-                };
-                format!("{}{}", " ".repeat(new_spaces), trimmed)
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+                    n => n,
+                }
+            };
+
+            out.push(format!("{}{}", " ".repeat(new_spaces), trimmed));
+
+            if is_item {
+                continue;
+            }
+            open_key = if Self::is_bare_key(trimmed) {
+                Some((spaces, new_spaces))
+            } else if open_key.is_some_and(|(key_src, _)| spaces <= key_src) {
+                // Sibling of the open key: its value block is over.
+                None
+            } else {
+                // Deeper than the key, so the value is a mapping and the key's
+                // block is still open. No open key stays `None`.
+                open_key
+            };
+        }
+
+        out.join("\n")
+    }
+
+    /// True when a line opens a block: `key:` with no inline value.
+    fn is_bare_key(trimmed: &str) -> bool {
+        let head = trimmed.split_once(" #").map_or(trimmed, |(h, _)| h);
+        head.trim_end().ends_with(':')
     }
 
     /// Return the canonical 4-space-indented YAML representation.
@@ -191,6 +244,69 @@ impl InfoYml {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// serde_yaml never indents block sequences: a key and its `- item` lines
+    /// share a column. This is the exact shape `to_sigma_indent` receives.
+    const SERDE_YAML_PIPELINES: &str = "regression_tests_info:\n- name: Positive Detection Test\n  type: json\n  match_count: 1\n  pipelines:\n  - regression_data/pipelines/process_creation_fieldmapping.yml\n  - regression_data/pipelines/other.yml\n  path: a.json\n";
+
+    #[test]
+    fn to_sigma_indent_nests_a_sequence_four_columns_under_its_key() {
+        let out = InfoYml::to_sigma_indent(SERDE_YAML_PIPELINES);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "regression_tests_info:");
+        assert_eq!(lines[1], "    - name: Positive Detection Test");
+        assert_eq!(lines[2], "      type: json");
+        assert_eq!(lines[3], "      match_count: 1");
+        assert_eq!(lines[4], "      pipelines:");
+        // +4 under `pipelines:` (6) — the README form, not the +0 form.
+        assert_eq!(
+            lines[5],
+            "          - regression_data/pipelines/process_creation_fieldmapping.yml"
+        );
+        // A second item stays on the same column: the key is still open.
+        assert_eq!(lines[6], "          - regression_data/pipelines/other.yml");
+        // The key's block closes on the next sibling.
+        assert_eq!(lines[7], "      path: a.json");
+    }
+
+    #[test]
+    fn to_sigma_indent_keeps_the_plain_four_six_layout() {
+        let serde = "rule_metadata:\n- id: 7595ba94-cf3b-4471-aa03-4f6baa9e5fad\n  title: T\nregression_tests_info:\n- name: T\n  type: evtx\n  path: a.evtx\n";
+        let out = InfoYml::to_sigma_indent(serde);
+        assert_eq!(
+            out,
+            "rule_metadata:\n    - id: 7595ba94-cf3b-4471-aa03-4f6baa9e5fad\n      title: T\nregression_tests_info:\n    - name: T\n      type: evtx\n      path: a.evtx"
+        );
+    }
+
+    /// `serde_yaml` output carries no comments, so key tracking only ever sees
+    /// contiguous lines; comments and blanks are still copied verbatim.
+    #[test]
+    fn to_sigma_indent_passes_comments_and_blanks_through() {
+        let serde = "# info.yml\npipelines:\n- a.yml\n\n- b.yml\npath: x\n";
+        let out = InfoYml::to_sigma_indent(serde);
+        assert_eq!(
+            out,
+            "# info.yml\npipelines:\n    - a.yml\n\n    - b.yml\npath: x"
+        );
+    }
+
+    /// A mapping value is not a sequence: a deeper child line keeps the 2→6
+    /// mapping and must not be read as an item of the open key.
+    #[test]
+    fn to_sigma_indent_does_not_treat_a_mapping_value_as_a_sequence() {
+        let serde = "meta:\n  owner: a\nnext: b\n";
+        let out = InfoYml::to_sigma_indent(serde);
+        assert_eq!(out, "meta:\n      owner: a\nnext: b");
+    }
+
+    #[test]
+    fn is_bare_key_ignores_an_inline_comment() {
+        assert!(InfoYml::is_bare_key("pipelines:"));
+        assert!(InfoYml::is_bare_key("pipelines:   # which mapping"));
+        assert!(!InfoYml::is_bare_key("path: a.json"));
+        assert!(!InfoYml::is_bare_key("time: 12:30"));
+    }
 
     #[test]
     fn info_yml_serializes_correctly() {

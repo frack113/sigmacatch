@@ -27,6 +27,7 @@ use serde::Serialize;
 use serde_json::{Map, Value as JsonValue};
 use sigmacatch::detection::DetectionEngine;
 use sigmacatch::regression::SigmahqRegression;
+use sigmacatch::regression::info::InfoYml;
 use sigmacatch::regression::logtype::{SIGMA_SPEC_TYPES, is_sigma_spec_type};
 use sigmacatch::rule::SigmahqRules;
 use sigmacatch::types::Event;
@@ -113,10 +114,14 @@ fn main() -> anyhow::Result<()> {
         std::process::exit(1);
     }
 
+    // `regression.path()` is `<sigma root>/regression_data`, but declared test
+    // paths and pipeline files are relative to the sigma root itself.
+    let sigma_root = regression.path().parent().unwrap_or(Path::new("./sigma"));
+
     // Bidirectional regression_tests_path validation.
     // Direction 1: each entry → rule must exist and declare a matching path.
     // Direction 2: each rule with regression_tests_path → entry must exist.
-    let path_validation = validate_regression_paths(&rules, &regression, json_output);
+    let path_validation = validate_regression_paths(&rules, &regression, sigma_root, json_output);
     let missing_path = path_validation.missing_path;
     let mismatched_path = path_validation.mismatched_path;
 
@@ -266,6 +271,24 @@ fn main() -> anyhow::Result<()> {
                 }
             }
             continue;
+        }
+
+        // Every declared test entry must resolve — not only the first one, which
+        // is the only entry `RegressionEntry` carries.
+        if let Some(info) = regression.get_info(idx) {
+            let errs = validate_declared_tests(info, sigma_root);
+            if !errs.is_empty() {
+                let msg = errs.join("; ");
+                total += 1;
+                failed.push(CheckFail {
+                    rule_name: entry.rule_name.clone(),
+                    error: msg.clone(),
+                });
+                if !json_output {
+                    println!("[FAIL] {msg} — {}", entry.rule_name);
+                }
+                continue;
+            }
         }
 
         let raw = match regression.get_raw_data(idx) {
@@ -504,9 +527,9 @@ struct PathValidation {
 fn validate_regression_paths(
     rules: &SigmahqRules,
     regression: &SigmahqRegression,
+    sigma_root: &Path,
     json_output: bool,
 ) -> PathValidation {
-    let sigma_root = regression.path().parent().unwrap_or(Path::new("./sigma"));
     let mut missing_path = 0usize;
     let mut mismatched_path = 0usize;
 
@@ -603,6 +626,57 @@ fn out_of_spec_types(regression: &SigmahqRegression) -> BTreeMap<&str, usize> {
         }
     }
     counts
+}
+
+/// Resolve a `pipelines`/`filters` entry the way the upstream runner's
+/// `get_absolute_path` does: an absolute path is taken as-is, a relative one
+/// is looked up from the sigma root upwards. Mirroring that walk-up keeps a
+/// partial clone that skipped `regression_data/pipelines/` from producing a
+/// false positive.
+fn resolve_upstream_relative(sigma_root: &Path, rel: &str) -> Option<PathBuf> {
+    let candidate = Path::new(rel);
+    if candidate.is_absolute() {
+        return candidate.exists().then(|| candidate.to_path_buf());
+    }
+    let mut dir = sigma_root;
+    loop {
+        let joined = dir.join(candidate);
+        if joined.exists() {
+            return Some(joined);
+        }
+        match dir.parent() {
+            Some(parent) if parent != dir => dir = parent,
+            _ => return None,
+        }
+    }
+}
+
+/// Validate every declared test entry, not just the first one.
+///
+/// `RegressionEntry` only carries the first entry, so the upstream
+/// `type: json` + `pipelines` second entry was parsed and then never looked
+/// at: a `path` that does not resolve, a data file that never landed, or a
+/// pipeline that is missing all passed unnoticed here, while the upstream
+/// runner fails the test. Report them with an explicit message instead of
+/// letting `sigma convert` fail later with an unrelated error.
+fn validate_declared_tests(info: &InfoYml, sigma_root: &Path) -> Vec<String> {
+    let mut errors = Vec::new();
+    for (i, test) in info.regression_tests_info.iter().enumerate() {
+        let data = sigma_root.join(&test.path);
+        if !data.exists() {
+            errors.push(format!("test[{i}] path not found: {}", test.path));
+        } else if std::fs::metadata(&data).is_ok_and(|m| m.len() == 0) {
+            errors.push(format!("test[{i}] data file is empty: {}", test.path));
+        }
+        for (kind, files) in [("pipelines", &test.pipelines), ("filters", &test.filters)] {
+            for (j, file) in files.iter().flatten().enumerate() {
+                if resolve_upstream_relative(sigma_root, file).is_none() {
+                    errors.push(format!("test[{i}] {kind}[{j}] not found: {file}"));
+                }
+            }
+        }
+    }
+    errors
 }
 
 fn parse_auditd_lines(raw: &[u8]) -> (Vec<Event>, usize) {
@@ -1048,7 +1122,7 @@ mod tests {
         let rules = SigmahqRules::new_from_path(&tmp.join("sigma")).unwrap();
         let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
 
-        let pv = validate_regression_paths(&rules, &regression, false);
+        let pv = validate_regression_paths(&rules, &regression, &tmp.join("sigma"), false);
         // Entry's rule_id (cccc...) has no matching rule in SigmahqRules → missing_path=1.
         assert_eq!(pv.missing_path, 1, "expected 1 missing path");
         assert_eq!(pv.mismatched_path, 0, "expected 0 mismatched paths");
@@ -1074,7 +1148,7 @@ mod tests {
         let rules = SigmahqRules::new_from_path(&tmp.join("sigma")).unwrap();
         let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
 
-        let pv = validate_regression_paths(&rules, &regression, false);
+        let pv = validate_regression_paths(&rules, &regression, &tmp.join("sigma"), false);
         // Direction 1: rule matches entry, but rtp (wrong_location) ≠ info_path (test) → mismatch.
         // Direction 2: rule rtp (wrong_location) file doesn't exist → mismatch.
         // Both directions legitimately flag the issue: mismatched_path=2.
@@ -1104,7 +1178,7 @@ mod tests {
         let rules = SigmahqRules::new_from_path(&tmp.join("sigma")).unwrap();
         let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
 
-        let pv = validate_regression_paths(&rules, &regression, false);
+        let pv = validate_regression_paths(&rules, &regression, &tmp.join("sigma"), false);
         // Direction 1: entry rule_id (bbbb...) doesn't match any loaded rule → missing_path=1.
         // Direction 2: rule points to info.yml, file exists, but entry_paths has bbb's path
         //              while the rule expects the same path → entry_paths.contains=true, so no
@@ -1353,6 +1427,265 @@ mod tests {
         );
         assert_eq!(counts.len(), 2, "only the two extensions: {counts:?}");
 
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    const ROOT_ID: &str = "242d26e0-1ce5-4a34-960d-144f34f60e37";
+    const ENTRY_ID: &str = "aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa";
+    /// Entry directory, relative to the sigma root — the shape a real
+    /// `regression_tests_info[].path` has.
+    const ENTRY_REL: &str = "regression_data/rules/test/entry";
+    /// `pipelines`/`filters` items sit at 6 in the +0 form and 10 in the README form.
+    const DASH_ZERO: usize = 6;
+    const DASH_README: usize = 10;
+
+    fn fresh_tmp(name: &str) -> PathBuf {
+        let tmp = std::env::temp_dir().join(name);
+        let _ = fs::remove_dir_all(&tmp);
+        tmp
+    }
+
+    /// Build a one-entry sigma root; returns the index, the sigma root and the
+    /// entry directory. `data_files` are created inside the entry directory.
+    fn setup_entry(
+        tmp: &Path,
+        info_yaml: &str,
+        data_files: &[&str],
+    ) -> (SigmahqRegression, PathBuf, PathBuf) {
+        let sigma_root = tmp.join("sigma");
+        let dir = sigma_root.join(ENTRY_REL);
+        fs::create_dir_all(&dir).unwrap();
+        write_file(&dir.join("info.yml"), info_yaml);
+        for name in data_files {
+            write_file(
+                &dir.join(name),
+                if name.ends_with(".json") {
+                    "{\"a\":1}\n"
+                } else {
+                    "x"
+                },
+            );
+        }
+        let regression =
+            SigmahqRegression::new_from_path(&sigma_root.join("regression_data")).unwrap();
+        (regression, sigma_root, dir)
+    }
+
+    /// `info.yml` with one test entry declaring `pipelines` and `filters`;
+    /// `item_indent` is the column of their `- ` items.
+    fn info_with_pipelines(item_indent: usize, pipeline: &str, filter: &str) -> String {
+        let pad = " ".repeat(item_indent);
+        format!(
+            "id: {ROOT_ID}\ndescription: N/A\ndate: 2025-12-25\nauthor: t\n\
+             rule_metadata:\n    - id: {ENTRY_ID}\n      title: T\n\
+             regression_tests_info:\n    - name: Positive Detection Test\n      type: json\n\
+             \x20     match_count: 1\n      pipelines:\n{pad}- {pipeline}\n\
+             \x20     filters:\n{pad}- {filter}\n      path: {ENTRY_REL}/{ENTRY_ID}.json\n"
+        )
+    }
+
+    #[test]
+    fn validate_declared_tests_accepts_resolvable_entries() {
+        let tmp = fresh_tmp("regressiondata-check-test-declared-ok");
+        let pipeline_dir = tmp.join("sigma").join("regression_data").join("pipelines");
+        fs::create_dir_all(&pipeline_dir).unwrap();
+        write_file(
+            &pipeline_dir.join("fieldmapping.yml"),
+            "name: fieldmapping\n",
+        );
+        let (regression, sigma_root, _) = setup_entry(
+            &tmp,
+            &info_with_pipelines(
+                DASH_README,
+                "regression_data/pipelines/fieldmapping.yml",
+                "regression_data/pipelines/fieldmapping.yml",
+            ),
+            &[&format!("{ENTRY_ID}.json")],
+        );
+        let info = regression.get_info(0).unwrap();
+        assert_eq!(
+            validate_declared_tests(info, &sigma_root),
+            Vec::<String>::new()
+        );
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    /// The upstream `type: json` + `pipelines` entry is the *second* one, and
+    /// `RegressionEntry` only carries the first: its path used to go unchecked.
+    #[test]
+    fn validate_declared_tests_checks_the_second_entry_too() {
+        let tmp = fresh_tmp("regressiondata-check-test-declared-second");
+        let (regression, sigma_root, _) = setup_entry(
+            &tmp,
+            &format!(
+                "id: {ROOT_ID}\ndescription: N/A\ndate: 2025-12-25\nauthor: t\n\
+                 rule_metadata:\n    - id: {ENTRY_ID}\n      title: T\n\
+                 regression_tests_info:\n    - name: Positive Detection Test\n      type: evtx\n\
+                 \x20     path: {ENTRY_REL}/{ENTRY_ID}.evtx\n    - name: Positive Detection Test\n      type: json\n\
+                 \x20     match_count: 1\n      path: {ENTRY_REL}/{ENTRY_ID}.absent.json\n"
+            ),
+            &[&format!("{ENTRY_ID}.evtx")],
+        );
+        let errs = validate_declared_tests(regression.get_info(0).unwrap(), &sigma_root);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(
+            errs[0].contains("test[1] path not found") && errs[0].contains("absent.json"),
+            "{errs:?}"
+        );
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn validate_declared_tests_reports_a_missing_pipeline() {
+        let tmp = fresh_tmp("regressiondata-check-test-declared-pipeline");
+        let (regression, sigma_root, _) = setup_entry(
+            &tmp,
+            &info_with_pipelines(
+                DASH_README,
+                "regression_data/pipelines/absent.yml",
+                "regression_data/pipelines/absent.yml",
+            ),
+            &[&format!("{ENTRY_ID}.json")],
+        );
+        let errs = validate_declared_tests(regression.get_info(0).unwrap(), &sigma_root);
+        assert_eq!(errs.len(), 2, "{errs:?}");
+        assert!(
+            errs[0].contains("test[0] pipelines[0] not found"),
+            "{errs:?}"
+        );
+        assert!(errs[1].contains("test[0] filters[0] not found"), "{errs:?}");
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn validate_declared_tests_reports_an_empty_data_file() {
+        let tmp = fresh_tmp("regressiondata-check-test-declared-empty");
+        let (_, sigma_root, dir) = setup_entry(
+            &tmp,
+            &format!(
+                "id: {ROOT_ID}\ndescription: N/A\ndate: 2025-12-25\nauthor: t\n\
+                 rule_metadata:\n    - id: {ENTRY_ID}\n      title: T\n\
+                 regression_tests_info:\n    - name: Positive Detection Test\n      type: evtx\n\
+                 \x20     path: {ENTRY_REL}/{ENTRY_ID}.evtx\n"
+            ),
+            &[&format!("{ENTRY_ID}.evtx")],
+        );
+        // Truncate to empty after discovery.
+        fs::write(dir.join(format!("{ENTRY_ID}.evtx")), b"").unwrap();
+        let reg_dir = sigma_root.join("regression_data");
+        let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
+        let errs = validate_declared_tests(regression.get_info(0).unwrap(), &sigma_root);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].contains("data file is empty"), "{errs:?}");
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    /// `get_absolute_path` upstream walks up from the entry directory, so a
+    /// pipeline reachable from an ancestor must not be reported missing.
+    #[test]
+    fn resolve_upstream_relative_walks_up_from_the_sigma_root() {
+        let tmp = fresh_tmp("regressiondata-check-test-declared-walkup");
+        let nested = tmp.join("a").join("b");
+        fs::create_dir_all(nested.join("regression_data").join("pipelines")).unwrap();
+        write_file(
+            &nested
+                .join("regression_data")
+                .join("pipelines")
+                .join("p.yml"),
+            "name: p\n",
+        );
+        assert_eq!(
+            resolve_upstream_relative(
+                &nested.join("regression_data"),
+                "regression_data/pipelines/p.yml"
+            ),
+            Some(
+                nested
+                    .join("regression_data")
+                    .join("pipelines")
+                    .join("p.yml")
+            )
+        );
+        assert!(
+            resolve_upstream_relative(
+                &nested.join("regression_data"),
+                "regression_data/pipelines/no.yml"
+            )
+            .is_none()
+        );
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    /// The +0 form committed in three SigmaHQ files is now non-canonical.
+    #[test]
+    fn validate_yaml_indentation_rejects_the_zero_indent_pipelines_form() {
+        let tmp = fresh_tmp("regressiondata-check-test-indent-zero");
+        let (regression, _, dir) = setup_entry(
+            &tmp,
+            &info_with_pipelines(
+                DASH_ZERO,
+                "regression_data/pipelines/x.yml",
+                "regression_data/pipelines/x.yml",
+            ),
+            &[&format!("{ENTRY_ID}.json")],
+        );
+        let err = validate_yaml_indentation(0, &regression).expect("+0 pipelines must be rejected");
+        assert!(err.contains("indentation"), "{err}");
+        assert!(dir.join("info.yml").exists());
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn validate_yaml_indentation_accepts_the_readme_pipelines_form() {
+        let tmp = fresh_tmp("regressiondata-check-test-indent-readme");
+        let (regression, _, _) = setup_entry(
+            &tmp,
+            &info_with_pipelines(
+                DASH_README,
+                "regression_data/pipelines/x.yml",
+                "regression_data/pipelines/x.yml",
+            ),
+            &[&format!("{ENTRY_ID}.json")],
+        );
+        assert_eq!(validate_yaml_indentation(0, &regression), None);
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn fix_moves_a_pipelines_sequence_to_four_columns_under_its_key() {
+        let tmp = fresh_tmp("regressiondata-check-test-fix-pipelines");
+        let (_, _, dir) = setup_entry(
+            &tmp,
+            &info_with_pipelines(
+                DASH_ZERO,
+                "regression_data/pipelines/x.yml",
+                "regression_data/pipelines/x.yml",
+            ),
+            &[&format!("{ENTRY_ID}.json")],
+        );
+        let reg_dir = tmp.join("sigma").join("regression_data");
+        let info_path = dir.join("info.yml");
+
+        let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
+        fix_json_newlines(&regression).unwrap();
+        let fixed = fs::read_to_string(&info_path).unwrap();
+        assert!(
+            fixed.contains("\n          - regression_data/pipelines/x.yml\n"),
+            "pipelines item must land at +4:\n{fixed}"
+        );
+        assert!(
+            fixed.contains("\n      pipelines:\n"),
+            "the key itself stays at 6:\n{fixed}"
+        );
+
+        // Idempotent: a second pass is a no-op.
+        let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
+        fix_json_newlines(&regression).unwrap();
+        assert_eq!(fs::read_to_string(&info_path).unwrap(), fixed);
+
+        // And the fixed form now passes the blocking indentation check.
+        let regression = SigmahqRegression::new_from_path(&reg_dir).unwrap();
+        assert_eq!(validate_yaml_indentation(0, &regression), None);
         fs::remove_dir_all(&tmp).unwrap();
     }
 
