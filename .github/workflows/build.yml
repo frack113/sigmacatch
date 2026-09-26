@@ -123,6 +123,7 @@ jobs:
         with:
           key: windows-${{ matrix.flavor }}-${{ hashFiles('**/Cargo.lock') }}
       - name: Build flavour
+        shell: bash
         run: |
           if [ "${{ matrix.build_bins }}" = "true" ]; then
             cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch ${{ matrix.features }} --all-targets
