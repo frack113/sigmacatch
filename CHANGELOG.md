@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-09-26
+
+### Changed
+
+- CI workflow optimizations: combined `regressiondata-check` builds with base flavors using `--all-targets` to eliminate redundant compilations; added cache keys with `Cargo.lock` hashes for better cache reuse; made `regression-check` depend on `linux` job to reuse built artifacts
+- Dependency updates: `evtx 0.12.3`, `thiserror 2.0.21`, `zerocopy 0.8.59`, `pest 2.9.2`, removed unused `base64`/`multiversion` transitive deps
+- Supply-chain: removed stale `cargo-deny` skip entries for `base64 0.22.1` and `foldhash 0.1.5`
+
 ## [0.6.1]
 
 ### Added
