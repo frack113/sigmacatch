@@ -170,6 +170,24 @@ Un jeu est **complet** si :
 
 Le `.json` auxiliaire n'entre pas en ligne de compte dans la validité.
 
+### `type` doit décrire le fichier de données
+
+`regression_tests_info[0].type` qualifie le fichier nommé par
+`regression_tests_info[0].path` — et rien d'autre. Les seules valeurs acceptées
+sont `evtx`, `log`, `json` et `raw`, correspondant à l'extension du fichier de
+données.
+
+Le `<rule_id>.json` auxiliaire est un artefact de relecture, pas le fichier de
+données : activer `regression.add_json_output` ne change donc jamais `type`.
+`type: ndjson` avec un chemin `.evtx` n'est pas une combinaison valide : `ndjson`
+décrit la *forme de l'export auxiliaire* (document unique pour un événement,
+JSONL pour plusieurs), pas le fichier de données.
+
+Quand `type` est inconnu, les lecteurs déduisent le format de l'extension du
+fichier de données au lieu de prendre une valeur par défaut, afin que les jeux
+déjà validés survivent à un `type` erroné. Un `type` reconnu mais en désaccord
+avec l'extension présente sur le disque est signalé par un avertissement.
+
 ### Validation du format info.yml
 
 Pour qu'un `info.yml` soit valide :

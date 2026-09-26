@@ -169,6 +169,23 @@ A set is **complete** if:
 
 The auxiliary `.json` is not part of the validity check.
 
+### `type` must describe the data file
+
+`regression_tests_info[0].type` qualifies the file named by
+`regression_tests_info[0].path` — nothing else. The only accepted values are
+`evtx`, `log`, `json` and `raw`, matching the data file's extension.
+
+The auxiliary `<rule_id>.json` is a review artifact, not the data file, so
+enabling `regression.add_json_output` never changes `type`. `type: ndjson` over
+an `.evtx` path is not a valid combination: `ndjson` describes the *layout of
+the auxiliary export* (single document for one event, JSONL for several), not
+the data file.
+
+When `type` is unrecognised, readers infer the format from the data file's
+extension rather than defaulting, so already-committed sets survive a bad
+`type`. A `type` that is recognised but disagrees with the extension on disk is
+reported as a warning.
+
 ### info.yml format validation
 
 For an `info.yml` to be valid:
