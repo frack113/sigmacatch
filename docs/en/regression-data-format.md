@@ -57,8 +57,8 @@ Variants: some rules (e.g. cisco) use `.raw` when the EVTX format is not applica
 
 ```yaml
 rule_metadata:
-  - id: <rule-UUID>           # Canonical SigmaHQ rule ID (UUID v4)
-    title: <string>           # Rule title
+    - id: <rule-UUID>           # Canonical SigmaHQ rule ID (UUID v4)
+      title: <string>           # Rule title
 ```
 
 `rule_metadata[0].id` is the **canonical ID**. This UUID uniquely identifies the rule across the entire system. It is used for:
@@ -71,11 +71,11 @@ rule_metadata:
 
 ```yaml
 regression_tests_info:
-  - name: Positive Detection Test
-    type: evtx                  # or "raw" for cisco, "log" for Linux (auditd/syslog/sysmon)
-    provider: <ProviderName>    # dynamically extracted from event's XML ProviderName (e.g., Microsoft-Windows-Sysmon, or "auditd")
-    match_count: <int>          # Number of matches found
-    path: regression_data/.../<rule_id>.evtx  # Relative path to the data file
+    - name: Positive Detection Test
+      type: evtx                  # or "raw" for cisco, "log" for Linux (auditd/syslog/sysmon)
+      provider: <ProviderName>    # dynamically extracted from event's XML ProviderName (e.g., Microsoft-Windows-Sysmon, or "auditd")
+      match_count: <int>          # Number of matches found
+      path: regression_data/.../<rule_id>.evtx  # Relative path to the data file
 ```
 
 ### Complete example
@@ -86,14 +86,14 @@ description: N/A
 date: 2024-01-15
 author: sigmacatch
 rule_metadata:
-  - id: d059842b-6b9d-4ed1-b5c3-5b89143c6ede
-    title: Suspicious BitsAdmin Download
+    - id: d059842b-6b9d-4ed1-b5c3-5b89143c6ede
+      title: Suspicious BitsAdmin Download
 regression_tests_info:
-  - name: Positive Detection Test
-    type: evtx
-    provider: Microsoft-Windows-Sysmon
-    match_count: 1
-    path: regression_data/rules/windows/process_creation/proc_creation_win_bitsadmin_download/d059842b-6b9d-4ed1-b5c3-5b89143c6ede.evtx
+    - name: Positive Detection Test
+      type: evtx
+      provider: Microsoft-Windows-Sysmon
+      match_count: 1
+      path: regression_data/rules/windows/process_creation/proc_creation_win_bitsadmin_download/d059842b-6b9d-4ed1-b5c3-5b89143c6ede.evtx
 ```
 
 ### `.log` examples (Linux)
@@ -106,14 +106,14 @@ description: N/A
 date: 2026-08-20
 author: frack113
 rule_metadata:
-  - id: 1543ae20-cbdf-4ec1-8d12-7664d667a825
-    title: Suspicious Commands Linux
+    - id: 1543ae20-cbdf-4ec1-8d12-7664d667a825
+      title: Suspicious Commands Linux
 regression_tests_info:
-  - name: Positive Detection Test
-    type: log
-    provider: auditd
-    match_count: 1
-    path: regression_data/rules/linux/auditd/execve/lnx_auditd_susp_cmds/1543ae20-cbdf-4ec1-8d12-7664d667a825.log
+    - name: Positive Detection Test
+      type: log
+      provider: auditd
+      match_count: 1
+      path: regression_data/rules/linux/auditd/execve/lnx_auditd_susp_cmds/1543ae20-cbdf-4ec1-8d12-7664d667a825.log
 ```
 
 **Sysmon-for-Linux (`type: log`, provider extracted from the event XML):**
@@ -124,14 +124,14 @@ description: N/A
 date: 2026-08-23
 author: frack113
 rule_metadata:
-  - id: f74107df-b6c6-4e80-bf00-4170b658162b
-    title: Sudo Privilege Escalation CVE-2019-14287
+    - id: f74107df-b6c6-4e80-bf00-4170b658162b
+      title: Sudo Privilege Escalation CVE-2019-14287
 regression_tests_info:
-  - name: Positive Detection Test
-    type: log
-    provider: Linux-Sysmon
-    match_count: 1
-    path: regression_data/rules/linux/builtin/lnx_sudo_privilege_escalation_cve_2019_14287/f74107df-b6c6-4e80-bf00-4170b658162b.log
+    - name: Positive Detection Test
+      type: log
+      provider: Linux-Sysmon
+      match_count: 1
+      path: regression_data/rules/linux/builtin/lnx_sudo_privilege_escalation_cve_2019_14287/f74107df-b6c6-4e80-bf00-4170b658162b.log
 ```
 
 ## Naming conventions
@@ -180,6 +180,18 @@ enabling `regression.add_json_output` never changes `type`. `type: ndjson` over
 an `.evtx` path is not a valid combination: `ndjson` describes the *layout of
 the auxiliary export* (single document for one event, JSONL for several), not
 the data file.
+
+> **SigmaHQ spec vs sigmacatch extensions.** The upstream regression spec defines
+> only four `type` values — `evtx`, `json`, `ndjson` and `jsonl` — and its runner
+> skips every other value as an unknown test type. `log` and `raw` are sigmacatch
+> extensions: entries declaring them validate and replay with
+> `regressiondata-check`, but the upstream runner cannot read them.
+> `regressiondata-check` reports the gap without failing the run, one line per
+> distinct type:
+>
+> ```text
+> [WARN] 12 test(s) declare type 'log', a sigmacatch extension outside the SigmaHQ regression spec (evtx/json/ndjson/jsonl); the upstream runner skips them
+> ```
 
 When `type` is unrecognised, readers infer the format from the data file's
 extension rather than defaulting, so already-committed sets survive a bad
