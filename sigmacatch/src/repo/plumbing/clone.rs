@@ -154,8 +154,15 @@ fn clone_via_git_cli(
 ) -> Result<()> {
     // Try to find git executable
     let Some(git_exe) = find_git_executable() else {
-        warn!("git executable not found in PATH, falling back to shallow clone via grit-lib");
-        return clone_repo_inner_impl(http_client, url, dest, true, false);
+        warn!(
+            "git executable not found in PATH, falling back to shallow clone via grit-lib \
+             (blobless filter --filter=blob:none is unavailable; depth-1 shallow is kept)"
+        );
+        // The caller's `sparse_checkout` is forwarded, not dropped: this fallback
+        // supports it, and `sparse_checkout` defaults to true. Not covered by a
+        // test because both failure branches below `remove_dir_all` the evidence
+        // (the sparse-checkout file lives under `.git`).
+        return clone_repo_inner_impl(http_client, url, dest, true, sparse_checkout);
     };
 
     let mut cmd = Command::new(git_exe);
