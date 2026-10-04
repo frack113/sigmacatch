@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Dependency updates: `rsigma-eval` / `rsigma-parser` / `rsigma-ir` 0.22 → 0.23 (API-compatible for sigmacatch; HIR cache schema moves 1 → 2, the existing load fallback covers the one-time cold start); lockfile patches within semver ranges (`tokio 1.53.2`, `libc 0.2.190`, `cc 1.6.0`, `uuid 1.27.0`, `serde_with 3.24.0`, `yoke-derive 0.8.4` resolving its yanked-version warning, `quinn-proto 0.11.19`, `quinn-udp 0.5.16`, `mio 1.2.4`, `lazy_static 1.5.1`, `tokio-rustls 0.26.6`)
+
+### Removed
+
+- Debug leftovers from the bloom/pruning session: `BUILD_TIME` build-date stamp (never set, always logged as `unknown`), `ebpf_script_trace.txt` / `ebpf_build_failure.txt` `OUT_DIR` traces (read by nothing), and the three `debug_*` registry isolation tests (the real matching test remains)
+
 ## [0.6.2] - 2026-09-26
 
 ### Added
