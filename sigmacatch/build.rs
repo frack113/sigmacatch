@@ -31,12 +31,6 @@ fn main() {
     println!("cargo:rerun-if-env-changed=SIGMACATCH_EBPF_OBJECT");
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
-    // Always-on execution trace: proves which binary revision runs and what
-    // it sees (feature flags arrive via env, not compile-time cfg here).
-    let _ = fs::write(
-        out_dir.join("ebpf_script_trace.txt"),
-        format!("ebpf_feature_env={:?}\n", env::var("CARGO_FEATURE_EBPF")),
-    );
     // Build-script warnings are denied workspace-wide (Q7.1): every outcome
     // below is silent here and surfaced at runtime by src/ebpf.rs instead.
     let target_is_linux = env::var("TARGET")
@@ -80,11 +74,10 @@ fn main() {
         return;
     }
 
-    if let Some(reason) = subbuild_err {
+    if subbuild_err.is_some() {
         // Placeholder: the loader rejects it at startup and collection
         // falls back to the legacy syslog tail ("built without nightly
         // toolchain?" in the runtime error).
-        let _ = fs::write(out_dir.join("ebpf_build_failure.txt"), &reason);
         fs::write(&dest, []).expect("write placeholder object");
     }
 }
@@ -98,10 +91,6 @@ fn build_probes(crate_dir: &Path, _out_dir: &Path) -> Result<PathBuf, String> {
     if !crate_dir.join("Cargo.toml").is_file() {
         return Err(format!("missing crate dir {}", crate_dir.display()));
     }
-    // Resolve the nightly cargo binary directly: rustup proxies in the
-    // build-script environment have proven unreliable at honoring both
-    // `rustup run` and RUSTUP_TOOLCHAIN under the parent cargo's exported
-    // environment.
     // Resolve the nightly cargo binary directly: rustup proxies in the
     // build-script environment have proven unreliable at honoring both
     // `rustup run` and RUSTUP_TOOLCHAIN under the parent cargo's exported

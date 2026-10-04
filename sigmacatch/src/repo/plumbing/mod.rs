@@ -18,10 +18,8 @@ pub(crate) mod push;
 pub(crate) mod refs;
 
 pub(crate) use checkout::{checkout_main_branch, open_odb};
-#[allow(unused_imports)]
 pub(crate) use clone::{clone_repo, clone_repo_partial, clone_repo_shallow, setup_sparse_checkout};
 pub(crate) use commit::commit_tree;
-#[allow(unused_imports)]
 pub(crate) use fetch::{
     fetch_options_for_branches, fetch_options_for_shallow_clone,
     fetch_options_for_sigmacatch_namespace, fetch_options_for_unshallow, fetch_remote,

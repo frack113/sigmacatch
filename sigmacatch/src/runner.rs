@@ -207,11 +207,7 @@ pub async fn run_with_cli<C: CollectorKind>(
 
     let _guard = crate::logging::init(&config, cli.verbose)?;
 
-    info!(
-        "Sigma Regression Generator v{} — build {}",
-        env!("CARGO_PKG_VERSION"),
-        option_env!("BUILD_TIME").unwrap_or("unknown")
-    );
+    info!("Sigma Regression Generator v{}", env!("CARGO_PKG_VERSION"));
 
     info!(
         "{} started for {} <{}>",

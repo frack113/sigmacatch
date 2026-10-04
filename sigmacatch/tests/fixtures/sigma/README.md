@@ -24,10 +24,10 @@ at the entry `info.yml` below `regression_data/`.
 ## Regenerating
 
 The `.log` entry is regenerable on the AlmaLinux rig with
-`sigmacatch-linux --features auditd,builtin`, filter config pointing at the
-rule, then `passwd -S` and a graceful stop (`touch .sigmacatch.stop`). The
-`.evtx` entry comes from the Win11 rig via `--evtx` writer. See
-`.agents/skills/sigmacatch-reggen/`.
+`sigmacatch --no-default-features --features auditd,builtin`, filter config
+pointing at the rule, then `passwd -S` and a graceful stop
+(`touch .sigmacatch.stop`). The `.evtx` entry comes from the Win11 rig via
+the `--evtx` writer.
 
 ## Sibling fixtures
 
