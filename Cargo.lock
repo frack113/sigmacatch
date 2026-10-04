@@ -2621,9 +2621,9 @@ dependencies = [
 
 [[package]]
 name = "rsigma-eval"
-version = "0.22.0"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8221a62c73b247763140b2f4e7ecb9b1e017bacc6b5606bba20a19697cde3c1d"
+checksum = "860cbbb9636456f012736d3bad6fbedc95b2394cd8ada14d0819d6c908766e99"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -2646,9 +2646,9 @@ dependencies = [
 
 [[package]]
 name = "rsigma-ir"
-version = "0.22.0"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35780a4c51b3d739b4b4b451c893821f4af9336dfbba35ab72bb138182ce545d"
+checksum = "b63a0cd3035d6f74cbe57729aa7b34641677ec3a89d6b3a016171e3e849e6b28"
 dependencies = [
  "ciborium",
  "rsigma-parser",
@@ -2660,9 +2660,9 @@ dependencies = [
 
 [[package]]
 name = "rsigma-parser"
-version = "0.22.0"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a63cdf80193fc1cbf663cdfd16126ecbb1ed2d9f8154813967e5e4ae03c60bc1"
+checksum = "c9591115785fe44bbe64e4a3dd434026e3fd49660300c9e7f52fdaf36ac2f5a8"
 dependencies = [
  "globset",
  "log",
