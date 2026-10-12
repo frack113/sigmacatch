@@ -197,6 +197,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "bit-set"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08807e080ed7f9d5433fa9b275196cfc35414f66a0c79d864dc51a0d825231a3"
+dependencies = [
+ "bit-vec",
+]
+
+[[package]]
+name = "bit-vec"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
+
+[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1000,6 +1015,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fancy-regex"
+version = "0.19.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d301f5bf187b3c295fce6468d3875037a0bccc5f6b151c63cac2f85babf21912"
+dependencies = [
+ "bit-set",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1780,7 +1806,7 @@ dependencies = [
  "nom",
  "serde",
  "serde_with",
- "thiserror 2.0.21",
+ "thiserror 1.0.69",
  "tinyvec",
 ]
 
@@ -2621,9 +2647,9 @@ dependencies = [
 
 [[package]]
 name = "rsigma-eval"
-version = "0.23.0"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "860cbbb9636456f012736d3bad6fbedc95b2394cd8ada14d0819d6c908766e99"
+checksum = "4a5be12987e979e0989ac3a40a6410746a2cd8d6df10c42d25b254bb9c3e1cf4"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -2646,10 +2672,11 @@ dependencies = [
 
 [[package]]
 name = "rsigma-ir"
-version = "0.23.0"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b63a0cd3035d6f74cbe57729aa7b34641677ec3a89d6b3a016171e3e849e6b28"
+checksum = "ac155166a25770b3b1161ac6ac0b18c8ddcc9b14d41d14195df6a201cf8db942"
 dependencies = [
+ "base64",
  "ciborium",
  "rsigma-parser",
  "serde",
@@ -2660,14 +2687,16 @@ dependencies = [
 
 [[package]]
 name = "rsigma-parser"
-version = "0.23.0"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9591115785fe44bbe64e4a3dd434026e3fd49660300c9e7f52fdaf36ac2f5a8"
+checksum = "49159a3676e7e6e74e5c01a919bfe4fac986b44151c0e3db223d125e43f2fe60"
 dependencies = [
+ "fancy-regex",
  "globset",
  "log",
  "pest",
  "pest_derive",
+ "regex-syntax",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3353,7 +3382,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
