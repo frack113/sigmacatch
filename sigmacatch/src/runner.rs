@@ -646,7 +646,11 @@ fn run_dry(config: &Config) -> Result<()> {
         );
     }
 
-    DetectionEngine::new(&rules)?;
+    // Honour the HIR cache like the real run path does, so a dry-run exercises
+    // the cache instead of always recompiling. A cache that loads cleanly is
+    // itself a validation; a rejected one is reported and recompiled.
+    let hir_cache_path: Option<PathBuf> = config.hir_cache.as_ref().map(PathBuf::from);
+    DetectionEngine::new_with_hir_cache(&rules, hir_cache_path.clone())?;
     eprintln!(
         "Dry-run OK — {} rules loaded ({} candidates), {} filtered by product, {} by status, {} by level, {} by author",
         stats.rules_loaded,
@@ -656,6 +660,9 @@ fn run_dry(config: &Config) -> Result<()> {
         stats.rules_filtered_level,
         stats.rules_filtered_author,
     );
+    if let Some(path) = hir_cache_path {
+        eprintln!("HIR cache: {}", path.display());
+    }
     if stats.rules_parse_failed > 0 {
         // Not a failure: the remaining rules still load. But rules in the
         // skipped files are silently undetected, so say so loudly.
