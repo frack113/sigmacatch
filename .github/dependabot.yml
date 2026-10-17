@@ -1,5 +1,7 @@
 version: 2
 updates:
+  # Actions and dependencies move weekly, except `sigmacatch/ebpf`: see the
+  # cargo entry below.
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -46,3 +48,24 @@ updates:
         patterns:
           - "windows-sys"
           - "quick-xml"
+
+  # `sigmacatch/ebpf` is a separate workspace (it opts out of the root one) and
+  # builds only on nightly with rust-src + bpf-linker, via `src/build.rs`. It is
+  # invisible to the root cargo entry above and to every stable CI job, so its
+  # dependencies would otherwise drift with nothing surfacing them. Monthly is
+  # enough: the probe only needs aya-ebpf to track the kernel ABI, and each bump
+  # requires a nightly rebuild plus a real VM run to be trusted.
+  - package-ecosystem: cargo
+    directory: /sigmacatch/ebpf
+    schedule:
+      interval: monthly
+      time: "08:00"
+      timezone: Europe/Paris
+    labels:
+      - dependencies
+      - automated
+    cooldown:
+      default-days: 21
+    commit-message:
+      prefix: "🔧 chore"
+      include: scope
