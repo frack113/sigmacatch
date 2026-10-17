@@ -71,7 +71,7 @@ jobs:
              target/release/sigmacatch-ebpf target/release/regressiondata-check dist/
           (cd dist && sha256sum *) > SHA256SUMS.linux
           tar -czf sigmacatch-linux-x86_64.tar.gz -C dist .
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sigmacatch-linux-x86_64
           path: |
@@ -118,7 +118,7 @@ jobs:
             "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf)
           } | Set-Content -Encoding ascii SHA256SUMS.windows
           Compress-Archive -Path "$dist/*" -DestinationPath sigmacatch-x86_64-pc-windows-msvc.zip -Force
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sigmacatch-x86_64-pc-windows-msvc
           path: |
