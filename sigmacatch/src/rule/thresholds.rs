@@ -22,6 +22,10 @@ pub struct LoadStats {
     /// entered the set. A non-zero value means silent coverage loss: every
     /// rule in those files is missing from detection.
     pub rules_parse_failed: u64,
+    /// Rules carrying a deprecated `detection.timeframe`, which aggregates over
+    /// a window. sigmacatch has no correlation engine, so the window is ignored
+    /// and each rule matches single events instead of an aggregate.
+    pub rules_timeframe_ignored: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

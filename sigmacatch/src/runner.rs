@@ -271,7 +271,7 @@ pub async fn run_with_cli<C: CollectorKind>(
     let stats = rules.stats();
 
     info!(
-        "Loaded {} rules ({} skipped by existing regression, {} filtered by product, {} filtered by status, {} filtered by level, {} filtered by author, {} rule files failed to parse)",
+        "Loaded {} rules ({} skipped by existing regression, {} filtered by product, {} filtered by status, {} filtered by level, {} filtered by author, {} rule files failed to parse, {} rules ignore their timeframe)",
         stats.rules_loaded,
         existing_rules.len(),
         stats.rules_filtered_product,
@@ -279,6 +279,7 @@ pub async fn run_with_cli<C: CollectorKind>(
         stats.rules_filtered_level,
         stats.rules_filtered_author,
         stats.rules_parse_failed,
+        stats.rules_timeframe_ignored,
     );
 
     if stats.rules_loaded == 0 {
@@ -662,6 +663,13 @@ fn run_dry(config: &Config) -> Result<()> {
             "WARNING — {} rule file(s) failed to parse and were skipped; \
              their rules are NOT being detected (see the warnings above)",
             stats.rules_parse_failed
+        );
+    }
+    if stats.rules_timeframe_ignored > 0 {
+        eprintln!(
+            "WARNING — {} rule(s) declare `detection.timeframe`, which sigmacatch \
+             ignores: they match single events instead of aggregating over the window",
+            stats.rules_timeframe_ignored
         );
     }
     Ok(())

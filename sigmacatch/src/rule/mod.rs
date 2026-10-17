@@ -135,6 +135,7 @@ impl SigmahqRules {
         let mut seen_ids: HashSet<String> = HashSet::new();
         let mut skipped_dupes: u64 = 0;
         let mut skipped_parse_errors: u64 = 0;
+        let mut skipped_timeframes: u64 = 0;
         for dir in &dirs {
             let mut pending = vec![dir.clone()];
             while let Some(current) = pending.pop() {
@@ -168,6 +169,17 @@ impl SigmahqRules {
                                             );
                                         }
                                         for rule in parsed.rules {
+                                            if let Some(timeframe) = &rule.detection.timeframe {
+                                                skipped_timeframes += 1;
+                                                tracing::warn!(
+                                                    "Rule {:?} declares \
+                                                     `detection.timeframe: {timeframe}`, \
+                                                     which sigmacatch ignores — it matches \
+                                                     single events instead of aggregating \
+                                                     over the window",
+                                                    rule.title
+                                                );
+                                            }
                                             let id = rule.id.clone().unwrap_or_else(|| {
                                                 format!("no-id-{}", path.display())
                                             });
@@ -203,6 +215,7 @@ impl SigmahqRules {
         set.stats.rules_loaded = set.rules.len() as u64;
         set.stats.rules_total_candidate = set.rules.len() as u64;
         set.stats.rules_parse_failed = skipped_parse_errors;
+        set.stats.rules_timeframe_ignored = skipped_timeframes;
         if skipped_dupes > 0 {
             tracing::warn!("{skipped_dupes} duplicate rules skipped");
         }
@@ -294,6 +307,7 @@ impl SigmahqRules {
                 // Filtering never reparses, so the parse failures the load pass
                 // recorded still stand.
                 rules_parse_failed: self.stats.rules_parse_failed,
+                rules_timeframe_ignored: self.stats.rules_timeframe_ignored,
             },
         }
     }
@@ -522,6 +536,54 @@ detection:
 
         let set = SigmahqRules::new_from_path(&tmp.path().join("sigma")).unwrap();
         assert_eq!(set.stats().rules_parse_failed, 0);
+    }
+
+    /// Sigma v1.x aggregation. sigmacatch has no correlation engine, so the
+    /// window is dead weight and the rule degrades to a per-event match.
+    const TIMEFRAME_RULE: &str = r#"title: Aggregated Rule
+id: 44444444-4444-4444-4444-444444444444
+status: stable
+level: critical
+author: Test Author
+logsource:
+  product: windows
+  service: sysmon
+  category: process_creation
+detection:
+  selection:
+    EventID: 1
+  timeframe: 15m
+  condition: selection
+"#;
+
+    #[test]
+    fn test_ruleset_counts_ignored_timeframes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("sigma").join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        write_rules(
+            &rules_dir,
+            &[("good.yml", MINIMAL_RULE), ("agg.yml", TIMEFRAME_RULE)],
+        );
+
+        let set = SigmahqRules::new_from_path(&tmp.path().join("sigma")).unwrap();
+
+        // The rule still loads — the window is simply not honoured — so the
+        // degradation has to be reported through the counters.
+        assert_eq!(set.len(), 2);
+        assert_eq!(set.stats().rules_timeframe_ignored, 1);
+        assert_eq!(set.stats().rules_parse_failed, 0);
+    }
+
+    #[test]
+    fn test_ruleset_reports_no_timeframes_by_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("sigma").join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        write_rules(&rules_dir, &[("good.yml", MINIMAL_RULE)]);
+
+        let set = SigmahqRules::new_from_path(&tmp.path().join("sigma")).unwrap();
+        assert_eq!(set.stats().rules_timeframe_ignored, 0);
     }
 
     #[test]
