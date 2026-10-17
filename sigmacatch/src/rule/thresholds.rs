@@ -18,6 +18,10 @@ pub struct LoadStats {
     pub rules_filtered_author: u64,
     /// Total rules seen before filtering.
     pub rules_total_candidate: u64,
+    /// Rule files that failed to parse and were skipped, so their rules never
+    /// entered the set. A non-zero value means silent coverage loss: every
+    /// rule in those files is missing from detection.
+    pub rules_parse_failed: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -108,6 +108,17 @@ fn main() -> anyhow::Result<()> {
 
     let rules = SigmahqRules::new_from_path(&sigma_path)?;
 
+    // A rule that fails to parse never enters the set, so its regression entry
+    // would be reported as a missing rule rather than a real mismatch. Refuse
+    // to validate instead, so the skip is never mistaken for coverage.
+    if rules.stats().rules_parse_failed > 0 {
+        anyhow::bail!(
+            "{} rule file(s) failed to parse and were skipped, so their regression \
+             data cannot be validated. Fix the parse errors reported above first.",
+            rules.stats().rules_parse_failed
+        );
+    }
+
     let regression = SigmahqRegression::new_from_path(&sigma_path.join("regression_data"))?;
     if regression.is_empty() {
         eprintln!("No regression entries found — nothing to validate");

@@ -271,13 +271,14 @@ pub async fn run_with_cli<C: CollectorKind>(
     let stats = rules.stats();
 
     info!(
-        "Loaded {} rules ({} skipped by existing regression, {} filtered by product, {} filtered by status, {} filtered by level, {} filtered by author)",
+        "Loaded {} rules ({} skipped by existing regression, {} filtered by product, {} filtered by status, {} filtered by level, {} filtered by author, {} rule files failed to parse)",
         stats.rules_loaded,
         existing_rules.len(),
         stats.rules_filtered_product,
         stats.rules_filtered_status,
         stats.rules_filtered_level,
         stats.rules_filtered_author,
+        stats.rules_parse_failed,
     );
 
     if stats.rules_loaded == 0 {
@@ -654,6 +655,15 @@ fn run_dry(config: &Config) -> Result<()> {
         stats.rules_filtered_level,
         stats.rules_filtered_author,
     );
+    if stats.rules_parse_failed > 0 {
+        // Not a failure: the remaining rules still load. But rules in the
+        // skipped files are silently undetected, so say so loudly.
+        eprintln!(
+            "WARNING — {} rule file(s) failed to parse and were skipped; \
+             their rules are NOT being detected (see the warnings above)",
+            stats.rules_parse_failed
+        );
+    }
     Ok(())
 }
 
