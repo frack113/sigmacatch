@@ -135,6 +135,7 @@ impl SigmahqRules {
         let mut seen_ids: HashSet<String> = HashSet::new();
         let mut skipped_dupes: u64 = 0;
         let mut skipped_parse_errors: u64 = 0;
+        let mut skipped_timeframes: u64 = 0;
         for dir in &dirs {
             let mut pending = vec![dir.clone()];
             while let Some(current) = pending.pop() {
@@ -153,29 +154,55 @@ impl SigmahqRules {
                                 continue;
                             }
                             if let Ok(content) = std::fs::read_to_string(&path) {
-                                if let Ok(parsed) = parse_sigma_yaml(&content) {
-                                    for rule in parsed.rules {
-                                        let id = rule
-                                            .id
-                                            .clone()
-                                            .unwrap_or_else(|| format!("no-id-{}", path.display()));
-                                        if seen_ids.insert(id.clone()) {
-                                            if let Ok(uuid) = Uuid::parse_str(&id) {
-                                                set.rule_paths.insert(uuid, path.clone());
-                                            }
-                                            set.rules.push(rule);
-                                        } else {
-                                            skipped_dupes += 1;
-                                            tracing::debug!(
-                                                "Skipping duplicate rule id={id} from {path:?}"
+                                match parse_sigma_yaml(&content) {
+                                    Ok(parsed) => {
+                                        // 0.24 reports a semantically invalid
+                                        // document through `errors` and still
+                                        // returns `Ok` with that document
+                                        // dropped, so a partial parse is only
+                                        // visible here.
+                                        for reason in &parsed.errors {
+                                            skipped_parse_errors += 1;
+                                            tracing::warn!(
+                                                "Sigma rule at {path:?} rejected, its \
+                                                 rules will not be detected: {reason}"
                                             );
                                         }
+                                        for rule in parsed.rules {
+                                            if let Some(timeframe) = &rule.detection.timeframe {
+                                                skipped_timeframes += 1;
+                                                tracing::warn!(
+                                                    "Rule {:?} declares \
+                                                     `detection.timeframe: {timeframe}`, \
+                                                     which sigmacatch ignores — it matches \
+                                                     single events instead of aggregating \
+                                                     over the window",
+                                                    rule.title
+                                                );
+                                            }
+                                            let id = rule.id.clone().unwrap_or_else(|| {
+                                                format!("no-id-{}", path.display())
+                                            });
+                                            if seen_ids.insert(id.clone()) {
+                                                if let Ok(uuid) = Uuid::parse_str(&id) {
+                                                    set.rule_paths.insert(uuid, path.clone());
+                                                }
+                                                set.rules.push(rule);
+                                            } else {
+                                                skipped_dupes += 1;
+                                                tracing::debug!(
+                                                    "Skipping duplicate rule id={id} from {path:?}"
+                                                );
+                                            }
+                                        }
                                     }
-                                } else {
-                                    skipped_parse_errors += 1;
-                                    tracing::warn!(
-                                        "Failed to parse Sigma rule at {path:?} — skipping"
-                                    );
+                                    Err(err) => {
+                                        skipped_parse_errors += 1;
+                                        tracing::warn!(
+                                            "Failed to parse Sigma rule at {path:?}, \
+                                             its rules will not be detected: {err}"
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -187,11 +214,16 @@ impl SigmahqRules {
         }
         set.stats.rules_loaded = set.rules.len() as u64;
         set.stats.rules_total_candidate = set.rules.len() as u64;
+        set.stats.rules_parse_failed = skipped_parse_errors;
+        set.stats.rules_timeframe_ignored = skipped_timeframes;
         if skipped_dupes > 0 {
             tracing::warn!("{skipped_dupes} duplicate rules skipped");
         }
         if skipped_parse_errors > 0 {
-            tracing::warn!("{skipped_parse_errors} rule files failed to parse");
+            tracing::error!(
+                "{skipped_parse_errors} rule file(s) failed to parse and were skipped — \
+                 their rules are not being detected"
+            );
         }
         Ok(set)
     }
@@ -272,6 +304,10 @@ impl SigmahqRules {
                 rules_filtered_level: filtered_level,
                 rules_filtered_author: filtered_author,
                 rules_total_candidate: total,
+                // Filtering never reparses, so the parse failures the load pass
+                // recorded still stand.
+                rules_parse_failed: self.stats.rules_parse_failed,
+                rules_timeframe_ignored: self.stats.rules_timeframe_ignored,
             },
         }
     }
@@ -453,6 +489,117 @@ detection:
         for (name, content) in files {
             fs::write(dir.join(name), content).unwrap();
         }
+    }
+
+    /// rsigma 0.24 rejects a string modifier placed before `fieldref` while
+    /// parsing, so this file never reaches the engine.
+    const UNPARSABLE_RULE: &str = r#"title: Unparsable Rule
+id: 33333333-3333-3333-3333-333333333333
+status: stable
+level: critical
+author: Test Author
+logsource:
+  product: windows
+  service: sysmon
+  category: process_creation
+detection:
+  selection:
+    Image|contains|fieldref: "foo"
+  condition: selection
+"#;
+
+    #[test]
+    fn test_ruleset_counts_parse_failures() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("sigma").join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        write_rules(
+            &rules_dir,
+            &[("good.yml", MINIMAL_RULE), ("bad.yml", UNPARSABLE_RULE)],
+        );
+
+        let set = SigmahqRules::new_from_path(&tmp.path().join("sigma")).unwrap();
+
+        // The bad rule is skipped, so it cannot be detected. That loss has to
+        // be visible in the counters rather than only in a log line.
+        assert_eq!(set.len(), 1);
+        assert_eq!(set.stats().rules_parse_failed, 1);
+        assert_eq!(set.stats().rules_loaded, 1);
+    }
+
+    #[test]
+    fn test_ruleset_reports_no_parse_failures_on_clean_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("sigma").join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        write_rules(&rules_dir, &[("good.yml", MINIMAL_RULE)]);
+
+        let set = SigmahqRules::new_from_path(&tmp.path().join("sigma")).unwrap();
+        assert_eq!(set.stats().rules_parse_failed, 0);
+    }
+
+    /// Sigma v1.x aggregation. sigmacatch has no correlation engine, so the
+    /// window is dead weight and the rule degrades to a per-event match.
+    const TIMEFRAME_RULE: &str = r#"title: Aggregated Rule
+id: 44444444-4444-4444-4444-444444444444
+status: stable
+level: critical
+author: Test Author
+logsource:
+  product: windows
+  service: sysmon
+  category: process_creation
+detection:
+  selection:
+    EventID: 1
+  timeframe: 15m
+  condition: selection
+"#;
+
+    #[test]
+    fn test_ruleset_counts_ignored_timeframes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("sigma").join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        write_rules(
+            &rules_dir,
+            &[("good.yml", MINIMAL_RULE), ("agg.yml", TIMEFRAME_RULE)],
+        );
+
+        let set = SigmahqRules::new_from_path(&tmp.path().join("sigma")).unwrap();
+
+        // The rule still loads — the window is simply not honoured — so the
+        // degradation has to be reported through the counters.
+        assert_eq!(set.len(), 2);
+        assert_eq!(set.stats().rules_timeframe_ignored, 1);
+        assert_eq!(set.stats().rules_parse_failed, 0);
+    }
+
+    #[test]
+    fn test_ruleset_reports_no_timeframes_by_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("sigma").join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        write_rules(&rules_dir, &[("good.yml", MINIMAL_RULE)]);
+
+        let set = SigmahqRules::new_from_path(&tmp.path().join("sigma")).unwrap();
+        assert_eq!(set.stats().rules_timeframe_ignored, 0);
+    }
+
+    #[test]
+    fn test_ruleset_filter_preserves_parse_failure_count() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join("sigma").join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        write_rules(
+            &rules_dir,
+            &[("good.yml", MINIMAL_RULE), ("bad.yml", UNPARSABLE_RULE)],
+        );
+
+        let set = SigmahqRules::new_from_path(&tmp.path().join("sigma")).unwrap();
+        let filtered = set.filter(SigmaFilterConfig::default());
+
+        assert_eq!(filtered.stats().rules_parse_failed, 1);
     }
 
     #[test]

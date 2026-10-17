@@ -1217,21 +1217,6 @@ detection:
 
     #[test]
     fn test_new_lenient_skips_failing_rules() {
-        // Rule with invalid modifier combination (conflicting |contains and |fieldref)
-        // This triggers "at most one operator may be set per field" error.
-        let bad_rule = r#"title: Bad Rule
-id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb
-status: experimental
-level: low
-author: Test
-logsource:
-  product: windows
-  category: process_creation
-detection:
-  selection:
-    Image|contains|fieldref: "foo"
-  condition: selection
-"#;
         let good_rule = r#"title: Good Rule
 id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa
 status: stable
@@ -1250,7 +1235,7 @@ detection:
         let sigma_dir = dir.path().join("sigma");
         let rules_dir = sigma_dir.join("rules");
         fs::create_dir_all(&rules_dir).unwrap();
-        fs::write(rules_dir.join("bad_rule.yml"), bad_rule).unwrap();
+        fs::write(rules_dir.join("bad_rule.yml"), BAD_RULE_YAML).unwrap();
         fs::write(rules_dir.join("good_rule.yml"), good_rule).unwrap();
 
         let rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
@@ -1268,6 +1253,18 @@ detection:
         assert!(*idx < rules.len());
     }
 
+    /// A rule that parses but cannot be compiled.
+    ///
+    /// The invariant these tests exercise is a *compile* failure, so the
+    /// fixture must survive `parse_sigma_yaml`: rsigma drops a rule that fails
+    /// to parse before it ever reaches `Engine::add_rules`, which would make
+    /// the engine succeed and the test assert nothing. Since rsigma 0.24 the
+    /// obvious semantic abuses (`|contains|fieldref`, `|gt|lt`, a numeric value
+    /// under `|contains`) are parse errors, not compile errors.
+    ///
+    /// A lookahead is the case the parser deliberately lets through: pySigma
+    /// accepts it, `fancy-regex` validates it, and only the evaluator's regex
+    /// engine — which has no lookaround — rejects it, as `InvalidRegex`.
     const BAD_RULE_YAML: &str = r#"title: Bad Rule
 id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb
 status: experimental
@@ -1278,7 +1275,7 @@ logsource:
   category: process_creation
 detection:
   selection:
-    Image|contains|fieldref: "foo"
+    Image|re: "(?=foo)bar"
   condition: selection
 "#;
 
@@ -1314,6 +1311,9 @@ detection:
         // Strict `new` would reject bad rules; `reload_rules` is lenient
         // (warn per rule, keep the compilable ones).
         let with_bad = rules_from(&[("good.yml", MINIMAL_RULE_YAML), ("bad.yml", BAD_RULE_YAML)]);
+        // Both rules reached the engine: the bad one was rejected at compile,
+        // not dropped at parse, so the reload had something to skip.
+        assert_eq!(with_bad.rules().len(), 2);
         engine.reload_rules(&with_bad).unwrap();
         assert_eq!(engine.rule_count(), 1);
     }

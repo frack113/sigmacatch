@@ -391,6 +391,14 @@ impl Config {
         if cli.offline {
             config.git.offline = Some(true);
         }
+        // `--hir-cache` is honoured, unlike on a bare dry-run it is an explicit
+        // opt-in to writing the cache file, so the "zero on-disk modification"
+        // promise still holds when the flag is absent. Honouring it lets a
+        // dry-run exercise the cache — a stale or rejected cache is a real
+        // problem, and it can only be observed through this path.
+        if let Some(cache) = &cli.hir_cache {
+            config.hir_cache = Some(cache.to_string_lossy().to_string());
+        }
         config.normalize_git();
         config.filter.normalize();
         Ok(config)
@@ -1214,6 +1222,44 @@ mod tests {
             !config.git.is_contrib(),
             "offline must normalize contrib to false"
         );
+    }
+
+    /// `--hir-cache` was silently dropped in dry-run mode: `load_for_dry_run`
+    /// applied `--author`, `--branch` and `--offline` but not this one, so a
+    /// dry-run always recompiled and the cache could never be exercised.
+    #[test]
+    fn test_load_for_dry_run_honours_hir_cache_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::File::create(&path).unwrap();
+
+        // Absent by default: a bare dry-run still writes nothing on disk.
+        let plain = Config::load_for_dry_run(&path, &CliArgs::default()).unwrap();
+        assert!(
+            plain.hir_cache.is_none(),
+            "a dry-run without --hir-cache must not touch the cache"
+        );
+
+        // Explicit opt-in is honoured.
+        let cli = CliArgs {
+            hir_cache: Some(PathBuf::from("hir.bin")),
+            ..CliArgs::default()
+        };
+        let config = Config::load_for_dry_run(&path, &cli).unwrap();
+        assert_eq!(config.hir_cache.as_deref(), Some("hir.bin"));
+    }
+
+    /// A cache declared in the file, with no CLI flag, is still honoured.
+    #[test]
+    fn test_load_for_dry_run_keeps_hir_cache_from_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "hir_cache: from-file.bin").unwrap();
+        }
+        let config = Config::load_for_dry_run(&path, &CliArgs::default()).unwrap();
+        assert_eq!(config.hir_cache.as_deref(), Some("from-file.bin"));
     }
 
     /// `git.sigma_repo_path` may be an absolute (full) path — the validator
