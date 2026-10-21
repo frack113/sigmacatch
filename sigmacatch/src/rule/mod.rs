@@ -23,7 +23,9 @@
 //! # }
 //! ```
 
-pub use rsigma_parser::{Level, LogSource, SigmaCollection, SigmaRule, Status, parse_sigma_yaml};
+pub use rsigma_parser::{
+    DiagnosticSeverity, Level, LogSource, SigmaCollection, SigmaRule, Status, parse_sigma_yaml,
+};
 
 pub use crate::rule::attack::SigmaRuleExt;
 pub(crate) use crate::rule::discover::find_rules_dirs;
@@ -156,17 +158,28 @@ impl SigmahqRules {
                             if let Ok(content) = std::fs::read_to_string(&path) {
                                 match parse_sigma_yaml(&content) {
                                     Ok(parsed) => {
-                                        // 0.24 reports a semantically invalid
-                                        // document through `errors` and still
-                                        // returns `Ok` with that document
-                                        // dropped, so a partial parse is only
-                                        // visible here.
-                                        for reason in &parsed.errors {
-                                            skipped_parse_errors += 1;
-                                            tracing::warn!(
-                                                "Sigma rule at {path:?} rejected, its \
-                                                 rules will not be detected: {reason}"
-                                            );
+                                        // A semantically invalid document is
+                                        // reported through `diagnostics` and
+                                        // still dropped from `rules`, so a
+                                        // partial parse is only visible here.
+                                        // Warnings mean the document was kept
+                                        // with an invalid value ignored.
+                                        for diag in &parsed.diagnostics {
+                                            match diag.severity {
+                                                DiagnosticSeverity::Error => {
+                                                    skipped_parse_errors += 1;
+                                                    tracing::warn!(
+                                                        "Sigma rule at {path:?} rejected, its \
+                                                         rules will not be detected: {diag}"
+                                                    );
+                                                }
+                                                DiagnosticSeverity::Warning => {
+                                                    tracing::warn!(
+                                                        "Sigma rule at {path:?} parsed with a \
+                                                         warning: {diag}"
+                                                    );
+                                                }
+                                            }
                                         }
                                         for rule in parsed.rules {
                                             if let Some(timeframe) = &rule.detection.timeframe {

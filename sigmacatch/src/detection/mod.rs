@@ -252,6 +252,13 @@ impl DetectionEngine {
         }
 
         if !loaded {
+            // 0.25 keeps each rule's HIR only when asked, and `save_hir`
+            // refuses to write without it. Enable it only when a cache is
+            // configured: retaining HIR costs memory on every run.
+            if hir_cache_path.is_some() {
+                engine.set_retain_hir(true);
+            }
+
             // add_rules (&[SigmaRule]) instead of add_collection avoids cloning
             // the whole Vec; indexes are rebuilt once at the end.
             let errors = engine.add_rules(rules.rules());
@@ -266,10 +273,11 @@ impl DetectionEngine {
             }
 
             // Persist HIR cache after first compilation.
-            if let Some(ref cache_path) = hir_cache_path
-                && let Ok(hir) = engine.save_hir()
-            {
-                write_hir_cache(cache_path, &hir_cache_key(rules), &hir);
+            if let Some(ref cache_path) = hir_cache_path {
+                match engine.save_hir() {
+                    Ok(hir) => write_hir_cache(cache_path, &hir_cache_key(rules), &hir),
+                    Err(e) => tracing::warn!("HIR cache {} not written: {e}", cache_path.display()),
+                }
             }
         }
 
@@ -348,6 +356,13 @@ impl DetectionEngine {
             &self.lnx_logsource_pipeline,
             &self.lnx_field_pipeline,
         )?;
+
+        // Retain HIR only when a cache path is set, so `save_hir` below can
+        // persist the freshly compiled rule set (0.25 keeps rule HIR only on
+        // request).
+        if self.hir_cache_path.is_some() {
+            engine.set_retain_hir(true);
+        }
 
         let errors = engine.add_rules(rules.rules());
         if !errors.is_empty() {
@@ -1423,7 +1438,11 @@ detection:
     #[test]
     fn test_save_load_hir_roundtrip_and_accessors() {
         let rules = rules_from(&[("good.yml", MINIMAL_RULE_YAML)]);
-        let mut engine = DetectionEngine::new(&rules).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("valid.hir");
+        // 0.25 keeps rule HIR only on request; `new_with_hir_cache` enables
+        // retention so `save_hir` can persist the compiled engine.
+        let mut engine = DetectionEngine::new_with_hir_cache(&rules, Some(cache.clone())).unwrap();
         assert_eq!(engine.rule_count(), 1);
 
         let blob = engine.save_hir().unwrap();
@@ -1462,10 +1481,10 @@ detection:
         let engine_corrupt = DetectionEngine::load_hir_cache(&corrupt);
         assert_eq!(engine_corrupt.rule_count(), 0);
 
-        // Valid cache written by an engine.
-        let mut engine = DetectionEngine::new(&rules).unwrap();
+        // Valid cache written by an engine. Retention must be on at load time
+        // for `save_hir` to succeed (0.25), so build with a cache path.
         let cache = dir.path().join("valid.hir");
-        engine.set_hir_cache(&cache);
+        let engine = DetectionEngine::new_with_hir_cache(&rules, Some(cache.clone())).unwrap();
         let blob = engine.save_hir().unwrap();
         fs::write(&cache, blob).unwrap();
         let loaded = DetectionEngine::load_hir_cache(&cache);
