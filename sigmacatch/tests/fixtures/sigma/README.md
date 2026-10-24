@@ -1,6 +1,7 @@
 # Fixture sigma — regression sample
 
-Minimal committed Sigma root used by the `regression-check` CI job
+Minimal committed Sigma root used by the regression check steps of the
+`linux` CI job
 (`.github/workflows/build.yml`) to validate `regressiondata-check` without
 cloning SigmaHQ (`sigma/` is gitignored).
 
@@ -32,7 +33,7 @@ the `--evtx` writer.
 ## Sibling fixtures
 
 - `sigma_negative/` — same tree with the mimikatz `rules/` file removed ;
-  the `regression-check` job asserts non-zero exit on it.
+  the `linux` job asserts non-zero exit on it.
 - `sigma_malformed/` + `sigma_malformed_reference/` — formatting
   regressions (2-space info.yml indent, JSON lacking its trailing newline)
   vs their normalized form ; the job asserts `--fix` reproduces the

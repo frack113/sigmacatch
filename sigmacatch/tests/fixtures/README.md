@@ -10,7 +10,8 @@ Regeneration (only when the encoder intentionally changes the byte layout): chec
 ## Regression-data fixtures
 
 - `sigma/`, `sigma_negative/`, `sigma_malformed/`, `sigma_malformed_reference/`
-  — minimal committed Sigma roots consumed by the `regression-check` CI job
+  — minimal committed Sigma roots consumed by the regression check steps of
+  the `linux` CI job
   (see `sigma/README.md`). The `.gitignore` negations
   (`sigmacatch/tests/fixtures/**/regression_data/`, `**/*.log`) keep them
   tracked despite the repo-wide ignore rules.
