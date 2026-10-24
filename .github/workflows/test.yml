@@ -22,20 +22,14 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The stable feature matrix runs in one job so every invocation shares a
+  # single target/ dir: the dependency tree (tokio, reqwest, rsigma, …) is
+  # compiled once, and only the feature-gated deps (regex, walkdir) plus the
+  # sigmacatch crate are rebuilt per feature combination.
   test:
-    name: Test ${{ matrix.package }}${{ matrix.features != '' && format(' — {0}', matrix.features) || '' }}
+    name: Test (stable features)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { package: sigmacatch, features: '', cache_key: default }
-          - { package: sigmacatch, features: 'auditd,builtin,sysmon', cache_key: sysmon }
-          # ebpf needs nightly + rust-src + bpf-linker (build.rs) or the leg
-          # would silently embed an empty placeholder object (false green).
-          - { package: sigmacatch, features: 'auditd,builtin,ebpf', nightly: true, cache_key: ebpf }
-          - { package: sigmacatch, features: 'evtx', cache_key: evtx }
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -45,11 +39,38 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: test-${{ matrix.cache_key }}-${{ hashFiles('**/Cargo.lock') }}
-      - name: Install nightly + bpf-linker (ebpf only)
-        if: matrix.nightly
+          key: test-stable-${{ hashFiles('**/Cargo.lock') }}
+      - name: Test (winevt)
+        run: cargo test --locked -p sigmacatch
+      - name: Test (auditd+builtin+sysmon)
+        run: cargo test --locked -p sigmacatch --no-default-features --features auditd,builtin,sysmon
+      - name: Test (evtx)
+        run: cargo test --locked -p sigmacatch --no-default-features --features evtx
+
+  # ebpf needs nightly + rust-src + bpf-linker (build.rs) or the leg would
+  # silently embed an empty placeholder object (false green). Separate job,
+  # separate target dir from the stable leg.
+  test-ebpf:
+    name: Test (ebpf)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Cache nightly toolchain
+        # Pinned nightly: bump the month in the key when the ebpf probe
+        # build breaks on the cached toolchain.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.rustup
+          key: rustup-nightly-2026-10-${{ runner.os }}
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # nightly
+        with:
+          toolchain: nightly
+          components: rust-src
+      - name: Install bpf-linker (static musl release)
         run: |
-          rustup toolchain install nightly --component rust-src
           if [ ! -x "${{ runner.tool_cache }}/bpf-linker/bpf-linker" ]; then
             curl -sL -o /tmp/bpf-linker.tar.zst \
               "https://github.com/aya-rs/bpf-linker/releases/download/v0.11.0/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
@@ -58,18 +79,15 @@ jobs:
           fi
           echo "${{ runner.tool_cache }}/bpf-linker" >> "$GITHUB_PATH"
       - name: Cache bpf-linker
-        if: matrix.nightly
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.tool_cache }}/bpf-linker
           key: bpf-linker-0.11.0
-      - name: Test package
-        run: |
-          if [ -n "${{ matrix.features }}" ]; then
-            cargo test --locked -p ${{ matrix.package }} --no-default-features --features ${{ matrix.features }}
-          else
-            cargo test --locked -p ${{ matrix.package }}
-          fi
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: test-ebpf-${{ hashFiles('**/Cargo.lock') }}
+      - name: Test (auditd+builtin+ebpf)
+        run: cargo +nightly test --locked -p sigmacatch --no-default-features --features auditd,builtin,ebpf
 
   # Anti-regression coverage gate (Q7.3): fails the build when line coverage of
   # the Linux-compilable input set drops below the threshold. `winevt` is a
@@ -122,12 +140,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+      - name: Cache nightly toolchain
+        # Pinned nightly: bump the month in the key when the ebpf probe
+        # build breaks on the cached toolchain.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          toolchain: stable
-      - name: Install nightly + bpf-linker
+          path: ~/.rustup
+          key: rustup-nightly-2026-10-${{ runner.os }}
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # nightly
+        with:
+          toolchain: nightly
+          components: rust-src
+      - name: Install bpf-linker (static musl release)
         run: |
-          rustup toolchain install nightly --component rust-src
           if [ ! -x "${{ runner.tool_cache }}/bpf-linker/bpf-linker" ]; then
             curl -sL -o /tmp/bpf-linker.tar.zst \
               "https://github.com/aya-rs/bpf-linker/releases/download/v0.11.0/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
@@ -138,7 +163,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: coverage-ebpf-${{ hashFiles('**/Cargo.lock') }}
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Cache bpf-linker
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.tool_cache }}/bpf-linker
           key: bpf-linker-0.11.0

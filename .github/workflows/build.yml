@@ -40,27 +40,18 @@ jobs:
       - run: cargo deny check
       - run: cargo machete
 
+  # CI validates compilation and feature gates, not codegen: the flavours
+  # build in debug. The release check stays mandatory locally before every
+  # PR (`cargo xwin build --release`, see CONTRIBUTING.md).
+  #
+  # base + sysmon share one target/ dir: the sysmon build is incremental over
+  # the base (same dep tree — sysmon only re-compiles the sigmacatch crate).
+  # `--all-targets` also builds the regressiondata-check bin, which the
+  # regression check steps below run in place (no separate job).
   linux:
-    name: Linux — ${{ matrix.flavor }}
+    name: Linux (auditd+builtin, sysmon)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # base + regressiondata-check built together with --all-targets
-          - flavor: base
-            features: --no-default-features --features auditd,builtin
-            nightly: false
-            build_bins: true
-          - flavor: sysmon
-            features: --no-default-features --features auditd,builtin,sysmon
-            nightly: false
-            build_bins: false
-          - flavor: ebpf
-            features: --no-default-features --features auditd,builtin,ebpf
-            nightly: true
-            build_bins: false
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,10 +59,66 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
         with:
           toolchain: stable
-      - name: Install nightly + bpf-linker (ebpf only)
-        if: matrix.nightly
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: linux-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build (auditd+builtin, --all-targets)
+        run: cargo build --locked -p sigmacatch --no-default-features --features auditd,builtin --all-targets
+      - name: Build (auditd+builtin+sysmon)
+        run: cargo build --locked -p sigmacatch --no-default-features --features auditd,builtin,sysmon
+      - name: Run regression checks
         run: |
-          rustup toolchain install nightly --component rust-src
+          ./target/debug/regressiondata-check --json --path sigmacatch/tests/fixtures/sigma
+          out=$(./target/debug/regressiondata-check --json --path sigmacatch/tests/fixtures/sigma)
+          printf '%s\n' "$out"
+          jq -e '.total == 2 and .failed_count == 0' <<<"$out"
+      - name: Negative — broken fixture fails (and --ignore must not mask it)
+        run: |
+          set +e
+          out=$(./target/debug/regressiondata-check --json --path sigmacatch/tests/fixtures/sigma_negative)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -ne 0 ]
+          jq -e '.failed_count >= 1' <<<"$out"
+          set +e
+          out=$(./target/debug/regressiondata-check --json --ignore --path sigmacatch/tests/fixtures/sigma_negative)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -ne 0 ]
+      - name: --fix reproduces the normalized reference on a throwaway copy
+        run: |
+          tmp="$RUNNER_TEMP/regress-malformed"
+          cp -r sigmacatch/tests/fixtures/sigma_malformed "$tmp"
+          ./target/debug/regressiondata-check --fix --path "$tmp"
+          diff -r "$tmp" sigmacatch/tests/fixtures/sigma_malformed_reference
+          git diff --exit-code
+
+  # ebpf needs nightly + rust-src + bpf-linker (build.rs) and must stay its
+  # own target dir — it changes the execution path and is never merged with
+  # the sysmon flavour.
+  linux-ebpf:
+    name: Linux (ebpf)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Cache nightly toolchain
+        # Pinned nightly: bump the month in the key when the ebpf probe
+        # build breaks on the cached toolchain.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.rustup
+          key: rustup-nightly-2026-10-${{ runner.os }}
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # nightly
+        with:
+          toolchain: nightly
+          components: rust-src
+      - name: Install bpf-linker (static musl release)
+        run: |
           if [ ! -x "${{ runner.tool_cache }}/bpf-linker/bpf-linker" ]; then
             curl -sL -o /tmp/bpf-linker.tar.zst \
               "https://github.com/aya-rs/bpf-linker/releases/download/v0.11.0/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
@@ -80,37 +127,22 @@ jobs:
           fi
           echo "${{ runner.tool_cache }}/bpf-linker" >> "$GITHUB_PATH"
       - name: Cache bpf-linker
-        if: matrix.nightly
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.tool_cache }}/bpf-linker
           key: bpf-linker-0.11.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: linux-${{ matrix.flavor }}-${{ hashFiles('**/Cargo.lock') }}
-      - name: Build flavour
-        run: |
-          if [ "${{ matrix.build_bins }}" = "true" ]; then
-            cargo build --release --locked -p sigmacatch ${{ matrix.features }} --all-targets
-          else
-            cargo build --release --locked -p sigmacatch ${{ matrix.features }}
-          fi
+          key: linux-ebpf-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build (auditd+builtin+ebpf)
+        run: cargo +nightly build --locked -p sigmacatch --no-default-features --features auditd,builtin,ebpf
 
+  # winevt + winevt-evtx share one target/ dir: the evtx build is incremental
+  # (only walkdir joins the dep tree).
   windows:
-    name: Windows — ${{ matrix.flavor }}
+    name: Windows (winevt, winevt+evtx)
     runs-on: windows-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # winevt + regressiondata-check built together
-          - flavor: winevt
-            features: ""
-            build_bins: true
-          - flavor: winevt-evtx
-            features: --features winevt,evtx
-            build_bins: false
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -121,58 +153,9 @@ jobs:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: windows-${{ matrix.flavor }}-${{ hashFiles('**/Cargo.lock') }}
-      - name: Build flavour
+          key: windows-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build flavours
         shell: bash
         run: |
-          if [ "${{ matrix.build_bins }}" = "true" ]; then
-            cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch ${{ matrix.features }} --all-targets
-          else
-            cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch ${{ matrix.features }}
-          fi
-
-  regression-check:
-    name: Regression data validator (fixture)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [linux]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          key: linux-base-${{ hashFiles('**/Cargo.lock') }}
-      - name: Build regressiondata-check
-        run: cargo build --release --locked -p sigmacatch --bin regressiondata-check
-      - name: Run regression checks
-        run: |
-          ./target/release/regressiondata-check --json --path sigmacatch/tests/fixtures/sigma
-          out=$(./target/release/regressiondata-check --json --path sigmacatch/tests/fixtures/sigma)
-          printf '%s\n' "$out"
-          jq -e '.total == 2 and .failed_count == 0' <<<"$out"
-      - name: Negative — broken fixture fails (and --ignore must not mask it)
-        run: |
-          set +e
-          out=$(./target/release/regressiondata-check --json --path sigmacatch/tests/fixtures/sigma_negative)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -ne 0 ]
-          jq -e '.failed_count >= 1' <<<"$out"
-          set +e
-          out=$(./target/release/regressiondata-check --json --ignore --path sigmacatch/tests/fixtures/sigma_negative)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -ne 0 ]
-      - name: --fix reproduces the normalized reference on a throwaway copy
-        run: |
-          tmp="$RUNNER_TEMP/regress-malformed"
-          cp -r sigmacatch/tests/fixtures/sigma_malformed "$tmp"
-          ./target/release/regressiondata-check --fix --path "$tmp"
-          diff -r "$tmp" sigmacatch/tests/fixtures/sigma_malformed_reference
-          git diff --exit-code
+          cargo build --locked --target x86_64-pc-windows-msvc -p sigmacatch --all-targets
+          cargo build --locked --target x86_64-pc-windows-msvc -p sigmacatch --features winevt,evtx
