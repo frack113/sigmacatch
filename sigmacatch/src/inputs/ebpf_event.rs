@@ -548,12 +548,9 @@ fn full_cmdline(ev: &ExecEvent) -> String {
 /// Render + parse through the legacy pipeline so engine inputs are
 /// indistinguishable from tailed-sysmon events.
 fn to_event(xml: String) -> Event {
-    let json_raw =
-        crate::types::parse_winevt_xml_raw(&xml).expect("rendered XML must always parse");
-    let json = crate::types::parse_winevt_xml(&xml).expect("rendered XML must always parse");
-    let mut event = Event::new(json_raw, json, xml.into_bytes());
-    event.inject_logsource_fields_for("linux", None);
-    event
+    let (json_raw, json) =
+        crate::types::parse_winevt_xml_both(&xml).expect("rendered XML must always parse");
+    Event::new_injected(json_raw, json, xml.into_bytes(), "linux", None)
 }
 
 fn read_euid() -> u32 {

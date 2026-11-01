@@ -205,9 +205,13 @@ fn build_event(kind: SourceKind, raw: &[u8], record: &Record) -> Event {
         }
         root
     });
-    let mut event = Event::new(raw_json, JsonValue::Object(flat), raw.to_vec());
-    event.inject_logsource_fields_for("linux", Some(&service));
-    event
+    Event::new_injected(
+        raw_json,
+        JsonValue::Object(flat),
+        raw.to_vec(),
+        "linux",
+        Some(&service),
+    )
 }
 
 /// Linux syslog event collector (implements `EventProducer` directly).

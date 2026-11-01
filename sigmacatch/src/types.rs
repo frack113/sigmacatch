@@ -121,8 +121,7 @@ impl Event {
     /// Parse a Winevt XML string into an Event.
     /// Stores both raw JSON (for regression) and transformed JSON (for detection).
     pub fn from_xml(xml: &str) -> Result<Self, ParseError> {
-        let json_raw = parse_winevt_xml_raw(xml)?;
-        let json = parse_winevt_xml(xml)?;
+        let (json_raw, json) = parse_winevt_xml_both(xml)?;
         let raw = xml.as_bytes().to_vec();
         Ok(Self {
             event_json_raw: Arc::new(json_raw),
@@ -132,61 +131,45 @@ impl Event {
         })
     }
 
-    /// EventID extracted from the parsed JSON.
-    fn event_id(&self) -> u32 {
-        let raw = self
-            .event_json
-            .get("Event")
-            .and_then(|v| v.get("System"))
-            .and_then(|v| v.get("EventID"));
-        match raw {
-            Some(Value::Number(n)) => n.as_u64().unwrap_or(0) as u32,
-            Some(Value::String(s)) => s.parse::<u64>().ok().unwrap_or(0) as u32,
-            // Winevt XML encodes `<EventID Qualifiers="..">400</EventID>` as an
-            // object with a `#text` member, e.g. `{"#attributes": {...}, "#text": "400"}`.
-            // Also handles `{"EventID": {"#text": "400"}}` and `{"EventID": 400}`.
-            Some(Value::Object(o)) => {
-                if let Some(event_id) = o.get("EventID") {
-                    match event_id {
-                        Value::Number(n) => n.as_u64().unwrap_or(0) as u32,
-                        Value::String(s) => s.parse::<u64>().ok().unwrap_or(0) as u32,
-                        Value::Object(o) => {
-                            o.get("#text").and_then(|t| t.as_u64()).unwrap_or(0) as u32
-                        }
-                        _ => 0,
-                    }
-                } else {
-                    0
-                }
-            }
-            _ => 0,
-        }
-    }
-
-    /// Provider extracted from the parsed JSON (System.Provider.Name).
-    fn provider(&self) -> &str {
-        self.event_json
-            .get("Event")
-            .and_then(|v| v.get("System"))
-            .and_then(|v| v.get("Provider"))
-            .and_then(|v| v.get("#attributes"))
-            .and_then(|v| v.get("Name"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-    }
-
-    /// Channel extracted from the parsed JSON.
+    /// Parse a Winevt XML string into an Event with the logsource fields
+    /// (`product`, `service`, `category`) already injected into the detection
+    /// view.
     ///
-    /// Checks `Event.System.Channel` first (Winevt XML), then `Channel` at the
-    /// top level (evtx crate output).
-    fn channel(&self) -> &str {
-        self.event_json
-            .get("Event")
-            .and_then(|v| v.get("System"))
-            .and_then(|v| v.get("Channel"))
-            .and_then(|v| v.as_str())
-            .or_else(|| self.event_json.get("Channel").and_then(|v| v.as_str()))
-            .unwrap_or("")
+    /// Both JSON views come from a single XML parse, and the injection happens
+    /// before the payload is `Arc`-shared — the per-event path therefore pays
+    /// for one parse and no deep clone of the transformed tree.
+    pub fn from_xml_injected(
+        xml: &str,
+        product: &str,
+        service: Option<&str>,
+    ) -> Result<Self, ParseError> {
+        let (json_raw, json) = parse_winevt_xml_both(xml)?;
+        let json = with_injected_logsource(json, product, service);
+        let raw = xml.as_bytes().to_vec();
+        Ok(Self {
+            event_json_raw: Arc::new(json_raw),
+            event_json: Arc::new(json),
+            event_raw: Arc::new(raw),
+            event_json_raw_all: None,
+        })
+    }
+
+    /// Build an event from its JSON views and raw bytes, with the logsource
+    /// fields already injected into the detection view (no post-Arc clone).
+    pub fn new_injected(
+        event_json_raw: Value,
+        event_json: Value,
+        event_raw: Vec<u8>,
+        product: &str,
+        service: Option<&str>,
+    ) -> Self {
+        let event_json = with_injected_logsource(event_json, product, service);
+        Self {
+            event_json_raw: Arc::new(event_json_raw),
+            event_json: Arc::new(event_json),
+            event_raw: Arc::new(event_raw),
+            event_json_raw_all: None,
+        }
     }
 
     /// EventRecordID extracted from the parsed JSON (`Event.System.EventRecordID`).
@@ -216,78 +199,159 @@ impl Event {
     /// statically: `service` is passed explicitly and the channel/provider
     /// tables are only consulted when no service is given.
     pub fn inject_logsource_fields_for(&mut self, product: &str, service: Option<&str>) {
-        let channel = self.channel();
-        let provider = self.provider();
-        let event_id = self.event_id();
-
-        let service = service.map(str::to_string).or_else(|| {
-            CHANNEL_TO_SERVICE
-                .get(channel)
-                .map(|s| s.to_string())
-                .or_else(|| {
-                    // Provider → channel → service (two-step resolution).
-                    PROVIDER_TO_CHANNEL
-                        .get(provider)
-                        .and_then(|ch| CHANNEL_TO_SERVICE.get(ch))
-                        .map(|s| s.to_string())
-                })
-        });
-
-        let category = get_category(channel, event_id)
-            .map(|c| {
-                // Sysmon EventID 12 is both registry add (CreateKey) and
-                // delete (DeleteKey/DeleteValue); the subcategory table holds
-                // one value per channel:event_id, so refine by EventType here
-                // or injected `registry_add` would prune `registry_delete` rules.
-                if c == "registry_add" && is_registry_delete_event_type(&self.event_json) {
-                    "registry_delete"
-                } else {
-                    c
-                }
-            })
-            .or_else(|| category_exclusive_sentinel(channel))
-            .map(str::to_string)
-            // The Sysmon registry subcategories (registry_add / registry_set /
-            // registry_rename / registry_delete) are children of the Sigma
-            // `registry_event` category. rsigma-eval prunes rules by exact
-            // category match, so injecting a subcategory would drop the parent
-            // `registry_event` rules (the majority of SigmaHQ) while injecting
-            // the parent would drop the subcategory rules. Sysmon EID 12/13/14
-            // are exclusively registry, so leaving `category` unset (fail-open)
-            // keeps both parent- and subcategory-typed rules reachable; the
-            // `service: sysmon` + `product: windows` pruning still applies.
-            .filter(|c| !is_registry_subcategory(c));
-
-        // Classic PowerShell categories (ps_classic_start / ps_classic_script) are
-        // detected by Sigma rules via the generic `Data` field, but rsigma has no
-        // dedicated powershell_classic field mapping and would resolve `Data` to a
-        // literal (missing) JSON path. Surface the EventData content under `Data`
-        // so `Data|contains` matching works.
-        let ps_data: Option<String> = match &category {
-            Some(c) if c == "ps_classic_start" || c == "ps_classic_script" => {
-                eventdata_to_string(&self.event_json)
-            }
-            _ => None,
-        };
-
         // The JSON is Arc-shared with every clone of this event, so the
         // injected fields are merged into a fresh copy that replaces the
         // shared one (the collector is the sole mutator, pre-channel-send).
         if (*self.event_json).is_object() {
-            let mut map = self.event_json.as_object().unwrap().clone();
-            map.insert("product".into(), Value::String(product.into()));
-            if let Some(s) = service {
-                map.insert("service".into(), Value::String(s));
-            }
-            if let Some(c) = &category {
-                map.insert("category".into(), Value::String(c.clone()));
-            }
-            if let Some(data_str) = ps_data {
-                map.insert("Data".into(), Value::String(data_str));
-            }
-            self.event_json = Arc::new(Value::Object(map));
+            let json = with_injected_logsource((*self.event_json).clone(), product, service);
+            self.event_json = Arc::new(json);
         }
     }
+}
+
+/// Logsource fields resolved for an event's detection view.
+struct LogsourceFields {
+    /// Resolved Sigma service (e.g. `sysmon`, `security`).
+    service: Option<String>,
+    /// Resolved Sigma category — `None` when the channel/event pair is
+    /// unmapped (fail-open) or a Sysmon registry subcategory (fail-open).
+    category: Option<String>,
+    /// Flattened `EventData` string for classic PowerShell categories.
+    ps_data: Option<String>,
+}
+
+/// Resolve the logsource fields to inject into the detection view of `json`
+/// (the shared core of [`Event::inject_logsource_fields_for`] and the
+/// `*_injected` constructors).
+fn resolve_logsource_fields(json: &Value, service: Option<&str>) -> LogsourceFields {
+    let channel = json_channel(json);
+    let provider = json_provider(json);
+    let event_id = json_event_id(json);
+
+    let service = service.map(str::to_string).or_else(|| {
+        CHANNEL_TO_SERVICE
+            .get(channel)
+            .map(|s| s.to_string())
+            .or_else(|| {
+                // Provider → channel → service (two-step resolution).
+                PROVIDER_TO_CHANNEL
+                    .get(provider)
+                    .and_then(|ch| CHANNEL_TO_SERVICE.get(ch))
+                    .map(|s| s.to_string())
+            })
+    });
+
+    let category = get_category(channel, event_id)
+        .map(|c| {
+            // Sysmon EventID 12 is both registry add (CreateKey) and
+            // delete (DeleteKey/DeleteValue); the subcategory table holds
+            // one value per channel:event_id, so refine by EventType here
+            // or injected `registry_add` would prune `registry_delete` rules.
+            if c == "registry_add" && is_registry_delete_event_type(json) {
+                "registry_delete"
+            } else {
+                c
+            }
+        })
+        .or_else(|| category_exclusive_sentinel(channel))
+        .map(str::to_string)
+        // The Sysmon registry subcategories (registry_add / registry_set /
+        // registry_rename / registry_delete) are children of the Sigma
+        // `registry_event` category. rsigma-eval prunes rules by exact
+        // category match, so injecting a subcategory would drop the parent
+        // `registry_event` rules (the majority of SigmaHQ) while injecting
+        // the parent would drop the subcategory rules. Sysmon EID 12/13/14
+        // are exclusively registry, so leaving `category` unset (fail-open)
+        // keeps both parent- and subcategory-typed rules reachable; the
+        // `service: sysmon` + `product: windows` pruning still applies.
+        .filter(|c| !is_registry_subcategory(c));
+
+    // Classic PowerShell categories (ps_classic_start / ps_classic_script) are
+    // detected by Sigma rules via the generic `Data` field, but rsigma has no
+    // dedicated powershell_classic field mapping and would resolve `Data` to a
+    // literal (missing) JSON path. Surface the EventData content under `Data`
+    // so `Data|contains` matching works.
+    let ps_data = match &category {
+        Some(c) if c == "ps_classic_start" || c == "ps_classic_script" => eventdata_to_string(json),
+        _ => None,
+    };
+
+    LogsourceFields {
+        service,
+        category,
+        ps_data,
+    }
+}
+
+/// Return `json` with the resolved logsource fields inserted into its root
+/// object (no-op when the root is not an object).
+fn with_injected_logsource(mut json: Value, product: &str, service: Option<&str>) -> Value {
+    let fields = resolve_logsource_fields(&json, service);
+    if let Some(map) = json.as_object_mut() {
+        map.insert("product".into(), Value::String(product.to_string()));
+        if let Some(s) = fields.service {
+            map.insert("service".into(), Value::String(s));
+        }
+        if let Some(c) = fields.category {
+            map.insert("category".into(), Value::String(c));
+        }
+        if let Some(d) = fields.ps_data {
+            map.insert("Data".into(), Value::String(d));
+        }
+    }
+    json
+}
+
+/// EventID extracted from an event's detection JSON.
+fn json_event_id(json: &Value) -> u32 {
+    let raw = json
+        .get("Event")
+        .and_then(|v| v.get("System"))
+        .and_then(|v| v.get("EventID"));
+    match raw {
+        Some(Value::Number(n)) => n.as_u64().unwrap_or(0) as u32,
+        Some(Value::String(s)) => s.parse::<u64>().ok().unwrap_or(0) as u32,
+        // Winevt XML encodes `<EventID Qualifiers="..">400</EventID>` as an
+        // object with a `#text` member, e.g. `{"#attributes": {...}, "#text": "400"}`.
+        // Also handles `{"EventID": {"#text": "400"}}` and `{"EventID": 400}`.
+        Some(Value::Object(o)) => {
+            if let Some(event_id) = o.get("EventID") {
+                match event_id {
+                    Value::Number(n) => n.as_u64().unwrap_or(0) as u32,
+                    Value::String(s) => s.parse::<u64>().ok().unwrap_or(0) as u32,
+                    Value::Object(o) => o.get("#text").and_then(|t| t.as_u64()).unwrap_or(0) as u32,
+                    _ => 0,
+                }
+            } else {
+                0
+            }
+        }
+        _ => 0,
+    }
+}
+
+/// Provider extracted from an event's detection JSON (System.Provider.Name).
+fn json_provider(json: &Value) -> &str {
+    json.get("Event")
+        .and_then(|v| v.get("System"))
+        .and_then(|v| v.get("Provider"))
+        .and_then(|v| v.get("#attributes"))
+        .and_then(|v| v.get("Name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+}
+
+/// Channel extracted from an event's detection JSON.
+///
+/// Checks `Event.System.Channel` first (Winevt XML), then `Channel` at the
+/// top level (evtx crate output).
+fn json_channel(json: &Value) -> &str {
+    json.get("Event")
+        .and_then(|v| v.get("System"))
+        .and_then(|v| v.get("Channel"))
+        .and_then(|v| v.as_str())
+        .or_else(|| json.get("Channel").and_then(|v| v.as_str()))
+        .unwrap_or("")
 }
 
 /// Flatten the `Event.EventData` values into a single string so the generic
@@ -739,6 +803,33 @@ fn normalize_eventdata_value(field: &str, value: &str) -> Value {
 /// Parse a Winevt XML string into nested JSON (raw — preserves original EventData key names).
 /// Used for regression data generation where exact fidelity to the source event is required.
 pub fn parse_winevt_xml_raw(xml: &str) -> Result<Value, ParseError> {
+    let doc = parse_winevt_document(xml)?;
+    let event = find_event_node(&doc)?;
+    Ok(event_node_to_value_raw(event))
+}
+
+/// Parse a Winevt XML string into nested JSON (transformed — EventData keys
+/// have their spaces stripped so Sigma field paths resolve).
+pub fn parse_winevt_xml(xml: &str) -> Result<Value, ParseError> {
+    let doc = parse_winevt_document(xml)?;
+    let event = find_event_node(&doc)?;
+    Ok(event_node_to_value(event))
+}
+
+/// Parse a Winevt XML string once and return both views of the event: the raw
+/// JSON (regression fidelity) and the transformed JSON (detection).
+///
+/// The single `roxmltree` parse is the dominant per-event cost, so building
+/// both views from one parsed document halves the parse work on the
+/// per-event hot path.
+pub fn parse_winevt_xml_both(xml: &str) -> Result<(Value, Value), ParseError> {
+    let doc = parse_winevt_document(xml)?;
+    let event = find_event_node(&doc)?;
+    Ok((event_node_to_value_raw(event), event_node_to_value(event)))
+}
+
+/// Size-check and parse a Winevt XML document.
+fn parse_winevt_document(xml: &str) -> Result<roxmltree::Document<'_>, ParseError> {
     if xml.len() > MAX_XML_SIZE {
         return Err(ParseError {
             message: format!(
@@ -749,18 +840,26 @@ pub fn parse_winevt_xml_raw(xml: &str) -> Result<Value, ParseError> {
         });
     }
 
-    let doc = roxmltree::Document::parse(xml).map_err(|e| ParseError {
+    roxmltree::Document::parse(xml).map_err(|e| ParseError {
         message: format!("XML parse error: {}", e),
-    })?;
+    })
+}
 
-    let root = doc.root();
-    let event = root
+/// Locate the `<Event>` element of a parsed Winevt document.
+fn find_event_node<'a, 'input: 'a>(
+    doc: &'a roxmltree::Document<'input>,
+) -> Result<roxmltree::Node<'a, 'input>, ParseError> {
+    doc.root()
         .descendants()
         .find(|n| n.tag_name().name() == "Event")
         .ok_or_else(|| ParseError {
             message: "no <Event> element found in XML".to_string(),
-        })?;
+        })
+}
 
+/// Raw view of an `<Event>` node: namespace declarations and attributes on the
+/// event element itself, then each child element verbatim.
+fn event_node_to_value_raw(event: Node) -> Value {
     let mut event_map = Map::new();
 
     let mut event_attrs = Map::new();
@@ -792,37 +891,16 @@ pub fn parse_winevt_xml_raw(xml: &str) -> Result<Value, ParseError> {
         }
     }
 
-    Ok(Value::Object({
+    Value::Object({
         let mut result = Map::new();
         result.insert("Event".into(), Value::Object(event_map));
         result
-    }))
+    })
 }
 
-/// Parse a Winevt XML string into nested JSON.
-pub fn parse_winevt_xml(xml: &str) -> Result<Value, ParseError> {
-    if xml.len() > MAX_XML_SIZE {
-        return Err(ParseError {
-            message: format!(
-                "XML input too large: {} bytes (max {} bytes)",
-                xml.len(),
-                MAX_XML_SIZE
-            ),
-        });
-    }
-
-    let doc = roxmltree::Document::parse(xml).map_err(|e| ParseError {
-        message: format!("XML parse error: {}", e),
-    })?;
-
-    let root = doc.root();
-    let event = root
-        .descendants()
-        .find(|n| n.tag_name().name() == "Event")
-        .ok_or_else(|| ParseError {
-            message: "no <Event> element found in XML".to_string(),
-        })?;
-
+/// Transformed view of an `<Event>` node: child elements with space-stripped
+/// EventData keys, plus the `_source` marker.
+fn event_node_to_value(event: Node) -> Value {
     let mut event_map = Map::new();
     for child in event.children() {
         if child.is_element() {
@@ -836,7 +914,7 @@ pub fn parse_winevt_xml(xml: &str) -> Result<Value, ParseError> {
     result.insert("Event".into(), Value::Object(event_map));
     result.insert("_source".into(), Value::String("winevt".to_string()));
 
-    Ok(Value::Object(result))
+    Value::Object(result)
 }
 
 fn node_to_value(node: Node, _is_root: bool) -> Value {

@@ -32,9 +32,12 @@ fn is_sysmon_record(record: &Record) -> bool {
 /// Returns `None` when the XML body cannot be parsed (truncated by the
 /// syslog daemon) — callers must skip the line.
 pub fn record_to_event(raw: &[u8], record: &Record) -> Option<Event> {
-    let json_raw = crate::types::parse_winevt_xml_raw(&record.message).ok()?;
-    let json = crate::types::parse_winevt_xml(&record.message).ok()?;
-    let mut event = Event::new(json_raw, json, raw.to_vec());
-    event.inject_logsource_fields_for("linux", None);
-    Some(event)
+    let (json_raw, json) = crate::types::parse_winevt_xml_both(&record.message).ok()?;
+    Some(Event::new_injected(
+        json_raw,
+        json,
+        raw.to_vec(),
+        "linux",
+        None,
+    ))
 }

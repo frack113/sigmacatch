@@ -409,9 +409,12 @@ pub async fn run_with_cli<C: CollectorKind>(
                     match event {
                         Some(event) => {
                             if let Some(pipeline) = pipeline_slot.as_mut() {
-                                let product = event.event_json.get("product").map(|v| v.to_string());
+                                if tracing::enabled!(tracing::Level::DEBUG) {
+                                    let product =
+                                        event.event_json.get("product").map(|v| v.to_string());
+                                    tracing::debug!("event received (product={:?})", product);
+                                }
                                 pipeline.engine.put_event(event);
-                                tracing::debug!("event received (product={:?})", product);
                             } else {
                                 // Pipeline is being generated; log and count dropped events.
                                 dropped_while_generating += 1;

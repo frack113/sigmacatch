@@ -400,9 +400,13 @@ pub fn record_to_event(lines: &[u8], record: &Record) -> Event {
     }
 
     flat.insert("provider".into(), JsonValue::String("auditd".into()));
-    let mut event = Event::new(json_raw, JsonValue::Object(flat), lines.to_vec());
-    event.inject_logsource_fields_for("linux", Some("auditd"));
-    event
+    Event::new_injected(
+        json_raw,
+        JsonValue::Object(flat),
+        lines.to_vec(),
+        "linux",
+        Some("auditd"),
+    )
 }
 
 #[cfg(test)]

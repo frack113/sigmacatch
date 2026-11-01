@@ -634,9 +634,7 @@ impl EventCollector {
         }
         let xml_str = String::from_utf16_lossy(&units);
 
-        let mut event = Event::from_xml(&xml_str).ok()?;
-        event.inject_logsource_fields();
-        Some(event)
+        Some(Event::from_xml_injected(&xml_str, "windows", None).ok()?)
     }
 
     /// Non-Windows stub: continuous collection is a no-op.
