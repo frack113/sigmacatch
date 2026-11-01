@@ -17,6 +17,8 @@
 //! receiver. Log rotation (inode change) is detected and the file re-opened.
 //! Non-Linux → silent stub.
 
+use std::sync::Arc;
+
 use crate::types::{Event, EventProducer, ProducerError};
 use async_trait::async_trait;
 use linux_audit_parser::{Parser, Value as AuditValue};
@@ -277,41 +279,45 @@ impl AuditdHandler {
         let records = std::mem::take(&mut self.group_records);
         self.group_seq = None;
 
-        // Build all per-record JSON raws for ndjson output (one per audit record)
-        let all_json_raw: Vec<Value> = records
-            .iter()
-            .map(|r| {
-                let record_line = lines
-                    .split(|&b| b == b'\n')
-                    .find(|line| {
-                        line.windows(r.ty.len() + 6).any(|w| {
-                            w.starts_with(b"type=") && &w[5..5 + r.ty.len()] == r.ty.as_bytes()
+        // Build all per-record JSON raws for ndjson output (one per audit
+        // record). Shared by Arc so every event in the group references the
+        // same vector instead of deep-cloning it.
+        let all_json_raw: Arc<Vec<Value>> = Arc::new(
+            records
+                .iter()
+                .map(|r| {
+                    let record_line = lines
+                        .split(|&b| b == b'\n')
+                        .find(|line| {
+                            line.windows(r.ty.len() + 6).any(|w| {
+                                w.starts_with(b"type=") && &w[5..5 + r.ty.len()] == r.ty.as_bytes()
+                            })
                         })
-                    })
-                    .unwrap_or(&lines);
-                let raw_fields = extract_raw_fields(record_line);
-                let mut root = Map::new();
-                root.insert(
-                    "stamp".into(),
-                    JsonValue::Object({
-                        let mut stamp = Map::new();
-                        stamp.insert("timestamp".into(), JsonValue::from(r.id.timestamp));
-                        stamp.insert("sequence".into(), JsonValue::from(r.id.sequence));
-                        stamp
-                    }),
-                );
-                root.insert("type".into(), JsonValue::String(r.ty.clone()));
-                if let Some(node) = &r.node {
-                    root.insert("node".into(), JsonValue::String(node.clone()));
-                }
-                root.insert("fields".into(), JsonValue::Object(raw_fields));
-                JsonValue::Object(root)
-            })
-            .collect();
+                        .unwrap_or(&lines);
+                    let raw_fields = extract_raw_fields(record_line);
+                    let mut root = Map::new();
+                    root.insert(
+                        "stamp".into(),
+                        JsonValue::Object({
+                            let mut stamp = Map::new();
+                            stamp.insert("timestamp".into(), JsonValue::from(r.id.timestamp));
+                            stamp.insert("sequence".into(), JsonValue::from(r.id.sequence));
+                            stamp
+                        }),
+                    );
+                    root.insert("type".into(), JsonValue::String(r.ty.clone()));
+                    if let Some(node) = &r.node {
+                        root.insert("node".into(), JsonValue::String(node.clone()));
+                    }
+                    root.insert("fields".into(), JsonValue::Object(raw_fields));
+                    JsonValue::Object(root)
+                })
+                .collect(),
+        );
 
         for record in records {
             let mut event = record_to_event(&lines, &record);
-            event.event_json_raw_all = Some(all_json_raw.clone());
+            event.event_json_raw_all = Some(Arc::clone(&all_json_raw));
             out.push(event);
         }
     }
@@ -394,9 +400,13 @@ pub fn record_to_event(lines: &[u8], record: &Record) -> Event {
     }
 
     flat.insert("provider".into(), JsonValue::String("auditd".into()));
-    let mut event = Event::new(json_raw, JsonValue::Object(flat), lines.to_vec());
-    event.inject_logsource_fields_for("linux", Some("auditd"));
-    event
+    Event::new_injected(
+        json_raw,
+        JsonValue::Object(flat),
+        lines.to_vec(),
+        "linux",
+        Some("auditd"),
+    )
 }
 
 #[cfg(test)]
@@ -590,6 +600,6 @@ mod tests {
         assert!(raw_text.starts_with("type=SYSCALL msg=audit("));
         assert!(raw_text.contains("type=PATH msg=audit("));
         assert!(raw_text.contains("type=EXECVE msg=audit("));
-        assert_eq!(event.event_raw, full);
+        assert_eq!(event.event_raw.as_ref().clone(), full);
     }
 }

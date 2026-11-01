@@ -10,8 +10,9 @@
 //! Pattern: collector → convert → FIFO (Event)
 
 use std::path::Path;
+use std::sync::Arc;
 
-use crate::types::{Event, EventProducer, ParseError, ProducerError, parse_winevt_xml_raw};
+use crate::types::{Event, EventProducer, ParseError, ProducerError};
 use async_trait::async_trait;
 use tracing::warn;
 
@@ -32,9 +33,6 @@ pub enum EvtxError {
 /// Crate-local result alias over [`EvtxError`].
 pub type Result<T> = std::result::Result<T, EvtxError>;
 use tokio::sync::{mpsc, watch};
-
-/// Re-export of the Winevt XML parser shared by the sigmacatch-types crate.
-pub use crate::types::parse_winevt_xml;
 
 /// EVTX file producer.
 ///
@@ -68,17 +66,7 @@ impl EventCollector {
             })?;
             let xml = std::str::from_utf8(record.data.as_bytes())
                 .map_err(|_| EvtxError::Parse("Invalid UTF-8 in EVTX record".to_string()))?;
-            let event_json_raw = parse_winevt_xml_raw(xml)?;
-            let event_json = parse_winevt_xml(xml)?;
-            let event_raw = record.data.as_bytes().to_vec();
-
-            let mut event = Event {
-                event_json_raw,
-                event_json,
-                event_raw,
-                event_json_raw_all: None,
-            };
-            event.inject_logsource_fields();
+            let event = Event::from_xml_injected(xml, "windows", None)?;
             events.push(event);
         }
 
@@ -98,15 +86,28 @@ impl Default for EventCollector {
 /// Event Log.  Without this strip, `write_evtx` would re-export via
 /// `EvtExportLog` (which queries the live log and finds nothing).  Stripping
 /// the record id forces the pure-Rust EVTX writer path instead.
+///
+/// The JSON is `Arc`-shared, so the strip is applied to a fresh copy that
+/// replaces the shared one.
 fn strip_record_id(event: &mut Event) {
-    if let Some(system) = event
+    let has_record_id = event
         .event_json
+        .get("Event")
+        .and_then(|v| v.get("System"))
+        .and_then(|v| v.as_object())
+        .is_some_and(|system| system.contains_key("EventRecordID"));
+    if !has_record_id {
+        return;
+    }
+    let mut json = (*event.event_json).clone();
+    if let Some(system) = json
         .get_mut("Event")
         .and_then(|v| v.get_mut("System"))
         .and_then(|v| v.as_object_mut())
     {
         system.remove("EventRecordID");
     }
+    event.event_json = Arc::new(json);
 }
 
 #[async_trait]
@@ -165,17 +166,7 @@ pub fn parse_evtx_bytes(data: &[u8]) -> Result<Vec<Event>> {
             record.map_err(|e| EvtxError::Parse(format!("EVTX record error in raw data: {e}")))?;
         let xml = std::str::from_utf8(record.data.as_bytes())
             .map_err(|_| EvtxError::Parse("Invalid UTF-8 in EVTX record".to_string()))?;
-        let event_json_raw = parse_winevt_xml_raw(xml)?;
-        let event_json = parse_winevt_xml(xml)?;
-        let event_raw = record.data.as_bytes().to_vec();
-
-        let mut event = Event {
-            event_json_raw,
-            event_json,
-            event_raw,
-            event_json_raw_all: None,
-        };
-        event.inject_logsource_fields();
+        let event = Event::from_xml_injected(xml, "windows", None)?;
         events.push(event);
     }
 

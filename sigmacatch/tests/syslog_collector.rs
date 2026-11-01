@@ -91,7 +91,7 @@ async fn test_collector_emits_per_valid_line() {
         e1.event_json["message"],
         "Failed password for invalid user root from 1.2.3.4"
     );
-    assert_eq!(e1.event_raw, SSHD);
+    assert_eq!(e1.event_raw.as_slice(), SSHD);
 
     let e2 = tokio::time::timeout(Duration::from_secs(2), rx.recv())
         .await
@@ -99,7 +99,7 @@ async fn test_collector_emits_per_valid_line() {
         .expect("present");
     assert_eq!(e2.event_json["service"], "cron");
     assert_eq!(e2.event_json["program"], "CRON");
-    assert_eq!(e2.event_raw, CRON);
+    assert_eq!(e2.event_raw.as_slice(), CRON);
 
     // The kernel tag is not in the taxonomy, so its service keeps the raw name.
     let e3 = tokio::time::timeout(Duration::from_secs(2), rx.recv())

@@ -258,3 +258,18 @@ of what was not yet committed is skipped.
   render/parse. The Linux collectors detect tail-file rotation (inode change) and re-open
   the file; the builtin syslog collector excludes lines tagged `sysmon` to avoid double
   capture (handled by the dedicated Sysmon-for-Linux collector).
+- **Memory: `Arc`-shared payloads + single-pass parse**: the payload fields of
+  `Event` and `Alert` (`event_json_raw`, `event_json`, `event_raw`,
+  `event_json_raw_all`) are `Arc`-shared — cloning an event (per rule match in
+  the detection engine, per channel hand-off) is a reference-count bump, not a
+  deep copy of the JSON tree. `parse_winevt_xml_both` parses the Winevt XML once
+  (raw view for regression + transformed view for detection), and
+  `Event::from_xml_injected`/`new_injected` inject the logsource fields
+  (`product`/`service`/`category`) into the detection view **before** the
+  payload is `Arc`-shared: the per-event path pays for one parse and no deep
+  clone of the transformed tree. Measured on a constant-volume live stream:
+  −47 % working set on Windows (247→130 MB) and −19 % RSS on Linux
+   (~204→164 MB). Diagram:
+   [arc-shared-event-pipeline.webm](arc-shared-event-pipeline.webm) (animation)
+   and [arc-shared-event-pipeline-dark.svg](arc-shared-event-pipeline-dark.svg)
+   (static, dark theme).

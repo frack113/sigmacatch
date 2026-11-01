@@ -205,9 +205,13 @@ fn build_event(kind: SourceKind, raw: &[u8], record: &Record) -> Event {
         }
         root
     });
-    let mut event = Event::new(raw_json, JsonValue::Object(flat), raw.to_vec());
-    event.inject_logsource_fields_for("linux", Some(&service));
-    event
+    Event::new_injected(
+        raw_json,
+        JsonValue::Object(flat),
+        raw.to_vec(),
+        "linux",
+        Some(&service),
+    )
 }
 
 /// Linux syslog event collector (implements `EventProducer` directly).
@@ -450,7 +454,7 @@ mod tests {
         assert_eq!(event.event_json["service"], "sshd");
         assert_eq!(event.event_json["program"], "sshd");
         assert_eq!(event.event_json["message"], "Failed password for root");
-        assert_eq!(event.event_raw, line);
+        assert_eq!(event.event_raw.as_ref().clone(), line);
     }
 
     #[test]

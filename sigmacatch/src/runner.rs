@@ -348,7 +348,12 @@ pub async fn run_with_cli<C: CollectorKind>(
 
     crate::regression::clean_partial_artifacts(&output_base);
 
-    let (tx, mut rx) = mpsc::channel::<Event>(100_000);
+    // 10 000 events of headroom is ~10x less buffered memory than the old
+    // 100 000 cap while keeping the same backpressure semantics: the
+    // collector blocks on `try_send`/`blocking_send` once the channel fills,
+    // and the 30 s generation cycles drain it well before a live channel
+    // fills 10 000 events.
+    let (tx, mut rx) = mpsc::channel::<Event>(10_000);
     let collector_stop = shutdown_rx.clone();
     let collector = kind.build(&cycle_channels);
     // In live mode keep a clone of the sender so the channel stays open after
@@ -404,9 +409,12 @@ pub async fn run_with_cli<C: CollectorKind>(
                     match event {
                         Some(event) => {
                             if let Some(pipeline) = pipeline_slot.as_mut() {
-                                let product = event.event_json.get("product").map(|v| v.to_string());
-                                pipeline.engine.put_events(vec![event]);
-                                tracing::debug!("event received (product={:?})", product);
+                                if tracing::enabled!(tracing::Level::DEBUG) {
+                                    let product =
+                                        event.event_json.get("product").map(|v| v.to_string());
+                                    tracing::debug!("event received (product={:?})", product);
+                                }
+                                pipeline.engine.put_event(event);
                             } else {
                                 // Pipeline is being generated; log and count dropped events.
                                 dropped_while_generating += 1;
@@ -479,7 +487,7 @@ pub async fn run_with_cli<C: CollectorKind>(
                     match event {
                         Some(event) => {
                             if let Some(pipeline) = pipeline_slot.as_mut() {
-                                pipeline.engine.put_events(vec![event]);
+                                pipeline.engine.put_event(event);
                             } else {
                                 dropped_while_generating += 1;
                                 if dropped_while_generating == 1 {
@@ -568,7 +576,7 @@ pub async fn run_with_cli<C: CollectorKind>(
     let drain_stop = std::time::Duration::from_secs(5);
     match tokio::time::timeout(drain_stop, async {
         while let Some(event) = rx.recv().await {
-            pipeline.engine.put_events(vec![event]);
+            pipeline.engine.put_event(event);
         }
     })
     .await

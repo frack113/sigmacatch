@@ -97,7 +97,7 @@ impl DataFormat {
                         path.display()
                     )));
                 }
-                std::fs::write(path, &alert.event_raw).map_err(|e| {
+                std::fs::write(path, &alert.event_raw[..]).map_err(|e| {
                     RegressionError::Invalid(format!(
                         "Failed to write log data {}: {e}",
                         path.display()
@@ -196,6 +196,7 @@ fn prefix_is_text(path: &Path, size: u64) -> bool {
 mod tests {
     use super::*;
     use crate::types::Alert;
+    use std::sync::Arc;
 
     fn bare_alert(event_raw: Vec<u8>) -> Alert {
         Alert {
@@ -204,9 +205,9 @@ mod tests {
             description: None,
             rule_path: None,
             severity: "low".to_string(),
-            event_json_raw: serde_json::json!({}),
-            event_json: serde_json::json!({}),
-            event_raw,
+            event_json_raw: Arc::new(serde_json::json!({})),
+            event_json: Arc::new(serde_json::json!({})),
+            event_raw: Arc::new(event_raw),
             event_json_raw_all: None,
         }
     }
@@ -239,9 +240,9 @@ mod tests {
     #[test]
     fn test_resolve_provider_log_uses_xml_provider_when_present() {
         let mut alert = bare_alert(Vec::new());
-        alert.event_json = serde_json::json!({
+        alert.event_json = Arc::new(serde_json::json!({
             "Event": { "System": { "Provider": { "#attributes": { "Name": "Linux-Sysmon" } } } }
-        });
+        }));
         assert_eq!(
             DataFormat::Log.resolve_provider(&alert).unwrap(),
             "Linux-Sysmon"
@@ -298,6 +299,9 @@ mod tests {
 
         let small = bare_alert(b"type=EXECVE msg=audit(1.2:3)\n".to_vec());
         DataFormat::Log.write(&small, &path).unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), small.event_raw);
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            small.event_raw.as_ref().clone()
+        );
     }
 }

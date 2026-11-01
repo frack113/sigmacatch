@@ -213,7 +213,7 @@ mod tests {
         let raw_nested = &event.event_json_raw["Event"];
         assert_eq!(raw_nested["EventData"]["User"], "root");
 
-        assert_eq!(event.event_raw, PROCESS_CREATE);
+        assert_eq!(event.event_raw.as_ref().clone(), PROCESS_CREATE);
     }
 
     #[test]

@@ -531,6 +531,11 @@ impl DetectionEngine {
         self.events.extend(events);
     }
 
+    /// Append a single event to the pending FIFO without a vector allocation.
+    pub fn put_event(&mut self, event: Event) {
+        self.events.push(event);
+    }
+
     /// Drain the pending events FIFO.
     pub fn get_events(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.events)

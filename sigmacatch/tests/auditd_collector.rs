@@ -88,7 +88,7 @@ async fn test_tail_emits_per_record_events() {
         assert_eq!(e.event_json["type"], expected);
         assert_eq!(e.event_json["service"], "auditd");
         // Every record of the group carries the full raw event lines.
-        assert_eq!(e.event_raw, group);
+        assert_eq!(e.event_raw.as_slice(), group.as_slice());
     }
 
     stop_tx.send(true).unwrap();
