@@ -450,7 +450,7 @@ mod tests {
         assert_eq!(event.event_json["service"], "sshd");
         assert_eq!(event.event_json["program"], "sshd");
         assert_eq!(event.event_json["message"], "Failed password for root");
-        assert_eq!(event.event_raw, line);
+        assert_eq!(event.event_raw.as_ref().clone(), line);
     }
 
     #[test]

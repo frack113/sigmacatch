@@ -649,7 +649,7 @@ mod tests {
     fn eid1_matches_golden_shape_and_order() {
         let mut builder = EventBuilder::new();
         let event = builder.exec_event(&sample_exec(FAKE_PID));
-        let xml = String::from_utf8(event.event_raw.clone()).expect("utf8 xml");
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8 xml");
 
         // Golden structure markers.
         assert!(xml.starts_with("<Event><System>"));
@@ -717,7 +717,7 @@ mod tests {
     fn eid1_unknown_parent_renders_null_fields() {
         let mut builder = EventBuilder::new();
         let event = builder.exec_event(&sample_exec(FAKE_PID));
-        let xml = String::from_utf8(event.event_raw).expect("utf8");
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
         assert!(xml.contains(
             "<Data Name=\"ParentProcessGuid\">{00000000-0000-0000-0000-000000000000}</Data>"
         ));
@@ -732,7 +732,7 @@ mod tests {
         ev.image[..missing.len()].copy_from_slice(missing);
         let mut builder = EventBuilder::new();
         let event = builder.exec_event(&ev);
-        let xml = String::from_utf8(event.event_raw).expect("utf8");
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
         assert!(xml.contains("<Data Name=\"Hashes\">-</Data>"));
         // CommandLine still falls back to image arg0 even when unhashable.
         assert!(
@@ -766,7 +766,7 @@ mod tests {
         let mut builder = EventBuilder::new();
         let _exec = builder.exec_event(&sample_exec(FAKE_PID));
         let event = builder.exit_event(FAKE_PID).expect("known process exits");
-        let xml = String::from_utf8(event.event_raw).expect("utf8");
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
 
         assert!(xml.contains("<EventID>5</EventID>"));
         assert!(xml.contains("<Version>3</Version>"));
@@ -785,7 +785,7 @@ mod tests {
         // image stays clean; the escaped content must come from arg0.
         let mut builder = EventBuilder::new();
         let event = builder.exec_event(&ev);
-        let xml = String::from_utf8(event.event_raw).expect("utf8");
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
         assert!(xml.contains("&lt;script&gt;&amp;amp;"));
         assert!(
             !xml[xml.find("<Data Name=\"CommandLine\"").expect("cmdline")..].contains("<script>")
@@ -806,7 +806,7 @@ mod net_tests {
 
         let addr = [127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         let event = builder.net_event(&sample_net(2, 22u16.to_be(), addr));
-        let xml = String::from_utf8(event.event_raw).expect("utf8");
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
 
         assert!(xml.contains("<EventID>3</EventID>"));
         assert!(xml.contains("<Version>5</Version>"));
@@ -856,7 +856,7 @@ mod net_tests {
         let mut builder = EventBuilder::new();
         let addr: [u8; 16] = std::net::Ipv6Addr::LOCALHOST.octets();
         let event = builder.net_event(&sample_net(10, 8080u16.to_be(), addr));
-        let xml = String::from_utf8(event.event_raw).expect("utf8");
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
 
         assert!(xml.contains("<Data Name=\"DestinationIsIpv6\">true</Data>"));
         assert!(xml.contains("<Data Name=\"DestinationIp\">::1</Data>"));
@@ -900,7 +900,7 @@ mod file_tests {
         let mut builder = EventBuilder::new();
         let _ = builder.exec_event(&sample_exec(FAKE_PID));
         let event = builder.file_create_event(&sample_file(FAKE_PID));
-        let xml = String::from_utf8(event.event_raw).expect("utf8");
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
 
         assert!(xml.contains("<EventID>11</EventID>"));
         assert!(xml.contains("<Version>2</Version>"));
@@ -944,7 +944,7 @@ mod file_tests {
         let rel = b"sigmacatch_rel_test.txt\0";
         ev.path[..rel.len()].copy_from_slice(rel);
         let event = builder.file_create_event(&ev);
-        let xml = String::from_utf8(event.event_raw).expect("utf8");
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
         let cwd = std::env::current_dir()
             .unwrap()
             .to_string_lossy()
@@ -962,7 +962,7 @@ mod file_tests {
         let rel = b"sub/file.conf\0";
         ev.path[..rel.len()].copy_from_slice(rel);
         let event = builder.file_create_event(&ev);
-        let xml = String::from_utf8(event.event_raw).expect("utf8");
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
         assert!(xml.contains("<Data Name=\"TargetFilename\">sub/file.conf</Data>"));
     }
 }
@@ -1035,7 +1035,7 @@ mod dns_tests {
             .dns_event(&sample_dns(FAKE_PID, &wire))
             .expect("valid");
 
-        let xml = String::from_utf8(event.event_raw).expect("utf8");
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
         for field in [
             "RuleName",
             "UtcTime",

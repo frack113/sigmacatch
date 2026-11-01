@@ -22,9 +22,10 @@
 //!     description: None,
 //!     rule_path: None,
 //!     severity: "medium".into(),
-//!     event_json_raw: json!({"event_id": 4624}),
-//!     event_json: json!({"event_id": 4624}),
-//!     event_raw: b"raw".to_vec(),
+//!     event_json_raw: std::sync::Arc::new(json!({"event_id": 4624})),
+//!     event_json: std::sync::Arc::new(json!({"event_id": 4624})),
+//!     event_raw: std::sync::Arc::new(b"raw".to_vec()),
+//!     event_json_raw_all: None,
 //! };
 //! assert_eq!(Product::Windows.as_str(), "windows");
 //! # Ok(())
@@ -37,6 +38,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -83,31 +85,35 @@ impl std::fmt::Display for Product {
 }
 
 /// A generic event for the detection engine: parsed JSON + raw source bytes.
+///
+/// The payload fields are `Arc`-shared: cloning an event (per rule match in
+/// the detection engine, per channel hand-off) is a reference-count bump,
+/// not a deep copy of the JSON tree.
 #[derive(Debug, Clone)]
 pub struct Event {
     /// Raw JSON as collected from Winevt (preserves original EventData key names).
     /// Used for regression data generation — must match the EVTX content exactly.
-    pub event_json_raw: Value,
+    pub event_json_raw: Arc<Value>,
     /// Transformed JSON for Sigma detection (EventData keys have spaces stripped).
     /// Used by the detection engine — makes field paths easier in Sigma rules.
-    pub event_json: Value,
+    pub event_json: Arc<Value>,
     /// Raw wire bytes as collected (XML for Winevt/sysmon paths, RFC3164 line
     /// for Linux collectors) — written verbatim to regression `.log` data.
-    pub event_raw: Vec<u8>,
+    pub event_raw: Arc<Vec<u8>>,
     /// All grouped records as individual JSON objects for ndjson regression output.
     /// For auditd: one entry per audit record in the grouped event (SYSCALL, EXECVE, PATH, etc.).
     /// For Winevt: single entry (the original event).
     /// Populated by collectors that group multiple records (e.g., auditd).
-    pub event_json_raw_all: Option<Vec<Value>>,
+    pub event_json_raw_all: Option<Arc<Vec<Value>>>,
 }
 
 impl Event {
     /// Build an event from its JSON views and raw bytes.
     pub fn new(event_json_raw: Value, event_json: Value, event_raw: Vec<u8>) -> Self {
         Self {
-            event_json_raw,
-            event_json,
-            event_raw,
+            event_json_raw: Arc::new(event_json_raw),
+            event_json: Arc::new(event_json),
+            event_raw: Arc::new(event_raw),
             event_json_raw_all: None,
         }
     }
@@ -119,9 +125,9 @@ impl Event {
         let json = parse_winevt_xml(xml)?;
         let raw = xml.as_bytes().to_vec();
         Ok(Self {
-            event_json_raw: json_raw,
-            event_json: json,
-            event_raw: raw,
+            event_json_raw: Arc::new(json_raw),
+            event_json: Arc::new(json),
+            event_raw: Arc::new(raw),
             event_json_raw_all: None,
         })
     }
@@ -264,7 +270,11 @@ impl Event {
             _ => None,
         };
 
-        if let Value::Object(ref mut map) = self.event_json {
+        // The JSON is Arc-shared with every clone of this event, so the
+        // injected fields are merged into a fresh copy that replaces the
+        // shared one (the collector is the sole mutator, pre-channel-send).
+        if (*self.event_json).is_object() {
+            let mut map = self.event_json.as_object().unwrap().clone();
             map.insert("product".into(), Value::String(product.into()));
             if let Some(s) = service {
                 map.insert("service".into(), Value::String(s));
@@ -275,6 +285,7 @@ impl Event {
             if let Some(data_str) = ps_data {
                 map.insert("Data".into(), Value::String(data_str));
             }
+            self.event_json = Arc::new(Value::Object(map));
         }
     }
 }
@@ -1065,6 +1076,9 @@ impl std::error::Error for ParseError {}
 // ─── Alert ─────────────────────────────────────────────────────────────────
 
 /// An alert produced when an event matches a Sigma rule.
+///
+/// The event payload is `Arc`-shared with the originating [`Event`], so
+/// building one alert per matched rule never deep-copies the JSON tree.
 #[derive(Debug, Clone)]
 pub struct Alert {
     /// Matched rule UUID (Sigma `id`).
@@ -1079,17 +1093,17 @@ pub struct Alert {
     pub severity: String,
     /// Raw JSON as collected from Winevt (preserves original EventData key names).
     /// Used for regression data generation — must match the EVTX content exactly.
-    pub event_json_raw: Value,
+    pub event_json_raw: Arc<Value>,
     /// Transformed JSON for Sigma detection (EventData keys have spaces stripped).
     /// Used by the detection engine.
-    pub event_json: Value,
+    pub event_json: Arc<Value>,
     /// Raw wire bytes as collected (see [`Event::event_raw`]).
-    pub event_raw: Vec<u8>,
+    pub event_raw: Arc<Vec<u8>>,
     /// All grouped records as individual JSON objects for ndjson regression output.
     /// For auditd: one entry per audit record in the grouped event (SYSCALL, EXECVE, PATH, etc.).
     /// For Winevt: single entry (the original event).
     /// Populated by collectors that group multiple records (e.g., auditd).
-    pub event_json_raw_all: Option<Vec<Value>>,
+    pub event_json_raw_all: Option<Arc<Vec<Value>>>,
 }
 
 impl Alert {
@@ -1269,7 +1283,7 @@ mod tests {
 
         let event = Event::from_xml(xml).unwrap();
         assert_eq!(event.event_json["_source"].as_str().unwrap(), "winevt");
-        assert_eq!(event.event_raw, xml.as_bytes());
+        assert_eq!(event.event_raw.as_ref().clone(), xml.as_bytes());
     }
 
     #[test]

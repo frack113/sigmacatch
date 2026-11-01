@@ -610,7 +610,7 @@ impl RegressionData {
             .iter()
             .flat_map(|alert| match &alert.event_json_raw_all {
                 Some(all) => all.iter().collect::<Vec<_>>(),
-                None => vec![&alert.event_json_raw],
+                None => vec![alert.event_json_raw.as_ref()],
             })
             .collect();
         // A lone record is a plain `.json` document: pretty-print it so
@@ -872,6 +872,7 @@ mod tests {
     use super::*;
     use crate::regression::format::MAX_DATA_BLOB_SIZE;
     use crate::types::Event;
+    use std::sync::Arc;
 
     /// Build an alert that exercises the pure-Rust EVTX writer path: an event
     /// without a record id, matched by the detection engine.
@@ -919,20 +920,20 @@ mod tests {
             description: Some("log-mode test".to_string()),
             rule_path: None,
             severity: "low".to_string(),
-            event_json_raw: serde_json::json!({
+            event_json_raw: Arc::new(serde_json::json!({
                 "stamp": { "timestamp": 1717056137482u64, "sequence": 90412 },
                 "type": "EXECVE",
                 "fields": { "argc": "2", "a0": "passwd", "a1": "-S" }
-            }),
-            event_json: serde_json::json!({
+            })),
+            event_json: Arc::new(serde_json::json!({
                 "type": "EXECVE",
                 "argc": "2",
                 "a0": "passwd",
                 "a1": "-S",
                 "product": "linux",
                 "service": "auditd"
-            }),
-            event_raw: raw_line.to_vec(),
+            })),
+            event_raw: Arc::new(raw_line.to_vec()),
             event_json_raw_all: None,
         }
     }
@@ -1252,11 +1253,11 @@ mod tests {
         let rule_id = Uuid::new_v4();
         let alert = synthetic_log_alert(rule_id);
         let grouped = Alert {
-            event_json_raw_all: Some(vec![
+            event_json_raw_all: Some(Arc::new(vec![
                 serde_json::json!({ "type": "EXECVE", "a0": "passwd" }),
                 serde_json::json!({ "type": "EXECVE", "a0": "whoami" }),
                 serde_json::json!({ "type": "EXECVE", "a0": "id" }),
-            ]),
+            ])),
             ..alert
         };
         reg.add(&grouped).expect("data generated");
@@ -1435,7 +1436,7 @@ mod tests {
 
         assert_eq!(
             std::fs::read(&log_path).unwrap(),
-            alert.event_raw,
+            alert.event_raw.as_ref().clone(),
             ".log carries the complete original audit lines"
         );
 
@@ -1452,7 +1453,7 @@ mod tests {
     /// audit event exceeds the data blob bound.
     fn oversized_log_alert(rule_id: Uuid) -> Alert {
         let mut alert = synthetic_log_alert(rule_id);
-        alert.event_raw = vec![0u8; MAX_DATA_BLOB_SIZE + 1];
+        alert.event_raw = Arc::new(vec![0u8; MAX_DATA_BLOB_SIZE + 1]);
         alert
     }
 
