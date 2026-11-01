@@ -265,3 +265,19 @@ push de ce qui n'a pas encore été commité est sauté.
   rotation du fichier tailé (changement d'inode) et rouvrent le fichier ; le collecteur syslog
   exclut les lignes taggées `sysmon` pour éviter les doubles événements (pris en charge par le
   collecteur sysmon dédié).
+- **Mémoire : payloads `Arc`-partagés + parse à passe unique** : les champs de
+  payload d'`Event` et `Alert` (`event_json_raw`, `event_json`, `event_raw`,
+  `event_json_raw_all`) sont `Arc`-partagés — cloner un événement (par
+  correspondance de règle dans le moteur de détection, par passage de canal) est
+  une incrémentation de compteur de référence, pas une copie profonde de
+  l'arbre JSON. `parse_winevt_xml_both` parse le XML Winevt une seule fois (vue
+  brute pour la régression + vue transformée pour la détection), et
+  `Event::from_xml_injected`/`new_injected` injectent les champs logsource
+  (`product`/`service`/`category`) dans la vue détection **avant** le partage
+  `Arc` : le chemin par événement paie un seul parse et aucun clone profond de
+  l'arbre transformé. Mesuré sur un flux live à volume constant : −47 % de
+  working set sous Windows (247→130 Mo) et −19 % de RSS sous Linux
+   (~204→164 Mo). Diagramme :
+   [arc-shared-event-pipeline.webm](arc-shared-event-pipeline.webm) (animation) et
+   [arc-shared-event-pipeline-dark.svg](arc-shared-event-pipeline-dark.svg)
+   (statique, thème sombre).
