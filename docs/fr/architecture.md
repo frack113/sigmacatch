@@ -1,5 +1,26 @@
 # Architecture
 
+Sigmacatch est un matcheur Sigma temps réel : il capture des événements OS, les
+confronte aux règles SigmaHQ du repo cloné, et réécrit les données de régression
+dans ce repo. Quatre diagrammes donnent la vue d'ensemble ; chaque section détaille
+un sous-système.
+
+![Pipeline partagé — de l'input au commit](../media/sigmacatch-shared-pipeline.svg)
+
+## Vue d'ensemble
+
+Un seul binaire `sigmacatch` (plus le binaire standalone `regressiondata-check`)
+assemble cinq briques :
+
+1. **Inputs** — adapters OS (Winevt, EVTX, auditd, syslog, Sysmon, eBPF) ;
+2. **Pipeline partagé** — un unique `run()` pour inputs live et one-shot ;
+3. **Détection** — `DetectionEngine` (pipelines, bloom, logsource) sur les règles
+   `SigmahqRules` ;
+4. **Régression** — `SigmahqRegression` : skip set, génération des fichiers,
+   annotation `regression_tests_path` ;
+5. **Git** — `SigmaRepo` (wrapper grit-lib) : clone optimisé, branche
+   `sigmacatch/<date>`, commit par règle, push unique.
+
 ## Workspace cargo
 
 Le projet est un package cargo unique (`sigmacatch`), plus un crate eBPF nested nightly-only (`sigmacatch/ebpf`) exclu du workspace :
@@ -46,7 +67,9 @@ sigmacatch/
 │       └── src/main.rs           #   8 tracepoints : execve, exec, exit, connect, openat (enter+exit), sendto, sendmsg
 ```
 
-## Collecteurs
+## Inputs
+
+![Matrice des inputs — features × plateforme](../media/sigmacatch-inputs.svg)
 
 Un seul binaire `sigmacatch` est produit par le package `sigmacatch`. Les features cargo
 sélectionnent quels inputs sont compilés, et `main.rs` choisit l'input au runtime : le
@@ -141,36 +164,10 @@ termine quand tous les fichiers sont épuisés, le processus s'arrête de lui-m�
 événement (l'événement 4688 exige son absence pour déclencher la règle d'imagerie). Comme il est
 100 % pur Rust, il se compile et tourne aussi sous Linux.
 
-## Graphe de dépendances
+## Pipeline partagé
 
-```text
-sigmacatch (package)
-├── src/runner.rs         (run<C: CollectorKind>, pipeline partagé + init tracing + module cli)
-├── src/config.rs         (Config, CliArgs)
-├── src/rule/             (SigmahqRules : load/filter/remove_id)
-├── src/detection/        (DetectionEngine : pipelines + bloom + LogSourceExtractor + resolve_channels)
-├── src/regression/       (SigmahqRegression : skip set + génération données)
-├── src/types.rs          (Event, Alert, RegressionHeader, Product, EventProducer, parsing XML)
-├── src/repo/             (SigmaRepo, wrapper grit-lib)
-├── src/evtx_reader.rs    (parse EVTX → Event)
-└── serde                 (sérialisation JSON des sorties diagnostics)
-
-regressiondata-check (deuxième binaire du package sigmacatch)
-├── réutilise src/detection/ (DetectionEngine)
-├── réutilise src/rule/      (SigmahqRules : load/filter)
-├── réutilise src/regression/ (SigmahqRegression)
-├── réutilise src/types.rs   (Event)
-├── réutilise src/evtx_reader.rs (parse EVTX → Event)
-└── linux-audit-parser       (parse records auditd → Event)
-```
-
-Le module `evtx_reader` dépend de `types` + la crate `evtx`. `regressiondata-check`
-(validation de régression, cross-platform) réutilise les mêmes modules (`detection`,
-`rule`, `regression`, `types`, `evtx_reader`) avec `linux-audit-parser` (auditd) selon le
-`LogType` de chaque entrée. Les sous-commandes de diagnostic (`cli.rs`) font un parsing
-manuel des arguments et utilisent `serde` pour leurs sorties JSON (toujours compilées).
-
-## Pipeline (runner partagé)
+Le pipeline `run<C: CollectorKind>` (`runner.rs`) est unique : inputs live et one-shot
+passent par la même boucle.
 
 ```text
 1. parse_args() + Config::load_with_cli("config.yaml", cli)
@@ -195,10 +192,10 @@ manuel des arguments et utilisent `serde` pour leurs sorties JSON (toujours comp
 9. Handlers d'arrêt (watch channel) : Ctrl+C, plus poller stop-file (500 ms) si live_capture()
    ; output_base = <sigma_repo_path>/regression_data ; clean_partial_artifacts()
 10. collector = kind.build(&cycle_channels) → tokio::spawn(collector.run(tx, stop))
-     ├── sigmacatch --evtx (one-shot) → EvtxCollector.run(tx, stop) : énumère les fichiers, envoie chaque événement parsé,
-    │                                  se termine à épuisement → sender tombé
-    ├── sigmacatch (winevt, Windows)  → EventCollector::new(cycle_channels).run(tx, stop)
-    └── sigmacatch (Linux)            → MultiCollector (tous les tails compilés et disponibles en parallèle, rotation détectée)
+    ├── sigmacatch --evtx (one-shot) → EvtxCollector.run(tx, stop) : énumère les fichiers, envoie chaque événement parsé,
+   │                                  se termine à épuisement → sender tombé
+   ├── sigmacatch (winevt, Windows)  → EventCollector::new(cycle_channels).run(tx, stop)
+   └── sigmacatch (Linux)            → MultiCollector (tous les tails compilés et disponibles en parallèle, rotation détectée)
 11. Boucle : tokio::select!
     ├── shutdown_rx (Ctrl+C, ou stop file / --max-runs atteint si live_capture()) → break
      ├── événement depuis rx → engine.put_events(vec![event])
@@ -208,6 +205,8 @@ manuel des arguments et utilisent `serde` pour leurs sorties JSON (toujours comp
     → process_and_generate() → upload_regression() (commit par règle) → push unique si contrib
     — one-shot propage l'erreur de l'upload final (code de sortie non nul) ; live mode log et continue
 ```
+
+### Génération et upload
 
 `process_and_generate()` :
 
@@ -241,6 +240,75 @@ des fichiers `.evtx` s'épuise d'elle-même (sender mpsc tombé → `rx.recv()` 
 (sémantique `-r 0`). Ctrl+C avorte toujours la passe : tout cycle en vol est abandonné et le
 push de ce qui n'a pas encore été commité est sauté.
 
+## Git & contribution
+
+![Workflow git — du clone au pull request](../media/sigmacatch-git-workflow.svg)
+
+`SigmaRepo` (wrapper grit-lib, `sigmacatch/src/repo/`) pilote tout le cycle git :
+
+- **Clone optimisé** — shallow `depth=1` + sparse checkout en mode cône (seuls
+  `rules/`, `rules-emerging-threats/`, `regression_data/`), partial clone en option ;
+  l'unshallow tourne en arrière-plan et est forcé avant le push.
+- **Branche de travail** — `sigmacatch/<date>` (configurable) ; l'intégrité de la
+  branche remote est vérifiée au démarrage, sinon re-clone.
+- **Skip set des PRs en attente** — le namespace `sigmacatch/*` est fetché en un
+  refspec glob unique : une VM fraîche ne recapture pas les règles dont les
+  PRs sont encore ouvertes.
+- **Commit par règle** — `🧪 test: add regression data for rule {rule_id}` ; en cas
+  d'échec commit/push, la branche locale est rollbackée vers le tip pré-batch.
+- **Push unique** — si `git.contrib: true` (sinon commits locaux uniquement) ; la
+  pull request elle-même est créée manuellement après le push.
+- **Offline** — `git.offline: true` : toutes les ops git sont no-op, pas de `.git`
+  requis, les fichiers locaux sont utilisés tels quels.
+
+## Données de régression
+
+![Sortie de régression — arborescence du repo sigma](../media/sigmacatch-regression-output.svg)
+
+Chaque règle matchée ajoute un dossier miroir de son chemin sous
+`<sigma_repo_path>/regression_data/` :
+
+- `info.yml` — métadonnées du test (id de la règle, header de régression) ;
+- `<rule_id>.evtx` — Windows (writer EVTX pur Rust, jamais `EvtExportLog`) ;
+- `<rule_id>.log` — Linux (lignes originales) ;
+- `<rule_id>.json` — optionnel (`add_json_output`).
+
+La règle elle-même est commitée à jour avec
+`regression_tests_path: regression_data/<rule_rel_path>/info.yml`. La validité des
+données existantes est vérifiable sans collecteur par le binaire standalone
+`regressiondata-check` (`--json`, `--ignore`, `--fix`, `--path`) ; les règles dont les
+données commitées sont invalides (EVTX cassé / texte vide) sont exclues du skip set et
+régénérées.
+
+## Graphe de dépendances
+
+```text
+sigmacatch (package)
+├── src/runner.rs         (run<C: CollectorKind>, pipeline partagé + init tracing + module cli)
+├── src/config.rs         (Config, CliArgs)
+├── src/rule/             (SigmahqRules : load/filter/remove_id)
+├── src/detection/        (DetectionEngine : pipelines + bloom + LogSourceExtractor + resolve_channels)
+├── src/regression/       (SigmahqRegression : skip set + génération données)
+├── src/types.rs          (Event, Alert, RegressionHeader, Product, EventProducer, parsing XML)
+├── src/repo/             (SigmaRepo, wrapper grit-lib)
+├── src/evtx_reader.rs    (parse EVTX → Event)
+└── serde                 (sérialisation JSON des sorties diagnostics)
+
+regressiondata-check (deuxième binaire du package sigmacatch)
+├── réutilise src/detection/ (DetectionEngine)
+├── réutilise src/rule/      (SigmahqRules : load/filter)
+├── réutilise src/regression/ (SigmahqRegression)
+├── réutilise src/types.rs   (Event)
+├── réutilise src/evtx_reader.rs (parse EVTX → Event)
+└── linux-audit-parser       (parse records auditd → Event)
+```
+
+Le module `evtx_reader` dépend de `types` + la crate `evtx`. `regressiondata-check`
+(validation de régression, cross-platform) réutilise les mêmes modules (`detection`,
+`rule`, `regression`, `types`, `evtx_reader`) avec `linux-audit-parser` (auditd) selon le
+`LogType` de chaque entrée. Les sous-commandes de diagnostic (`cli.rs`) font un parsing
+manuel des arguments et utilisent `serde` pour leurs sorties JSON (toujours compilées).
+
 ## Notes de conception
 
 - **Stop file** : `config.stop_file` (défaut `.sigmacatch.stop`) est pollé toutes les
@@ -262,9 +330,9 @@ push de ce qui n'a pas encore été commité est sauté.
   inexistants dès `ERROR_EVT_CHANNEL_NOT_FOUND` (un seul `error!`) ; chaque channel vivant
   journalise « initial query OK » puis un heartbeat « still alive » (60s) ; `warn!` quand des
    événements sont récupérés mais perdus au rendu/parsing. Les collecteurs Linux détectent la
-  rotation du fichier tailé (changement d'inode) et rouvrent le fichier ; le collecteur syslog
-  exclut les lignes taggées `sysmon` pour éviter les doubles événements (pris en charge par le
-  collecteur sysmon dédié).
+   rotation du fichier tailé (changement d'inode) et rouvrent le fichier ; le collecteur syslog
+   exclut les lignes taggées `sysmon` pour éviter les doubles événements (pris en charge par le
+   collecteur sysmon dédié).
 - **Mémoire : payloads `Arc`-partagés + parse à passe unique** : les champs de
   payload d'`Event` et `Alert` (`event_json_raw`, `event_json`, `event_raw`,
   `event_json_raw_all`) sont `Arc`-partagés — cloner un événement (par
@@ -277,7 +345,8 @@ push de ce qui n'a pas encore été commité est sauté.
   `Arc` : le chemin par événement paie un seul parse et aucun clone profond de
   l'arbre transformé. Mesuré sur un flux live à volume constant : −47 % de
   working set sous Windows (247→130 Mo) et −19 % de RSS sous Linux
-   (~204→164 Mo). Diagramme :
-   [arc-shared-event-pipeline.webm](arc-shared-event-pipeline.webm) (animation) et
-   [arc-shared-event-pipeline-dark.svg](arc-shared-event-pipeline-dark.svg)
+   (~204→164 Mo). Diagrammes :
+   [sigmacatch-arc-shared-event-pipeline-animated.svg](../media/sigmacatch-arc-shared-event-pipeline-animated.svg)
+   (SVG animé : flux le long des arêtes, pulsation des nœuds dans l'ordre du cycle) et
+   [sigmacatch-arc-shared-event-pipeline.svg](../media/sigmacatch-arc-shared-event-pipeline.svg)
    (statique, thème sombre).

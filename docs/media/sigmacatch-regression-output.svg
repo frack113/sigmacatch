@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 921 545" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-animation="trace" data-preset="classic" data-quality-profile="showcase" data-tree-ui="" data-tree-direction="right" data-reader-fit="intrinsic-height" data-reader-min-text="7.5">
+        <title id="archify-diagram-title">Sigmacatch — sortie de régression</title>
+        <desc id="archify-diagram-description">Contenue réelle du repo sigma : chaque règle matchée ajoute un dossier miroir sous regression_data/.</desc>
+        <!-- Definitions -->
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-default" />
+          </marker>
+          <marker id="arrowhead-emphasis" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-emphasis" />
+          </marker>
+          <marker id="arrowhead-security" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-security" />
+          </marker>
+          <marker id="arrowhead-dashed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-dashed" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" class="c-grid" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+        <style>
+          svg[data-tree-ui] .tree-hue-root { --tree-hue: var(--text-muted); --tree-wash: transparent; }
+          svg[data-tree-ui] .tree-hue-backend { --tree-hue: var(--backend-stroke); --tree-wash: var(--backend-fill); }
+          svg[data-tree-ui] .tree-hue-database { --tree-hue: var(--database-stroke); --tree-wash: var(--database-fill); }
+          svg[data-tree-ui] .tree-hue-cloud { --tree-hue: var(--cloud-stroke); --tree-wash: var(--cloud-fill); }
+          svg[data-tree-ui] .tree-hue-frontend { --tree-hue: var(--frontend-stroke); --tree-wash: var(--frontend-fill); }
+          svg[data-tree-ui] .tree-hue-messagebus { --tree-hue: var(--messagebus-stroke); --tree-wash: var(--messagebus-fill); }
+          svg[data-tree-ui] .tree-hue-external { --tree-hue: var(--external-stroke); --tree-wash: var(--external-fill); }
+          svg[data-tree-ui] .tree-edge { stroke-linejoin: round; stroke-linecap: round; }
+          svg[data-tree-ui] .tree-edge-trunk { stroke: color-mix(in srgb, var(--text) 18%, var(--arrow)); }
+          svg[data-tree-ui] .tree-edge-hued { stroke: color-mix(in srgb, var(--tree-hue) 42%, var(--arrow)); }
+          svg[data-tree-ui] .tree-root { fill: var(--text); stroke: none; }
+          svg[data-tree-ui] [data-tree-depth="0"] .tree-label { fill: var(--mask); }
+          svg[data-tree-ui] [data-tree-depth="0"] .tree-sublabel { fill: var(--mask); opacity: 0.68; }
+          svg[data-tree-ui] .tree-branch { fill: var(--tree-wash); stroke: color-mix(in srgb, var(--tree-hue) 48%, var(--lane-stroke)); }
+          svg[data-tree-ui] .tree-leaf { fill: var(--mask); stroke: color-mix(in srgb, var(--tree-hue) 22%, var(--lane-stroke)); }
+          svg[data-tree-ui] .tree-socket { fill: var(--mask); stroke: var(--tree-hue); pointer-events: none; }
+          svg[data-tree-ui] .tree-accent { stroke: var(--tree-hue); pointer-events: none; }
+          svg[data-tree-ui] [data-tree-stack] { display: none; fill: var(--mask); stroke: color-mix(in srgb, var(--tree-hue) 70%, var(--lane-stroke)); }
+          svg[data-tree-ui] [data-tree-collapsed] [data-tree-stack] { display: inline; }
+          svg[data-tree-ui] [data-tree-hidden] { display: none; }
+          svg[data-tree-ui] .tree-toggle-hit { fill: transparent; }
+          svg[data-tree-ui] .tree-toggle-disc { fill: var(--mask); stroke: color-mix(in srgb, var(--tree-hue) 55%, var(--lane-stroke)); transition: stroke 0.15s ease, fill 0.15s ease; }
+          svg[data-tree-ui] .tree-toggle-glyph { stroke: var(--text-muted); fill: none; transition: stroke 0.15s ease; }
+          svg[data-tree-ui] .tree-toggle-count { display: none; }
+          svg[data-tree-ui] .tree-count-pill { fill: var(--tree-hue); stroke: none; }
+          svg[data-tree-ui] .tree-toggle-count text { fill: var(--mask); }
+          svg[data-tree-ui] [data-tree-toggle] { cursor: pointer; outline: none; }
+          svg[data-tree-ui] [data-tree-toggle][aria-expanded="true"] .tree-toggle-plus { display: none; }
+          svg[data-tree-ui] [data-tree-toggle][aria-expanded="false"] .tree-toggle-count { display: inline; }
+          svg[data-tree-ui] [data-tree-toggle][aria-expanded="false"] .tree-toggle-disc { fill: var(--tree-hue); stroke: var(--tree-hue); }
+          svg[data-tree-ui] [data-tree-toggle][aria-expanded="false"] .tree-toggle-glyph { stroke: var(--mask); }
+          svg[data-tree-ui] [data-tree-toggle]:hover .tree-toggle-disc,
+          svg[data-tree-ui] [data-tree-toggle]:focus-visible .tree-toggle-disc { stroke: var(--tree-hue); stroke-width: 2; }
+          svg[data-tree-ui] [data-tree-toggle]:hover .tree-toggle-glyph,
+          svg[data-tree-ui] [data-tree-toggle]:focus-visible .tree-toggle-glyph { stroke: var(--text); }
+          svg[data-tree-ui] [data-tree-expand-all] { cursor: pointer; outline: none; }
+          svg[data-tree-ui] [data-tree-expand-all] rect { fill: var(--mask); stroke: var(--lane-stroke); }
+          svg[data-tree-ui] [data-tree-expand-all]:is(:hover, :focus-visible) rect { stroke: var(--arrow-emphasis); stroke-width: 2; }
+          svg[data-tree-ui]:not([data-tree-any-collapsed]) [data-tree-expand-all] { display: none; }
+        </style>
+
+        <!-- Background Grid -->
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- Containment links -->
+        <path data-edge-from="root" data-edge-to="rules" data-edge-key="0" data-tree-ancestors="root" data-composition-points="192,227.5;216,227.5;216,109.5;240,109.5" d="M 192 227.5 L 206 227.5 Q 216 227.5 216 217.5 L 216 119.5 Q 216 109.5 226 109.5 L 240 109.5" class="a-default tree-edge tree-edge-trunk" data-animate="edge" style="--step:1" stroke-width="1.8"/>
+        <path data-edge-from="rules" data-edge-to="rulefile" data-edge-key="1" data-tree-ancestors="rules root" data-composition-points="403,110;451,110" d="M 403 110 L 451 110" class="a-default tree-edge tree-edge-hued tree-hue-backend" data-animate="edge" style="--step:2" stroke-width="1.5"/>
+        <path data-edge-from="root" data-edge-to="regdata" data-edge-key="2" data-tree-ancestors="root" data-composition-points="192,227.5;216,227.5;216,344.5;240,344.5" d="M 192 227.5 L 206 227.5 Q 216 227.5 216 237.5 L 216 334.5 Q 216 344.5 226 344.5 L 240 344.5" class="a-default tree-edge tree-edge-trunk" data-animate="edge" style="--step:1" stroke-width="1.8"/>
+        <path data-edge-from="regdata" data-edge-to="entry" data-edge-key="3" data-tree-ancestors="regdata root" data-composition-points="403,345;451,345" d="M 403 345 L 451 345" class="a-default tree-edge tree-edge-hued tree-hue-database" data-animate="edge" style="--step:2" stroke-width="1.5"/>
+        <path data-edge-from="entry" data-edge-to="info" data-edge-key="4" data-tree-ancestors="entry regdata root" data-composition-points="634,344.5;658,344.5;658,211.5;682,211.5" d="M 634 344.5 L 648 344.5 Q 658 344.5 658 334.5 L 658 221.5 Q 658 211.5 668 211.5 L 682 211.5" class="a-default tree-edge tree-edge-hued tree-hue-database" data-animate="edge" style="--step:3" stroke-width="1.5"/>
+        <path data-edge-from="entry" data-edge-to="evtx" data-edge-key="5" data-tree-ancestors="entry regdata root" data-composition-points="634,344.5;658,344.5;658,306.5;682,306.5" d="M 634 344.5 L 648 344.5 Q 658 344.5 658 334.5 L 658 316.5 Q 658 306.5 668 306.5 L 682 306.5" class="a-default tree-edge tree-edge-hued tree-hue-database" data-animate="edge" style="--step:3" stroke-width="1.5"/>
+        <path data-edge-from="entry" data-edge-to="log" data-edge-key="6" data-tree-ancestors="entry regdata root" data-composition-points="634,344.5;658,344.5;658,392.5;682,392.5" d="M 634 344.5 L 648 344.5 Q 658 344.5 658 354.5 L 658 382.5 Q 658 392.5 668 392.5 L 682 392.5" class="a-default tree-edge tree-edge-hued tree-hue-database" data-animate="edge" style="--step:3" stroke-width="1.5"/>
+        <path data-edge-from="entry" data-edge-to="json" data-edge-key="7" data-tree-ancestors="entry regdata root" data-composition-points="634,344.5;658,344.5;658,476.5;682,476.5" d="M 634 344.5 L 648 344.5 Q 658 344.5 658 354.5 L 658 466.5 Q 658 476.5 668 476.5 L 682 476.5" class="a-default tree-edge tree-edge-hued tree-hue-database" data-animate="edge" style="--step:3" stroke-width="1.5"/>
+
+        <!-- Nodes -->
+        <g id="node-root" data-node-id="root" data-node-label="repo sigma" tabindex="0" role="button" aria-label="Focus repo sigma, sigma/ (clone local), Root" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="sigma/ (clone local)" data-node-context="Root" data-tree-depth="0" class="tree-hue-root">
+          <title>repo sigma · sigma/ (clone local) · Root</title>
+          <rect data-tree-stack="" x="37" y="194" width="160" height="77" rx="10" class="tree-stack-frontend" stroke-width="1.2"/>
+          <rect x="32" y="189" width="160" height="77" rx="10" class="c-mask"/>
+          <rect x="32" y="189" width="160" height="77" rx="10" class="c-frontend tree-root" data-animate="node" style="--step:0" stroke-width="0"/>
+
+
+          <text data-node-label="" x="112" class="t-primary tree-label" font-size="14.5" font-weight="750" text-anchor="middle"><tspan x="112" y="231.5">repo sigma</tspan></text>
+          <text data-detail="context" x="112" class="t-muted tree-sublabel" font-size="11" text-anchor="middle"><tspan x="112" y="250.5">sigma/ (clone local)</tspan></text>
+        </g>
+        <g id="node-rules" data-node-id="rules" data-node-label="rules/" tabindex="0" role="button" aria-label="Focus rules/, règles Sigma source, Branch" aria-pressed="false" data-node-kind="backend" data-node-sublabel="règles Sigma source" data-node-context="Branch" data-tree-depth="1" data-tree-ancestors="root" class="tree-hue-backend">
+          <title>rules/ · règles Sigma source · Branch</title>
+          <rect data-tree-stack="" x="245" y="76" width="163" height="77" rx="10" class="tree-stack-backend" stroke-width="1.2"/>
+          <rect x="240" y="71" width="163" height="77" rx="10" class="c-mask"/>
+          <rect x="240" y="71" width="163" height="77" rx="10" class="c-backend tree-branch" data-animate="node" style="--step:1" stroke-width="1.2"/>
+
+          <circle cx="240" cy="109.5" r="2.6" class="tree-socket" stroke-width="1.4"/>
+          <text data-node-label="" x="321.5" class="t-primary tree-label" font-size="13" font-weight="700" text-anchor="middle"><tspan x="321.5" y="113.5">rules/</tspan></text>
+          <text data-detail="context" x="321.5" class="t-muted tree-sublabel" font-size="11" text-anchor="middle"><tspan x="321.5" y="132.5">règles Sigma source</tspan></text>
+        </g>
+        <g id="node-rulefile" data-node-id="rulefile" data-node-label="&lt;rule&gt;.yml" tabindex="0" role="button" aria-label="Focus &lt;rule&gt;.yml, annoté regression_tests_path, Leaf" aria-pressed="false" data-node-kind="external" data-node-sublabel="annoté regression_tests_path" data-node-context="Leaf" data-tree-depth="2" data-tree-ancestors="rules root" class="tree-hue-backend">
+          <title>&lt;rule&gt;.yml · annoté regression_tests_path · Leaf</title>
+
+          <rect x="451" y="64" width="183" height="91" rx="10" class="c-mask"/>
+          <rect x="451" y="64" width="183" height="91" rx="10" class="c-external tree-leaf" data-animate="node" style="--step:2" stroke-width="1"/>
+
+          <circle cx="451" cy="109.5" r="2.6" class="tree-socket" stroke-width="1.4"/>
+          <text data-node-label="" x="542.5" class="t-primary tree-label" font-size="13" font-weight="560" text-anchor="middle"><tspan x="542.5" y="106.5">&lt;rule&gt;.yml</tspan></text>
+          <text data-detail="context" x="542.5" class="t-muted tree-sublabel" font-size="11" text-anchor="middle"><tspan x="542.5" y="125.5">annoté</tspan><tspan x="542.5" y="139.5">regression_tests_path</tspan></text>
+        </g>
+        <g id="node-regdata" data-node-id="regdata" data-node-label="regression_data/" tabindex="0" role="button" aria-label="Focus regression_data/, miroir du chemin de la règle, Branch" aria-pressed="false" data-node-kind="backend" data-node-sublabel="miroir du chemin de la règle" data-node-context="Branch" data-tree-depth="1" data-tree-ancestors="root" class="tree-hue-database">
+          <title>regression_data/ · miroir du chemin de la règle · Branch</title>
+          <rect data-tree-stack="" x="245" y="304" width="163" height="91" rx="10" class="tree-stack-backend" stroke-width="1.2"/>
+          <rect x="240" y="299" width="163" height="91" rx="10" class="c-mask"/>
+          <rect x="240" y="299" width="163" height="91" rx="10" class="c-backend tree-branch" data-animate="node" style="--step:1" stroke-width="1.2"/>
+
+          <circle cx="240" cy="344.5" r="2.6" class="tree-socket" stroke-width="1.4"/>
+          <text data-node-label="" x="321.5" class="t-primary tree-label" font-size="13" font-weight="700" text-anchor="middle"><tspan x="321.5" y="341.5">regression_data/</tspan></text>
+          <text data-detail="context" x="321.5" class="t-muted tree-sublabel" font-size="11" text-anchor="middle"><tspan x="321.5" y="360.5">miroir du chemin de</tspan><tspan x="321.5" y="374.5">la règle</tspan></text>
+        </g>
+        <g id="node-entry" data-node-id="entry" data-node-label="&lt;rule_rel_path&gt;/" tabindex="0" role="button" aria-label="Focus &lt;rule_rel_path&gt;/, ex : rules/windows/builtin/…, Branch" aria-pressed="false" data-node-kind="backend" data-node-sublabel="ex : rules/windows/builtin/…" data-node-context="Branch" data-tree-depth="2" data-tree-ancestors="regdata root" class="tree-hue-database">
+          <title>&lt;rule_rel_path&gt;/ · ex : rules/windows/builtin/… · Branch</title>
+          <rect data-tree-stack="" x="456" y="313" width="183" height="73" rx="10" class="tree-stack-backend" stroke-width="1.2"/>
+          <rect x="451" y="308" width="183" height="73" rx="10" class="c-mask"/>
+          <rect x="451" y="308" width="183" height="73" rx="10" class="c-backend tree-branch" data-animate="node" style="--step:2" stroke-width="1.2"/>
+
+          <circle cx="451" cy="344.5" r="2.6" class="tree-socket" stroke-width="1.4"/>
+          <text data-node-label="" x="542.5" class="t-primary tree-label" font-size="13" font-weight="700" text-anchor="middle"><tspan x="542.5" y="332.5">&lt;rule_rel_path&gt;/</tspan></text>
+          <text data-detail="context" x="542.5" class="t-muted tree-sublabel" font-size="11" text-anchor="middle"><tspan x="542.5" y="351.5">ex :</tspan><tspan x="542.5" y="365.5">rules/windows/builtin/…</tspan></text>
+        </g>
+        <g id="node-info" data-node-id="info" data-node-label="info.yml" tabindex="0" role="button" aria-label="Focus info.yml, métadonnées du test, Leaf" aria-pressed="false" data-node-kind="external" data-node-sublabel="métadonnées du test" data-node-context="Leaf" data-tree-depth="3" data-tree-ancestors="entry regdata root" class="tree-hue-database">
+          <title>info.yml · métadonnées du test · Leaf</title>
+
+          <rect x="682" y="173" width="195" height="77" rx="10" class="c-mask"/>
+          <rect x="682" y="173" width="195" height="77" rx="10" class="c-external tree-leaf" data-animate="node" style="--step:3" stroke-width="1"/>
+
+          <circle cx="682" cy="211.5" r="2.6" class="tree-socket" stroke-width="1.4"/>
+          <text data-node-label="" x="779.5" class="t-primary tree-label" font-size="13" font-weight="560" text-anchor="middle"><tspan x="779.5" y="215.5">info.yml</tspan></text>
+          <text data-detail="context" x="779.5" class="t-muted tree-sublabel" font-size="11" text-anchor="middle"><tspan x="779.5" y="234.5">métadonnées du test</tspan></text>
+        </g>
+        <g id="node-evtx" data-node-id="evtx" data-node-label="&lt;rule_id&gt;.evtx" tabindex="0" role="button" aria-label="Focus &lt;rule_id&gt;.evtx, Windows · writer Rust pur, Leaf" aria-pressed="false" data-node-kind="external" data-node-sublabel="Windows · writer Rust pur" data-node-context="Leaf" data-tree-depth="3" data-tree-ancestors="entry regdata root" class="tree-hue-database">
+          <title>&lt;rule_id&gt;.evtx · Windows · writer Rust pur · Leaf</title>
+
+          <rect x="682" y="268" width="195" height="77" rx="10" class="c-mask"/>
+          <rect x="682" y="268" width="195" height="77" rx="10" class="c-external tree-leaf" data-animate="node" style="--step:3" stroke-width="1"/>
+
+          <circle cx="682" cy="306.5" r="2.6" class="tree-socket" stroke-width="1.4"/>
+          <text data-node-label="" x="779.5" class="t-primary tree-label" font-size="13" font-weight="560" text-anchor="middle"><tspan x="779.5" y="310.5">&lt;rule_id&gt;.evtx</tspan></text>
+          <text data-detail="context" x="779.5" class="t-muted tree-sublabel" font-size="11" text-anchor="middle"><tspan x="779.5" y="329.5">Windows · writer Rust pur</tspan></text>
+        </g>
+        <g id="node-log" data-node-id="log" data-node-label="&lt;rule_id&gt;.log" tabindex="0" role="button" aria-label="Focus &lt;rule_id&gt;.log, Linux · lignes originales, Leaf" aria-pressed="false" data-node-kind="external" data-node-sublabel="Linux · lignes originales" data-node-context="Leaf" data-tree-depth="3" data-tree-ancestors="entry regdata root" class="tree-hue-database">
+          <title>&lt;rule_id&gt;.log · Linux · lignes originales · Leaf</title>
+
+          <rect x="682" y="363" width="195" height="59" rx="10" class="c-mask"/>
+          <rect x="682" y="363" width="195" height="59" rx="10" class="c-external tree-leaf" data-animate="node" style="--step:3" stroke-width="1"/>
+
+          <circle cx="682" cy="392.5" r="2.6" class="tree-socket" stroke-width="1.4"/>
+          <text data-node-label="" x="779.5" class="t-primary tree-label" font-size="13" font-weight="560" text-anchor="middle"><tspan x="779.5" y="387.5">&lt;rule_id&gt;.log</tspan></text>
+          <text data-detail="context" x="779.5" class="t-muted tree-sublabel" font-size="11" text-anchor="middle"><tspan x="779.5" y="406.5">Linux · lignes originales</tspan></text>
+        </g>
+        <g id="node-json" data-node-id="json" data-node-label="&lt;rule_id&gt;.json" tabindex="0" role="button" aria-label="Focus &lt;rule_id&gt;.json, optionnel · add_json_output, Leaf" aria-pressed="false" data-node-kind="external" data-node-sublabel="optionnel · add_json_output" data-node-context="Leaf" data-tree-depth="3" data-tree-ancestors="entry regdata root" class="tree-hue-database">
+          <title>&lt;rule_id&gt;.json · optionnel · add_json_output · Leaf</title>
+
+          <rect x="682" y="440" width="195" height="73" rx="10" class="c-mask"/>
+          <rect x="682" y="440" width="195" height="73" rx="10" class="c-external tree-leaf" data-animate="node" style="--step:3" stroke-width="1"/>
+
+          <circle cx="682" cy="476.5" r="2.6" class="tree-socket" stroke-width="1.4"/>
+          <text data-node-label="" x="779.5" class="t-primary tree-label" font-size="13" font-weight="560" text-anchor="middle"><tspan x="779.5" y="464.5">&lt;rule_id&gt;.json</tspan></text>
+          <text data-detail="context" x="779.5" class="t-muted tree-sublabel" font-size="11" text-anchor="middle"><tspan x="779.5" y="483.5">optionnel ·</tspan><tspan x="779.5" y="497.5">add_json_output</tspan></text>
+        </g>
+
+        <!-- Branch toggles -->
+        <g data-tree-toggle="root" data-tree-count="8" data-tree-label-collapse="Collapse repo sigma (8 below)" data-tree-label-expand="Expand repo sigma (8 hidden)" role="button" tabindex="0" aria-expanded="true" aria-label="Collapse repo sigma (8 below)" class="tree-hue-root">
+          <circle cx="192" cy="227.5" r="14.5" class="tree-toggle-hit"/>
+          <circle cx="192" cy="227.5" r="7.5" class="tree-toggle-disc" stroke-width="1.2"/>
+          <path class="tree-toggle-glyph" d="M 188.85 227.5 H 195.15" stroke-width="1.5" stroke-linecap="round"/>
+          <path class="tree-toggle-glyph tree-toggle-plus" d="M 192 224.35 V 230.65" stroke-width="1.5" stroke-linecap="round"/>
+          <g class="tree-toggle-count">
+            <rect x="202.5" y="220" width="17.2" height="15" rx="7.5" class="tree-count-pill"/>
+            <text x="211.1" y="231.1" class="t-primary" font-size="10" font-weight="700" text-anchor="middle">8</text>
+          </g>
+        </g>
+        <g data-tree-toggle="rules" data-tree-count="1" data-tree-ancestors="root" data-tree-label-collapse="Collapse rules/ (1 below)" data-tree-label-expand="Expand rules/ (1 hidden)" role="button" tabindex="0" aria-expanded="true" aria-label="Collapse rules/ (1 below)" class="tree-hue-backend">
+          <circle cx="403" cy="109.5" r="14.5" class="tree-toggle-hit"/>
+          <circle cx="403" cy="109.5" r="7.5" class="tree-toggle-disc" stroke-width="1.2"/>
+          <path class="tree-toggle-glyph" d="M 399.85 109.5 H 406.15" stroke-width="1.5" stroke-linecap="round"/>
+          <path class="tree-toggle-glyph tree-toggle-plus" d="M 403 106.35 V 112.65" stroke-width="1.5" stroke-linecap="round"/>
+          <g class="tree-toggle-count">
+            <rect x="413.5" y="102" width="17.2" height="15" rx="7.5" class="tree-count-pill"/>
+            <text x="422.1" y="113.1" class="t-primary" font-size="10" font-weight="700" text-anchor="middle">1</text>
+          </g>
+        </g>
+        <g data-tree-toggle="regdata" data-tree-count="5" data-tree-ancestors="root" data-tree-label-collapse="Collapse regression_data/ (5 below)" data-tree-label-expand="Expand regression_data/ (5 hidden)" role="button" tabindex="0" aria-expanded="true" aria-label="Collapse regression_data/ (5 below)" class="tree-hue-database">
+          <circle cx="403" cy="344.5" r="14.5" class="tree-toggle-hit"/>
+          <circle cx="403" cy="344.5" r="7.5" class="tree-toggle-disc" stroke-width="1.2"/>
+          <path class="tree-toggle-glyph" d="M 399.85 344.5 H 406.15" stroke-width="1.5" stroke-linecap="round"/>
+          <path class="tree-toggle-glyph tree-toggle-plus" d="M 403 341.35 V 347.65" stroke-width="1.5" stroke-linecap="round"/>
+          <g class="tree-toggle-count">
+            <rect x="413.5" y="337" width="17.2" height="15" rx="7.5" class="tree-count-pill"/>
+            <text x="422.1" y="348.1" class="t-primary" font-size="10" font-weight="700" text-anchor="middle">5</text>
+          </g>
+        </g>
+        <g data-tree-toggle="entry" data-tree-count="4" data-tree-ancestors="regdata root" data-tree-label-collapse="Collapse &lt;rule_rel_path&gt;/ (4 below)" data-tree-label-expand="Expand &lt;rule_rel_path&gt;/ (4 hidden)" role="button" tabindex="0" aria-expanded="true" aria-label="Collapse &lt;rule_rel_path&gt;/ (4 below)" class="tree-hue-database">
+          <circle cx="634" cy="344.5" r="14.5" class="tree-toggle-hit"/>
+          <circle cx="634" cy="344.5" r="7.5" class="tree-toggle-disc" stroke-width="1.2"/>
+          <path class="tree-toggle-glyph" d="M 630.85 344.5 H 637.15" stroke-width="1.5" stroke-linecap="round"/>
+          <path class="tree-toggle-glyph tree-toggle-plus" d="M 634 341.35 V 347.65" stroke-width="1.5" stroke-linecap="round"/>
+          <g class="tree-toggle-count">
+            <rect x="644.5" y="337" width="17.2" height="15" rx="7.5" class="tree-count-pill"/>
+            <text x="653.1" y="348.1" class="t-primary" font-size="10" font-weight="700" text-anchor="middle">4</text>
+          </g>
+        </g>
+
+        <!-- Expand all (shown only while a branch is collapsed) -->
+        <g data-tree-expand-all="" role="button" tabindex="0" aria-label="Expand all">
+          <rect x="32" y="18" width="87" height="24" rx="12" stroke-width="1.2"/>
+          <text x="44" y="34" class="t-primary" font-size="10.5" font-weight="650">Expand all</text>
+        </g>
+      </svg>

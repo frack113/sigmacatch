@@ -16,6 +16,11 @@ logs/
 rdp.sh
 windows_output/
 
+# local docs venv (must stay OUT of docs/: a venv under docs_dir makes
+# mkdocs_static_i18n re-register the theme assets as docs files and the
+# build fails on a phantom docs/assets/images/favicon.png)
+.venv-docs/
+
 # internal
 _bmad/
 _bmad-output/

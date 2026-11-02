@@ -9,6 +9,7 @@ edit_uri: edit/main/docs/
 theme:
   name: material
   language: en
+  favicon: assets/images/favicon.svg
   palette:
     - scheme: default
       primary: deep purple
