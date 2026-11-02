@@ -346,7 +346,7 @@ manuel des arguments et utilisent `serde` pour leurs sorties JSON (toujours comp
   l'arbre transformé. Mesuré sur un flux live à volume constant : −47 % de
   working set sous Windows (247→130 Mo) et −19 % de RSS sous Linux
    (~204→164 Mo). Diagrammes :
-   [sigmacatch-arc-shared-event-pipeline-animated.svg](../media/sigmacatch-arc-shared-event-pipeline-animated.svg)
-   (SVG animé : flux le long des arêtes, pulsation des nœuds dans l'ordre du cycle) et
-   [sigmacatch-arc-shared-event-pipeline.svg](../media/sigmacatch-arc-shared-event-pipeline.svg)
-   (statique, thème sombre).
+
+   ![Pipeline partagé — SVG animé : flux le long des arêtes, pulsation des nœuds dans l'ordre du cycle](../media/sigmacatch-arc-shared-event-pipeline-animated.svg)
+
+   ![Pipeline partagé — SVG statique, thème sombre](../media/sigmacatch-arc-shared-event-pipeline.svg)

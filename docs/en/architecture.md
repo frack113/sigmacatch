@@ -363,7 +363,7 @@ for their JSON outputs (always compiled).
   deep clone of the transformed tree. Measured on a live stream at constant
   volume: −47 % working set on Windows (247→130 MB) and −19 % RSS on Linux
   (~204→164 MB). Diagrams:
-  [sigmacatch-arc-shared-event-pipeline-animated.svg](../media/sigmacatch-arc-shared-event-pipeline-animated.svg)
-  (animated SVG: flow along the edges, nodes pulsing in cycle order) and
-  [sigmacatch-arc-shared-event-pipeline.svg](../media/sigmacatch-arc-shared-event-pipeline.svg)
-  (static, dark theme).
+
+  ![Shared pipeline — animated SVG: flow along the edges, nodes pulsing in cycle order](../media/sigmacatch-arc-shared-event-pipeline-animated.svg)
+
+  ![Shared pipeline — static SVG, dark theme](../media/sigmacatch-arc-shared-event-pipeline.svg)
