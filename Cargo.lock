@@ -1244,27 +1244,40 @@ dependencies = [
 
 [[package]]
 name = "grit-lib"
-version = "0.5.0"
+version = "0.5.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2dc4f0678b79a68e0df08b7ab3a3a94bfa617eab7271f4f8aeea00c92ec33fe"
+checksum = "78b1e5fb6242bf32b7306ad7dccbe538f3a761e5fe54a0885fc45b753016a106"
 dependencies = [
+ "crc32fast",
  "encoding_rs",
  "filetime",
  "flate2",
+ "getrandom 0.2.17",
+ "hashbrown 0.15.5",
  "hex",
  "icu_normalizer",
  "imara-diff",
  "libc",
+ "memchr",
+ "memmap2",
  "merge3",
  "nix",
  "regex",
+ "rustix",
+ "serde",
+ "serde_json",
  "sha1",
+ "sha1dc",
  "sha2 0.11.1",
  "shell-words",
  "similar",
+ "smallvec",
  "tempfile",
+ "terminal_size",
  "thiserror 2.0.21",
  "time",
+ "tz-rs",
+ "tzdb",
  "unicode-width",
  "url",
  "windows-sys 0.61.2",
@@ -1847,6 +1860,15 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "memmap2"
+version = "0.9.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b0ca1155a9ecc25aa12e8313a119f32edf0255fea2f44839c4ac0a12b2ac157"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "merge3"
@@ -3006,6 +3028,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1dc"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5b0ebf6537e3e8db8bb7d21ecb6d7399738c953c757945c6b95e46c4e95df7b"
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3423,6 +3451,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "terminal_size"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
+dependencies = [
+ "rustix",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "text-size"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3739,6 +3777,32 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "tz-rs"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fc6c929ffa10fb34f4a3c7e9a73620a83ef2e85e47f9ec3381b8289e6762f42"
+
+[[package]]
+name = "tzdb"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56d4e985b6dda743ae7fd4140c28105316ffd75bc58258ee6cc12934e3eb7a0c"
+dependencies = [
+ "iana-time-zone",
+ "tz-rs",
+ "tzdb_data",
+]
+
+[[package]]
+name = "tzdb_data"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "febaa995f6852367564e16c3369988b99d471d43ed12b1255b8d294661797f1c"
+dependencies = [
+ "tz-rs",
+]
 
 [[package]]
 name = "ucd-trie"
