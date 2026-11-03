@@ -162,6 +162,7 @@ mod tests {
             author_raw: Vec::new(),
             committer_raw: Vec::new(),
             raw_message: None,
+            extra_headers: Vec::new(),
         };
         let odb = crate::repo::plumbing::checkout::open_odb(&git_dir);
         let raw = grit_lib::objects::serialize_commit(&commit);

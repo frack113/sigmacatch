@@ -245,7 +245,7 @@ impl AuthHttpClient {
     }
 }
 
-impl grit_lib::transport::http::HttpClient for AuthHttpClient {
+impl grit_lib::remote::transport::http::HttpClient for AuthHttpClient {
     /// Negotiate git protocol v2 for every HTTP request.
     ///
     /// grit's `http_fetch` passes `client.git_protocol_header()` into the
@@ -404,7 +404,7 @@ pub fn ensure_ssh_host_config(ssh_key_path: Option<&str>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grit_lib::transport::http::HttpClient;
+    use grit_lib::remote::transport::http::HttpClient;
 
     #[test]
     fn test_sanitize_url_with_at() {

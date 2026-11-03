@@ -4,9 +4,10 @@
 //! Full clone: init + fetch + set HEAD + checkout worktree.
 
 use crate::repo::{RepoError, Result};
-use grit_lib::transport::http::HttpClient;
+use grit_lib::remote::transport::http::HttpClient;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use tracing::{info, warn};
 
 use crate::repo::plumbing::checkout::checkout_main_branch;
@@ -24,7 +25,7 @@ const DEFAULT_BRANCHES: &[&str] = &["master", "main"];
 const DEFAULT_HTTP_TIMEOUT: u64 = 120;
 
 /// Full clone: init + fetch + set HEAD + checkout worktree.
-pub fn clone_repo(http_client: &dyn HttpClient, url: &str, dest: &Path) -> Result<()> {
+pub fn clone_repo(http_client: Arc<dyn HttpClient>, url: &str, dest: &Path) -> Result<()> {
     clone_repo_inner(
         http_client,
         url,
@@ -38,7 +39,7 @@ pub fn clone_repo(http_client: &dyn HttpClient, url: &str, dest: &Path) -> Resul
 
 /// Shallow clone with optional sparse checkout.
 pub fn clone_repo_shallow(
-    http_client: &dyn HttpClient,
+    http_client: Arc<dyn HttpClient>,
     url: &str,
     dest: &Path,
     sparse_checkout: bool,
@@ -57,7 +58,7 @@ pub fn clone_repo_shallow(
 /// Partial clone with blobless filter (--filter=blob:none) + shallow depth=1.
 /// Uses `git` CLI for initial clone since grit-lib doesn't yet support --filter.
 pub fn clone_repo_partial(
-    http_client: &dyn HttpClient,
+    http_client: Arc<dyn HttpClient>,
     url: &str,
     dest: &Path,
     sparse_checkout: bool,
@@ -74,7 +75,7 @@ pub fn clone_repo_partial(
 }
 
 fn clone_repo_inner(
-    http_client: &dyn HttpClient,
+    http_client: Arc<dyn HttpClient>,
     url: &str,
     dest: &Path,
     shallow: bool,
@@ -145,7 +146,7 @@ fn clone_repo_inner(
 /// Clone using `git` CLI with --filter=blob:none --depth=1 for partial clone.
 /// Falls back to shallow clone via grit-lib if git CLI is not available.
 fn clone_via_git_cli(
-    http_client: &dyn HttpClient,
+    http_client: Arc<dyn HttpClient>,
     url: &str,
     dest: &Path,
     shallow: bool,
@@ -255,7 +256,7 @@ fn first_executable_path(stdout: &[u8]) -> Option<PathBuf> {
 
 /// Internal implementation shared by both clone paths
 fn clone_repo_inner_impl(
-    http_client: &dyn HttpClient,
+    http_client: Arc<dyn HttpClient>,
     url: &str,
     dest: &Path,
     shallow: bool,
@@ -308,7 +309,7 @@ fn clone_repo_inner_impl(
 
 /// Set up cone-mode sparse checkout for rules/, rules-emerging-threats/, regression_data/
 pub(crate) fn setup_sparse_checkout(git_dir: &Path) -> Result<()> {
-    use grit_lib::sparse_checkout::build_expanded_cone_sparse_checkout_lines;
+    use grit_lib::index::sparse_checkout::build_expanded_cone_sparse_checkout_lines;
 
     let dirs = vec![
         "rules".to_string(),
@@ -372,7 +373,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
 
-        clone_repo(&FailClient, "https://example.com/sigma.git", tmp.path()).unwrap();
+        clone_repo(
+            Arc::new(FailClient),
+            "https://example.com/sigma.git",
+            tmp.path(),
+        )
+        .unwrap();
     }
 
     /// A failed fetch must remove the half-initialized `.git` so the next run
@@ -383,7 +389,7 @@ mod tests {
         let dest = tmp.path();
         let git_dir = dest.join(".git");
 
-        let err = clone_repo(&FailClient, "https://example.com/sigma.git", dest)
+        let err = clone_repo(Arc::new(FailClient), "https://example.com/sigma.git", dest)
             .unwrap_err()
             .to_string();
         assert!(

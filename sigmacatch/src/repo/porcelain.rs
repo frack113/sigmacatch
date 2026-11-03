@@ -5,6 +5,7 @@
 
 use crate::repo::{RepoError, Result};
 use std::path::Path;
+use std::sync::Arc;
 use tracing::{info, warn};
 
 use crate::repo::plumbing::{
@@ -31,7 +32,7 @@ fn current_branch_name(git_dir: &Path) -> Result<Option<String>> {
 /// Wraps `clone_repo` by creating an `AuthHttpClient` from token.
 pub(crate) fn git_clone(url: &str, dest: &Path, token: Option<&str>) -> Result<()> {
     let http_client = AuthHttpClient::new(token.map(|s| zeroize::Zeroizing::new(s.to_string())))?;
-    crate::repo::plumbing::clone_repo(&http_client, url, dest)
+    crate::repo::plumbing::clone_repo(Arc::new(http_client), url, dest)
 }
 
 /// Clone a repository using token auth with shallow clone and optional sparse checkout.
@@ -47,7 +48,7 @@ pub(crate) fn git_clone_shallow(
         http_timeout_secs,
         30, // connect timeout
     )?;
-    crate::repo::plumbing::clone_repo_shallow(&http_client, url, dest, sparse_checkout)
+    crate::repo::plumbing::clone_repo_shallow(Arc::new(http_client), url, dest, sparse_checkout)
 }
 
 /// Clone a repository using token auth with partial clone (--filter=blob:none --depth=1).
@@ -64,7 +65,7 @@ pub(crate) fn git_clone_partial(
         http_timeout_secs,
         30, // connect timeout
     )?;
-    crate::repo::plumbing::clone_repo_partial(&http_client, url, dest, sparse_checkout)
+    crate::repo::plumbing::clone_repo_partial(Arc::new(http_client), url, dest, sparse_checkout)
 }
 
 /// Clone a repository using SSH transport (full history).
@@ -160,7 +161,7 @@ pub(crate) fn git_unshallow(git_dir: &Path, token: Option<&str>) -> Result<()> {
         .ok_or_else(|| RepoError::State("Cannot unshallow — HEAD is detached".to_string()))?;
     let opts = fetch_options_for_unshallow(&[branch.as_str()]);
 
-    fetch_remote(&http_client, git_dir, &remote_url, &opts)?;
+    fetch_remote(Arc::new(http_client), git_dir, &remote_url, &opts)?;
     crate::repo::plumbing::pack_loose_objects(git_dir)?;
 
     // Re-checkout worktree to reflect full history
@@ -203,7 +204,7 @@ pub(crate) fn git_pull(git_dir: &Path, token: Option<&str>) -> Result<()> {
         .ok_or_else(|| RepoError::State("Cannot pull — HEAD is detached".to_string()))?;
     let opts = fetch_options_for_branches(&[branch.as_str()]);
 
-    fetch_remote(&http_client, git_dir, &remote_url, &opts)?;
+    fetch_remote(Arc::new(http_client), git_dir, &remote_url, &opts)?;
     fast_forward_branch(git_dir)?;
 
     crate::repo::plumbing::pack_loose_objects(git_dir)?;
@@ -253,7 +254,7 @@ pub(crate) fn git_add(git_dir: &Path, work_tree: &Path, paths: &[&str]) -> Resul
             add_file_to_index(git_dir, &full_path, work_tree, &mut index)?;
         }
     }
-    write_index(git_dir, &index)?;
+    write_index(git_dir, &mut index)?;
     Ok(())
 }
 
@@ -293,11 +294,11 @@ pub(crate) fn git_commit(
     // bug (inverted condition).
     let mut merged_index = grit_lib::index::Index::new();
     add_tree_to_index(&odb, parent_commit.tree, "", &mut merged_index)?;
-    for entry in &staged_index.entries {
+    for entry in staged_index.entries() {
         merged_index.add_or_replace(grit_lib::index::IndexEntry { ..entry.clone() });
     }
 
-    let tree_oid = grit_lib::write_tree::write_tree_from_index(&odb, &merged_index, "")
+    let tree_oid = grit_lib::index::write_tree::write_tree_from_index(&odb, &merged_index, "")
         .map_err(|e| RepoError::Grit(format!("Failed to write tree: {}", e)))?;
 
     // Nothing changed relative to HEAD — skip creating an empty commit.
@@ -332,6 +333,7 @@ mod tests {
             author_raw: Vec::new(),
             committer_raw: Vec::new(),
             raw_message: None,
+            extra_headers: Vec::new(),
         };
         let odb = open_odb(&git_dir);
         let raw = grit_lib::objects::serialize_commit(&commit);

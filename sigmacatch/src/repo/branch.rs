@@ -120,8 +120,8 @@ mod tests {
     use crate::repo::plumbing::read_loose_or_packed_ref;
     use crate::repo::plumbing::refs::symbolic_ref_target;
     use grit_lib::index::Index;
+    use grit_lib::index::write_tree::write_tree_from_index;
     use grit_lib::objects::{CommitData, ObjectId, ObjectKind};
-    use grit_lib::write_tree::write_tree_from_index;
 
     /// Init a repo with one root commit on `main` and HEAD pointing at it.
     /// Returns `(git_dir, head_oid)`.
@@ -145,6 +145,7 @@ mod tests {
             author_raw: Vec::new(),
             committer_raw: Vec::new(),
             raw_message: None,
+            extra_headers: Vec::new(),
         };
         let raw = grit_lib::objects::serialize_commit(&commit);
         let head_oid = odb.write(ObjectKind::Commit, &raw).unwrap();
@@ -167,6 +168,7 @@ mod tests {
             author_raw: Vec::new(),
             committer_raw: Vec::new(),
             raw_message: None,
+            extra_headers: Vec::new(),
         };
         let raw = grit_lib::objects::serialize_commit(&commit);
         odb.write(ObjectKind::Commit, &raw).unwrap()
@@ -220,7 +222,7 @@ mod tests {
         assert!(
             err.to_string()
                 .to_lowercase()
-                .contains("cannot be resolved"),
+                .contains("failed to read remote tracking ref"),
             "corrupt remote ref must fail loudly: {err}"
         );
     }

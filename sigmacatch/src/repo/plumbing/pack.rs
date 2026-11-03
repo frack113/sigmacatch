@@ -9,8 +9,8 @@
 //! push pack-building.
 
 use crate::repo::{RepoError, Result};
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::{HashAlgo, Object, ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
 use sha1::{Digest, Sha1};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -341,8 +341,8 @@ pub(crate) fn pack_loose_objects(git_dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use grit_lib::index::write_tree::write_tree_from_index;
     use grit_lib::objects::{CommitData, ObjectKind};
-    use grit_lib::write_tree::write_tree_from_index;
     use tempfile::tempdir;
 
     fn make_committed_repo(tmp: &tempfile::TempDir) -> (PathBuf, Odb) {
@@ -375,6 +375,7 @@ mod tests {
             author_raw: Vec::new(),
             committer_raw: Vec::new(),
             raw_message: None,
+            extra_headers: Vec::new(),
         };
         let raw = grit_lib::objects::serialize_commit(&commit);
         let cid = odb.write(ObjectKind::Commit, &raw).unwrap();

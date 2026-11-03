@@ -5,7 +5,7 @@
 
 use crate::repo::{RepoError, Result};
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
+use grit_lib::objects::odb::Odb;
 use std::collections::HashSet;
 use std::path::Path;
 use tracing::{info, warn};
@@ -235,8 +235,8 @@ pub(crate) fn is_exec_file(_metadata: &std::fs::Metadata) -> bool {
 mod tests {
     use super::*;
     use grit_lib::index::Index;
+    use grit_lib::index::write_tree::write_tree_from_index;
     use grit_lib::objects::{CommitData, ObjectKind};
-    use grit_lib::write_tree::write_tree_from_index;
 
     /// Init a repo whose HEAD commit contains `rules/a.yml` and `keep.txt`.
     fn build_committed_repo(tmp: &tempfile::TempDir) {
@@ -277,6 +277,7 @@ mod tests {
             author_raw: Vec::new(),
             committer_raw: Vec::new(),
             raw_message: None,
+            extra_headers: Vec::new(),
         };
         let raw = grit_lib::objects::serialize_commit(&commit);
         let cid = odb.write(ObjectKind::Commit, &raw).unwrap();
