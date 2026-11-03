@@ -2,11 +2,15 @@
 
 Regression data format for Sigma rules, compatible with SigmaHQ.
 
-## Purpose
+## Objective
 
-A regression test set consists per rule of an `info.yml` file (metadata) and a **data file** (`<rule_id>.evtx` for Windows, `<rule_id>.log` for Linux). An auxiliary `.json` (raw event) can be added via the `regression.add_json_output` option (default: `false`). This allows validating that a Sigma engine always produces the same results for a given rule against a known event.
+A regression set consists per rule of an `info.yml` file (metadata) and a **data file**
+(`<rule_id>.evtx` for Windows, `<rule_id>.log` for Linux). An optional `.json` auxiliary
+(raw event) can be added via the `regression.add_json_output` option (default: `false`). This
+set allows validating that a Sigma engine always produces the same results for a given rule
+against a known event.
 
-## Directory tree
+## Tree
 
 The output mirrors the SigmaHQ hierarchy under `rules/`, `rules-emerging-threats/` and
 `rules-threat-hunting/`:
@@ -18,22 +22,26 @@ regression_data/
 └── rules-emerging-threats/2026/Exploits/CVE-2026-33829/<slug>/
 ```
 
-Intermediate directories reflect the SigmaHQ category hierarchy. The last directory before the files is always a **slug** derived from the rule YAML name.
+The intermediate directories mirror the SigmaHQ category hierarchy. The last folder before the
+files is always a **slug** derived from the source Sigma YAML rule name.
 
-## Regression directory contents
+## Content of a regression folder
 
-Each rule with regression contains a directory (slug) with:
+Each rule with regression contains a folder (slug) with :
 
 ```text
 <slug>/
 ├── info.yml                    # Metadata + test results
-├── <rule_id>.evtx              # Valid EVTX (EvtExportLog or pure Rust writer)
+├── <rule_id>.evtx              # Valid EVTX (EvtExportLog or pure-Rust writer)
 └── <rule_id>.json              # Optional (regression.add_json_output) — raw event
 ```
 
-The `<rule_id>` is always the **UUID** contained in `rule_metadata[0].id` of the `info.yml` file. It is never the directory name.
+The `<rule_id>` is always the **UUID** contained in `rule_metadata[0].id` of the `info.yml`
+file. It is never the folder name.
 
-Variants: some rules (e.g. cisco) use `.raw` when the EVTX format is not applicable. Linux rules use `.log` (complete original lines: auditd, syslog or Sysmon-for-Linux XML). The data file + `info.yml` are the mandatory output; the `.json` is an optional extra.
+Variants: some rules (e.g. cisco) use `.raw` when the EVTX format is not applicable. Linux
+rules use `.log` (complete original lines: auditd, syslog, or Sysmon-for-Linux XML). The data
+file + `info.yml` constitute the mandatory output ; the `.json` is an optional supplement.
 
 ## `info.yml` schema
 
@@ -41,31 +49,31 @@ Variants: some rules (e.g. cisco) use `.raw` when the EVTX format is not applica
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string (UUID) | Test instance ID (distinct from the rule's rule_id) |
+| `id` | string (UUID) | Instance test identifier (distinct from the rule's rule_id) |
 | `description` | string | Test description (often `"N/A"`) |
 | `date` | string (ISO 8601) | Test creation date (`YYYY-MM-DD`) |
 | `author` | string | Test author |
-| `rule_metadata` | sequence | List of at least one element containing rule metadata |
+| `rule_metadata` | sequence | List of at least one element containing the rule metadata |
 
 ### Optional fields
 
 | Field | Type | Description |
-|-------|------|-------------|
+|---|---|---|
 | `regression_tests_info` | sequence | Regression test details |
 
 ### `rule_metadata` structure
 
 ```yaml
 rule_metadata:
-    - id: <rule-UUID>           # Canonical SigmaHQ rule ID (UUID v4)
+    - id: <rule-UUID>           # Canonical SigmaHQ rule identifier (UUID v4)
       title: <string>           # Rule title
 ```
 
-`rule_metadata[0].id` is the **canonical ID**. This UUID uniquely identifies the rule across the entire system. It is used for:
+`rule_metadata[0].id` is the **canonical identifier**. It is used to :
 
-- Naming data files (`.evtx`, `.log`, `.json`)
-- Lookup key in Sigma engines
-- Indexing in data structures
+- Name data files (`.evtx`, `.log`, `.json`)
+- Serve as lookup key in the Sigma engines
+- Index into data structures
 
 ### `regression_tests_info` structure (optional)
 
@@ -73,7 +81,7 @@ rule_metadata:
 regression_tests_info:
     - name: Positive Detection Test
       type: evtx                  # or "raw" for cisco, "log" for Linux (auditd/syslog/sysmon)
-      provider: <ProviderName>    # dynamically extracted from event's XML ProviderName (e.g., Microsoft-Windows-Sysmon, or "auditd")
+      provider: <ProviderName>    # dynamically extracted from the XML ProviderName (e.g. Microsoft-Windows-Sysmon, or "auditd")
       match_count: <int>          # Number of matches found
       path: regression_data/.../<rule_id>.evtx  # Relative path to the data file
 ```
@@ -98,7 +106,7 @@ regression_tests_info:
 
 ### `.log` examples (Linux)
 
-**auditd (`type: log`, fallback provider `auditd` — plain-text event without XML):**
+**auditd (`type: log`, fallback provider `auditd` — raw text event without XML) :**
 
 ```yaml
 id: 60ff02c2-a649-436c-972d-7c6fe6af8711
@@ -110,13 +118,13 @@ rule_metadata:
       title: Suspicious Commands Linux
 regression_tests_info:
     - name: Positive Detection Test
-      type: log
+    - type: log
       provider: auditd
       match_count: 1
       path: regression_data/rules/linux/auditd/execve/lnx_auditd_susp_cmds/1543ae20-cbdf-4ec1-8d12-7664d667a825.log
 ```
 
-**Sysmon-for-Linux (`type: log`, provider extracted from the event XML):**
+**Sysmon-for-Linux (`type: log`, provider extracted from the event XML) :**
 
 ```yaml
 id: 8f2a5c31-9d64-4b7e-a1c2-3f5d8e90b7aa
@@ -136,108 +144,109 @@ regression_tests_info:
 
 ## Naming conventions
 
-### Directories
+### Folders
 
-- The last directory (slug) is derived from the SigmaHQ rule YAML source file name
-- Intermediate directories reflect the category hierarchy (`windows/process_creation/`, `cisco/aaa/`, etc.)
+- The last folder (slug) is derived from the source Sigma YAML rule filename
+- The intermediate folders mirror the category hierarchy (`windows/process_creation/`, `cisco/aaa/`, etc.)
 - Slugs are lowercase with underscores (`proc_creation_win_bitsadmin_download`)
 - **The slug is never compared to the rule_id UUID**
 
 ### Data files
 
 | File | Format | Name | Content |
-|------|--------|------|---------|
+|---------|--------|-----|---------|
 | `info.yml` | YAML | Always `info.yml` | Metadata + results |
-| `<rule_id>.evtx` | Binary | UUID v4 | Valid EVTX (EvtExportLog or pure Rust writer; validated ≥ 1 record at write time) |
-| `<rule_id>.log` | Text | UUID v4 | Complete event (multi-record auditd lines, syslog lines, or Sysmon-for-Linux XML) |
-| `<rule_id>.json` | JSON | UUID v4 | Optional (`regression.add_json_output`) — raw event (nested Winevt JSON or flat Linux JSON; single JSON object or JSONL, exactly one trailing newline, validated by `regressiondata-check`) |
+| `<rule_id>.evtx` | Binary | UUID v4 | Valid EVTX (EvtExportLog or pure-Rust writer; validated ≥ 1 record at write) |
+| `<rule_id>.log` | Text | UUID v4 | Full event (original auditd lines multi-record, syslog lines, or Sysmon-for-Linux XML) |
+| `<rule_id>.json` | JSON | UUID v4 | Optional (`regression.add_json_output`) — raw event (nested Winevt JSON or flat Linux JSON; single JSON or JSONL, exactly one trailing newline, validated by `regressiondata-check`) |
 
-The `<rule_id>` in file names is always the UUID from `rule_metadata[0].id`.
+The `<rule_id>` in the file names is always the UUID from `rule_metadata[0].id`.
 
 ## Validation rules
 
-### rule_id consistency
+### Rule_id coherence
 
-The same UUID must appear in `rule_metadata[0].id` of `info.yml` and in the name of every present data file. If these values diverge, the set is inconsistent.
+The same UUID must appear in `rule_metadata[0].id` of `info.yml` and in the name of each data
+file present. If these values diverge, the set is inconsistent.
 
 ### Completeness
 
-A set is **complete** if:
+A set is **complete** if :
 
 - `info.yml` exists
 - the data file referenced by `regression_tests_info[0].path` exists and is valid (EVTX magic / non-empty text, size ≤ 64 MiB)
-
-The auxiliary `.json` is not part of the validity check.
+- the `.json` auxiliary does not count for validity.
 
 ### `type` must describe the data file
 
 `regression_tests_info[0].type` qualifies the file named by
-`regression_tests_info[0].path` — nothing else. The only accepted values are
-`evtx`, `log`, `json` and `raw`, matching the data file's extension.
+`regression_tests_info[0].path` — and nothing else. The only values accepted
+are `evtx`, `log`, `json` and `raw`, matching the data file extension.
+(`json` is the auxiliary artifact type, not the data file type — activating
+`regression.add_json_output` never changes `type`. `type: ndjson` with an `.evtx`
+path is not a valid combination : `ndjson` describes the *auxiliary export form*
+(single document per event, JSONL for several), not the data file.)
 
-The auxiliary `<rule_id>.json` is a review artifact, not the data file, so
-enabling `regression.add_json_output` never changes `type`. `type: ndjson` over
-an `.evtx` path is not a valid combination: `ndjson` describes the *layout of
-the auxiliary export* (single document for one event, JSONL for several), not
-the data file.
+> **SigmaHQ spec and sigmacatch extensions.** The upstream regression spec defines only
+> four `type` values — `evtx`, `json`, `ndjson` and `jsonl` — and its runner ignores any
+> other value as an unknown test type. `log` and `raw` are sigmacatch extensions : entries
+> declaring them are validated and replayed with `regressiondata-check`, but the upstream
+> runner does not know them. `regressiondata-check` flags this drift without failing the
+> run, on a single line per distinct type :
 
-> **SigmaHQ spec vs sigmacatch extensions.** The upstream regression spec defines
-> only four `type` values — `evtx`, `json`, `ndjson` and `jsonl` — and its runner
-> skips every other value as an unknown test type. `log` and `raw` are sigmacatch
-> extensions: entries declaring them validate and replay with
-> `regressiondata-check`, but the upstream runner cannot read them.
-> `regressiondata-check` reports the gap without failing the run, one line per
-> distinct type:
->
 > ```text
 > [WARN] 12 test(s) declare type 'log', a sigmacatch extension outside the SigmaHQ regression spec (evtx/json/ndjson/jsonl); the upstream runner skips them
 > ```
 
-When `type` is unrecognised, readers infer the format from the data file's
-extension rather than defaulting, so already-committed sets survive a bad
-`type`. A `type` that is recognised but disagrees with the extension on disk is
-reported as a warning.
+When `type` is unknown, the readers deduce the format from the data file's extension
+instead of taking a default value, so that already-validated sets survive a wrong `type`.
+A recognized `type` that disagrees with the extension present on disk is reported with a warning.
 
-### info.yml format validation
+### `info.yml` format validation
 
-For an `info.yml` to be valid:
+For an `info.yml` to be valid :
 
 1. The file must be UTF-8 (BOM allowed)
 2. The `rule_metadata` field must be a non-empty sequence
-3. `rule_metadata[0].id` must be a parseable UUID; a hard error is raised only on unparsable values. Non-v4 or non-lowercase-canonical (`8-4-4-4-12`) ids are accepted with a warning — upstream SigmaHQ ships such ids and their regression entries must not be dropped
-4. The root `id` in the YAML (instance ID) is ignored for rule_id validation
+3. `rule_metadata[0].id` must be a parseable UUID ; a hard error is raised only on unparseable
+   values. Non-v4 or non-lowercase-canonical (`8-4-4-4-12`) ids are accepted with a warning —
+   upstream SigmaHQ ships some and their regression entries must not be discarded
+4. The root `id` in the YAML (instance ID) is ignored for rule_id validation.
 
 ### Naming validation
 
-- The parent directory name is **never** validated against the rule_id
+- The parent folder name is **never** validated against the rule_id
 - Data files must be named exactly `<rule_id>.<ext>`
-- Hidden files (starting with `.`) are ignored
-
-Unparsable `info.yml` files are skipped with a warning (never silently) so they cannot fall out of the skip set unnoticed.
+- Hidden files (starting with `.`) are ignored.
 
 ## Platforms
 
 ### Windows
 
-The majority of rules (process_creation, file_event, registry, etc.) target Windows. The `.json` event files contain Windows-specific keys (`Image`, `CommandLine`, `ParentImage`, etc.).
+The majority of rules (process_creation, file_event, registry, etc.) target Windows. The
+`.json` events contain Windows-specific keys (`Image`, `CommandLine`, `ParentImage`, etc.).
 
 ### Cisco
 
-Some network rules use native formats (`.raw` instead of `.json` + `.evtx`). The `provider` field in `regression_tests_info` may be absent on read.
+Some rules use native formats (`.raw` instead of `.json` + `.evtx`). The `provider` field in
+`regression_tests_info` may be absent.
 
 ### Linux (auditd / syslog / sysmon)
 
-Three collectors run in parallel, each guarded by its source — the full specification
-(tailed files, guards, parsing) lives in [architecture.md](architecture.md). All their
+Three collectors run in parallel, each kept by its source — the complete specification
+(files tailed, guards, parsing) lives in [architecture.md](architecture.md). All of their
 regression data uses `.log` (complete original lines: auditd records grouped by
-`timestamp:sequence`, RFC3164 syslog lines, or Sysmon-for-Linux XML).
-
-On hosts forwarding audit records into syslog (audisp/rsyslog), both pipelines capture the same activity: an auditd-based rule and a syslog-based rule can both produce regression data from it. The provider written to `info.yml` comes from the event XML when present (`Linux-Sysmon` for Sysmon-for-Linux events), falling back to `auditd` for plain-text events.
+`timestamp:sequence`, syslog lines RFC3164, or Sysmon-for-Linux XML). On hosts that relay
+audit records to syslog (audisp/rsyslog), both pipelines capture the same activity: an
+auditd-based rule and a syslog-based rule can both produce regression data from it. The
+provider written into `info.yml` comes from the event XML when it exists (`Linux-Sysmon` for
+Sysmon-for-Linux events), with a fallback to `auditd` for raw-text events.
 
 ### Emerging Threats
 
-Rules specific to emerging threats, organized by year and type (Exploits, Malware). Same naming conventions as main rules.
+Rules specific to emerging threats, organized by year and type (Exploits, Malware). Same
+naming conventions as the main rules.
 
 ### Threat Hunting
 
-Threat hunting rules. Same naming conventions.
+Rules for threat hunting. Same naming conventions.

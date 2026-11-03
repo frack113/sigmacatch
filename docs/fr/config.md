@@ -38,7 +38,7 @@ filter:
   max_rule_size: 1048576        # octets ; plage 1024..10MB
 regression:
   max_failed_cycles: 3          # bloquer une règle après N cycles d'échec consécutifs
-  add_json_output: false        # écrire aussi le <rule_id>.json auxiliaire à côté du fichier de données
+  add_json_output: false        # écrire aussi le <rule_id>.json auxiliaire (événement brut) à côté du fichier de données
 hir_cache: ""                   # chemin vers le fichier de cache HIR persistant (warm-start moteur ; vide = recompilation à chaque run)
 stop_file: ".sigmacatch.stop"   # créez ce fichier pour arrêter proprement un run continu (-r 0)
 ```

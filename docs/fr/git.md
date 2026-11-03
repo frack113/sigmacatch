@@ -34,7 +34,7 @@ Basée sur la remote ref si présente (sinon HEAD) pour garder le fast-forward. 
 
 **Branche de travail hors `sigmacatch/*` (correction #95)** : Si le nom de la branche de travail ne match pas le pattern `sigmacatch/*` (ex: `feature/mon-test`), elle est maintenant explicitement fetchée depuis le fork avant `create_branch`, donc la branche locale est basée sur le tip du fork au lieu du `HEAD`/`master` local. Cela assure que les re-runs same-day ou noms de branche custom restent en sync avec le remote.
 
-**Skip du master-switch (re-run même jour)** : `is_head_on_working_branch()` inspecte la cible de HEAD (`symbolic_ref_target`) avant `switch_to_tracking_branch()`. Si HEAD est déjà sur `refs/heads/sigmacatch/<date>`, le va-et-vient master → branche de travail est sauté (évite l'aller-retour inutile, corrige le cas Windows sans ssh). Un re-run du même jour reste donc sur la branche de travail directement.
+**Skip du master-switch (re-run même jour)** : `is_head_on_working_branch()` inspecte la cible de HEAD (`symbolic_ref_target`) avant `switch_to_tracking_branch()`. Si HEAD est déjà sur `refs/heads/sigmacatch/<date>`, le va-et-vout master → branche de travail est sauté (évite l'aller-retour inutile, corrige le cas Windows sans ssh). Un re-run du même jour reste donc sur la branche de travail directement.
 
 ### Skip-set multi-branches (PR en attente)
 
@@ -65,7 +65,7 @@ Basée sur la remote ref si présente (sinon HEAD) pour garder le fast-forward. 
 `git.contrib` est opt-in : `true` (ou `--contrib`) active le push sur le fork ; `false` (défaut) = commits locaux, aucun push. `needs_network()` = `!offline || contrib` — token GitHub requis seulement si une opération réseau (pull ou push) est active. **`offline: true` neutralise `contrib`** (forcé à `false`, `warn!`) : aucun push ne sera jamais tenté en mode offline.
 
 **Transport SSH** : `git.transport: ssh` + `ssh_key_path` (clé ed25519). `ensure_ssh_host_config()` écrit les directives `IdentityFile`/`UserKnownHostsFile` dans `~/.ssh/config` avant les ops de transport (idempotent, **écriture atomique** tmp + rename pour éviter un fichier partiel ; sautée en mode offline) ; sur Windows, `ssh` est résolu via OpenSSH de Windows / Git for Windows et exécuté en direct (`SshCommand::Program`). Quand `ssh_key_path` est renseigné, chaque commit de régression est signé en ed25519 pure Rust (`ssh-key`) — l'en-tête `gpgsig` reproduit `git commit -S` (le format SSH de la signature s'active via la config git `gpg.format = ssh`) → GitHub affiche "Verified". **Échec du pull SSH = abort** (pas de fallback automatique) : si le binaire `ssh` manque
-(Windows sans Git for Windows) ou la clé est invalide, le run s'arrête ; le message d'erreur
+(sur Windows sans Git for Windows) ou la clé est invalide, le run s'arrête ; le message d'erreur
 conseille alors de passer `transport: http` dans `config.yaml` pour utiliser HTTPS au
 prochain lancement.
 

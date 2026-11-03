@@ -34,10 +34,10 @@ filter:
   # min_status: stable          # keep only rules with status >= this (values below)
   # min_level: critical         # keep only rules with level >= this (values below)
   author: ""                    # keep only rules authored by this author (empty = no filter)
-  max_rule_size: 1048576        # bytes; range 1024..10MB
+  max_rule_size: 1048576        # bytes; range 1024..10485760 (10MB)
 regression:
   max_failed_cycles: 3          # block a rule after N consecutive failure cycles
-  add_json_output: false        # also write the auxiliary <rule_id>.json alongside the data file
+  add_json_output: false        # also write the auxiliary <rule_id>.json (raw event) next to the data file
 hir_cache: ""                   # path to persistent HIR cache file (warm-start engine; empty = compile every run)
 stop_file: ".sigmacatch.stop"   # create this file to gracefully stop a continuous (-r 0) run
 ```

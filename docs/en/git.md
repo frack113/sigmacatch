@@ -1,24 +1,24 @@
 # Git Workflow
 
-All git operations go through **grit-lib** (pure Rust) via the `repo` module of the `sigmacatch` package — never a `git` binary on PATH. The invariants below are non-negotiable.
+All git operations go through **grit-lib** (pure Rust) via the `repo` module of the `sigmacatch` package — never a `git` binary on the PATH. The invariants below are non-negotiable.
 
 ## Invariants
 
-### Full-history by default; shallow clone with deferred unshallow (configurable)
+### Full history by default; shallow clone with deferred unshallow (configurable)
 
-`fetch_options_for_branches()` (`plumbing/fetch.rs`) uses per-branch refspecs (never `+refs/heads/*`, except the namespace glob `+refs/heads/sigmacatch/*`).
+`fetch_options_for_branches()` (`plumbing/fetch.rs`) uses per-branch refspecs (never `+refs/heads/*`, except the `sigmacatch/*` namespace glob `+refs/heads/sigmacatch/*`).
 
-By default (`git.shallow_clone: true`), the initial clone uses `depth=1` (only the tip commit) for a fast first run. Before any push, the repository is automatically unshallowed (full history fetched) in the background. This avoids the push ancestry issue while keeping first-run fast.
+By default (`git.shallow_clone: true`), the initial clone uses `depth=1` (only the tip commit) for a fast first run. Before any push, the repo is automatically unshallowed (full history recovered) in the background. This avoids the ancestry problem at push time while keeping a fast first run.
 
 Set `git.shallow_clone: false` in `config.yaml` to disable shallow clone and fetch full history immediately.
 
 ### HTTP fetch protocol v2
 
-`AuthHttpClient` (`transport.rs`) sends `version=2` → capability-only advertisement + `ls-refs` scoped to the ref-prefixes derived from the narrow refspecs (in v0/v1 GitHub serves ALL remote refs, huge on the big Sigma repo). The `sigmacatch/*` glob yields the ref-prefix `refs/heads/sigmacatch/` (truncated at the first `*`). SSH already uses v2.
+`AuthHttpClient` (`transport.rs`) sends `version=2` → capability-only advertisement + scoped `ls-refs` to the derived ref-prefixes (in v0/v1, GitHub serves **all** remote refs, huge on the big Sigma repo). The `sigmacatch/*` glob produces the ref-prefix `refs/heads/sigmacatch/` (cut at the first `*`). SSH already uses v2.
 
 ### Retry with exponential backoff
 
-All network operations (clone, fetch, pull) retry on transient failures with exponential backoff (5s → 10s → 20s → 40s → 60s max). Configurable via `git.max_retries` (default 3) and timeout fields (`clone_timeout_secs`, `fetch_timeout_secs`, `http_timeout_secs`).
+All network operations (clone, fetch, pull) retry on transient failures with exponential backoff (5s → 10s → 20s → 40s → 60s max). Configurable via `git.max_retries` (default 3) and the timeout fields (`clone_timeout_secs`, `fetch_timeout_secs`, `http_timeout_secs`).
 
 ### Sparse checkout (cone mode)
 
@@ -26,44 +26,46 @@ When `git.sparse_checkout: true` (default), a cone-mode sparse checkout is confi
 
 ### Working branch
 
-The working branch name is configurable via `git.working_branch` in `config.yaml` or the
-`--branch` CLI flag. When absent or empty, the default `sigmacatch/<YYYYMMDD>` (today's date)
-is used.
+The working branch name is configurable via `git.working_branch` in `config.yaml`
+or the `--branch` flag on the command line. When empty or unset, the default
+branch `sigmacatch/<AAAAMMDD>` (date of the day) is used.
 
-Based on the remote ref if present (else HEAD) to keep fast-forward. The narrow pull does not update `refs/remotes/origin/sigmacatch/<date>` → fetch of the `sigmacatch/*` namespace (glob, single fetch, best-effort: network failure = `warn!` with a categorized cause — SSH key/ssh binary vs missing token vs network — and continue with the worktree only) before `create_branch`. Branch missing from the fork → no-op.
+Based on the remote ref if present (else HEAD) to keep fast-forward. The narrow pull does not update `refs/remotes/origin/sigmacatch/<date>` → fetch of the `sigmacatch/*` namespace (`sigmacatch/*` glob, one fetch, best-effort: network failure = `warn!` with categorized cause — SSH binary/ssh key vs missing token vs network — and continue with the worktree only) before `create_branch`. Branch absent from the fork → no-op.
 
-**Working branch outside `sigmacatch/*` (fixes #95)**: If the working branch name doesn't match the `sigmacatch/*` pattern (e.g., `feature/my-test`), it is now explicitly fetched from the fork before `create_branch`, so the local branch is based on the fork's tip instead of local `HEAD`/`master`. This ensures same-day re-runs or custom branch names stay in sync with the remote.
+**Working branch outside `sigmacatch/*` (fix #95)**: if the working branch name does not match the `sigmacatch/*` pattern (e.g. `feature/mon-test`), it is now explicitly fetched from the fork before `create_branch`, so the local branch is based on the fork's tip instead of the local `HEAD`/`master`. This ensures same-day re-runs or custom branch names stay in sync with the remote.
 
-**Master-switch skip (same-day re-run)**: `is_head_on_working_branch()` inspects the HEAD target (`symbolic_ref_target`) before `switch_to_tracking_branch()`. If HEAD is already on `refs/heads/sigmacatch/<date>`, the master → working-branch round-trip is skipped (avoids a needless round-trip, fixes Windows without ssh). A same-day re-run therefore stays on the working branch directly.
+**Skip of the master-switch (same-day re-run)** : `is_head_on_working_branch()` inspects the HEAD target (`symbolic_ref_target`) before `switch_to_tracking_branch()`. If HEAD is already on `refs/heads/sigmacatch/<date>`, the master → working-branch round trip is skipped (avoids the useless ping-pong, fixes the Windows-without-ssh case). A same-day re-run therefore stays on the working branch directly.
 
-### Multi-branch skip set (pending PRs)
+### Multi-branch skip-set (pending PRs)
 
-`pending_regression_rule_ids()` (`SigmaRepo`) scans the trees of ALL remote `sigmacatch/*` branches (never a checkout — `list_refs` + in-RAM walk of `regression_data/`, ids extracted from `<uuid>.<ext>` filenames). Union with the worktree → a fresh VM does not re-capture data from a still-open PR of another day; the new PR diff stays based on main (previous PR data never included). `.evtx` blobs are validated at scan time (size ≤ 64 MiB then a full `parse_evtx_bytes` re-parse); other extensions (`.log`) are accepted without structural validation at scan time — deep validation is repeated at write time. An unreadable, empty or corrupt `.evtx` blob excludes the rule from the skip set (self-healing, bounded RAM). Offline mode: the scan is skipped entirely (no local refs read) — the skip set is built from the on-disk worktree only.
+`pending_regression_rule_ids()` (`SigmaRepo`) scans the trees of **all** remote `sigmacatch/*` branches (never checkout — `list_refs` + `regression_data/` walk in RAM, ids extracted from `<uuid>.<ext>` names). Union with the worktree → a fresh VM does not recapture data for another day's still-open PR; the diff of the new PR is based on main (previous PRs' data never included). `.evtx` blobs are validated at scan (size ≤ 64 MiB then full re-parse of `parse_evtx_bytes`), other extensions (`.log`) are accepted without structural validation at scan — deep validation happens at write time. An unreadable, empty or corrupted `.evtx` blob excludes the rule from the skip set (auto-heal, bounded RAM). Offline mode: scan skipped entirely (no local ref reads) — the skip set only covers the worktree.
 
 ### Remote working-branch guard
 
-`check_remote_working_branch()` (startup) validates the same-day branch (readable commit, ≥ 1 parent, tree with `rules/`) else actionable bail. Absent → `Ok` (fresh day).
+`check_remote_working_branch()` (startup) validates the same-day working branch (readable commit, ≥ 1 parent, tree with `rules/`) else actionable bail. Absent → `Ok` (fresh day).
 
 ### Worktree = exact mirror of the commit
 
-`checkout_main_branch` (`plumbing/checkout.rs`) deletes any file absent from the tree (`.git` never touched) → deterministic skip set at startup (leftovers from a failed push do not pollute). **Offline mode**: all git operations are no-ops (`init`, working branch, checkout, commit, push) — on-disk files are left untouched, a `.git` is not even required (extracted sigma zip), and local edits/deletions made for testing survive the restart.
+`checkout_main_branch` (`plumbing/checkout.rs`) deletes any file absent from the tree (`.git` never touched) → deterministic skip set at startup (leftovers from a failed push don't pollute). **Offline mode**: all git operations are no-ops (`init`, working-branch, checkout, commit, push) — local files are left intact, no `.git` is even required (extracted sigma zip), deletions and modifications made for tests survive the restart.
 
-### Complete grit clone = loose objects
+### Full clone = loose objects
 
-`is_repo_complete` accepts a repo as soon as HEAD resolves to a readable commit in the ODB (no `objects/pack`/`packed-refs` required); unreadable repo → deleted + re-cloned (online only — offline uses the repo as-is without any check).
+`is_repo_complete` accepts a repo as soon as HEAD resolves to a readable commit in the ODB (no `objects/pack`/`packed-refs` required) ; repo unreadable → removed + re-cloned (online only — in offline the repo is used as-is without verification).
 
 ### Non-destructive pull failure
 
-`pull()` (`plumbing/fetch.rs`) now returns a clear `Err` with context (`with_context`) if `.git/config` reading or the SSH/HTTP fetch fails — the repo is left **as-is** (no `remove_dir_all`, no re-clone). The error includes the repo path, the exact cause (e.g. missing config, invalid SSH key), and suggests offline mode as an alternative. At startup, `is_repo_complete` keeps its existing behavior (unreadable repo → deleted + re-cloned).
+`pull()` (`plumbing/fetch.rs`) now returns a clear `Err` with context (`with_context`) if reading `.git/config` or the SSH/HTTP fetch fails — the repo is left **as-is** (no `remove_dir_all`, no re-clone). The error mentions the repo path, the exact cause (e.g. missing config, invalid SSH key) and suggests the offline mode as an alternative. At startup, `is_repo_complete` keeps its existing behavior (repo unreadable → removed + re-cloned).
 
 ### Pack after each clone/fetch
 
-`pack_loose_objects()` (`plumbing/pack.rs`) consolidates the ~131K loose files (~650 MB) into a V2 pack (zlib, no delta, rayon) → `.git/` ~218 MB (3x), clean `fsck`, ODB readable loose or pack.
+`pack_loose_objects()` (`plumbing/pack.rs`) consolidates the ~131K loose files (~650 MB) into a V2 pack (zlib, no delta, rayon) → `.git/` ~218 MB (3x), clean `fsck`, readable loose or pack ODB.
 
 ## Git configuration
 
-`git.contrib` is opt-in: `true` (or `--contrib`) enables pushing to the fork; `false` (default) = local commits only, no push. `needs_network()` = `!offline || contrib` — a GitHub token is required only when a network operation (pull or push) is active. **`offline: true` neutralizes `contrib`** (forced to `false`, `warn!`): no push will ever be attempted in offline mode.
+`git.contrib` is opt-in: `true` (or `--contrib`) enables push to the remote fork; `false` (default) = local commits, no push. `needs_network()` = `!offline || contrib` — GitHub token required only if a network operation (pull or push) is active. **`offline: true` neutralizes `contrib`** (forced to `false`, `warn!`) : no push will ever be attempted in offline mode.
 
-**SSH transport**: `git.transport: ssh` + `ssh_key_path` (ed25519 key). `ensure_ssh_host_config()` writes the `IdentityFile`/`UserKnownHostsFile` directives into `~/.ssh/config` before transport ops (idempotent, **atomic write** tmp + rename to avoid a partial file; skipped in offline mode); on Windows, `ssh` is resolved via Windows OpenSSH / Git for Windows and executed directly (`SshCommand::Program`). When `ssh_key_path` is set, every regression commit is signed with pure-Rust ed25519 (`ssh-key`) — the `gpgsig` header reproduces `git commit -S` (the SSH signature format is enabled via the git config `gpg.format = ssh`) → GitHub shows "Verified". **SSH pull failure = abort** (no automatic fallback): when the `ssh` binary is missing (Windows without Git for Windows) or the key is invalid, the run stops; the error message advises switching to `transport: http` in `config.yaml` to use HTTPS on the next run.
+**SSH transport** : `git.transport: ssh` + `ssh_key_path` (ed25519). `ensure_ssh_host_config()` writes the `IdentityFile`/`UserKnownHostsFile` directives into `~/.ssh/config` before the transport ops (idempotent, **atomic write** tmp + rename to avoid a partial file ; skipped in offline mode) ; on Windows, `ssh` is resolved via the Windows OpenSSH / Git for Windows and executed directly (`SshCommand::Program`). When `ssh_key_path` is set, each regression commit is signed in ed25519 pure Rust (`ssh-key`) — the `gpgsig` header reproduces `git commit -S` (the SSH signature format activates via the git `gpg.format = ssh` config) → GitHub shows "Verified". **SSH pull failure = abort** (no automatic fallback) : if the `ssh` binary is missing
+(on Windows without Git for Windows) or the key is invalid, the run stops ; the error message
+then suggests switching to `transport: http` in `config.yaml` for the next launch.
 
-The full key reference lives in the Quick start section of the [README](https://github.com/frack113/sigmacatch/blob/main/README.md#quick-start).
+The complete key reference lives in the Quick start section of the [README](https://github.com/frack113/sigmacatch/blob/main/README.md#quick-start).
