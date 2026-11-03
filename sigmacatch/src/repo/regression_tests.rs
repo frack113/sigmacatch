@@ -6,9 +6,9 @@
 use std::path::PathBuf;
 
 use crate::repo::plumbing::{add_file_to_index, init_repo, open_odb};
+use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::objects::{CommitData, ObjectId, ObjectKind, serialize_commit};
-use grit_lib::transfer::{PackBuildOptions, build_pack};
-use grit_lib::write_tree::write_tree_from_index;
+use grit_lib::remote::transfer::{PackBuildOptions, build_pack};
 
 /// Minimal in-memory repo helper: init + commit with explicit parents.
 struct TestRepo {
@@ -44,6 +44,7 @@ impl TestRepo {
             author_raw: Vec::new(),
             committer_raw: Vec::new(),
             raw_message: None,
+            extra_headers: Vec::new(),
         };
         let raw = serialize_commit(&commit);
         odb.write(ObjectKind::Commit, &raw).unwrap()

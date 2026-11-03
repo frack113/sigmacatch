@@ -4,13 +4,15 @@
 //! Fetch from remote via smart HTTP or SSH.
 
 use crate::repo::Result;
-use grit_lib::fetch::Progress;
-use grit_lib::transfer::{FetchOptions, TagMode};
-use grit_lib::transport::http::{HttpClient, http_fetch};
+use grit_lib::progress::{NeverCancel, ProgressSink};
+use grit_lib::remote::fetch::Progress;
+use grit_lib::remote::transfer::{FetchDepth, FetchOptions, TagMode};
+use grit_lib::remote::transport::http::{HttpClient, http_fetch};
 
 use super::refs::map_grit;
-use grit_lib::transport::{ConnectOptions, SshCommand, SshTransport, Transport};
+use grit_lib::remote::transport::{ConnectOptions, SshTransport, Transport};
 use std::path::Path;
+use std::sync::Arc;
 use tracing::info;
 
 use crate::repo::transport::{SshMode, sanitize_url};
@@ -19,6 +21,8 @@ use crate::repo::transport::{SshMode, sanitize_url};
 /// first clone's long download isn't silent. The server's messages are
 /// `\r`-delimited counters (`Enumerating objects`, `Compressing objects`, …).
 struct LogProgress;
+
+impl ProgressSink for LogProgress {}
 
 impl Progress for LogProgress {
     fn message(&mut self, bytes: &[u8]) {
@@ -84,7 +88,7 @@ pub(crate) fn fetch_options_for_shallow_clone(branches: &[&str]) -> FetchOptions
     FetchOptions {
         refspecs,
         tags: TagMode::None,
-        depth: Some(1),
+        fetch_depth: FetchDepth::depth(1),
         ..Default::default()
     }
 }
@@ -99,24 +103,25 @@ pub(crate) fn fetch_options_for_unshallow(branches: &[&str]) -> FetchOptions {
     FetchOptions {
         refspecs,
         tags: TagMode::None,
-        unshallow: true,
+        fetch_depth: Some(FetchDepth::Unshallow),
         ..Default::default()
     }
 }
 
 /// Fetch from remote via smart HTTP.
 pub fn fetch_remote(
-    http_client: &dyn HttpClient,
+    http_client: Arc<dyn HttpClient>,
     git_dir: &Path,
     repo_url: &str,
     opts: &FetchOptions,
 ) -> Result<(usize, Option<String>)> {
     info!("Fetching from {}", sanitize_url(repo_url));
+    let mut opts = opts.clone();
     let outcome = map_grit(http_fetch(
         http_client,
         git_dir,
         repo_url,
-        opts,
+        &mut opts,
         &mut LogProgress,
     ))?;
     let count = outcome.updates.len();
@@ -138,23 +143,21 @@ pub fn fetch_remote_ssh(
     info!("Fetching via SSH from {}", repo_url);
     let transport = match ssh_mode {
         SshMode::Default => SshTransport::new(),
-        SshMode::ShellCommand(cmd) => SshTransport {
-            ssh_command: SshCommand::ShellCommand(cmd.clone().into()),
-        },
-        SshMode::Program(args) => SshTransport {
-            ssh_command: SshCommand::Program(args[0].clone()),
-        },
+        SshMode::ShellCommand(cmd) => SshTransport::with_shell_command(cmd.clone()),
+        SshMode::Program(args) => SshTransport::with_program(args[0].clone()),
     };
     let mut conn = map_grit(transport.connect(
         repo_url,
-        grit_lib::transport::Service::UploadPack,
+        grit_lib::remote::transport::Service::UploadPack,
         &ConnectOptions::default(),
     ))?;
-    let outcome = map_grit(grit_lib::fetch::fetch_remote(
+    let mut opts = opts.clone();
+    let outcome = map_grit(grit_lib::remote::fetch::fetch_remote(
         git_dir,
         &mut *conn,
-        opts,
+        &mut opts,
         &mut LogProgress,
+        &NeverCancel,
     ))?;
     let count = outcome.updates.len();
     info!(
@@ -176,7 +179,7 @@ mod tests {
     fn test_fetch_options_are_full_history() {
         let opts = fetch_options_for_branches(&["master", "main"]);
         assert!(
-            opts.depth.is_none(),
+            opts.fetch_depth.is_none(),
             "fetch must be full-history, not shallow"
         );
         assert!(opts.refspecs.iter().all(|r| !r.contains("refs/heads/*")));
@@ -206,7 +209,10 @@ mod tests {
             opts.refspecs,
             vec!["+refs/heads/sigmacatch/*:refs/remotes/origin/sigmacatch/*".to_string()]
         );
-        assert!(opts.depth.is_none(), "namespace fetch must be full-history");
+        assert!(
+            opts.fetch_depth.is_none(),
+            "namespace fetch must be full-history"
+        );
         assert_eq!(opts.tags, TagMode::None);
         assert!(
             opts.refspecs.iter().all(|r| !r.contains("refs/heads/*:")),
@@ -261,7 +267,7 @@ mod tests {
 
         let opts = fetch_options_for_branches(&["main"]);
         let err = fetch_remote(
-            &FailClient,
+            Arc::new(FailClient),
             &git_dir,
             "https://example.com/sigma.git",
             &opts,

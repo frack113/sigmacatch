@@ -50,7 +50,7 @@ use crate::repo::porcelain::{
 };
 pub use crate::repo::transport::GitTransport;
 use crate::repo::transport::{AuthHttpClient, https_to_ssh_url, sanitize_url};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Default SigmaHQ repository URL.
@@ -476,7 +476,12 @@ impl SigmaRepo {
             let outcome = match transport {
                 GitTransport::Http => {
                     let http_client = AuthHttpClient::new(token.clone())?;
-                    crate::repo::plumbing::fetch_remote(&http_client, git_dir, &remote_url, &opts)
+                    crate::repo::plumbing::fetch_remote(
+                        Arc::new(http_client),
+                        git_dir,
+                        &remote_url,
+                        &opts,
+                    )
                 }
                 GitTransport::Ssh => {
                     let ssh_url =
@@ -550,7 +555,12 @@ impl SigmaRepo {
             let outcome = match transport {
                 GitTransport::Http => {
                     let http_client = AuthHttpClient::new(token.clone())?;
-                    crate::repo::plumbing::fetch_remote(&http_client, git_dir, &remote_url, &opts)
+                    crate::repo::plumbing::fetch_remote(
+                        Arc::new(http_client),
+                        git_dir,
+                        &remote_url,
+                        &opts,
+                    )
                 }
                 GitTransport::Ssh => {
                     let ssh_url =
@@ -1102,7 +1112,12 @@ impl SigmaRepo {
                 let http_client = AuthHttpClient::new(self.token.clone())?;
                 let remote_url =
                     crate::repo::plumbing::read_remote_url_from_config(&git_dir, "origin")?;
-                crate::repo::plumbing::push_branch(&http_client, &git_dir, &remote_url, branch)
+                crate::repo::plumbing::push_branch(
+                    Arc::new(http_client),
+                    &git_dir,
+                    &remote_url,
+                    branch,
+                )
             }
             GitTransport::Ssh => {
                 let remote_url =
@@ -1183,7 +1198,7 @@ fn is_repo_complete(git_dir: &Path) -> bool {
 /// under `regression_data/` (the generator's skip markers). Never touches the
 /// working tree. `.evtx` blobs are parsed to validate they contain records.
 fn collect_tree_rule_ids(
-    odb: &grit_lib::odb::Odb,
+    odb: &grit_lib::objects::odb::Odb,
     tree_oid: ObjectId,
     valid: &mut HashSet<Uuid>,
     broken: &mut HashSet<Uuid>,
@@ -1198,7 +1213,7 @@ const MAX_REGRESSION_TREE_DEPTH: u32 = 32;
 const MAX_EVTX_BLOB_SIZE: usize = 64 * 1024 * 1024;
 
 fn collect_tree_rule_ids_depth(
-    odb: &grit_lib::odb::Odb,
+    odb: &grit_lib::objects::odb::Odb,
     tree_oid: ObjectId,
     valid: &mut HashSet<Uuid>,
     broken: &mut HashSet<Uuid>,
@@ -1262,8 +1277,8 @@ fn collect_tree_rule_ids_depth(
 mod tests {
     use super::*;
     use crate::repo::plumbing::init_repo;
+    use grit_lib::index::write_tree::write_tree_from_index;
     use grit_lib::objects::{CommitData, ObjectKind};
-    use grit_lib::write_tree::write_tree_from_index;
 
     /// Build a `.git` with HEAD → refs/heads/main and one committed file
     /// (loose objects only — exactly what a grit clone produces).
@@ -1287,6 +1302,7 @@ mod tests {
             author_raw: Vec::new(),
             committer_raw: Vec::new(),
             raw_message: None,
+            extra_headers: Vec::new(),
         };
         let raw = grit_lib::objects::serialize_commit(&commit);
         let cid = odb.write(ObjectKind::Commit, &raw).unwrap();
@@ -1310,7 +1326,11 @@ mod tests {
         assert!(!is_repo_complete(&git_dir));
     }
 
-    fn write_commit(odb: &grit_lib::odb::Odb, tree: ObjectId, parents: Vec<ObjectId>) -> ObjectId {
+    fn write_commit(
+        odb: &grit_lib::objects::odb::Odb,
+        tree: ObjectId,
+        parents: Vec<ObjectId>,
+    ) -> ObjectId {
         let commit = CommitData {
             tree,
             parents,
@@ -1321,6 +1341,7 @@ mod tests {
             author_raw: Vec::new(),
             committer_raw: Vec::new(),
             raw_message: None,
+            extra_headers: Vec::new(),
         };
         let raw = grit_lib::objects::serialize_commit(&commit);
         odb.write(ObjectKind::Commit, &raw).unwrap()

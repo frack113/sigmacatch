@@ -4,8 +4,8 @@
 //! Commit object creation.
 
 use crate::repo::{RepoError, Result};
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
 use grit_lib::refs;
 use std::path::Path;
 use tracing::info;
@@ -82,8 +82,8 @@ pub(crate) fn commit_tree(
 mod tests {
     use super::*;
     use crate::repo::plumbing::{init_repo, open_odb, write_index};
+    use grit_lib::index::write_tree::write_tree_from_index;
     use grit_lib::objects::{CommitData, ObjectKind};
-    use grit_lib::write_tree::write_tree_from_index;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
@@ -118,6 +118,7 @@ mod tests {
             author_raw: Vec::new(),
             committer_raw: Vec::new(),
             raw_message: None,
+            extra_headers: Vec::new(),
         };
         let raw = grit_lib::objects::serialize_commit(&commit);
         let commit_oid = odb.write(ObjectKind::Commit, &raw).unwrap();
@@ -199,7 +200,7 @@ mod tests {
             &mut index,
         )
         .unwrap();
-        write_index(&git_dir, &index).unwrap();
+        write_index(&git_dir, &mut index).unwrap();
 
         let odb = open_odb(&git_dir);
         let tree = write_tree_from_index(&odb, &index, "").unwrap();
@@ -266,7 +267,7 @@ mod tests {
             &mut index,
         )
         .unwrap();
-        write_index(&git_dir, &index).unwrap();
+        write_index(&git_dir, &mut index).unwrap();
         let tree = write_tree_from_index(&odb, &index, "").unwrap();
 
         // Capture grit's output for comparison.
@@ -283,6 +284,7 @@ mod tests {
             author_raw: Vec::new(),
             committer_raw: Vec::new(),
             raw_message: None,
+            extra_headers: Vec::new(),
         };
         let grit_raw = grit_lib::objects::serialize_commit(&commit_data);
 
@@ -319,7 +321,7 @@ mod tests {
             &mut index,
         )
         .unwrap();
-        write_index(&git_dir, &index).unwrap();
+        write_index(&git_dir, &mut index).unwrap();
         let tree = write_tree_from_index(&odb, &index, "").unwrap();
 
         commit_tree(
@@ -368,7 +370,7 @@ mod tests {
             &mut index,
         )
         .unwrap();
-        write_index(&git_dir, &index).unwrap();
+        write_index(&git_dir, &mut index).unwrap();
         let odb = open_odb(&git_dir);
         let tree = write_tree_from_index(&odb, &index, "").unwrap();
 
@@ -417,7 +419,7 @@ mod tests {
             &mut index,
         )
         .unwrap();
-        write_index(&git_dir, &index).unwrap();
+        write_index(&git_dir, &mut index).unwrap();
         let tree = write_tree_from_index(&odb, &index, "").unwrap();
 
         commit_tree(

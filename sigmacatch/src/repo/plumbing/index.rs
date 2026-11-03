@@ -5,7 +5,7 @@
 
 use crate::repo::{RepoError, Result};
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
+use grit_lib::objects::odb::Odb;
 use std::path::Path;
 use tracing::warn;
 
@@ -105,7 +105,7 @@ pub(crate) fn add_tree_to_index(
     Ok(())
 }
 
-pub(crate) fn write_index(git_dir: &Path, index: &grit_lib::index::Index) -> Result<()> {
+pub(crate) fn write_index(git_dir: &Path, index: &mut grit_lib::index::Index) -> Result<()> {
     let index_path = git_dir.join("index");
     if let Some(parent) = index_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -239,7 +239,7 @@ mod tests {
         let mut index = grit_lib::index::Index::new();
         add_file_to_index(git_dir, &file, work_tree, &mut index)?;
         let tree_oid = crate::repo::plumbing::refs::map_grit(
-            grit_lib::write_tree::write_tree_from_index(&odb, &index, ""),
+            grit_lib::index::write_tree::write_tree_from_index(&odb, &index, ""),
         )?;
 
         let commit = grit_lib::objects::CommitData {
@@ -252,6 +252,7 @@ mod tests {
             author_raw: Vec::new(),
             committer_raw: Vec::new(),
             raw_message: None,
+            extra_headers: Vec::new(),
         };
         let raw = grit_lib::objects::serialize_commit(&commit);
         let commit_oid =

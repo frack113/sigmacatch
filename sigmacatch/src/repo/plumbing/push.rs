@@ -5,42 +5,44 @@
 
 use super::refs::map_grit;
 use crate::repo::{RepoError, Result};
-use grit_lib::fetch::NoProgress;
 use grit_lib::objects::ObjectId;
-use grit_lib::transfer::PushOptions;
-use grit_lib::transfer::PushRefSpec;
-use grit_lib::transport::Transport;
-use grit_lib::transport::http::HttpClient;
-use grit_lib::transport::{SshCommand, SshTransport};
+use grit_lib::progress::NeverCancel;
+use grit_lib::remote::fetch::NoProgress;
+use grit_lib::remote::transfer::PushOptions;
+use grit_lib::remote::transfer::PushRefSpec;
+use grit_lib::remote::transport::SshTransport;
+use grit_lib::remote::transport::Transport;
+use grit_lib::remote::transport::http::HttpClient;
 use std::path::Path;
+use std::sync::Arc;
 use tracing::{info, warn};
 
 use crate::repo::plumbing::refs::read_loose_or_packed_ref;
 use crate::repo::transport::SshMode;
 
 /// Describe a rejection reason in user-friendly text.
-fn describe_push_rejection(status: &grit_lib::push_report::PushRefStatus) -> String {
+fn describe_push_rejection(status: &grit_lib::remote::push_report::PushRefStatus) -> String {
     match status {
-        grit_lib::push_report::PushRefStatus::RejectNonFastForward => {
+        grit_lib::remote::push_report::PushRefStatus::RejectNonFastForward => {
             "local branch has diverged — run `git pull` first or use `--force`".to_string()
         }
-        grit_lib::push_report::PushRefStatus::RejectAlreadyExists => {
+        grit_lib::remote::push_report::PushRefStatus::RejectAlreadyExists => {
             "remote ref already exists — rename your branch or delete the remote ref".to_string()
         }
-        grit_lib::push_report::PushRefStatus::RejectFetchFirst => {
+        grit_lib::remote::push_report::PushRefStatus::RejectFetchFirst => {
             "remote has new commits not in your local branch — run `git pull` first".to_string()
         }
-        grit_lib::push_report::PushRefStatus::RejectNeedsForce => {
+        grit_lib::remote::push_report::PushRefStatus::RejectNeedsForce => {
             "remote requires `--force` (non-fast-forward) — update the remote branch first"
                 .to_string()
         }
-        grit_lib::push_report::PushRefStatus::RejectStale => {
+        grit_lib::remote::push_report::PushRefStatus::RejectStale => {
             "force-with-lease stale — the remote ref changed unexpectedly".to_string()
         }
-        grit_lib::push_report::PushRefStatus::RemoteRejected => {
+        grit_lib::remote::push_report::PushRefStatus::RemoteRejected => {
             "remote rejected the update (hook or policy)".to_string()
         }
-        grit_lib::push_report::PushRefStatus::AtomicPushFailed => {
+        grit_lib::remote::push_report::PushRefStatus::AtomicPushFailed => {
             "atomic push failed — another ref in this push was rejected".to_string()
         }
         _ => format!("{:?}", status),
@@ -49,7 +51,7 @@ fn describe_push_rejection(status: &grit_lib::push_report::PushRefStatus) -> Str
 
 /// Push a local branch to the remote via smart HTTP.
 pub fn push_branch(
-    http_client: &dyn HttpClient,
+    http_client: Arc<dyn HttpClient>,
     git_dir: &Path,
     remote_url: &str,
     branch_name: &str,
@@ -62,6 +64,7 @@ pub fn push_branch(
     })?;
     let spec = PushRefSpec {
         src: Some(head_oid),
+        src_ref: Some(ref_name.clone()),
         dst: format!("refs/heads/{}", branch_name),
         force: false,
         delete: false,
@@ -72,14 +75,19 @@ pub fn push_branch(
         atomic: false,
         dry_run: false,
         push_options: Vec::new(),
+        diagnostics: None,
+        network_trace: false,
+        remote_ref_tips: None,
+        tracking_remote: None,
     };
-    let outcome = map_grit(grit_lib::push::push_http(
+    let outcome = map_grit(grit_lib::remote::push::push_http(
         http_client,
         git_dir,
         remote_url,
         &[spec],
         &opts,
         &mut NoProgress,
+        &NeverCancel,
     ))?;
     if outcome.results.is_empty() {
         warn!("No refs were pushed");
@@ -114,6 +122,7 @@ pub fn push_branch_ssh(
     })?;
     let spec = PushRefSpec {
         src: Some(head_oid),
+        src_ref: Some(ref_name.clone()),
         dst: format!("refs/heads/{}", branch_name),
         force: false,
         delete: false,
@@ -124,27 +133,28 @@ pub fn push_branch_ssh(
         atomic: false,
         dry_run: false,
         push_options: Vec::new(),
+        diagnostics: None,
+        network_trace: false,
+        remote_ref_tips: None,
+        tracking_remote: None,
     };
     let transport = match ssh_mode {
         SshMode::Default => SshTransport::new(),
-        SshMode::ShellCommand(cmd) => SshTransport {
-            ssh_command: SshCommand::ShellCommand(cmd.clone().into()),
-        },
-        SshMode::Program(args) => SshTransport {
-            ssh_command: SshCommand::Program(args[0].clone()),
-        },
+        SshMode::ShellCommand(cmd) => SshTransport::with_shell_command(cmd.clone()),
+        SshMode::Program(args) => SshTransport::with_program(args[0].clone()),
     };
     let mut conn = map_grit(transport.connect(
         remote_url,
-        grit_lib::transport::Service::ReceivePack,
-        &grit_lib::transport::ConnectOptions::default(),
+        grit_lib::remote::transport::Service::ReceivePack,
+        &grit_lib::remote::transport::ConnectOptions::default(),
     ))?;
-    let outcome = map_grit(grit_lib::push::push_remote(
+    let outcome = map_grit(grit_lib::remote::push::push_remote(
         git_dir,
         &mut *conn,
         &[spec],
         &opts,
         &mut NoProgress,
+        &NeverCancel,
     ))?;
     if outcome.results.is_empty() {
         warn!("No refs were pushed via SSH");
@@ -159,8 +169,8 @@ pub fn push_branch_ssh(
                     .unwrap_or_default();
                 let action_hint = if matches!(
                     result.status,
-                    grit_lib::push_report::PushRefStatus::RejectFetchFirst
-                        | grit_lib::push_report::PushRefStatus::RejectNonFastForward
+                    grit_lib::remote::push_report::PushRefStatus::RejectFetchFirst
+                        | grit_lib::remote::push_report::PushRefStatus::RejectNonFastForward
                 ) {
                     "Delete the branch on GitHub and re-run, or rename it."
                 } else {
@@ -225,6 +235,7 @@ mod tests {
             author_raw: Vec::new(),
             committer_raw: Vec::new(),
             raw_message: None,
+            extra_headers: Vec::new(),
         };
         let odb = crate::repo::plumbing::checkout::open_odb(&git_dir);
         let raw = grit_lib::objects::serialize_commit(&commit);
@@ -240,7 +251,7 @@ mod tests {
 
     #[test]
     fn describe_push_rejection_covers_every_status() {
-        use grit_lib::push_report::PushRefStatus as S;
+        use grit_lib::remote::push_report::PushRefStatus as S;
         assert!(describe_push_rejection(&S::RejectNonFastForward).contains("git pull"));
         assert!(describe_push_rejection(&S::RejectAlreadyExists).contains("already exists"));
         assert!(describe_push_rejection(&S::RejectFetchFirst).contains("git pull"));
@@ -259,7 +270,7 @@ mod tests {
         let git_dir = setup_repo(tmp.path(), "main");
 
         let err = push_branch(
-            &FailClient,
+            Arc::new(FailClient),
             &git_dir,
             "https://example.com/sigma.git",
             "feature",
@@ -275,7 +286,7 @@ mod tests {
         let git_dir = setup_repo(tmp.path(), "main");
 
         let err = push_branch(
-            &FailClient,
+            Arc::new(FailClient),
             &git_dir,
             "https://example.com/sigma.git",
             "main",
