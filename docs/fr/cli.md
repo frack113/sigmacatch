@@ -1,5 +1,8 @@
 # CLI — Diagnostic et sous-commandes
 
+Toutes les commandes documentées ici sont des sous-commandes ou flags du binaire
+`sigmacatch` — et le validateur de régression est un binaire standalone dédié.
+
 ## `regressiondata-check` — validation de la régression (cross-platform)
 
 `check` n'est plus une sous-commande des binaires de collecte : c'est un binaire
@@ -22,9 +25,9 @@ regressiondata-check [--json] [--ignore] [--fix] [--path <DIR>]
 
 **Fonction :** validation approfondie de toutes les données de régression dans le
 `regression_data/` de la racine sigma (`./sigma/regression_data` par défaut). Les
-entrées sont parses selon leur `LogType` : `.evtx` via
-`evtx_reader::parse_evtx_bytes`, `.log` via le parser auditd, lignes JSON directes.
-Le logtype `Raw` est sauté (compté dans `Skipped`).
+entrées sont parses selon leur `LogType` : `.evtx` via `evtx_reader::parse_evtx_bytes`,
+`.log` via le parser auditd, lignes JSON directes. Le logtype `Raw` est sauté
+(compté dans `Skipped`).
 
 ### Pipeline
 
@@ -75,16 +78,6 @@ Le résumé affiche aussi, quand non nuls : `Missing paths`, `Mismatched`, `Igno
 `Skipped`, `Dropped lines` et `Warnings`, suivi de la liste `Failed rules`
 (`FAIL <rule_name> — <error>`) quand des entrées ont échoué. Un résumé en échec sort
 avec exit 1 (échecs de détection **ou** chemins manquants/incohérents).
-
-**Exemple :**
-
-```bash
-regressiondata-check
-regressiondata-check --json --ignore
-# depuis la racine d'un checkout du repo sigma (ex. CI/CD sur SigmaHQ/sigma) :
-regressiondata-check --path .
-regressiondata-check --fix --path .
-```
 
 ### Sortie JSON
 
@@ -142,8 +135,8 @@ sigmacatch --evtx <EVTX_PATH> [OPTIONS]
 
       --evtx <EVTX_PATH>  Dossier de fichiers .evtx, scanné récursivement
                        (défaut : C:\Windows\System32\winevt\Logs)
-  -v, --verbose        Journalisation info sur stderr
-  -h, --help           Affiche l'aide et quitte
+   -v, --verbose        Journalisation info sur stderr
+   -h, --help           Affiche l'aide et quitte
 ```
 
 `--evtx` est parsé par le CLI partagé mais n'est utilisé que par l'input `evtx`. Comme
@@ -173,10 +166,10 @@ sigmacatch [OPTIONS]
   -n, --dry-run       Vérification en lecture seule : charge les règles de ./sigma et
                       construit le moteur — aucune donnée écrite, aucune opération git/réseau
       --author <NOM>  Remplace l'auteur git du config.yaml pour ce run
-      --branch <NOM>  Nom de la branche de travail (défaut : sigmacatch/<date du jour>)
+      --branch <NOM>  Nom de la branche de travail (défaut : sigmacatch/<AAAAJJMM>)
        --evtx <CHEMIN> Dossier de fichiers EVTX à traiter (input one-shot evtx ;
                         échoue si la feature `evtx` n'est pas compilée)
-      --hir-cache <CHEMIN> Fichier de cache HIR persistant (warm-start : saute la
+       --hir-cache <CHEMIN> Fichier de cache HIR persistant (warm-start : saute la
                         recompilation des règles au run suivant ; vide = recompilation à chaque run)
   --help, -h          Affiche l'aide et quitte
 ```
@@ -190,7 +183,7 @@ règles de `./sigma` + à la construction du moteur de détection.
 ## Sous-commandes de diagnostic du binaire
 
 Les commandes ci-dessous sont des sous-commandes de `sigmacatch`, **toujours compilées**
-(la feature `tools` a été supprimée) :
+(les features de diagnostic sont intégrées au binaire) :
 
 | Binaire | Sous-commandes |
 |---|---|
@@ -210,8 +203,9 @@ config.
 
 **Usage :** `sigmacatch check-filter [--json]`
 
-**Fonction :** valide `SigmaFilterConfig` (product / status / level / author) contre le vrai jeu
-de règles Sigma. Aucun argument CLI au-delà de `--json` — exécute toutes les combinaisons de filtres automatiquement.
+**Fonction :** valide `SigmaFilterConfig` (product / status / level / author) contre le vrai
+jeu de règles Sigma. Aucun argument CLI au-delà de `--json` — exécute toutes les combinaisons
+de filtres automatiquement.
 
 ### Pipeline
 
@@ -256,6 +250,8 @@ sigmacatch list-rules --json --coverage
 ```
 
 ---
+
+## État des sous-commandes
 
 Les sous-commandes `get-atomic` et `check-channels` ont été retirées. `get-atomic` est
 remplacé par la liste des techniques manquantes produite par `list-rules --json --coverage`

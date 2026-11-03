@@ -1,5 +1,8 @@
 # CLI — Diagnostic and tooling
 
+All documented commands here are subcommands or flags of the `sigmacatch` binary — and the
+regression validator is a dedicated standalone binary.
+
 ## `regressiondata-check` — regression validation (cross-platform)
 
 `check` is no longer a subcommand of the collector: it is a standalone
@@ -174,7 +177,7 @@ sigmacatch [OPTIONS]
       --branch <NAME> Working branch name (default: sigmacatch/<today's date>)
        --evtx <PATH>   Directory of EVTX files to process (one-shot evtx input;
                         fails if the `evtx` feature is not compiled in)
-      --hir-cache <PATH> Persistent HIR cache file (warm-start: skip rule
+       --hir-cache <PATH> Persistent HIR cache file (warm-start: skip rule
                         recompilation on next run; empty = compile every run)
   --help, -h         Print help and exit
 ```
@@ -248,6 +251,8 @@ separately.
 sigmacatch list-rules
 sigmacatch list-rules --json --coverage
 ```
+
+## Subcommand retirement state
 
 The `get-atomic` and `check-channels` subcommands have been removed. `get-atomic` is
 replaced by the list of missing techniques produced by `list-rules --json --coverage` and
