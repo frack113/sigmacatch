@@ -53,7 +53,7 @@ bytemuck = { version = "1", default-features = false, features = [
 ], optional = true }
 chrono = "0.4"
 crc32fast = "1.5"
-evtx = "0.12"
+evtx = "0.15.1"
 flate2 = "1.1"
 grit-lib = "0.5"
 hex = { version = "0.4", optional = true }
