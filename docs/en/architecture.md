@@ -2,7 +2,7 @@
 
 Sigmacatch is a real-time Sigma matcher: it captures OS events, evaluates them
 against the SigmaHQ rules of the cloned repo, and writes regression data back
-into that repo. Four diagrams give the overview; each section details one
+into that repo. Five diagrams give the overview; each section details one
 subsystem.
 
 ![Shared pipeline — from input to commit](../media/sigmacatch-shared-pipeline.svg)
@@ -251,6 +251,10 @@ stop-file poller, and `--max-runs` is ignored (`-r 0` semantics). Ctrl+C always
 aborts the pass: any in-flight cycle is abandoned and the push of what has not
 been committed yet is skipped.
 
+## Optimized pipeline — Arc payloads
+
+![Shared pipeline — animated SVG: flow along the edges, nodes pulsing in cycle order](../media/sigmacatch-arc-shared-event-pipeline-animated.svg)
+
 ## Git & contribution
 
 ![Git workflow — from clone to pull request](../media/sigmacatch-git-workflow.svg)
@@ -362,8 +366,4 @@ for their JSON outputs (always compiled).
   **before** the `Arc` sharing: the per-event path pays for one parse and no
   deep clone of the transformed tree. Measured on a live stream at constant
   volume: −47 % working set on Windows (247→130 MB) and −19 % RSS on Linux
-  (~204→164 MB). Diagrams:
-
-  ![Shared pipeline — animated SVG: flow along the edges, nodes pulsing in cycle order](../media/sigmacatch-arc-shared-event-pipeline-animated.svg)
-
-  ![Shared pipeline — static SVG, dark theme](../media/sigmacatch-arc-shared-event-pipeline.svg)
+  (~204→164 MB).

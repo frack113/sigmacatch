@@ -2,7 +2,7 @@
 
 Sigmacatch est un matcheur Sigma temps réel : il capture des événements OS, les
 confronte aux règles SigmaHQ du repo cloné, et réécrit les données de régression
-dans ce repo. Quatre diagrammes donnent la vue d'ensemble ; chaque section détaille
+dans ce repo. Cinq diagrammes donnent la vue d'ensemble ; chaque section détaille
 un sous-système.
 
 ![Pipeline partagé — de l'input au commit](../media/sigmacatch-shared-pipeline.svg)
@@ -240,6 +240,10 @@ des fichiers `.evtx` s'épuise d'elle-même (sender mpsc tombé → `rx.recv()` 
 (sémantique `-r 0`). Ctrl+C avorte toujours la passe : tout cycle en vol est abandonné et le
 push de ce qui n'a pas encore été commité est sauté.
 
+## Pipeline optimisé — payloads Arc
+
+![Pipeline partagé — SVG animé : flux le long des arêtes, pulsation des nœuds dans l'ordre du cycle](../media/sigmacatch-arc-shared-event-pipeline-animated.svg)
+
 ## Git & contribution
 
 ![Workflow git — du clone au pull request](../media/sigmacatch-git-workflow.svg)
@@ -345,8 +349,4 @@ manuel des arguments et utilisent `serde` pour leurs sorties JSON (toujours comp
   `Arc` : le chemin par événement paie un seul parse et aucun clone profond de
   l'arbre transformé. Mesuré sur un flux live à volume constant : −47 % de
   working set sous Windows (247→130 Mo) et −19 % de RSS sous Linux
-   (~204→164 Mo). Diagrammes :
-
-   ![Pipeline partagé — SVG animé : flux le long des arêtes, pulsation des nœuds dans l'ordre du cycle](../media/sigmacatch-arc-shared-event-pipeline-animated.svg)
-
-   ![Pipeline partagé — SVG statique, thème sombre](../media/sigmacatch-arc-shared-event-pipeline.svg)
+   (~204→164 Mo).
