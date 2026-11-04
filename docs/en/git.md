@@ -4,7 +4,7 @@ All git operations go through **grit-lib** (pure Rust) via the `repo` module of 
 
 ## Invariants
 
-### Full-history by default; shallow clone with deferred unshallow (configurable)
+### Shallow clone by default, with deferred unshallow (configurable)
 
 `fetch_options_for_branches()` (`plumbing/fetch.rs`) uses per-branch refspecs (never `+refs/heads/*`, except the namespace glob `+refs/heads/sigmacatch/*`).
 
@@ -52,7 +52,7 @@ Based on the remote ref if present (else HEAD) to keep fast-forward. The narrow 
 
 `checkout_main_branch` (`plumbing/checkout.rs`) deletes any file absent from the tree (`.git` never touched) → deterministic skip set at startup (leftovers from a failed push do not pollute). **Offline mode**: all git operations are no-ops (`init`, working branch, checkout, commit, push) — on-disk files are left untouched, a `.git` is not even required (extracted sigma zip), and local edits/deletions made for testing survive the restart.
 
-### Complete grit clone = loose objects
+### Complete repo = resolvable HEAD
 
 `is_repo_complete` accepts a repo as soon as HEAD resolves to a readable commit in the ODB (no `objects/pack`/`packed-refs` required); unreadable repo → deleted + re-cloned (online only — offline uses the repo as-is without any check).
 
@@ -62,7 +62,11 @@ Based on the remote ref if present (else HEAD) to keep fast-forward. The narrow 
 
 ### Pack after each clone/fetch
 
-`pack_loose_objects()` (`plumbing/pack.rs`) consolidates the ~131K loose files (~650 MB) into a V2 pack (zlib, no delta, rayon) → `.git/` ~218 MB (3x), clean `fsck`, ODB readable loose or pack.
+`pack_loose_objects()` (`plumbing/pack.rs`) consolidates the loose objects written by local commits into a V2 pack (zlib, no delta, rayon). Remote fetches produce none: grit-lib installs the received pack directly under `objects/pack/` (V2 index + reverse index `.rev`) — the function targets objects from commits between runs and returns quickly when there are none.
+
+### Clone phase timings
+
+`git_clone`/`git_clone_shallow` log phase timings (`connect`, `Fetch done`, `Checkout done`, `Clone finished`): a slow first run is diagnosable from the log, no re-instrumentation needed.
 
 ## Git configuration
 

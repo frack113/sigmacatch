@@ -4,7 +4,7 @@ Toutes les opérations git passent par **grit-lib** (pure Rust) via le module `r
 
 ## Invariants
 
-### Full-history par défaut ; shallow clone avec unshallow différé (configurable)
+### Shallow clone par défaut, avec unshallow différé (configurable)
 
 `fetch_options_for_branches()` (`plumbing/fetch.rs`) utilise des refspecs par branche ciblée (jamais `+refs/heads/*`, sauf le glob namespace `+refs/heads/sigmacatch/*`).
 
@@ -52,7 +52,7 @@ Basée sur la remote ref si présente (sinon HEAD) pour garder le fast-forward. 
 
 `checkout_main_branch` (`plumbing/checkout.rs`) supprime tout fichier absent de l'arbre (`.git` jamais touché) → skip-set déterministe au startup (les restes d'un push raté ne polluent pas). **Mode offline** : toutes les opérations git sont des no-op (`init`, working-branch, checkout, commit, push) — les fichiers locaux sont laissés intacts, un `.git` n'est même pas requis (zip sigma extrait), les suppressions et modifications faites pour des tests survivent au redémarrage.
 
-### Clone grit complet = objets loose
+### Repo complet = HEAD résolvable
 
 `is_repo_complete` accepte un repo dès que HEAD résout vers un commit lisible dans l'ODB (pas de `objects/pack`/`packed-refs` requis) ; repo illisible → supprimé + re-cloné (online uniquement — en offline le repo est utilisé tel quel sans vérification).
 
@@ -62,7 +62,11 @@ Basée sur la remote ref si présente (sinon HEAD) pour garder le fast-forward. 
 
 ### Pack après chaque clone/fetch
 
-`pack_loose_objects()` (`plumbing/pack.rs`) consolide les ~131K fichiers loose (~650 MB) en un pack V2 (zlib, pas de delta, rayon) → `.git/` ~218 MB (3x), `fsck` propre, ODB lisible loose ou pack.
+`pack_loose_objects()` (`plumbing/pack.rs`) consolide les objets loose écrits par les commits locaux en un pack V2 (zlib, pas de delta, rayon). Les fetches distantes n'en produisent pas : grit-lib installe le pack reçu directement sous `objects/pack/` (index V2 + index inverse `.rev`) — la fonction vise les objets des commits entre deux runs et retourne vite quand il n'y en a pas.
+
+### Timings de clone
+
+`git_clone`/`git_clone_shallow` loguent les temps de phase (`connect`, `Fetch done`, `Checkout done`, `Clone finished`) : un premier run lent se diagnostique au log, sans re-instrumenter.
 
 ## Configuration git
 
