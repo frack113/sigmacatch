@@ -12,20 +12,17 @@ Unknown fields are rejected.
 git:
   author: "sigmacatch"          # PLACEHOLDER — set your GitHub username before the next run
   email: ""                     # required (any non-empty value containing @)
-  github_token: ""              # GitHub token (or set the GITHUB_TOKEN env var) — see validation
-  transport: http               # http or ssh
-  ssh_key_path: ""              # absolute path to an SSH private key (only used with transport: ssh)
-  sigma_repo_url: "https://github.com/SigmaHQ/sigma.git"
+  fork_repo_url: ""             # SSH URL of your fork; default git@github.com:<author>/sigma.git
+  ssh_key_path: ""              # absolute path to an SSH private key (empty = SSH agent)
+  sigma_repo_url: "git@github.com:SigmaHQ/sigma.git"   # SSH only
   sigma_repo_path: "sigma"      # local clone path; relative paths resolve against the config dir
   offline: false                # true = zero git operations (no pull/clone/commit/push)
   contrib: false                # true = push commits to your remote fork
   working_branch: ""            # optional working branch; default sigmacatch/<YYYYMMDD>
   shallow_clone: true           # depth=1 initial clone, unshallow before push (default true)
   sparse_checkout: true         # cone-mode sparse checkout: rules/, rules-emerging-threats/, regression_data/ (default true)
-  partial_clone: false          # blobless filter (--filter=blob:none) for initial clone (default false)
   clone_timeout_secs: 600       # overall clone timeout (seconds)
   fetch_timeout_secs: 300       # fetch/pull timeout (seconds)
-  http_timeout_secs: 120        # per-request HTTP timeout (seconds)
   max_retries: 3                # max retry attempts for transient failures
 log:
   level_file: debug             # debug | info | warn | error
@@ -48,20 +45,17 @@ stop_file: ".sigmacatch.stop"   # create this file to gracefully stop a continuo
 |---|---|---|
 | `author` | `sigmacatch` | GitHub username. The placeholder `sigmacatch` is rejected; must be alphanumeric + hyphens. Required unless `offline: true`. |
 | `email` | `""` | Commit email. Must contain `@`. Required unless `offline: true`. |
-| `github_token` | `""` | GitHub token, or set the `GITHUB_TOKEN` env var. Required for `transport: http` when a network op is active (`offline: false` or `contrib: true`). No whitespace. |
-| `transport` | `http` | Git transport: `http` or `ssh`. |
-| `ssh_key_path` | *(unset)* | Absolute path to an SSH private key (ed25519). Only used with `transport: ssh`; must exist and be a file when a network op is active. `chmod 600` recommended. |
-| `sigma_repo_url` | `https://github.com/SigmaHQ/sigma.git` | SigmaHQ repository to clone/fetch. |
+| `fork_repo_url` | `git@github.com:<author>/sigma.git` | SSH URL of your fork: push target and source of pending `sigmacatch/*` branches. Must be an SSH URL. |
+| `ssh_key_path` | *(unset)* | Absolute path to an SSH private key (ed25519). Empty = use the SSH agent. Must exist and be a file when a network op is active. `chmod 600` recommended. |
+| `sigma_repo_url` | `git@github.com:SigmaHQ/sigma.git` | SigmaHQ repository to clone/fetch. SSH only — an `https://` URL is rejected at startup. |
 | `sigma_repo_path` | `sigma` | Local clone path. Relative paths resolve against the config file's directory; must not be empty or contain `..`. |
 | `offline` | `false` | Skip all git operations (no pull/clone/commit/push). On-disk files are used as-is (`.git` optional). **Neutralizes `contrib`** (forced to `false`). |
 | `contrib` | `false` | Push commits to your remote fork. Neutralized by `offline: true`. |
 | `working_branch` | *(unset)* | Working branch name. When empty, the default `sigmacatch/<YYYYMMDD>` branch is used. |
 | `shallow_clone` | `true` | Initial clone uses depth=1 (fast); unshallow runs before push. Set `false` for full history. |
 | `sparse_checkout` | `true` | Cone-mode sparse checkout: only `rules/`, `rules-emerging-threats/`, `regression_data/` materialize. Set `false` for full worktree. |
-| `partial_clone` | `false` | Blobless filter (`--filter=blob:none --depth=1`) for initial clone. Requires git CLI. Falls back to shallow clone with warning. |
 | `clone_timeout_secs` | `600` | Overall clone timeout in seconds. Must be >0 and ≤3600. |
 | `fetch_timeout_secs` | `300` | Fetch/pull timeout in seconds. Must be >0 and ≤1800. |
-| `http_timeout_secs` | `120` | Per-request HTTP timeout in seconds. Must be >0 and ≤600. |
 | `max_retries` | `3` | Max retry attempts for transient network failures. Must be ≤10. |
 
 ## log

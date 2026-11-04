@@ -45,12 +45,11 @@ until you edit it — `author: sigmacatch` (placeholder, rejected by validation)
 `email` both bail. The full reference (every field, defaults, and validation) is in the
 [Configuration reference](docs/en/config.md).
 
-**Contrib is opt-in** (`git.contrib: true` or `--contrib`): pushes regression commits to your fork. By default (`false`) commits stay local. The GitHub token is only required when a network operation is active (`offline: false` or `contrib: true`). **`offline: true` neutralizes `contrib`** (forced to `false`): no push in offline mode.
+**Contrib is opt-in** (`git.contrib: true` or `--contrib`): pushes regression commits to your fork over SSH. By default (`false`) commits stay local. Authentication is SSH-only — the SSH agent, or `git.ssh_key_path`; there is no GitHub token. Clone/fetch use `git.sigma_repo_url` (default `git@github.com:SigmaHQ/sigma.git`), push and pending-branch fetch use `git.fork_repo_url` (default `git@github.com:<author>/sigma.git`). **`offline: true` neutralizes `contrib`** (forced to `false`): no push in offline mode.
 
 **Performance options** (config.yaml):
 
 - `git.shallow_clone: true` (default) — depth=1 initial clone, unshallow before push
-- `git.partial_clone: false` — blobless filter (`--filter=blob:none`) for smaller clone; requires git CLI
 - `hir_cache: ""` — persistent HIR cache path to warm-start the detection engine (skip rule recompilation); also via `--hir-cache <PATH>` CLI flag
 
 ## CLI

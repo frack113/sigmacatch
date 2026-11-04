@@ -180,7 +180,7 @@ sigmacatch [OPTIONS]
 ```
 
 `--dry-run` runs **before** logger init: it creates neither `config.yaml` nor `logs/`,
-skips git validation (author/email/token) and only loads the rules from `./sigma` +
+skips git validation (author/email/SSH key) and only loads the rules from `./sigma` +
 builds the detection engine.
 
 ---
@@ -198,7 +198,7 @@ An unknown or absent subcommand → `sigmacatch` starts its normal collection lo
 `--evtx`, the one-shot EVTX pass). The `filter.product` value is taken from the config.
 
 > **Common prerequisite:** every subcommand loads `config.yaml` through `Config::load`,
-> which runs **full** validation (including git.author/email/token) — not just the
+> which runs **full** validation (including git.author/email/SSH key) — not just the
 > `filter` section. On a fresh machine with the default `config.yaml`, a diagnostic
 > subcommand can therefore fail on a git error before reaching its own work.
 
