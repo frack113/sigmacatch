@@ -49,15 +49,13 @@ impl Progress for LogProgress {
 /// v2 the server turns these refspecs into `ref-prefix` lines and does not even
 /// advertise the other branches.
 pub(crate) fn fetch_options_for_branches(branches: &[&str]) -> FetchOptions {
-    let refspecs = branches
+    let mut opts = FetchOptions::new();
+    opts.refspecs = branches
         .iter()
         .map(|b| format!("+refs/heads/{}:refs/remotes/origin/{}", b, b))
         .collect();
-    FetchOptions {
-        refspecs,
-        tags: TagMode::None,
-        ..Default::default()
-    }
+    opts.tags = TagMode::None;
+    opts
 }
 
 /// Fetch options for the whole `sigmacatch/*` namespace (every pending-PR
@@ -69,41 +67,36 @@ pub(crate) fn fetch_options_for_branches(branches: &[&str]) -> FetchOptions {
 /// first `*` (`refs/heads/sigmacatch/`) so only those branches are advertised.
 /// Full history (no `depth`) — same invariant as `fetch_options_for_branches`.
 pub(crate) fn fetch_options_for_sigmacatch_namespace() -> FetchOptions {
-    FetchOptions {
-        refspecs: vec!["+refs/heads/sigmacatch/*:refs/remotes/origin/sigmacatch/*".to_string()],
-        tags: TagMode::None,
-        ..Default::default()
-    }
+    let mut opts = FetchOptions::new();
+    opts.refspecs = vec!["+refs/heads/sigmacatch/*:refs/remotes/origin/sigmacatch/*".to_string()];
+    opts.tags = TagMode::None;
+    opts
 }
 
 /// Fetch options for shallow clone (depth=1).
 /// Used for initial clone when `git.shallow_clone = true`.
 pub(crate) fn fetch_options_for_shallow_clone(branches: &[&str]) -> FetchOptions {
-    let refspecs = branches
+    let mut opts = FetchOptions::new();
+    opts.refspecs = branches
         .iter()
         .map(|b| format!("+refs/heads/{}:refs/remotes/origin/{}", b, b))
         .collect();
-    FetchOptions {
-        refspecs,
-        tags: TagMode::None,
-        fetch_depth: FetchDepth::depth(1),
-        ..Default::default()
-    }
+    opts.tags = TagMode::None;
+    opts.fetch_depth = FetchDepth::depth(1);
+    opts
 }
 
 /// Fetch options for unshallow (fetch full history).
 /// Used before push when repo was cloned shallow.
 pub(crate) fn fetch_options_for_unshallow(branches: &[&str]) -> FetchOptions {
-    let refspecs = branches
+    let mut opts = FetchOptions::new();
+    opts.refspecs = branches
         .iter()
         .map(|b| format!("+refs/heads/{}:refs/remotes/origin/{}", b, b))
         .collect();
-    FetchOptions {
-        refspecs,
-        tags: TagMode::None,
-        fetch_depth: Some(FetchDepth::Unshallow),
-        ..Default::default()
-    }
+    opts.tags = TagMode::None;
+    opts.fetch_depth = Some(FetchDepth::Unshallow);
+    opts
 }
 
 /// Connect to the remote over SSH and return a live connection positioned

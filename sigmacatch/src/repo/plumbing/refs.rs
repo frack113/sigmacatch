@@ -174,6 +174,28 @@ mod tests {
         (git_dir, tmp.to_path_buf(), commit_oid.to_string())
     }
 
+    /// Write an extra commit into the repo and return its oid as a hex string.
+    /// 0.5.28+ `refs::write_ref` verifies the target object exists, so test
+    /// fixtures must point refs at real objects, not arbitrary oids.
+    fn write_commit(git_dir: &std::path::Path, message: &str) -> String {
+        let commit = CommitData {
+            tree: grit_lib::objects::ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
+                .unwrap(),
+            parents: Vec::new(),
+            author: "test <t@example.com> 0 +0000".to_string(),
+            committer: "test <t@example.com> 0 +0000".to_string(),
+            message: message.to_string(),
+            encoding: None,
+            author_raw: Vec::new(),
+            committer_raw: Vec::new(),
+            raw_message: None,
+            extra_headers: Vec::new(),
+        };
+        let odb = crate::repo::plumbing::checkout::open_odb(git_dir);
+        let raw = grit_lib::objects::serialize_commit(&commit);
+        odb.write(ObjectKind::Commit, &raw).unwrap().to_string()
+    }
+
     fn write_loose_ref(git_dir: &std::path::Path, name: &str, oid: &str) {
         let path = git_dir.join(name);
         if let Some(parent) = path.parent() {
@@ -238,8 +260,8 @@ mod tests {
     fn set_head_after_fetch_picks_main_by_default() {
         let tmp = tempfile::tempdir().unwrap();
         let (git_dir, _, _) = setup_repo(tmp.path());
-        let remote_oid = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-        write_loose_ref(&git_dir, "refs/remotes/origin/main", remote_oid);
+        let remote_oid = write_commit(&git_dir, "second\n");
+        write_loose_ref(&git_dir, "refs/remotes/origin/main", &remote_oid);
 
         set_head_after_fetch(&git_dir, None);
 
@@ -249,7 +271,7 @@ mod tests {
         );
         assert_eq!(
             read_loose_or_packed_ref(&git_dir, "refs/heads/main").as_deref(),
-            Some(remote_oid)
+            Some(remote_oid.as_str())
         );
     }
 
@@ -257,8 +279,8 @@ mod tests {
     fn set_head_after_fetch_falls_back_to_master() {
         let tmp = tempfile::tempdir().unwrap();
         let (git_dir, _, _) = setup_repo(tmp.path());
-        let remote_oid = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-        write_loose_ref(&git_dir, "refs/remotes/origin/master", remote_oid);
+        let remote_oid = write_commit(&git_dir, "second\n");
+        write_loose_ref(&git_dir, "refs/remotes/origin/master", &remote_oid);
 
         set_head_after_fetch(&git_dir, None);
 
@@ -296,15 +318,15 @@ mod tests {
     fn fast_forward_branch_moves_local_ref_to_remote() {
         let tmp = tempfile::tempdir().unwrap();
         let (git_dir, _, old_oid) = setup_repo(tmp.path());
-        let remote_oid = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+        let remote_oid = write_commit(&git_dir, "second\n");
         assert_ne!(old_oid, remote_oid);
-        write_loose_ref(&git_dir, "refs/remotes/origin/main", remote_oid);
+        write_loose_ref(&git_dir, "refs/remotes/origin/main", &remote_oid);
 
         fast_forward_branch(&git_dir).unwrap();
 
         assert_eq!(
             read_loose_or_packed_ref(&git_dir, "refs/heads/main").as_deref(),
-            Some(remote_oid)
+            Some(remote_oid.as_str())
         );
     }
 

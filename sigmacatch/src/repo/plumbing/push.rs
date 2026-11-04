@@ -68,6 +68,7 @@ pub fn push_branch(
         delete: false,
         expected_old: None,
         expect_absent: false,
+        hook_src_ref: None,
     };
     let opts = PushOptions {
         atomic: false,
@@ -77,6 +78,8 @@ pub fn push_branch(
         network_trace: false,
         remote_ref_tips: None,
         tracking_remote: None,
+        no_verify: false,
+        resumable_threshold: None,
     };
     let SshMode::Program(args) = ssh_mode;
     let transport = SshTransport::with_program(args[0].clone());
