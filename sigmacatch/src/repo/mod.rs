@@ -4,7 +4,7 @@
 //! Git operations via grit-lib (pure Rust Git reimplementation).
 //!
 //! Architecture:
-//!   Transport    → `AuthHttpClient` (HttpClient trait) for HTTPS auth
+//!   Transport    → SSH only (`ssh` binary, key from agent or `git.ssh_key_path`)
 //!   Plumbing     → Raw git ops: Odb, Index, commit, checkout, refs (`plumbing/`)
 //!   Porcelain    → High-level wrappers: clone, pull, push, add, commit (`porcelain.rs`)
 //!   Branch       → Branch and HEAD management (`branch.rs`)
@@ -13,14 +13,14 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use crate::repo::{SigmaRepo, GitTransport};
+//! use crate::repo::SigmaRepo;
 //! use std::path::Path;
 //!
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut repo = SigmaRepo::new();
 //! repo.set_repo_path(Path::new("sigma").into());
 //! repo.set_info_user("myuser", "me@example.com");
-//! repo.set_info_http("ghp_...");
+//! repo.set_info_ssh(None);
 //! repo.init().await?;
 //! # Ok(())
 //! # }
@@ -45,16 +45,14 @@ use uuid::Uuid;
 
 use crate::repo::branch::{create_branch, switch_head};
 use crate::repo::porcelain::{
-    git_add, git_clone, git_clone_partial, git_clone_shallow, git_clone_ssh, git_clone_ssh_shallow,
-    git_commit, git_pull, git_pull_ssh, git_unshallow, git_unshallow_ssh,
+    git_add, git_clone, git_clone_shallow, git_commit, git_pull, git_unshallow,
 };
-pub use crate::repo::transport::GitTransport;
-use crate::repo::transport::{AuthHttpClient, https_to_ssh_url, sanitize_url};
-use std::sync::{Arc, Mutex};
+use crate::repo::transport::{https_to_ssh_url, sanitize_url};
+use std::sync::Mutex;
 use std::time::Duration;
 
-/// Default SigmaHQ repository URL.
-pub const DEFAULT_SIGMA_REPO_URL: &str = "https://github.com/SigmaHQ/sigma.git";
+/// Default SigmaHQ repository URL (SSH only).
+pub const DEFAULT_SIGMA_REPO_URL: &str = "git@github.com:SigmaHQ/sigma.git";
 
 /// Check if an error is transient (network-related, retryable)
 fn is_transient_error(e: &RepoError) -> bool {
@@ -123,9 +121,11 @@ pub struct SigmaRepo {
     // User info for git commits (defaults from Config)
     author: String,
     email: String,
-    token: Option<zeroize::Zeroizing<String>>,
-    transport: GitTransport,
     ssh_key_path: Option<String>,
+    /// SSH URL of the fork: push target and source of `sigmacatch/*` branches.
+    /// `None` falls back to the `origin` remote (repos cloned before this key
+    /// existed).
+    fork_url: Option<String>,
     // Optional ed25519 key for signing regression commits (pure-Rust ssh-key)
     signing_key: Option<PathBuf>,
     offline: bool,
@@ -133,11 +133,9 @@ pub struct SigmaRepo {
     // Clone/fetch optimization settings
     shallow_clone: bool,
     sparse_checkout: bool,
-    partial_clone: bool,
     // Timeout and retry settings
     clone_timeout_secs: u64,
     fetch_timeout_secs: u64,
-    http_timeout_secs: u64,
     max_retries: u32,
     // Background unshallow task handle (Mutex for interior mutability)
     unshallow_handle: Mutex<Option<tokio::task::JoinHandle<Result<()>>>>,
@@ -152,18 +150,15 @@ impl SigmaRepo {
             working_branch: None,
             author: String::new(),
             email: String::new(),
-            token: None,
-            transport: GitTransport::default(),
             ssh_key_path: None,
+            fork_url: None,
             signing_key: None,
             offline: false,
             contrib: false,
             shallow_clone: true,
             sparse_checkout: true,
-            partial_clone: false,
             clone_timeout_secs: 600,
             fetch_timeout_secs: 300,
-            http_timeout_secs: 120,
             max_retries: 3,
             unshallow_handle: Mutex::new(None),
         }
@@ -180,20 +175,15 @@ impl SigmaRepo {
         self.repo_path = path;
     }
 
-    /// Set HTTP transport with a GitHub token.
-    pub fn set_info_http(&mut self, token: &str) {
-        self.transport = GitTransport::Http;
-        self.token = if token.trim().is_empty() {
-            None
-        } else {
-            Some(zeroize::Zeroizing::new(token.trim().to_string()))
-        };
+    /// Configure the SSH key used by clone/fetch/push (agent when `None`).
+    pub fn set_info_ssh(&mut self, ssh_key_path: Option<&str>) {
+        self.ssh_key_path = ssh_key_path.map(String::from);
     }
 
-    /// Set SSH transport with an optional SSH key path.
-    pub fn set_info_ssh(&mut self, ssh_key_path: Option<&str>) {
-        self.transport = GitTransport::Ssh;
-        self.ssh_key_path = ssh_key_path.map(String::from);
+    /// Set the SSH URL of the fork: push target and source of `sigmacatch/*`
+    /// branches. When unset, the `origin` remote (the clone URL) is used.
+    pub fn set_fork_url(&mut self, url: String) {
+        self.fork_url = Some(url);
     }
 
     /// Set an ed25519 OpenSSH private key used to sign every regression commit
@@ -218,28 +208,22 @@ impl SigmaRepo {
     /// Configure clone optimization settings.
     /// - `shallow_clone`: use depth=1 for initial clone, unshallow before push
     /// - `sparse_checkout`: use cone-mode sparse checkout (only rules/, rules-emerging-threats/, regression_data/)
-    /// - `partial_clone`: use blobless filter (--filter=blob:none) for initial clone
     /// - `clone_timeout_secs`: overall clone timeout in seconds
     /// - `fetch_timeout_secs`: fetch/pull timeout in seconds
-    /// - `http_timeout_secs`: per-request HTTP timeout in seconds
     /// - `max_retries`: maximum retry attempts for transient failures
     #[allow(clippy::too_many_arguments)]
     pub fn set_clone_optimizations(
         &mut self,
         shallow_clone: bool,
         sparse_checkout: bool,
-        partial_clone: bool,
         clone_timeout_secs: u64,
         fetch_timeout_secs: u64,
-        http_timeout_secs: u64,
         max_retries: u32,
     ) {
         self.shallow_clone = shallow_clone;
         self.sparse_checkout = sparse_checkout;
-        self.partial_clone = partial_clone;
         self.clone_timeout_secs = clone_timeout_secs;
         self.fetch_timeout_secs = fetch_timeout_secs;
-        self.http_timeout_secs = http_timeout_secs;
         self.max_retries = max_retries;
     }
 
@@ -258,20 +242,11 @@ impl SigmaRepo {
             return;
         }
 
-        let transport = self.transport;
-        let token = self.token.clone();
         let ssh_key_path = self.ssh_key_path.clone();
         let git_dir = self.repo_path.join(".git");
 
         let handle = tokio::spawn(async move {
-            match transport {
-                GitTransport::Http => {
-                    let _ = git_unshallow(&git_dir, token.as_ref().map(|t| t.as_str()));
-                }
-                GitTransport::Ssh => {
-                    let _ = git_unshallow_ssh(&git_dir, ssh_key_path.as_deref());
-                }
-            }
+            let _ = git_unshallow(&git_dir, ssh_key_path.as_deref());
             Ok(())
         });
 
@@ -345,37 +320,25 @@ impl SigmaRepo {
             }
 
             info!("Sigma repository exists, pulling latest...");
-            let transport = self.transport;
             let max_retries = self.max_retries;
 
             // Synchronous retry with exponential backoff for pull
             let mut delay = Duration::from_secs(5);
             for attempt in 0..=max_retries {
                 let git_dir_clone = git_dir.clone();
-                let token = self.token.clone();
                 let ssh_key_path = self.ssh_key_path.clone();
-                let outcome = match transport {
-                    GitTransport::Http => tokio::task::spawn_blocking(move || {
-                        git_pull(&git_dir_clone, token.as_ref().map(|t| t.as_str()))
-                    })
-                    .await
-                    .map_err(|e| RepoError::State(format!("Pull task panicked: {}", e)))?,
-                    GitTransport::Ssh => {
-                        let result = tokio::task::spawn_blocking(move || {
-                            git_pull_ssh(&git_dir_clone, ssh_key_path.as_deref())
-                        })
-                        .await
-                        .map_err(|e| RepoError::State(format!("Pull task panicked: {}", e)))?;
-                        if let Err(ref e) = result {
-                            warn!(
-                                "SSH pull failed ({e}) — run will abort. If the ssh \
-                                  binary or key is missing, switch to transport = http \
-                                  in config.yaml to use HTTPS."
-                            );
-                        }
-                        result
-                    }
-                };
+                let outcome = tokio::task::spawn_blocking(move || {
+                    git_pull(&git_dir_clone, ssh_key_path.as_deref())
+                })
+                .await
+                .map_err(|e| RepoError::State(format!("Pull task panicked: {}", e)))?;
+                if let Err(ref e) = outcome {
+                    warn!(
+                        "SSH pull failed ({e}) — run will abort. Check that the `ssh` \
+                         binary exists and that the agent (or git.ssh_key_path) holds \
+                         a key accepted by GitHub."
+                    );
+                }
 
                 match outcome {
                     Ok(()) => break,
@@ -462,35 +425,28 @@ impl SigmaRepo {
 
     /// Fetch the specific working branch from origin.
     /// Used when working_branch doesn't match sigmacatch/* pattern (issue #95).
+    /// URL used for fork-side operations (push, `sigmacatch/*` fetch).
+    /// Falls back to the `origin` remote for repositories cloned before
+    /// `git.fork_repo_url` existed.
+    fn fork_remote_url(&self, git_dir: &Path) -> Result<String> {
+        match &self.fork_url {
+            Some(url) if !url.trim().is_empty() => Ok(url.trim().to_string()),
+            _ => crate::repo::plumbing::read_remote_url_from_config(git_dir, "origin"),
+        }
+    }
+
     fn fetch_working_branch(&self, git_dir: &Path, branch_name: &str) -> Result<()> {
-        let remote_url = crate::repo::plumbing::read_remote_url_from_config(git_dir, "origin")?;
+        let remote_url = self.fork_remote_url(git_dir)?;
+        let ssh_url = https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
         let opts = crate::repo::plumbing::fetch::fetch_options_for_branches(&[branch_name]);
-        let transport = self.transport;
-        let token = self.token.clone();
         let ssh_key_path = self.ssh_key_path.clone();
         let max_retries = self.max_retries;
 
         // Synchronous retry with exponential backoff
         let mut delay = Duration::from_secs(5);
         for attempt in 0..=max_retries {
-            let outcome = match transport {
-                GitTransport::Http => {
-                    let http_client = AuthHttpClient::new(token.clone())?;
-                    crate::repo::plumbing::fetch_remote(
-                        Arc::new(http_client),
-                        git_dir,
-                        &remote_url,
-                        &opts,
-                    )
-                }
-                GitTransport::Ssh => {
-                    let ssh_url =
-                        https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
-                    let ssh_mode =
-                        crate::repo::transport::build_ssh_shell_command(ssh_key_path.as_deref());
-                    crate::repo::plumbing::fetch_remote_ssh(git_dir, &ssh_url, &ssh_mode, &opts)
-                }
-            };
+            let ssh_mode = crate::repo::transport::build_ssh_shell_command(ssh_key_path.as_deref());
+            let outcome = crate::repo::plumbing::fetch_remote(git_dir, &ssh_url, &ssh_mode, &opts);
 
             match outcome {
                 Ok((_count, _default_branch)) => {
@@ -508,19 +464,12 @@ impl SigmaRepo {
                     delay = std::cmp::min(delay * 2, Duration::from_secs(60));
                 }
                 Err(e) => {
-                    let cause = if matches!(transport, GitTransport::Ssh) {
-                        "SSH key invalid or ssh binary unavailable"
-                    } else if token.is_none() {
-                        "missing GitHub token (set git.github_token in config.yaml or GITHUB_TOKEN env)"
-                    } else {
-                        "network unreachable, rate-limited, or authentication failed"
-                    };
                     warn!(
-                        "Failed to fetch working branch '{}' from origin ({}): {}. \
+                        "Failed to fetch working branch '{}' from fork ({}): \
+                         SSH key invalid or ssh binary unavailable. \
                          The branch will be created from local HEAD instead of fork tip: {e}",
                         branch_name,
                         sanitize_url(&remote_url),
-                        cause,
                     );
                     return Ok(());
                 }
@@ -529,47 +478,30 @@ impl SigmaRepo {
         Ok(())
     }
 
-    /// Fetch every `sigmacatch/*` branch from origin with a single glob
+    /// Fetch every `sigmacatch/*` branch from the fork with a single glob
     /// refspec, so their remote tracking refs are current before `create_branch`
     /// bases on them and before `pending_regression_rule_ids()` scans them.
     /// No-op (zero updates) when no such branch exists on the fork yet.
     ///
     /// This is a **best-effort** fetch: a network failure (transient outage,
-    /// rate limit, no token) is logged as a `warn!` and swallowed. The run then
-    /// degrades gracefully — the skip set is built only from the checked-out
-    /// worktree (main) instead of the worktree ∪ pending branches, so an
-    /// already-captured PR *could* be re-captured, but the run still proceeds
-    /// and completes rather than aborting at startup. The push-rollback guard
-    /// still protects against a sibling-commit push (`RejectNonFastForward`).
+    /// unreachable host, missing SSH key) is logged as a `warn!` and swallowed.
+    /// The run then degrades gracefully — the skip set is built only from the
+    /// checked-out worktree (main) instead of the worktree ∪ pending branches,
+    /// so an already-captured PR *could* be re-captured, but the run still
+    /// proceeds and completes rather than aborting at startup. The push-rollback
+    /// guard still protects against a sibling-commit push (`RejectNonFastForward`).
     fn fetch_sigmacatch_branches(&self, git_dir: &Path) -> Result<()> {
-        let remote_url = crate::repo::plumbing::read_remote_url_from_config(git_dir, "origin")?;
+        let remote_url = self.fork_remote_url(git_dir)?;
+        let ssh_url = https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
         let opts = crate::repo::plumbing::fetch_options_for_sigmacatch_namespace();
-        let transport = self.transport;
-        let token = self.token.clone();
         let ssh_key_path = self.ssh_key_path.clone();
         let max_retries = self.max_retries;
 
         // Synchronous retry with exponential backoff
         let mut delay = Duration::from_secs(5);
         for attempt in 0..=max_retries {
-            let outcome = match transport {
-                GitTransport::Http => {
-                    let http_client = AuthHttpClient::new(token.clone())?;
-                    crate::repo::plumbing::fetch_remote(
-                        Arc::new(http_client),
-                        git_dir,
-                        &remote_url,
-                        &opts,
-                    )
-                }
-                GitTransport::Ssh => {
-                    let ssh_url =
-                        https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
-                    let ssh_mode =
-                        crate::repo::transport::build_ssh_shell_command(ssh_key_path.as_deref());
-                    crate::repo::plumbing::fetch_remote_ssh(git_dir, &ssh_url, &ssh_mode, &opts)
-                }
-            };
+            let ssh_mode = crate::repo::transport::build_ssh_shell_command(ssh_key_path.as_deref());
+            let outcome = crate::repo::plumbing::fetch_remote(git_dir, &ssh_url, &ssh_mode, &opts);
 
             match outcome {
                 Ok((_count, _default_branch)) => return Ok(()),
@@ -584,19 +516,12 @@ impl SigmaRepo {
                     delay = std::cmp::min(delay * 2, Duration::from_secs(60));
                 }
                 Err(e) => {
-                    let cause = if matches!(transport, GitTransport::Ssh) {
-                        "SSH key invalid or ssh binary unavailable"
-                    } else if token.is_none() {
-                        "missing GitHub token (set git.github_token in config.yaml or GITHUB_TOKEN env)"
-                    } else {
-                        "network unreachable, rate-limited, or authentication failed"
-                    };
                     warn!(
-                        "Failed to fetch sigmacatch/* branches from origin ({}): {}. \
-                         the skip set will only cover the checked-out worktree.\
+                        "Failed to fetch sigmacatch/* branches from fork ({}): \
+                         SSH key invalid or ssh binary unavailable. \
+                         The skip set will only cover the checked-out worktree. \
                          Re-runs on this repo can still resolve pending-PR data: {e}",
                         sanitize_url(&remote_url),
-                        cause,
                     );
                     return Ok(());
                 }
@@ -834,7 +759,6 @@ impl SigmaRepo {
     }
 
     async fn clone_repo(&self) -> Result<()> {
-        let transport = self.transport;
         let max_retries = self.max_retries;
 
         // Synchronous retry with exponential backoff for clone
@@ -844,66 +768,29 @@ impl SigmaRepo {
                 .remote_url
                 .clone()
                 .unwrap_or_else(|| DEFAULT_SIGMA_REPO_URL.to_string());
+            let ssh_url = https_to_ssh_url(&url).unwrap_or(url);
             let path = self.repo_path.clone();
-            let token = self.token.clone();
             let ssh_key_path = self.ssh_key_path.clone();
             let shallow = self.shallow_clone;
             let sparse = self.sparse_checkout;
-            let partial = self.partial_clone;
-            let http_timeout = self.http_timeout_secs;
 
             info!(
-                "Cloning Sigma repository from {}... (shallow={}, sparse={}, partial={})",
-                sanitize_url(&url),
+                "Cloning Sigma repository from {}... (shallow={}, sparse={})",
+                sanitize_url(&ssh_url),
                 self.shallow_clone,
                 self.sparse_checkout,
-                self.partial_clone
             );
             let clone_start = std::time::Instant::now();
 
-            let outcome = match transport {
-                GitTransport::Http => tokio::task::spawn_blocking(move || {
-                    if partial {
-                        git_clone_partial(
-                            &url,
-                            &path,
-                            token.as_ref().map(|t| t.as_str()),
-                            sparse,
-                            http_timeout,
-                        )
-                    } else if shallow {
-                        git_clone_shallow(
-                            &url,
-                            &path,
-                            token.as_ref().map(|t| t.as_str()),
-                            sparse,
-                            http_timeout,
-                        )
-                    } else {
-                        git_clone(&url, &path, token.as_ref().map(|t| t.as_str()))
-                    }
-                })
-                .await
-                .map_err(|e| RepoError::State(format!("Clone task panicked: {}", e)))?,
-                GitTransport::Ssh => {
-                    let ssh_url = https_to_ssh_url(&url).ok_or_else(|| {
-                        RepoError::Transport(format!("Cannot convert URL to SSH format: {}", url))
-                    })?;
-                    tokio::task::spawn_blocking(move || {
-                        if partial {
-                            // For SSH, fall back to shallow clone since git CLI partial clone
-                            // with SSH requires additional setup
-                            git_clone_ssh_shallow(&ssh_url, &path, ssh_key_path.as_deref(), sparse)
-                        } else if shallow {
-                            git_clone_ssh_shallow(&ssh_url, &path, ssh_key_path.as_deref(), sparse)
-                        } else {
-                            git_clone_ssh(&ssh_url, &path, ssh_key_path.as_deref())
-                        }
-                    })
-                    .await
-                    .map_err(|e| RepoError::State(format!("Clone task panicked: {}", e)))?
+            let outcome = tokio::task::spawn_blocking(move || {
+                if shallow {
+                    git_clone_shallow(&ssh_url, &path, ssh_key_path.as_deref(), sparse)
+                } else {
+                    git_clone(&ssh_url, &path, ssh_key_path.as_deref())
                 }
-            };
+            })
+            .await
+            .map_err(|e| RepoError::State(format!("Clone task panicked: {}", e)))?;
 
             match outcome {
                 Ok(()) => {
@@ -1107,27 +994,11 @@ impl SigmaRepo {
             )));
         }
 
-        match self.transport {
-            GitTransport::Http => {
-                let http_client = AuthHttpClient::new(self.token.clone())?;
-                let remote_url =
-                    crate::repo::plumbing::read_remote_url_from_config(&git_dir, "origin")?;
-                crate::repo::plumbing::push_branch(
-                    Arc::new(http_client),
-                    &git_dir,
-                    &remote_url,
-                    branch,
-                )
-            }
-            GitTransport::Ssh => {
-                let remote_url =
-                    crate::repo::plumbing::read_remote_url_from_config(&git_dir, "origin")?;
-                let ssh_url = https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
-                let ssh_mode =
-                    crate::repo::transport::build_ssh_shell_command(self.ssh_key_path.as_deref());
-                crate::repo::plumbing::push_branch_ssh(&git_dir, &ssh_url, branch, &ssh_mode)
-            }
-        }
+        let remote_url = self.fork_remote_url(&git_dir)?;
+        let ssh_url = https_to_ssh_url(&remote_url).unwrap_or(remote_url);
+        let ssh_mode =
+            crate::repo::transport::build_ssh_shell_command(self.ssh_key_path.as_deref());
+        crate::repo::plumbing::push_branch(&git_dir, &ssh_url, branch, &ssh_mode)
     }
 
     /// Ensure repository is unshallowed (fetch full history) if it was cloned shallow.
@@ -1142,16 +1013,8 @@ impl SigmaRepo {
         }
 
         info!("Repository was cloned shallow — fetching full history before push...");
-        match self.transport {
-            GitTransport::Http => {
-                let token = self.token.clone();
-                git_unshallow(&git_dir, token.as_ref().map(|t| t.as_str()))
-            }
-            GitTransport::Ssh => {
-                let ssh_key_path = self.ssh_key_path.clone();
-                git_unshallow_ssh(&git_dir, ssh_key_path.as_deref())
-            }
-        }
+        let ssh_key_path = self.ssh_key_path.clone();
+        git_unshallow(&git_dir, ssh_key_path.as_deref())
     }
 }
 
@@ -1163,18 +1026,15 @@ impl Default for SigmaRepo {
             working_branch: None,
             author: String::new(),
             email: String::new(),
-            token: None,
-            transport: GitTransport::default(),
             ssh_key_path: None,
+            fork_url: None,
             signing_key: None,
             offline: false,
             contrib: false,
             shallow_clone: true,
             sparse_checkout: true,
-            partial_clone: false,
             clone_timeout_secs: 600,
             fetch_timeout_secs: 300,
-            http_timeout_secs: 120,
             max_retries: 3,
             unshallow_handle: Mutex::new(None),
         }
@@ -1184,10 +1044,9 @@ impl Default for SigmaRepo {
 fn is_repo_complete(git_dir: &Path) -> bool {
     // A repository is usable when HEAD resolves to a commit object that is
     // readable in the ODB. This covers both real-git clones (packed refs +
-    // packs) and grit's unpack_objects-based clones (loose objects only, no
-    // `objects/pack` or `packed-refs`), which the previous check wrongly
-    // treated as incomplete — deleting and re-cloning the repository on every
-    // run.
+    // packs) and grit-lib clones (packs installed under `objects/pack/`),
+    // which the previous check wrongly treated as incomplete — deleting and
+    // re-cloning the repository on every run.
     let Ok(head) = crate::repo::plumbing::resolve_head(git_dir) else {
         return false;
     };
@@ -1280,8 +1139,13 @@ mod tests {
     use grit_lib::index::write_tree::write_tree_from_index;
     use grit_lib::objects::{CommitData, ObjectKind};
 
+    /// Serializes every test that mutates process-wide environment variables
+    /// (`GIT_SSH`, `HOME`, `USERPROFILE`, …): Rust test threads share one
+    /// environment, and the transport reads it while other tests run.
+    pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// Build a `.git` with HEAD → refs/heads/main and one committed file
-    /// (loose objects only — exactly what a grit clone produces).
+    /// (loose objects only — what local commits produce between runs).
     fn make_committed_repo(tmp: &tempfile::TempDir) {
         let git_dir = tmp.path().join(".git");
         let work_tree = tmp.path();
@@ -1722,29 +1586,9 @@ mod tests {
     }
 
     #[test]
-    fn test_set_info_http() {
-        let mut repo = SigmaRepo::new();
-        repo.set_info_http("ghp_token123");
-        assert_eq!(repo.transport, GitTransport::Http);
-        assert_eq!(
-            repo.token.as_ref().map(|t| t.as_str()),
-            Some("ghp_token123")
-        );
-    }
-
-    #[test]
-    fn test_set_info_http_empty() {
-        let mut repo = SigmaRepo::new();
-        repo.set_info_http("");
-        assert_eq!(repo.transport, GitTransport::Http);
-        assert_eq!(repo.token, None);
-    }
-
-    #[test]
     fn test_set_info_ssh() {
         let mut repo = SigmaRepo::new();
         repo.set_info_ssh(Some("/home/user/.ssh/id"));
-        assert_eq!(repo.transport, GitTransport::Ssh);
         assert_eq!(repo.ssh_key_path, Some("/home/user/.ssh/id".to_string()));
     }
 
@@ -1752,8 +1596,18 @@ mod tests {
     fn test_set_info_ssh_none() {
         let mut repo = SigmaRepo::new();
         repo.set_info_ssh(None);
-        assert_eq!(repo.transport, GitTransport::Ssh);
         assert_eq!(repo.ssh_key_path, None);
+    }
+
+    #[test]
+    fn test_set_fork_url() {
+        let mut repo = SigmaRepo::new();
+        assert_eq!(repo.fork_url, None);
+        repo.set_fork_url("git@github.com:user/sigma.git".to_string());
+        assert_eq!(
+            repo.fork_url.as_deref(),
+            Some("git@github.com:user/sigma.git")
+        );
     }
 
     /// Build a remote ref `sigmacatch/<date>` whose commit tree contains the

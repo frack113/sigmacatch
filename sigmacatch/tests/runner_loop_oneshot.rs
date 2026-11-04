@@ -130,7 +130,7 @@ fn setup() -> (tempfile::TempDir, Event) {
     // SSH transport with a signing key and no working branch: exercises the
     // ssh bootstrap branch and the default `sigmacatch/<YYYYMMDD>` branch name.
     let config_yaml = format!(
-        "git:\n  author: runner-test\n  email: runner-test@example.com\n  github_token: dummy\n  transport: ssh\n  ssh_key_path: {}\n  sigma_repo_path: {}\n  offline: true\nfilter:\n  product: linux\n",
+        "git:\n  author: runner-test\n  email: runner-test@example.com\n  ssh_key_path: {}\n  sigma_repo_path: {}\n  offline: true\nfilter:\n  product: linux\n",
         ssh_key.display(),
         sigma.display()
     );

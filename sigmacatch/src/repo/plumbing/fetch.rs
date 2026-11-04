@@ -1,21 +1,19 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Fetch from remote via smart HTTP or SSH.
+//! Fetch from remote over SSH.
 
-use crate::repo::Result;
+use crate::repo::{RepoError, Result};
 use grit_lib::progress::{NeverCancel, ProgressSink};
 use grit_lib::remote::fetch::Progress;
 use grit_lib::remote::transfer::{FetchDepth, FetchOptions, TagMode};
-use grit_lib::remote::transport::http::{HttpClient, http_fetch};
-
-use super::refs::map_grit;
-use grit_lib::remote::transport::{ConnectOptions, SshTransport, Transport};
 use std::path::Path;
-use std::sync::Arc;
 use tracing::info;
 
-use crate::repo::transport::{SshMode, sanitize_url};
+use super::refs::map_grit;
+use grit_lib::remote::transport::{ConnectOptions, Connection, SshTransport, Transport};
+
+use crate::repo::transport::SshMode;
 
 /// Forward the remote's side-band progress lines (channel 2) to the log so a
 /// first clone's long download isn't silent. The server's messages are
@@ -51,15 +49,13 @@ impl Progress for LogProgress {
 /// v2 the server turns these refspecs into `ref-prefix` lines and does not even
 /// advertise the other branches.
 pub(crate) fn fetch_options_for_branches(branches: &[&str]) -> FetchOptions {
-    let refspecs = branches
+    let mut opts = FetchOptions::new();
+    opts.refspecs = branches
         .iter()
         .map(|b| format!("+refs/heads/{}:refs/remotes/origin/{}", b, b))
         .collect();
-    FetchOptions {
-        refspecs,
-        tags: TagMode::None,
-        ..Default::default()
-    }
+    opts.tags = TagMode::None;
+    opts
 }
 
 /// Fetch options for the whole `sigmacatch/*` namespace (every pending-PR
@@ -71,90 +67,84 @@ pub(crate) fn fetch_options_for_branches(branches: &[&str]) -> FetchOptions {
 /// first `*` (`refs/heads/sigmacatch/`) so only those branches are advertised.
 /// Full history (no `depth`) — same invariant as `fetch_options_for_branches`.
 pub(crate) fn fetch_options_for_sigmacatch_namespace() -> FetchOptions {
-    FetchOptions {
-        refspecs: vec!["+refs/heads/sigmacatch/*:refs/remotes/origin/sigmacatch/*".to_string()],
-        tags: TagMode::None,
-        ..Default::default()
-    }
+    let mut opts = FetchOptions::new();
+    opts.refspecs = vec!["+refs/heads/sigmacatch/*:refs/remotes/origin/sigmacatch/*".to_string()];
+    opts.tags = TagMode::None;
+    opts
 }
 
 /// Fetch options for shallow clone (depth=1).
 /// Used for initial clone when `git.shallow_clone = true`.
 pub(crate) fn fetch_options_for_shallow_clone(branches: &[&str]) -> FetchOptions {
-    let refspecs = branches
+    let mut opts = FetchOptions::new();
+    opts.refspecs = branches
         .iter()
         .map(|b| format!("+refs/heads/{}:refs/remotes/origin/{}", b, b))
         .collect();
-    FetchOptions {
-        refspecs,
-        tags: TagMode::None,
-        fetch_depth: FetchDepth::depth(1),
-        ..Default::default()
-    }
+    opts.tags = TagMode::None;
+    opts.fetch_depth = FetchDepth::depth(1);
+    opts
 }
 
 /// Fetch options for unshallow (fetch full history).
 /// Used before push when repo was cloned shallow.
 pub(crate) fn fetch_options_for_unshallow(branches: &[&str]) -> FetchOptions {
-    let refspecs = branches
+    let mut opts = FetchOptions::new();
+    opts.refspecs = branches
         .iter()
         .map(|b| format!("+refs/heads/{}:refs/remotes/origin/{}", b, b))
         .collect();
-    FetchOptions {
-        refspecs,
-        tags: TagMode::None,
-        fetch_depth: Some(FetchDepth::Unshallow),
-        ..Default::default()
-    }
+    opts.tags = TagMode::None;
+    opts.fetch_depth = Some(FetchDepth::Unshallow);
+    opts
 }
 
-/// Fetch from remote via smart HTTP.
-pub fn fetch_remote(
-    http_client: Arc<dyn HttpClient>,
-    git_dir: &Path,
-    repo_url: &str,
-    opts: &FetchOptions,
-) -> Result<(usize, Option<String>)> {
-    info!("Fetching from {}", sanitize_url(repo_url));
-    let mut opts = opts.clone();
-    let outcome = map_grit(http_fetch(
-        http_client,
-        git_dir,
-        repo_url,
-        &mut opts,
-        &mut LogProgress,
-    ))?;
-    let count = outcome.updates.len();
-    info!(
-        "Fetched {} ref updates (default branch: {})",
-        count,
-        outcome.default_branch.as_deref().unwrap_or("unknown")
-    );
-    Ok((count, outcome.default_branch))
-}
-
-/// Fetch from remote via SSH.
-pub fn fetch_remote_ssh(
-    git_dir: &Path,
-    repo_url: &str,
-    ssh_mode: &SshMode,
-    opts: &FetchOptions,
-) -> Result<(usize, Option<String>)> {
-    info!("Fetching via SSH from {}", repo_url);
-    let transport = match ssh_mode {
-        SshMode::Default => SshTransport::new(),
-        SshMode::ShellCommand(cmd) => SshTransport::with_shell_command(cmd.clone()),
-        SshMode::Program(args) => SshTransport::with_program(args[0].clone()),
-    };
-    let mut conn = map_grit(transport.connect(
+/// Connect to the remote over SSH and return a live connection positioned
+/// just past the ref advertisement.
+pub fn connect_ssh(repo_url: &str, ssh_mode: &SshMode) -> Result<Box<dyn Connection>> {
+    let SshMode::Program(args) = ssh_mode;
+    let transport = SshTransport::with_program(args[0].clone());
+    map_grit(transport.connect(
         repo_url,
         grit_lib::remote::transport::Service::UploadPack,
         &ConnectOptions::default(),
-    ))?;
+    ))
+}
+
+/// Connect to the remote over SSH and report the branch its `HEAD` symref
+/// points at — the branch a clone must check out.
+///
+/// The connection is returned so the caller can fetch through it: the
+/// advertisement was already read on connect, and a second handshake would be
+/// wasted. The remote's advertised default branch is authoritative: grit-lib
+/// resolves explicit fetch refspecs strictly, so requesting a branch the
+/// remote does not have fails the whole fetch with `SourceNotFound`.
+pub fn connect_with_default_branch(
+    repo_url: &str,
+    ssh_mode: &SshMode,
+) -> Result<(Box<dyn Connection>, String)> {
+    let conn = connect_ssh(repo_url, ssh_mode)?;
+    let head = conn.head_symref().map(str::to_string);
+    match head {
+        Some(sym) if sym.starts_with("refs/heads/") => {
+            Ok((conn, sym.strip_prefix("refs/heads/").unwrap().to_string()))
+        }
+        _ => Err(RepoError::State(format!(
+            "Remote {repo_url} advertised no HEAD branch — cannot determine its default branch"
+        ))),
+    }
+}
+
+/// Fetch from a live SSH connection whose advertisement was already read.
+pub fn fetch_remote_on(
+    git_dir: &Path,
+    conn: &mut dyn Connection,
+    opts: &FetchOptions,
+) -> Result<(usize, Option<String>)> {
     let mut opts = opts.clone();
     let outcome = map_grit(grit_lib::remote::fetch::fetch_remote(
         git_dir,
-        &mut *conn,
+        conn,
         &mut opts,
         &mut LogProgress,
         &NeverCancel,
@@ -166,6 +156,18 @@ pub fn fetch_remote_ssh(
         outcome.default_branch.as_deref().unwrap_or("unknown")
     );
     Ok((count, outcome.default_branch))
+}
+
+/// Fetch from remote over SSH (connects, then fetches).
+pub fn fetch_remote(
+    git_dir: &Path,
+    repo_url: &str,
+    ssh_mode: &SshMode,
+    opts: &FetchOptions,
+) -> Result<(usize, Option<String>)> {
+    info!("Fetching via SSH from {}", repo_url);
+    let mut conn = connect_ssh(repo_url, ssh_mode)?;
+    fetch_remote_on(git_dir, &mut *conn, opts)
 }
 
 #[cfg(test)]
@@ -220,29 +222,6 @@ mod tests {
         );
     }
 
-    struct FailClient;
-
-    impl HttpClient for FailClient {
-        fn get(&self, _url: &str, _git_protocol: Option<&str>) -> grit_lib::error::Result<Vec<u8>> {
-            Err(grit_lib::error::Error::Message(
-                "no network in tests".into(),
-            ))
-        }
-
-        fn post(
-            &self,
-            _url: &str,
-            _content_type: &str,
-            _accept: &str,
-            _body: &[u8],
-            _git_protocol: Option<&str>,
-        ) -> grit_lib::error::Result<Vec<u8>> {
-            Err(grit_lib::error::Error::Message(
-                "no network in tests".into(),
-            ))
-        }
-    }
-
     /// Side-band progress bytes are `\r`-delimited and may carry invalid UTF-8
     /// mid-transfer — the logging path must survive both without panicking.
     #[test]
@@ -255,48 +234,36 @@ mod tests {
     }
 
     #[test]
-    fn fetch_remote_http_error_is_mapped() {
+    fn fetch_remote_fails_at_connect_with_missing_binary() {
         let tmp = tempfile::tempdir().unwrap();
         let git_dir = tmp.path().join(".git");
         crate::repo::plumbing::init::init_repo(
             &git_dir,
             tmp.path(),
-            "https://example.com/sigma.git",
-        )
-        .unwrap();
-
-        let opts = fetch_options_for_branches(&["main"]);
-        let err = fetch_remote(
-            Arc::new(FailClient),
-            &git_dir,
-            "https://example.com/sigma.git",
-            &opts,
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(
-            err.contains("no network in tests"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn fetch_remote_ssh_fails_at_connect_with_missing_binary() {
-        let tmp = tempfile::tempdir().unwrap();
-        let git_dir = tmp.path().join(".git");
-        crate::repo::plumbing::init::init_repo(
-            &git_dir,
-            tmp.path(),
-            "https://example.com/sigma.git",
+            "git@github.com:SigmaHQ/sigma.git",
         )
         .unwrap();
 
         // A nonexistent ssh binary fails immediately — no real process, no network.
         let mode = SshMode::Program(vec![std::ffi::OsString::from("/nonexistent/ssh")]);
         let opts = fetch_options_for_branches(&["main"]);
-        let err = fetch_remote_ssh(&git_dir, "git@github.com:u/r.git", &mode, &opts)
+        let err = fetch_remote(&git_dir, "git@github.com:u/r.git", &mode, &opts)
             .unwrap_err()
             .to_string();
+        assert!(!err.is_empty());
+    }
+
+    /// Default-branch discovery fails at connect when the ssh binary is
+    /// missing — the error must be actionable, not a refspec failure.
+    #[test]
+    fn connect_with_default_branch_fails_at_connect_with_missing_binary() {
+        let mode = SshMode::Program(vec![std::ffi::OsString::from("/nonexistent/ssh")]);
+        // `Ok` carries a `Box<dyn Connection>` that is not `Debug`, so no
+        // `unwrap_err` — match instead.
+        let err = match connect_with_default_branch("git@github.com:u/r.git", &mode) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("expected a connect failure"),
+        };
         assert!(!err.is_empty());
     }
 }

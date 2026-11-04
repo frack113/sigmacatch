@@ -127,7 +127,7 @@ async fn all_rules_have_existing_regression_data_bails_without_collecting() {
     .expect("write existing data file");
 
     let config_yaml = format!(
-        "git:\n  author: runner-test\n  email: runner-test@example.com\n  github_token: dummy\n  sigma_repo_path: {}\n  offline: true\nfilter:\n  product: linux\n",
+        "git:\n  author: runner-test\n  email: runner-test@example.com\n  sigma_repo_path: {}\n  offline: true\nfilter:\n  product: linux\n",
         sigma.display()
     );
     std::fs::write(tmp.path().join("config.yaml"), config_yaml).expect("write config.yaml");

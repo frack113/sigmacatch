@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Post-fetch pack consolidation: collect loose objects written by grit-lib's
-//! `unpack_objects` and consolidate them into a binary pack + V2 index, then
-//! delete the loose files. grit-lib writes every fetched object as a loose
-//! file (no `git gc --auto` equivalent), so for the Sigma repo (~131K objects)
-//! this reduces disk usage from ~641 MB to ~52 MB and speeds up subsequent
-//! push pack-building.
+//! Post-fetch pack consolidation: collect loose objects written by local
+//! commits (`git_add`/`git_commit` go through `Odb::write`) and consolidate
+//! them into a binary pack + V2 index, then delete the loose files. Remote
+//! fetches produce no loose objects — grit-lib installs the received pack
+//! directly under `objects/pack/` — so this keeps the object store tidy
+//! across runs and speeds up subsequent push pack-building.
 
 use crate::repo::{RepoError, Result};
 use grit_lib::objects::odb::Odb;
@@ -274,8 +274,11 @@ fn write_v2_index(idx_path: &Path, offsets: &[PackOffset], pack_checksum: &[u8])
 /// Scan for loose objects, build a pack + V2 index, write to `objects/pack/`,
 /// then delete the loose object files and their now-empty parent directories.
 ///
-/// Called after clone/fetch so the Sigma repo's ~131K loose objects are
-/// consolidated into a single compressed pack (47 MB vs 641 MB loose).
+/// Remote fetches install their received pack directly under `objects/pack/`
+/// (grit-lib's index-pack step), so this targets the loose objects written by
+/// local commits (`git_add`/`git_commit` write via `Odb::write`): called after
+/// clone/fetch/pull they consolidate those into a pack and keep the object
+/// store tidy across runs. Returns early when no loose objects exist.
 pub(crate) fn pack_loose_objects(git_dir: &Path) -> Result<()> {
     let objects_dir = git_dir.join("objects");
     let odb = crate::repo::plumbing::open_odb(git_dir);

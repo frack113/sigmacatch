@@ -81,7 +81,7 @@ pipeline. Highlights:
 - One continuous run until Ctrl+C: collect + evaluate + generate (30s) + commit + push.
 - All aggregation in memory — no intermediate database.
 - Windows collection via the Windows Event Log API (`EvtQueryW`/`EvtNext`/`EvtRender`); Linux collection via auditd tail, builtin syslog files, and Sysmon-for-Linux.
-- No external `git` binary: everything goes through grit-lib via the `repo` module of the `sigmacatch` package.
+- Git is SSH-only: transport (clone/fetch/push) goes through the system `ssh` binary (exec'd by grit-lib) in the `repo` module of the `sigmacatch` package; object/index/refs operations go through grit-lib. No token, no HTTP.
 - No hand-rolled parsers: use `rsigma-parser`, `serde_yaml`, `serde_json`, etc.
 - Security first: validate paths, cap sizes, sanitize inputs.
 

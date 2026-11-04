@@ -1,34 +1,15 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Transport layer: HTTPS with token auth (`AuthHttpClient`) and SSH with
-//! key-based auth. Also carries the shared URL-sanitization and SSH-command
-//! helpers used by the plumbing and porcelain layers.
+//! Transport layer: SSH with key-based auth only.
+//!
+//! Sigmacatch never handles GitHub credentials. Clone, fetch and push all go
+//! through the system `ssh` binary (SSH agent, or `git.ssh_key_path` wired via
+//! `~/.ssh/config`), so there is no token to configure, store or leak.
 
-use crate::repo::{RepoError, Result};
 use tracing::{debug, info};
-use zeroize::Zeroizing;
 
-/// Git transport protocol for clone/fetch/push operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum GitTransport {
-    /// HTTPS with token auth (default).
-    #[default]
-    Http,
-    /// SSH with key-based auth.
-    Ssh,
-}
-
-impl std::fmt::Display for GitTransport {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GitTransport::Http => write!(f, "http"),
-            GitTransport::Ssh => write!(f, "ssh"),
-        }
-    }
-}
-
+/// Hide credentials embedded in a URL before logging it.
 pub(crate) fn sanitize_url(url: &str) -> String {
     if let Some(at_pos) = url.find('@')
         && let Some(scheme_end) = url[..at_pos].find("://")
@@ -42,8 +23,11 @@ pub(crate) fn sanitize_url(url: &str) -> String {
 /// Convert an HTTPS GitHub URL to SSH format.
 /// e.g. `https://github.com/user/repo.git` → `git@github.com:user/repo.git`
 ///
-/// Returns `None` if the URL is not a valid GitHub HTTPS URL, contains path traversal,
-/// or contains characters that would allow SSH command injection.
+/// Kept for repositories cloned before the SSH-only switch: their `.git/config`
+/// still carries an HTTPS `origin`, and every transport path converts it on
+/// read. Returns `None` if the URL is not a valid GitHub HTTPS URL, contains
+/// path traversal, or contains characters that would allow SSH command
+/// injection.
 pub fn https_to_ssh_url(url: &str) -> Option<String> {
     let rest = url.strip_prefix("https://github.com/")?;
     if rest.contains("..") || rest.contains([' ', '\t', '\n', '\r']) {
@@ -68,101 +52,18 @@ pub fn https_to_ssh_url(url: &str) -> Option<String> {
     Some(format!("git@github.com:{}.git", repo))
 }
 
-/// Resolve the full path to the `ssh` executable, falling back to a bare name.
-///
-/// This is needed because the process PATH may differ from the user's interactive
-/// shell PATH (e.g. when launched by a service or from a non-interactive context).
-///
-/// On Windows, common locations are checked:
-/// - `C:\Windows\System32\OpenSSH\ssh.exe` (Windows OpenSSH client)
-/// - `%ProgramFiles%\Git\usr\bin\ssh.exe` (Git for Windows)
-///
-/// On Unix, `which ssh` is used when available.
-/// If none of these resolve, the caller receives `"ssh"` and the OS PATH lookup
-/// is attempted (may still fail if PATH is too narrow).
-#[cfg(windows)]
-fn resolve_ssh_path() -> String {
-    // First try the OS resolver (works on both Windows and Unix when PATH is set)
-    let mut cmd = std::process::Command::new("which");
-    cmd.arg("ssh").stdin(std::process::Stdio::null());
-    if let Ok(output) = cmd.output()
-        && output.status.success()
-    {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            return path;
-        }
-    }
-
-    // Windows-specific fallbacks
-    #[cfg(windows)]
-    {
-        let program_files =
-            std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
-        let program_files_x86 = std::env::var("ProgramFiles(x86)")
-            .unwrap_or_else(|_| "C:\\Program Files (x86)".to_string());
-        let candidates: Vec<std::path::PathBuf> = vec![
-            std::path::PathBuf::from(r"C:\Windows\System32\OpenSSH\ssh.exe"),
-            std::path::PathBuf::from(r"C:\Windows\Sysnative\OpenSSH\ssh.exe"),
-            std::path::Path::new(&program_files)
-                .join("Git")
-                .join("usr")
-                .join("bin")
-                .join("ssh.exe"),
-            std::path::Path::new(&program_files_x86)
-                .join("Git")
-                .join("usr")
-                .join("bin")
-                .join("ssh.exe"),
-        ]
-        .into_iter()
-        .filter(|p| p.exists())
-        .collect();
-
-        if let Some(path) = candidates.into_iter().next() {
-            return path.to_string_lossy().to_string();
-        }
-    }
-
-    // Nothing resolved — return bare name, hope for the best
-    "ssh".to_string()
-}
-
 /// How the caller should construct the SSH transport.
+/// Direct exec only — no shell dependency. Host-key verification is disabled
+/// via `~/.ssh/config` written by `ensure_ssh_host_config`.
 #[derive(Clone, Debug)]
 pub(crate) enum SshMode {
-    /// Use grit-lib's default: resolve from environment (`GIT_SSH_COMMAND`, `GIT_SSH`, `ssh`).
-    #[expect(
-        dead_code,
-        reason = "variant kept for API completeness; no caller selects it yet"
-    )]
-    Default,
-    /// Use `SshCommand::ShellCommand` — runs via `sh -c`. Requires a POSIX shell.
-    /// Constructed only by non-Windows callers: dead under the `windows` target,
-    /// alive otherwise — hence the target-gated expectation.
-    #[cfg_attr(
-        windows,
-        expect(dead_code, reason = "no Windows caller constructs the sh -c transport")
-    )]
-    ShellCommand(String),
-    /// Use `SshCommand::Program` — direct exec, no shell. Works on Windows.
-    /// The vector holds the full argv: `["ssh.exe", "-i", "/path/to/key"]`.
+    /// Direct `ssh` binary execution.
     Program(Vec<std::ffi::OsString>),
 }
 
 /// Build the SSH transport mode from environment and optional SSH key path.
-///
-/// Priority: `GIT_SSH` env > resolved `ssh` path from PATH / common locations.
-/// Environment variables take precedence so the user can override config at runtime
-/// (e.g. for testing different keys or proxies).
-///
-/// On Unix, returns `ShellCommand("ssh -o StrictHostKeyChecking=no")` so the host-key
-/// prompt is skipped in headless mode.
-///
-/// On Windows, returns `Program([ssh.exe, -i, key_path])`. Host-key verification is
-/// disabled by writing `~/.ssh/config` with `StrictHostKeyChecking no` (see
-/// `ensure_ssh_host_config`). `GIT_SSH_COMMAND` is unsupported on Windows because
-/// grit-lib runs it via `sh -c` which requires a POSIX shell.
+/// Direct exec (`Program`) everywhere — the key is wired via `~/.ssh/config`
+/// (`ensure_ssh_host_config`). `GIT_SSH_COMMAND` is unsupported (required `sh -c`).
 pub(crate) fn build_ssh_shell_command(_ssh_key_path: Option<&str>) -> SshMode {
     if let Ok(cmd) = std::env::var("GIT_SSH")
         && !cmd.is_empty()
@@ -173,161 +74,12 @@ pub(crate) fn build_ssh_shell_command(_ssh_key_path: Option<&str>) -> SshMode {
     if let Ok(cmd) = std::env::var("GIT_SSH_COMMAND")
         && !cmd.is_empty()
     {
-        debug!(
-            "Ignoring GIT_SSH_COMMAND (shell command lines are not supported without sh); \
-                 use GIT_SSH or ~/.ssh/config instead"
-        );
+        debug!("Ignoring GIT_SSH_COMMAND (shell command lines not supported)");
     }
-    #[cfg(windows)]
-    {
-        let ssh_bin = resolve_ssh_path();
-        // SshCommand::Program only accepts the binary path; -i and key path
-        // cannot be passed as args. The key is wired via IdentityFile in
-        // ~/.ssh/config by ensure_ssh_host_config() instead.
-        debug!("Resolved ssh path on Windows: {}", ssh_bin,);
-        SshMode::Program(vec![ssh_bin.into()])
-    }
-    #[cfg(not(windows))]
-    {
-        let mut cmd = "ssh -o StrictHostKeyChecking=no".to_string();
-        if let Some(key) = _ssh_key_path {
-            cmd.push_str(&format!(" -i {}", shell_escape(key)));
-        }
-        SshMode::ShellCommand(cmd)
-    }
-}
-
-/// Escape a path for safe inclusion in a shell command string.
-#[cfg(not(windows))]
-fn shell_escape(s: &str) -> String {
-    format!("'{}'", s.replace('\\', "\\\\").replace('\'', "'\\''"))
-}
-
-/// HTTP client implementing grit-lib's `HttpClient` trait with GitHub token auth.
-/// Not `Sync` — constructed inside a single `spawn_blocking` closure and never
-/// shared across threads. Restoring `Mutex` would be needed if concurrent use
-/// is introduced in the future.
-pub struct AuthHttpClient {
-    client: reqwest::blocking::Client,
-    token: Option<Zeroizing<String>>,
-}
-
-impl AuthHttpClient {
-    /// Create with default timeouts (backward compatible)
-    pub fn new(token: Option<Zeroizing<String>>) -> Result<Self> {
-        Self::with_timeouts(token, 120, 30)
-    }
-
-    /// Create with custom timeouts
-    pub fn with_timeouts(
-        token: Option<Zeroizing<String>>,
-        http_timeout_secs: u64,
-        connect_timeout_secs: u64,
-    ) -> Result<Self> {
-        let client = reqwest::blocking::Client::builder()
-            .user_agent("sigmacatch/0.3.0")
-            .timeout(std::time::Duration::from_secs(http_timeout_secs))
-            .connect_timeout(std::time::Duration::from_secs(connect_timeout_secs))
-            .redirect(reqwest::redirect::Policy::limited(10))
-            .build()
-            .map_err(|e| RepoError::Transport(format!("http client build: {e}")))?;
-        Ok(Self { client, token })
-    }
-
-    fn add_auth(&self, url: &str) -> String {
-        if let Some(t) = self.token.as_deref()
-            && url.starts_with("https://")
-            && let Some(rest) = url.strip_prefix("https://")
-        {
-            return format!("https://x-access-token:{t}@{rest}");
-        }
-        url.to_string()
-    }
-}
-
-impl grit_lib::remote::transport::http::HttpClient for AuthHttpClient {
-    /// Negotiate git protocol v2 for every HTTP request.
-    ///
-    /// grit's `http_fetch` passes `client.git_protocol_header()` into the
-    /// `info/refs` discovery GET. Without an override it sends `None`, so the
-    /// server (GitHub) falls back to a v0/v1 advertisement that enumerates
-    /// *every* remote ref — wasteful here, and it defeats the `ref-prefix`
-    /// narrowing that the narrow refspecs rely on under v2. Requesting v2
-    /// makes grit issue a scoped `command=ls-refs` with `ref-prefix` lines
-    /// derived from the refspecs, and use the v2 pack-negotiation path. With
-    /// the Sigma repo (very large), this materially cuts clone/fetch time.
-    fn git_protocol_header(&self) -> Option<&str> {
-        Some("version=2")
-    }
-
-    fn get(&self, url: &str, git_protocol: Option<&str>) -> grit_lib::error::Result<Vec<u8>> {
-        let auth_url = self.add_auth(url);
-        debug!(
-            "[HTTP GET] {} (protocol={:?})",
-            sanitize_url(&auth_url),
-            git_protocol
-        );
-        let mut req = self.client.get(&auth_url);
-        if let Some(proto) = git_protocol {
-            req = req.header("Git-Protocol", proto);
-        }
-        let resp = req
-            .send()
-            .map_err(|e| grit_lib::error::Error::Message(e.to_string()))?;
-        let status = resp.status();
-        debug!("[HTTP GET] {} → {}", sanitize_url(&auth_url), status);
-        if !status.is_success() {
-            return Err(grit_lib::error::Error::Message(format!(
-                "HTTP GET {}: {}",
-                status, url
-            )));
-        }
-        resp.bytes()
-            .map(|b| b.to_vec())
-            .map_err(|e| grit_lib::error::Error::Message(e.to_string()))
-    }
-
-    fn post(
-        &self,
-        url: &str,
-        content_type: &str,
-        accept: &str,
-        body: &[u8],
-        git_protocol: Option<&str>,
-    ) -> grit_lib::error::Result<Vec<u8>> {
-        let auth_url = self.add_auth(url);
-        debug!(
-            "[HTTP POST] {} body={}B content_type={} accept={} protocol={:?}",
-            sanitize_url(&auth_url),
-            body.len(),
-            content_type,
-            accept,
-            git_protocol
-        );
-        let mut req = self
-            .client
-            .post(&auth_url)
-            .header("Content-Type", content_type)
-            .header("Accept", accept);
-        if let Some(proto) = git_protocol {
-            req = req.header("Git-Protocol", proto);
-        }
-        let resp = req
-            .body(body.to_vec())
-            .send()
-            .map_err(|e| grit_lib::error::Error::Message(e.to_string()))?;
-        let status = resp.status();
-        debug!("[HTTP POST] {} → {}", sanitize_url(&auth_url), status);
-        if !status.is_success() {
-            return Err(grit_lib::error::Error::Message(format!(
-                "HTTP POST {}: {}",
-                status, url
-            )));
-        }
-        resp.bytes()
-            .map(|b| b.to_vec())
-            .map_err(|e| grit_lib::error::Error::Message(e.to_string()))
-    }
+    // Direct binary execution — no OS-resolving dependency. The `ssh` binary is
+    // provided by the runtime environment: OpenSSH on Linux/macOS, the Windows
+    // OpenSSH client (shipped since Windows 10) or Git for Windows on Windows.
+    SshMode::Program(vec![std::ffi::OsString::from("ssh")])
 }
 
 /// Ensure `~/.ssh/config` disables host-key verification and points to the
@@ -344,7 +96,7 @@ impl grit_lib::remote::transport::http::HttpClient for AuthHttpClient {
 ///
 /// The function is idempotent: if the config already contains the required
 /// directives it returns `Ok(())` immediately.
-pub fn ensure_ssh_host_config(ssh_key_path: Option<&str>) -> Result<()> {
+pub fn ensure_ssh_host_config(ssh_key_path: Option<&str>) -> crate::repo::Result<()> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_default();
@@ -404,7 +156,6 @@ pub fn ensure_ssh_host_config(ssh_key_path: Option<&str>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grit_lib::remote::transport::http::HttpClient;
 
     #[test]
     fn test_sanitize_url_with_at() {
@@ -424,23 +175,6 @@ mod tests {
     fn test_sanitize_url_empty() {
         let result = sanitize_url("");
         assert_eq!(result, "");
-    }
-
-    /// Protocol v2 must be advertised on every HTTP request — without it GitHub
-    /// serves a v0/v1 full advertisement, which (a) enumerates every remote ref
-    /// and (b) defeats the `ref-prefix` narrowing our narrow refspecs depend on,
-    /// making clones of the large Sigma repo needlessly slow.
-    #[test]
-    fn test_git_protocol_header_negotiates_v2() {
-        let client = AuthHttpClient::new(None).unwrap();
-        assert_eq!(client.git_protocol_header(), Some("version=2"));
-    }
-
-    #[test]
-    fn test_transport_display() {
-        assert_eq!(GitTransport::Http.to_string(), "http");
-        assert_eq!(GitTransport::Ssh.to_string(), "ssh");
-        assert_eq!(GitTransport::default(), GitTransport::Http);
     }
 
     #[test]
@@ -502,77 +236,22 @@ mod tests {
         }
     }
 
-    /// Serde round-trip keeps the lowercase wire format used in `config.yaml`.
-    #[test]
-    fn test_transport_serde_round_trip() {
-        let ssh: GitTransport = serde_yaml::from_str("ssh").unwrap();
-        assert_eq!(ssh, GitTransport::Ssh);
-        let http: GitTransport = serde_yaml::from_str("http").unwrap();
-        assert_eq!(http, GitTransport::Http);
-    }
+    // Shared with the porcelain tests: Rust test threads share one environment,
+    // so every test that mutates `GIT_SSH`/`HOME` takes this lock.
+    use crate::repo::tests::ENV_LOCK;
 
     #[test]
-    fn test_add_auth_prefixes_token_on_https_only() {
-        let no_token = AuthHttpClient::new(None).unwrap();
-        assert_eq!(
-            no_token.add_auth("https://github.com/u/r.git/info/refs"),
-            "https://github.com/u/r.git/info/refs"
-        );
-
-        let token = AuthHttpClient::new(Some(Zeroizing::new("tok123".to_string()))).unwrap();
-        assert_eq!(
-            token.add_auth("https://github.com/u/r.git/info/refs"),
-            "https://x-access-token:tok123@github.com/u/r.git/info/refs"
-        );
-        // Non-HTTPS URLs are never rewritten.
-        assert_eq!(
-            token.add_auth("http://localhost:4000/u/r.git"),
-            "http://localhost:4000/u/r.git"
-        );
-    }
-
-    /// Serializes every test that mutates process environment variables
-    /// (`GIT_SSH`, `HOME`, …): Rust test threads share one environment.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[test]
-    fn test_build_ssh_shell_command_default_unix() {
+    fn test_build_ssh_shell_command_unix_is_program() {
         let _guard = ENV_LOCK.lock().unwrap();
         unsafe {
             std::env::remove_var("GIT_SSH");
             std::env::remove_var("GIT_SSH_COMMAND");
         }
         let mode = build_ssh_shell_command(None);
-        #[cfg(not(windows))]
-        {
-            match &mode {
-                SshMode::ShellCommand(cmd) => {
-                    assert_eq!(cmd, "ssh -o StrictHostKeyChecking=no")
-                }
-                other => panic!("expected ShellCommand, got {other:?}"),
-            }
-        }
-        #[cfg(windows)]
-        {
-            assert!(matches!(mode, SshMode::Program(_)));
-        }
-    }
-
-    #[test]
-    #[cfg(not(windows))]
-    fn test_build_ssh_shell_command_escapes_key_path() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        unsafe { std::env::remove_var("GIT_SSH") };
-        let mode = build_ssh_shell_command(Some("/tmp/a b/c's key"));
-        match &mode {
-            SshMode::ShellCommand(cmd) => {
-                assert_eq!(
-                    cmd,
-                    "ssh -o StrictHostKeyChecking=no -i '/tmp/a b/c'\\''s key'"
-                )
-            }
-            other => panic!("expected ShellCommand, got {other:?}"),
-        }
+        assert!(
+            matches!(mode, SshMode::Program(_)),
+            "Unix must use direct Program, not sh -c: {mode:?}"
+        );
     }
 
     #[test]
@@ -586,7 +265,6 @@ mod tests {
             SshMode::Program(args) => {
                 assert_eq!(args, &vec![std::ffi::OsString::from("/usr/bin/fake-ssh")]);
             }
-            other => panic!("expected Program, got {other:?}"),
         }
         unsafe { std::env::remove_var("GIT_SSH") };
     }
@@ -660,14 +338,5 @@ mod tests {
             content.contains("StrictHostKeyChecking no"),
             "got:\n{content}"
         );
-    }
-
-    #[test]
-    #[cfg(not(windows))]
-    fn test_shell_escape() {
-        assert_eq!(shell_escape("/tmp/key"), "'/tmp/key'");
-        assert_eq!(shell_escape("/a b/c"), "'/a b/c'");
-        assert_eq!(shell_escape("/a'b/c"), "'/a'\\''b/c'");
-        assert_eq!(shell_escape("/a\\b/c"), "'/a\\\\b/c'");
     }
 }

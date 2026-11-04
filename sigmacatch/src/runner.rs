@@ -105,20 +105,20 @@ pub async fn bootstrap_repo_regression(
     config: &Config,
     sigma_repo_path: &Path,
 ) -> Result<(SigmaRepo, String, SigmahqRegression)> {
-    let fork_url = format!("https://github.com/{}/sigma", config.git.author);
+    let fork_url = config
+        .git
+        .fork_repo_url
+        .clone()
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| format!("git@github.com:{}/sigma.git", config.git.author));
     let mut sigma_repo = SigmaRepo::new();
     sigma_repo.set_repo_path(sigma_repo_path.to_path_buf());
     sigma_repo.set_info_user(&config.git.author, &config.git.email);
+    sigma_repo.set_info_ssh(config.git.ssh_key_path.as_deref());
+    sigma_repo.set_fork_url(fork_url.clone());
 
-    match config.git.transport {
-        crate::config::GitTransport::Http => sigma_repo.set_info_http(&config.git.github_token),
-        crate::config::GitTransport::Ssh => {
-            sigma_repo.set_info_ssh(config.git.ssh_key_path.as_deref())
-        }
-    };
-
-    if matches!(config.git.transport, crate::config::GitTransport::Ssh)
-        && config.git.needs_network()
+    if config.git.needs_network()
         && let Err(e) = crate::repo::ensure_ssh_host_config(config.git.ssh_key_path.as_deref())
     {
         warn!("Failed to write SSH host-config: {e}");
@@ -132,10 +132,8 @@ pub async fn bootstrap_repo_regression(
     sigma_repo.set_clone_optimizations(
         config.git.shallow_clone,
         config.git.sparse_checkout,
-        config.git.partial_clone,
         config.git.clone_timeout_secs,
         config.git.fetch_timeout_secs,
-        config.git.http_timeout_secs,
         config.git.max_retries,
     );
 
@@ -145,7 +143,7 @@ pub async fn bootstrap_repo_regression(
         );
     }
     if config.git.is_contrib() {
-        info!("Contrib mode: push enabled — will push to remote fork");
+        info!("Contrib mode: push enabled — will push to {fork_url}");
     } else {
         info!("No-contrib mode: push disabled — commits will be local only");
     }
@@ -156,7 +154,9 @@ pub async fn bootstrap_repo_regression(
     };
     info!("Branch name: {branch_name}");
 
-    sigma_repo.set_remote_url(fork_url).await?;
+    sigma_repo
+        .set_remote_url(config.git.sigma_repo_url.clone())
+        .await?;
     sigma_repo.set_working_branch(branch_name.clone())?;
     sigma_repo.check_remote_working_branch()?;
 

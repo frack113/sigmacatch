@@ -182,7 +182,7 @@ sigmacatch [OPTIONS]
 ```
 
 `--dry-run` s'exécute **avant** l'initialisation du logger : il ne crée ni `config.yaml`
-ni `logs/`, saute la validation git (author/email/token) et se limite au chargement des
+ni `logs/`, saute la validation git (author/email/clé SSH) et se limite au chargement des
 règles de `./sigma` + à la construction du moteur de détection.
 
 ---
@@ -201,7 +201,7 @@ Une sous-commande inconnue ou absente → `sigmacatch` démarre sa boucle de col
 config.
 
 > **Prérequis commun :** chaque sous-commande charge `config.yaml` via `Config::load`, qui
-> exécute la validation **complète** (git.author/email/token compris) — pas seulement la
+> exécute la validation **complète** (git.author/email/clé SSH comprise) — pas seulement la
 > section `filter`. Sur une machine neuve avec le `config.yaml` par défaut, une
 > sous-commande diagnostic peut donc échouer sur une erreur git avant d'atteindre son
 > propre travail.

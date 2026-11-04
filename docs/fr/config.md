@@ -13,20 +13,17 @@ inconnus sont rejetés.
 git:
   author: "sigmacatch"          # PLACEHOLDER — remplacez par votre nom d'utilisateur GitHub avant le run suivant
   email: ""                     # requis (toute valeur non vide contenant @)
-  github_token: ""              # token GitHub (ou variable d'environnement GITHUB_TOKEN) — voir validation
-  transport: http               # http ou ssh
-  ssh_key_path: ""              # chemin absolu vers une clé privée SSH (uniquement avec transport: ssh)
-  sigma_repo_url: "https://github.com/SigmaHQ/sigma.git"
+  fork_repo_url: ""             # URL SSH de votre fork ; défaut git@github.com:<author>/sigma.git
+  ssh_key_path: ""              # chemin absolu vers une clé privée SSH (vide = agent SSH)
+  sigma_repo_url: "git@github.com:SigmaHQ/sigma.git"   # SSH uniquement
   sigma_repo_path: "sigma"      # chemin du clone local ; les chemins relatifs se résolvent depuis le dossier du config
   offline: false                # true = zéro opération git (pas de pull/clone/commit/push)
   contrib: false                # true = pousser les commits vers votre fork distant
   working_branch: ""            # branche de travail optionnelle ; défaut sigmacatch/<AAAAJJMM>
   shallow_clone: true           # clone initial depth=1 (rapide), unshallow avant push (défaut true)
   sparse_checkout: true         # sparse checkout mode cône : rules/, rules-emerging-threats/, regression_data/ (défaut true)
-  partial_clone: false          # filtre blobless (--filter=blob:none) pour le clone initial (défaut false)
   clone_timeout_secs: 600       # timeout global du clone (secondes)
   fetch_timeout_secs: 300       # timeout fetch/pull (secondes)
-  http_timeout_secs: 120        # timeout HTTP par requête (secondes)
   max_retries: 3                # max tentatives de retry pour échecs transitoires
 log:
   level_file: debug             # debug | info | warn | error
@@ -49,20 +46,17 @@ stop_file: ".sigmacatch.stop"   # créez ce fichier pour arrêter proprement un 
 |---|---|---|
 | `author` | `sigmacatch` | Nom d'utilisateur GitHub. Le placeholder `sigmacatch` est rejeté ; alphanumérique + tirets uniquement. Requis sauf `offline: true`. |
 | `email` | `""` | Email de commit. Doit contenir `@`. Requis sauf `offline: true`. |
-| `github_token` | `""` | Token GitHub, ou variable d'environnement `GITHUB_TOKEN`. Requis pour `transport: http` quand une opération réseau est active (`offline: false` ou `contrib: true`). Pas d'espaces. |
-| `transport` | `http` | Transport git : `http` ou `ssh`. |
-| `ssh_key_path` | *(défaut)* | Chemin absolu vers une clé privée SSH (ed25519). Uniquement avec `transport: ssh` ; doit exister et être un fichier quand une opération réseau est active. `chmod 600` recommandé. |
-| `sigma_repo_url` | `https://github.com/SigmaHQ/sigma.git` | Dépôt SigmaHQ à cloner/récupérer. |
+| `fork_repo_url` | `git@github.com:<author>/sigma.git` | URL SSH de votre fork : cible du push et source des branches `sigmacatch/*` en attente. Doit être une URL SSH. |
+| `ssh_key_path` | *(défaut)* | Chemin absolu vers une clé privée SSH (ed25519). Vide = agent SSH. Doit exister et être un fichier quand une opération réseau est active. `chmod 600` recommandé. |
+| `sigma_repo_url` | `git@github.com:SigmaHQ/sigma.git` | Dépôt SigmaHQ à cloner/récupérer. SSH uniquement — une URL `https://` est rejetée au démarrage. |
 | `sigma_repo_path` | `sigma` | Chemin du clone local. Les chemins relatifs se résolvent depuis le dossier du fichier de configuration ; ne doit pas être vide ni contenir `..`. |
 | `offline` | `false` | Ignore toutes les opérations git (pas de pull/clone/commit/push). Les fichiers sur disque sont utilisés tels quels (`.git` optionnel). **Neutralise `contrib`** (forcé à `false`). |
 | `contrib` | `false` | Pousse les commits vers votre fork distant. Neutralisé par `offline: true`. |
 | `working_branch` | *(défaut)* | Nom de la branche de travail. Quand vide, la branche par défaut `sigmacatch/<AAAAJJMM>` est utilisée. |
 | `shallow_clone` | `true` | Clone initial depth=1 (rapide), unshallow avant push. Mettre `false` pour historique complet. |
 | `sparse_checkout` | `true` | Sparse checkout mode cône : rules/, rules-emerging-threats/, regression_data/. `false` = worktree complet. |
-| `partial_clone` | `false` | Filtre blobless (`--filter=blob:none --depth=1`) pour le clone initial. Nécessite le CLI git. Repli sur shallow clone avec avertissement. |
 | `clone_timeout_secs` | `600` | Timeout global du clone en secondes. Doit être >0 et ≤3600. |
 | `fetch_timeout_secs` | `300` | Timeout fetch/pull en secondes. Doit être >0 et ≤1800. |
-| `http_timeout_secs` | `120` | Timeout HTTP par requête en secondes. Doit être >0 et ≤600. |
 | `max_retries` | `3` | Max tentatives de retry pour échecs transitoires. Doit être ≤10. |
 
 ## log
