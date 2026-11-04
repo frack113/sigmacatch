@@ -3,7 +3,7 @@
 
 //! Fetch from remote over SSH.
 
-use crate::repo::Result;
+use crate::repo::{RepoError, Result};
 use grit_lib::progress::{NeverCancel, ProgressSink};
 use grit_lib::remote::fetch::Progress;
 use grit_lib::remote::transfer::{FetchDepth, FetchOptions, TagMode};
@@ -11,7 +11,7 @@ use std::path::Path;
 use tracing::info;
 
 use super::refs::map_grit;
-use grit_lib::remote::transport::{ConnectOptions, SshTransport, Transport};
+use grit_lib::remote::transport::{ConnectOptions, Connection, SshTransport, Transport};
 
 use crate::repo::transport::SshMode;
 
@@ -106,25 +106,52 @@ pub(crate) fn fetch_options_for_unshallow(branches: &[&str]) -> FetchOptions {
     }
 }
 
-/// Fetch from remote over SSH.
-pub fn fetch_remote(
-    git_dir: &Path,
-    repo_url: &str,
-    ssh_mode: &SshMode,
-    opts: &FetchOptions,
-) -> Result<(usize, Option<String>)> {
-    info!("Fetching via SSH from {}", repo_url);
+/// Connect to the remote over SSH and return a live connection positioned
+/// just past the ref advertisement.
+pub fn connect_ssh(repo_url: &str, ssh_mode: &SshMode) -> Result<Box<dyn Connection>> {
     let SshMode::Program(args) = ssh_mode;
     let transport = SshTransport::with_program(args[0].clone());
-    let mut conn = map_grit(transport.connect(
+    map_grit(transport.connect(
         repo_url,
         grit_lib::remote::transport::Service::UploadPack,
         &ConnectOptions::default(),
-    ))?;
+    ))
+}
+
+/// Connect to the remote over SSH and report the branch its `HEAD` symref
+/// points at — the branch a clone must check out.
+///
+/// The connection is returned so the caller can fetch through it: the
+/// advertisement was already read on connect, and a second handshake would be
+/// wasted. The remote's advertised default branch is authoritative: grit-lib
+/// resolves explicit fetch refspecs strictly, so requesting a branch the
+/// remote does not have fails the whole fetch with `SourceNotFound`.
+pub fn connect_with_default_branch(
+    repo_url: &str,
+    ssh_mode: &SshMode,
+) -> Result<(Box<dyn Connection>, String)> {
+    let conn = connect_ssh(repo_url, ssh_mode)?;
+    let head = conn.head_symref().map(str::to_string);
+    match head {
+        Some(sym) if sym.starts_with("refs/heads/") => {
+            Ok((conn, sym.strip_prefix("refs/heads/").unwrap().to_string()))
+        }
+        _ => Err(RepoError::State(format!(
+            "Remote {repo_url} advertised no HEAD branch — cannot determine its default branch"
+        ))),
+    }
+}
+
+/// Fetch from a live SSH connection whose advertisement was already read.
+pub fn fetch_remote_on(
+    git_dir: &Path,
+    conn: &mut dyn Connection,
+    opts: &FetchOptions,
+) -> Result<(usize, Option<String>)> {
     let mut opts = opts.clone();
     let outcome = map_grit(grit_lib::remote::fetch::fetch_remote(
         git_dir,
-        &mut *conn,
+        conn,
         &mut opts,
         &mut LogProgress,
         &NeverCancel,
@@ -136,6 +163,18 @@ pub fn fetch_remote(
         outcome.default_branch.as_deref().unwrap_or("unknown")
     );
     Ok((count, outcome.default_branch))
+}
+
+/// Fetch from remote over SSH (connects, then fetches).
+pub fn fetch_remote(
+    git_dir: &Path,
+    repo_url: &str,
+    ssh_mode: &SshMode,
+    opts: &FetchOptions,
+) -> Result<(usize, Option<String>)> {
+    info!("Fetching via SSH from {}", repo_url);
+    let mut conn = connect_ssh(repo_url, ssh_mode)?;
+    fetch_remote_on(git_dir, &mut *conn, opts)
 }
 
 #[cfg(test)]
@@ -218,6 +257,20 @@ mod tests {
         let err = fetch_remote(&git_dir, "git@github.com:u/r.git", &mode, &opts)
             .unwrap_err()
             .to_string();
+        assert!(!err.is_empty());
+    }
+
+    /// Default-branch discovery fails at connect when the ssh binary is
+    /// missing — the error must be actionable, not a refspec failure.
+    #[test]
+    fn connect_with_default_branch_fails_at_connect_with_missing_binary() {
+        let mode = SshMode::Program(vec![std::ffi::OsString::from("/nonexistent/ssh")]);
+        // `Ok` carries a `Box<dyn Connection>` that is not `Debug`, so no
+        // `unwrap_err` — match instead.
+        let err = match connect_with_default_branch("git@github.com:u/r.git", &mode) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("expected a connect failure"),
+        };
         assert!(!err.is_empty());
     }
 }

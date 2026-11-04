@@ -9,15 +9,12 @@ use tracing::{info, warn};
 
 use crate::repo::plumbing::{
     add_directory_to_index, add_file_to_index, add_tree_to_index, checkout_main_branch,
-    commit_tree, fast_forward_branch, fetch_options_for_branches, fetch_options_for_shallow_clone,
-    fetch_options_for_unshallow, fetch_remote, init_repo, open_odb, read_remote_url_from_config,
-    resolve_head, set_head_after_fetch, setup_sparse_checkout, symbolic_ref_target, write_index,
+    commit_tree, connect_with_default_branch, fast_forward_branch, fetch_options_for_branches,
+    fetch_options_for_shallow_clone, fetch_options_for_unshallow, fetch_remote, fetch_remote_on,
+    init_repo, open_odb, read_remote_url_from_config, resolve_head, set_head_after_fetch,
+    setup_sparse_checkout, symbolic_ref_target, write_index,
 };
 use crate::repo::transport::{build_ssh_shell_command, https_to_ssh_url};
-
-/// Default branches fetched on clone. Sigmacatch only ever uses the default
-/// branch; `main` is the alternative in case `master` is not the default.
-const DEFAULT_BRANCHES: &[&str] = &["master", "main"];
 
 /// Branch name (e.g. `master`) that HEAD currently points at, when HEAD is on
 /// a symbolic ref. Returns `None` for a detached HEAD.
@@ -36,9 +33,17 @@ pub(crate) fn git_clone(url: &str, dest: &Path, ssh_key_path: Option<&str>) -> R
 
     info!("Cloning via SSH into {:?}", dest);
     init_repo(&git_dir, dest, url)?;
-    let opts = fetch_options_for_branches(DEFAULT_BRANCHES);
     let ssh_mode = build_ssh_shell_command(ssh_key_path);
-    let (count, default_branch) = match fetch_remote(&git_dir, url, &ssh_mode, &opts) {
+    let (mut conn, default_branch) = match connect_with_default_branch(url, &ssh_mode) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&git_dir);
+            return Err(e);
+        }
+    };
+    info!("Remote default branch: {default_branch}");
+    let opts = fetch_options_for_branches(&[default_branch.as_str()]);
+    let (count, default_branch) = match fetch_remote_on(&git_dir, &mut *conn, &opts) {
         Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_dir_all(&git_dir);
@@ -85,9 +90,17 @@ pub(crate) fn git_clone_shallow(
         setup_sparse_checkout(&git_dir)?;
     }
 
-    let opts = fetch_options_for_shallow_clone(DEFAULT_BRANCHES);
     let ssh_mode = build_ssh_shell_command(ssh_key_path);
-    let (count, default_branch) = match fetch_remote(&git_dir, url, &ssh_mode, &opts) {
+    let (mut conn, default_branch) = match connect_with_default_branch(url, &ssh_mode) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&git_dir);
+            return Err(e);
+        }
+    };
+    info!("Remote default branch: {default_branch}");
+    let opts = fetch_options_for_shallow_clone(&[default_branch.as_str()]);
+    let (count, default_branch) = match fetch_remote_on(&git_dir, &mut *conn, &opts) {
         Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_dir_all(&git_dir);

@@ -21,8 +21,9 @@ pub(crate) use checkout::{checkout_main_branch, open_odb};
 pub(crate) use clone::setup_sparse_checkout;
 pub(crate) use commit::commit_tree;
 pub(crate) use fetch::{
-    fetch_options_for_branches, fetch_options_for_shallow_clone,
+    connect_with_default_branch, fetch_options_for_branches, fetch_options_for_shallow_clone,
     fetch_options_for_sigmacatch_namespace, fetch_options_for_unshallow, fetch_remote,
+    fetch_remote_on,
 };
 pub(crate) use index::{add_directory_to_index, add_file_to_index, add_tree_to_index, write_index};
 pub(crate) use init::init_repo;
