@@ -5,6 +5,7 @@
 
 use crate::repo::{RepoError, Result};
 use std::path::Path;
+use std::time::Instant;
 use tracing::{info, warn};
 
 use crate::repo::plumbing::{
@@ -15,6 +16,15 @@ use crate::repo::plumbing::{
     setup_sparse_checkout, symbolic_ref_target, write_index,
 };
 use crate::repo::transport::{build_ssh_shell_command, https_to_ssh_url};
+
+/// Format a `Duration` for log lines: `512 ms` under a second, `1.23 s` above.
+fn fmt_dur(d: std::time::Duration) -> String {
+    if d >= std::time::Duration::from_secs(1) {
+        format!("{:.2} s", d.as_secs_f64())
+    } else {
+        format!("{} ms", d.as_millis())
+    }
+}
 
 /// Branch name (e.g. `master`) that HEAD currently points at, when HEAD is on
 /// a symbolic ref. Returns `None` for a detached HEAD.
@@ -32,6 +42,7 @@ pub(crate) fn git_clone(url: &str, dest: &Path, ssh_key_path: Option<&str>) -> R
     }
 
     info!("Cloning via SSH into {:?}", dest);
+    let started = Instant::now();
     init_repo(&git_dir, dest, url)?;
     let ssh_mode = build_ssh_shell_command(ssh_key_path);
     let (mut conn, default_branch) = match connect_with_default_branch(url, &ssh_mode) {
@@ -41,7 +52,10 @@ pub(crate) fn git_clone(url: &str, dest: &Path, ssh_key_path: Option<&str>) -> R
             return Err(e);
         }
     };
-    info!("Remote default branch: {default_branch}");
+    info!(
+        "Remote default branch: {default_branch} (connect {})",
+        fmt_dur(started.elapsed())
+    );
     let opts = fetch_options_for_branches(&[default_branch.as_str()]);
     let (count, default_branch) = match fetch_remote_on(&git_dir, &mut *conn, &opts) {
         Ok(r) => r,
@@ -56,13 +70,16 @@ pub(crate) fn git_clone(url: &str, dest: &Path, ssh_key_path: Option<&str>) -> R
             "No refs fetched from remote via SSH — empty or unreachable repository".to_string(),
         ));
     }
+    info!("Fetch done in {}", fmt_dur(started.elapsed()));
 
     set_head_after_fetch(&git_dir, default_branch.as_deref());
 
     checkout_main_branch(&git_dir, dest)?;
+    info!("Checkout done in {}", fmt_dur(started.elapsed()));
 
     crate::repo::plumbing::pack_loose_objects(&git_dir)?;
 
+    info!("Clone finished in {}", fmt_dur(started.elapsed()));
     Ok(())
 }
 
@@ -83,6 +100,7 @@ pub(crate) fn git_clone_shallow(
         "Cloning via SSH into {:?} (shallow, sparse={})",
         dest, sparse_checkout
     );
+    let started = Instant::now();
     init_repo(&git_dir, dest, url)?;
 
     // Configure sparse checkout before fetch if requested
@@ -98,7 +116,10 @@ pub(crate) fn git_clone_shallow(
             return Err(e);
         }
     };
-    info!("Remote default branch: {default_branch}");
+    info!(
+        "Remote default branch: {default_branch} (connect {})",
+        fmt_dur(started.elapsed())
+    );
     let opts = fetch_options_for_shallow_clone(&[default_branch.as_str()]);
     let (count, default_branch) = match fetch_remote_on(&git_dir, &mut *conn, &opts) {
         Ok(r) => r,
@@ -113,13 +134,16 @@ pub(crate) fn git_clone_shallow(
             "No refs fetched from remote via SSH — empty or unreachable repository".to_string(),
         ));
     }
+    info!("Fetch done in {}", fmt_dur(started.elapsed()));
 
     set_head_after_fetch(&git_dir, default_branch.as_deref());
 
     checkout_main_branch(&git_dir, dest)?;
+    info!("Checkout done in {}", fmt_dur(started.elapsed()));
 
     crate::repo::plumbing::pack_loose_objects(&git_dir)?;
 
+    info!("Clone finished in {}", fmt_dur(started.elapsed()));
     Ok(())
 }
 

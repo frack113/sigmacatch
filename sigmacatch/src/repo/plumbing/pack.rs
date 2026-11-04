@@ -274,8 +274,11 @@ fn write_v2_index(idx_path: &Path, offsets: &[PackOffset], pack_checksum: &[u8])
 /// Scan for loose objects, build a pack + V2 index, write to `objects/pack/`,
 /// then delete the loose object files and their now-empty parent directories.
 ///
-/// Called after clone/fetch so the Sigma repo's ~131K loose objects are
-/// consolidated into a single compressed pack (47 MB vs 641 MB loose).
+/// Remote fetches install their received pack directly under `objects/pack/`
+/// (grit-lib's index-pack step), so this targets the loose objects written by
+/// local commits (`git_add`/`git_commit` write via `Odb::write`): called after
+/// clone/fetch/pull they consolidate those into a pack and keep the object
+/// store tidy across runs. Returns early when no loose objects exist.
 pub(crate) fn pack_loose_objects(git_dir: &Path) -> Result<()> {
     let objects_dir = git_dir.join("objects");
     let odb = crate::repo::plumbing::open_odb(git_dir);
