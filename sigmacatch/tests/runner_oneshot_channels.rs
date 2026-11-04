@@ -132,7 +132,7 @@ async fn resolved_channels_reach_the_collector_and_data_is_written() {
     std::fs::write(rules_dir.join("sshd.yml"), SSHD_RULE).expect("write rule");
 
     let config_yaml = format!(
-        "git:\n  author: runner-test\n  email: runner-test@example.com\n  github_token: dummy\n  sigma_repo_path: {}\n  offline: true\nfilter:\n  product: linux\n",
+        "git:\n  author: runner-test\n  email: runner-test@example.com\n  sigma_repo_path: {}\n  offline: true\nfilter:\n  product: linux\n",
         sigma.display()
     );
     std::fs::write(tmp.path().join("config.yaml"), config_yaml).expect("write config.yaml");

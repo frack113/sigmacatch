@@ -27,7 +27,7 @@ fn run_in(cwd: &Path, args: &[&str]) -> (i32, String) {
 /// Write a config.yaml whose sigma repo is the relative `sigma` dir and whose
 /// git section bypasses every network precondition.
 fn write_config(cwd: &Path) {
-    let yaml = "git:\n  author: check-test\n  email: check-test@example.com\n  github_token: dummy\n  sigma_repo_path: sigma\n  offline: true\n";
+    let yaml = "git:\n  author: check-test\n  email: check-test@example.com\n  sigma_repo_path: sigma\n  offline: true\n";
     std::fs::write(cwd.join("config.yaml"), yaml).expect("write config.yaml");
 }
 

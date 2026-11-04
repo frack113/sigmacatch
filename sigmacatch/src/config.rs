@@ -23,9 +23,6 @@ use serde::{Deserialize, Serialize};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
-/// Git transport protocol re-exported from sigmacatch-repo.
-pub use crate::repo::GitTransport;
-
 /// Errors produced by loading, saving or validating `config.yaml`.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -51,13 +48,12 @@ pub struct GitConfig {
     pub author: String,
     /// Email address for git commits.
     pub email: String,
-    /// GitHub token (or set GITHUB_TOKEN env var) — required for HTTP transport.
-    pub github_token: String,
-    /// Transport protocol: `http` (default) or `ssh`.
-    pub transport: GitTransport,
+    /// SSH URL of your fork (push target, and source of pending `sigmacatch/*`
+    /// branches). When unset, defaults to `git@github.com:<author>/sigma.git`.
+    pub fork_repo_url: Option<String>,
     /// Path to SSH private key (optional). If empty, uses default SSH agent.
     pub ssh_key_path: Option<String>,
-    /// Sigma repository URL to clone/fetch from.
+    /// Sigma repository URL to clone/fetch from. SSH only.
     #[serde(default = "default_sigma_repo_url")]
     pub sigma_repo_url: String,
     /// Local path to store the sigma repository.
@@ -86,19 +82,12 @@ pub struct GitConfig {
     /// Default: true (minimal disk I/O). Set to false for full worktree checkout.
     #[serde(default = "default_sparse_checkout")]
     pub sparse_checkout: bool,
-    /// Use partial clone with blobless filter (--filter=blob:none) for initial clone.
-    /// Default: false (uses shallow clone). Set to true to enable partial clone.
-    #[serde(default)]
-    pub partial_clone: bool,
     /// Overall clone timeout in seconds.
     #[serde(default = "default_clone_timeout")]
     pub clone_timeout_secs: u64,
     /// Fetch/pull timeout in seconds.
     #[serde(default = "default_fetch_timeout")]
     pub fetch_timeout_secs: u64,
-    /// Per-request HTTP timeout in seconds.
-    #[serde(default = "default_http_timeout")]
-    pub http_timeout_secs: u64,
     /// Maximum retry attempts for transient network failures.
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
@@ -128,16 +117,8 @@ fn default_fetch_timeout() -> u64 {
     300
 }
 
-fn default_http_timeout() -> u64 {
-    120
-}
-
 fn default_max_retries() -> u32 {
     3
-}
-
-fn default_partial_clone() -> bool {
-    false
 }
 
 impl GitConfig {
@@ -162,8 +143,7 @@ impl Default for GitConfig {
         Self {
             author: "sigmacatch".to_string(),
             email: String::new(),
-            github_token: String::new(),
-            transport: GitTransport::Http,
+            fork_repo_url: None,
             ssh_key_path: None,
             sigma_repo_url: default_sigma_repo_url(),
             sigma_repo_path: default_sigma_repo_path(),
@@ -172,10 +152,8 @@ impl Default for GitConfig {
             working_branch: None,
             shallow_clone: default_shallow_clone(),
             sparse_checkout: default_sparse_checkout(),
-            partial_clone: default_partial_clone(),
             clone_timeout_secs: default_clone_timeout(),
             fetch_timeout_secs: default_fetch_timeout(),
-            http_timeout_secs: default_http_timeout(),
             max_retries: default_max_retries(),
         }
     }
@@ -335,7 +313,32 @@ impl Config {
         }
 
         let yaml = std::fs::read_to_string(path)?;
-        serde_yaml::from_str(&yaml).map_err(|e| ConfigError::Format(e.to_string()))
+        Self::parse_yaml(&yaml)
+    }
+
+    /// Parse `config.yaml`, adding an actionable hint when a removed key is
+    /// still present (the HTTP + token transport no longer exists).
+    fn parse_yaml(yaml: &str) -> Result<Self> {
+        serde_yaml::from_str(yaml).map_err(|e| {
+            let mut msg = e.to_string();
+            if msg.contains("unknown field")
+                && [
+                    "github_token",
+                    "transport",
+                    "http_timeout_secs",
+                    "partial_clone",
+                ]
+                .iter()
+                .any(|key| msg.contains(key))
+            {
+                msg.push_str(
+                    "\n  The HTTP + token transport was removed: sigmacatch uses SSH only.\n  \
+                     Delete 'github_token', 'transport', 'http_timeout_secs' and 'partial_clone' \
+                     from the 'git:' block.",
+                );
+            }
+            ConfigError::Format(msg)
+        })
     }
 
     /// Load, normalize and validate a config file.
@@ -378,7 +381,7 @@ impl Config {
     pub fn load_for_dry_run(path: &PathBuf, cli: &CliArgs) -> Result<Self> {
         let mut config = if path.exists() {
             let yaml = std::fs::read_to_string(path)?;
-            serde_yaml::from_str::<Self>(&yaml).map_err(|e| ConfigError::Format(e.to_string()))?
+            Self::parse_yaml(&yaml)?
         } else {
             Self::default()
         };
@@ -436,7 +439,7 @@ impl Config {
     pub fn validate(&self) -> Result<()> {
         self.validate_git_credentials()?;
         self.validate_ssh_key()?;
-        self.validate_github_token()?;
+        self.validate_ssh_urls()?;
         self.validate_filter_settings()?;
         self.validate_regression_settings()?;
         self.validate_sigma_repo_path()?;
@@ -498,23 +501,23 @@ impl Config {
         let path = std::path::Path::new(key_path);
         if !path.is_absolute() {
             return Err(ConfigError::Invalid(format!(
-                "config: SSH key path '{}' is not absolute (transport={}); \
+                "config: SSH key path '{}' is not absolute; \
                  use a full path like /home/user/.ssh/id or C:\\Users\\user\\.ssh\\id",
-                key_path, self.git.transport
+                key_path
             )));
         }
         let meta = std::fs::metadata(key_path).map_err(|_| {
             ConfigError::Invalid(format!(
-                "config: SSH key path '{}' does not exist (transport={}); \
-                 remove ssh_key_path from config or switch to transport = http",
-                key_path, self.git.transport
+                "config: SSH key path '{}' does not exist; \
+                 remove ssh_key_path from config to use the SSH agent instead",
+                key_path
             ))
         })?;
         if !meta.is_file() {
             return Err(ConfigError::Invalid(format!(
-                "config: SSH key path '{}' is not a file (transport={}); \
-                 remove ssh_key_path from config or switch to transport = http",
-                key_path, self.git.transport
+                "config: SSH key path '{}' is not a file; \
+                 remove ssh_key_path from config to use the SSH agent instead",
+                key_path
             )));
         }
         #[cfg(unix)]
@@ -541,29 +544,29 @@ impl Config {
         Ok(())
     }
 
-    fn validate_github_token(&self) -> Result<()> {
-        // Token is only required for HTTP transport when a network operation
-        // is enabled (pull or push). Fully offline mode needs no token.
-        if self.git.transport != GitTransport::Http || !self.git.needs_network() {
-            return Ok(());
+    /// Reject an HTTPS URL with an actionable message: the HTTP + token
+    /// transport was removed, so only SSH URLs are accepted.
+    fn validate_ssh_urls(&self) -> Result<()> {
+        Self::validate_ssh_url("sigma_repo_url", &self.git.sigma_repo_url)?;
+        if let Some(url) = &self.git.fork_repo_url {
+            Self::validate_ssh_url("fork_repo_url", url)?;
         }
-        let has_config_token = !self.git.github_token.trim().is_empty();
-        let has_env_token = std::env::var("GITHUB_TOKEN")
-            .map(|t| !t.trim().is_empty())
-            .unwrap_or(false);
-        if !has_config_token && !has_env_token {
-            return Err(ConfigError::Invalid("config: 'git.github_token' is required for HTTP transport when offline=false or contrib=true. \
-                 Set git.github_token in config.yaml or GITHUB_TOKEN env var. \
-                 Create a token at https://github.com/settings/tokens. \
-                 Alternatively, set offline: true and contrib: false for fully offline mode (no network).".to_string()));
+        Ok(())
+    }
+
+    fn validate_ssh_url(key: &str, url: &str) -> Result<()> {
+        let url = url.trim();
+        if url.is_empty() {
+            return Err(ConfigError::Invalid(format!(
+                "config: 'git.{key}' must not be empty"
+            )));
         }
-        if has_config_token {
-            let trimmed = self.git.github_token.trim();
-            if trimmed.contains(char::is_whitespace) {
-                return Err(ConfigError::Invalid(
-                    "config: 'git.github_token' contains whitespace — trim it".to_string(),
-                ));
-            }
+        if url.starts_with("http://") || url.starts_with("https://") {
+            return Err(ConfigError::Invalid(format!(
+                "config: 'git.{key}' must be an SSH URL \
+                 (git@host:owner/repo.git or ssh://...), got {url:?}. \
+                 HTTPS + token transport was removed: sigmacatch now uses SSH only."
+            )));
         }
         Ok(())
     }
@@ -638,17 +641,6 @@ impl Config {
             return Err(ConfigError::Invalid(format!(
                 "config: 'git.fetch_timeout_secs' exceeds maximum (1800s), got {}",
                 self.git.fetch_timeout_secs
-            )));
-        }
-        if self.git.http_timeout_secs == 0 {
-            return Err(ConfigError::Invalid(
-                "config: 'git.http_timeout_secs' must be > 0".to_string(),
-            ));
-        }
-        if self.git.http_timeout_secs > 600 {
-            return Err(ConfigError::Invalid(format!(
-                "config: 'git.http_timeout_secs' exceeds maximum (600s), got {}",
-                self.git.http_timeout_secs
             )));
         }
         if self.git.max_retries > 10 {
@@ -1118,7 +1110,6 @@ mod tests {
             writeln!(file, "git:").unwrap();
             writeln!(file, "  author: my-user").unwrap();
             writeln!(file, "  email: me@example.com").unwrap();
-            writeln!(file, "  github_token: ghp_token").unwrap();
         }
         let cli = CliArgs {
             offline: true,
@@ -1143,7 +1134,6 @@ mod tests {
             writeln!(file, "git:").unwrap();
             writeln!(file, "  author: my-user").unwrap();
             writeln!(file, "  email: me@example.com").unwrap();
-            writeln!(file, "  github_token: ghp_token").unwrap();
         }
         let cli = CliArgs {
             offline: false,
@@ -1303,5 +1293,51 @@ mod tests {
             err.to_string().contains("path traversal"),
             "unexpected error: {err}"
         );
+    }
+
+    /// A config written before the SSH-only switch still carries
+    /// `github_token`/`transport`. It must fail loudly, with the hint that says
+    /// which keys to delete — not with a bare "unknown field".
+    #[test]
+    fn test_load_removed_http_transport_keys_gets_migration_hint() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "git:").unwrap();
+            writeln!(file, "  author: someuser").unwrap();
+            writeln!(file, "  email: someuser@example.com").unwrap();
+            writeln!(file, "  github_token: ghp_token").unwrap();
+            writeln!(file, "  transport: http").unwrap();
+        }
+        let err = Config::load(&path).unwrap_err().to_string();
+        assert!(err.contains("unknown field"), "unexpected error: {err}");
+        assert!(err.contains("github_token"), "unexpected error: {err}");
+        assert!(
+            err.contains("SSH only") && err.contains("Delete"),
+            "the error must tell the user what to delete, got: {err}"
+        );
+    }
+
+    /// The transport is SSH-only: an HTTPS clone URL is rejected at startup
+    /// instead of failing later at the first fetch.
+    #[test]
+    fn test_validate_rejects_https_sigma_repo_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "git:").unwrap();
+            writeln!(file, "  author: someuser").unwrap();
+            writeln!(file, "  email: someuser@example.com").unwrap();
+            writeln!(file, "  offline: true").unwrap();
+            writeln!(
+                file,
+                "  sigma_repo_url: https://github.com/SigmaHQ/sigma.git"
+            )
+            .unwrap();
+        }
+        let err = Config::load(&path).unwrap_err().to_string();
+        assert!(err.contains("SSH URL"), "unexpected error: {err}");
     }
 }

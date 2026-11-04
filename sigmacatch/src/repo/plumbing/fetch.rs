@@ -1,21 +1,19 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Fetch from remote via smart HTTP or SSH.
+//! Fetch from remote over SSH.
 
 use crate::repo::Result;
 use grit_lib::progress::{NeverCancel, ProgressSink};
 use grit_lib::remote::fetch::Progress;
 use grit_lib::remote::transfer::{FetchDepth, FetchOptions, TagMode};
-use grit_lib::remote::transport::http::{HttpClient, http_fetch};
+use std::path::Path;
+use tracing::info;
 
 use super::refs::map_grit;
 use grit_lib::remote::transport::{ConnectOptions, SshTransport, Transport};
-use std::path::Path;
-use std::sync::Arc;
-use tracing::info;
 
-use crate::repo::transport::{SshMode, sanitize_url};
+use crate::repo::transport::SshMode;
 
 /// Forward the remote's side-band progress lines (channel 2) to the log so a
 /// first clone's long download isn't silent. The server's messages are
@@ -108,44 +106,16 @@ pub(crate) fn fetch_options_for_unshallow(branches: &[&str]) -> FetchOptions {
     }
 }
 
-/// Fetch from remote via smart HTTP.
+/// Fetch from remote over SSH.
 pub fn fetch_remote(
-    http_client: Arc<dyn HttpClient>,
-    git_dir: &Path,
-    repo_url: &str,
-    opts: &FetchOptions,
-) -> Result<(usize, Option<String>)> {
-    info!("Fetching from {}", sanitize_url(repo_url));
-    let mut opts = opts.clone();
-    let outcome = map_grit(http_fetch(
-        http_client,
-        git_dir,
-        repo_url,
-        &mut opts,
-        &mut LogProgress,
-    ))?;
-    let count = outcome.updates.len();
-    info!(
-        "Fetched {} ref updates (default branch: {})",
-        count,
-        outcome.default_branch.as_deref().unwrap_or("unknown")
-    );
-    Ok((count, outcome.default_branch))
-}
-
-/// Fetch from remote via SSH.
-pub fn fetch_remote_ssh(
     git_dir: &Path,
     repo_url: &str,
     ssh_mode: &SshMode,
     opts: &FetchOptions,
 ) -> Result<(usize, Option<String>)> {
     info!("Fetching via SSH from {}", repo_url);
-    let transport = match ssh_mode {
-        SshMode::Default => SshTransport::new(),
-        SshMode::ShellCommand(cmd) => SshTransport::with_shell_command(cmd.clone()),
-        SshMode::Program(args) => SshTransport::with_program(args[0].clone()),
-    };
+    let SshMode::Program(args) = ssh_mode;
+    let transport = SshTransport::with_program(args[0].clone());
     let mut conn = map_grit(transport.connect(
         repo_url,
         grit_lib::remote::transport::Service::UploadPack,
@@ -220,29 +190,6 @@ mod tests {
         );
     }
 
-    struct FailClient;
-
-    impl HttpClient for FailClient {
-        fn get(&self, _url: &str, _git_protocol: Option<&str>) -> grit_lib::error::Result<Vec<u8>> {
-            Err(grit_lib::error::Error::Message(
-                "no network in tests".into(),
-            ))
-        }
-
-        fn post(
-            &self,
-            _url: &str,
-            _content_type: &str,
-            _accept: &str,
-            _body: &[u8],
-            _git_protocol: Option<&str>,
-        ) -> grit_lib::error::Result<Vec<u8>> {
-            Err(grit_lib::error::Error::Message(
-                "no network in tests".into(),
-            ))
-        }
-    }
-
     /// Side-band progress bytes are `\r`-delimited and may carry invalid UTF-8
     /// mid-transfer — the logging path must survive both without panicking.
     #[test]
@@ -255,46 +202,20 @@ mod tests {
     }
 
     #[test]
-    fn fetch_remote_http_error_is_mapped() {
+    fn fetch_remote_fails_at_connect_with_missing_binary() {
         let tmp = tempfile::tempdir().unwrap();
         let git_dir = tmp.path().join(".git");
         crate::repo::plumbing::init::init_repo(
             &git_dir,
             tmp.path(),
-            "https://example.com/sigma.git",
-        )
-        .unwrap();
-
-        let opts = fetch_options_for_branches(&["main"]);
-        let err = fetch_remote(
-            Arc::new(FailClient),
-            &git_dir,
-            "https://example.com/sigma.git",
-            &opts,
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(
-            err.contains("no network in tests"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn fetch_remote_ssh_fails_at_connect_with_missing_binary() {
-        let tmp = tempfile::tempdir().unwrap();
-        let git_dir = tmp.path().join(".git");
-        crate::repo::plumbing::init::init_repo(
-            &git_dir,
-            tmp.path(),
-            "https://example.com/sigma.git",
+            "git@github.com:SigmaHQ/sigma.git",
         )
         .unwrap();
 
         // A nonexistent ssh binary fails immediately — no real process, no network.
         let mode = SshMode::Program(vec![std::ffi::OsString::from("/nonexistent/ssh")]);
         let opts = fetch_options_for_branches(&["main"]);
-        let err = fetch_remote_ssh(&git_dir, "git@github.com:u/r.git", &mode, &opts)
+        let err = fetch_remote(&git_dir, "git@github.com:u/r.git", &mode, &opts)
             .unwrap_err()
             .to_string();
         assert!(!err.is_empty());

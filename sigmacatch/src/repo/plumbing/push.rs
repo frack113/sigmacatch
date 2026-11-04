@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Push local branches to remote via smart HTTP or SSH.
+//! Push local branches to the fork over SSH.
 
 use super::refs::map_grit;
 use crate::repo::{RepoError, Result};
@@ -12,9 +12,7 @@ use grit_lib::remote::transfer::PushOptions;
 use grit_lib::remote::transfer::PushRefSpec;
 use grit_lib::remote::transport::SshTransport;
 use grit_lib::remote::transport::Transport;
-use grit_lib::remote::transport::http::HttpClient;
 use std::path::Path;
-use std::sync::Arc;
 use tracing::{info, warn};
 
 use crate::repo::plumbing::refs::read_loose_or_packed_ref;
@@ -49,66 +47,8 @@ fn describe_push_rejection(status: &grit_lib::remote::push_report::PushRefStatus
     }
 }
 
-/// Push a local branch to the remote via smart HTTP.
+/// Push a local branch to the remote over SSH.
 pub fn push_branch(
-    http_client: Arc<dyn HttpClient>,
-    git_dir: &Path,
-    remote_url: &str,
-    branch_name: &str,
-) -> Result<()> {
-    let ref_name = format!("refs/heads/{}", branch_name);
-    let oid_str = read_loose_or_packed_ref(git_dir, &ref_name)
-        .ok_or_else(|| RepoError::State(format!("Branch '{}' not found locally", branch_name)))?;
-    let head_oid = ObjectId::from_hex(&oid_str).map_err(|e| {
-        RepoError::InvalidRef(format!("Invalid OID for branch '{}': {}", branch_name, e))
-    })?;
-    let spec = PushRefSpec {
-        src: Some(head_oid),
-        src_ref: Some(ref_name.clone()),
-        dst: format!("refs/heads/{}", branch_name),
-        force: false,
-        delete: false,
-        expected_old: None,
-        expect_absent: false,
-    };
-    let opts = PushOptions {
-        atomic: false,
-        dry_run: false,
-        push_options: Vec::new(),
-        diagnostics: None,
-        network_trace: false,
-        remote_ref_tips: None,
-        tracking_remote: None,
-    };
-    let outcome = map_grit(grit_lib::remote::push::push_http(
-        http_client,
-        git_dir,
-        remote_url,
-        &[spec],
-        &opts,
-        &mut NoProgress,
-        &NeverCancel,
-    ))?;
-    if outcome.results.is_empty() {
-        warn!("No refs were pushed");
-    } else {
-        for result in &outcome.results {
-            if result.status.is_error() {
-                return Err(RepoError::Grit(format!(
-                    "Push of '{}' rejected by remote: {:?}. \
-                     The remote branch has diverged (likely another machine or a prior \
-                     partial push). Delete the branch on GitHub and re-run, or rename it.",
-                    branch_name, result.status
-                )));
-            }
-        }
-        info!("Pushed branch '{}'", branch_name);
-    }
-    Ok(())
-}
-
-/// Push via SSH.
-pub fn push_branch_ssh(
     git_dir: &Path,
     remote_url: &str,
     branch_name: &str,
@@ -138,11 +78,8 @@ pub fn push_branch_ssh(
         remote_ref_tips: None,
         tracking_remote: None,
     };
-    let transport = match ssh_mode {
-        SshMode::Default => SshTransport::new(),
-        SshMode::ShellCommand(cmd) => SshTransport::with_shell_command(cmd.clone()),
-        SshMode::Program(args) => SshTransport::with_program(args[0].clone()),
-    };
+    let SshMode::Program(args) = ssh_mode;
+    let transport = SshTransport::with_program(args[0].clone());
     let mut conn = map_grit(transport.connect(
         remote_url,
         grit_lib::remote::transport::Service::ReceivePack,
@@ -194,35 +131,10 @@ mod tests {
     use crate::repo::plumbing::init::init_repo;
     use grit_lib::objects::{CommitData, ObjectKind};
 
-    /// HttpClient whose every request fails fast — keeps tests off the network
-    /// while still exercising the pre-push validation and call sites.
-    struct FailClient;
-
-    impl HttpClient for FailClient {
-        fn get(&self, _url: &str, _git_protocol: Option<&str>) -> grit_lib::error::Result<Vec<u8>> {
-            Err(grit_lib::error::Error::Message(
-                "no network in tests".into(),
-            ))
-        }
-
-        fn post(
-            &self,
-            _url: &str,
-            _content_type: &str,
-            _accept: &str,
-            _body: &[u8],
-            _git_protocol: Option<&str>,
-        ) -> grit_lib::error::Result<Vec<u8>> {
-            Err(grit_lib::error::Error::Message(
-                "no network in tests".into(),
-            ))
-        }
-    }
-
     /// Minimal repo with one commit on `branch`, HEAD symbolic.
     fn setup_repo(tmp: &std::path::Path, branch: &str) -> std::path::PathBuf {
         let git_dir = tmp.join(".git");
-        init_repo(&git_dir, tmp, "https://example.com/sigma.git").unwrap();
+        init_repo(&git_dir, tmp, "git@github.com:SigmaHQ/sigma.git").unwrap();
 
         let commit = CommitData {
             tree: grit_lib::objects::ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
@@ -268,58 +180,22 @@ mod tests {
     fn push_branch_missing_local_branch_is_state_error() {
         let tmp = tempfile::tempdir().unwrap();
         let git_dir = setup_repo(tmp.path(), "main");
-
-        let err = push_branch(
-            Arc::new(FailClient),
-            &git_dir,
-            "https://example.com/sigma.git",
-            "feature",
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(err.contains("not found locally"), "unexpected error: {err}");
-    }
-
-    #[test]
-    fn push_branch_valid_branch_reaches_transport() {
-        let tmp = tempfile::tempdir().unwrap();
-        let git_dir = setup_repo(tmp.path(), "main");
-
-        let err = push_branch(
-            Arc::new(FailClient),
-            &git_dir,
-            "https://example.com/sigma.git",
-            "main",
-        )
-        .unwrap_err()
-        .to_string();
-        // The FailClient's error surfaces through map_grit.
-        assert!(
-            err.contains("no network in tests"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn push_branch_ssh_missing_local_branch_is_state_error() {
-        let tmp = tempfile::tempdir().unwrap();
-        let git_dir = setup_repo(tmp.path(), "main");
         let mode = SshMode::Program(vec![std::ffi::OsString::from("/nonexistent/ssh")]);
 
-        let err = push_branch_ssh(&git_dir, "git@github.com:u/r.git", "feature", &mode)
+        let err = push_branch(&git_dir, "git@github.com:u/r.git", "feature", &mode)
             .unwrap_err()
             .to_string();
         assert!(err.contains("not found locally"), "unexpected error: {err}");
     }
 
     #[test]
-    fn push_branch_ssh_valid_branch_fails_at_connect() {
+    fn push_branch_valid_branch_fails_at_connect() {
         let tmp = tempfile::tempdir().unwrap();
         let git_dir = setup_repo(tmp.path(), "main");
         // A nonexistent ssh binary fails immediately — no real process, no network.
         let mode = SshMode::Program(vec![std::ffi::OsString::from("/nonexistent/ssh")]);
 
-        let err = push_branch_ssh(&git_dir, "git@github.com:u/r.git", "main", &mode)
+        let err = push_branch(&git_dir, "git@github.com:u/r.git", "main", &mode)
             .unwrap_err()
             .to_string();
         assert!(

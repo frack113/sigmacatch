@@ -135,7 +135,7 @@ async fn live_loop_stop_file_triggers_drain_flush_and_offline_upload() {
 
     let stop_file = tmp.path().join("stop");
     let config_yaml = format!(
-        "git:\n  author: runner-test\n  email: runner-test@example.com\n  github_token: dummy\n  sigma_repo_path: {}\n  offline: true\n  working_branch: sigmacatch/live-test\nfilter:\n  product: linux\nstop_file: {}\n",
+        "git:\n  author: runner-test\n  email: runner-test@example.com\n  sigma_repo_path: {}\n  offline: true\n  working_branch: sigmacatch/live-test\nfilter:\n  product: linux\nstop_file: {}\n",
         sigma.display(),
         stop_file.display()
     );

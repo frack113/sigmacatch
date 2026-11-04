@@ -5,17 +5,15 @@
 
 use crate::repo::{RepoError, Result};
 use std::path::Path;
-use std::sync::Arc;
 use tracing::{info, warn};
 
 use crate::repo::plumbing::{
     add_directory_to_index, add_file_to_index, add_tree_to_index, checkout_main_branch,
     commit_tree, fast_forward_branch, fetch_options_for_branches, fetch_options_for_shallow_clone,
-    fetch_options_for_unshallow, fetch_remote, fetch_remote_ssh, init_repo, open_odb,
-    read_remote_url_from_config, resolve_head, set_head_after_fetch, setup_sparse_checkout,
-    symbolic_ref_target, write_index,
+    fetch_options_for_unshallow, fetch_remote, init_repo, open_odb, read_remote_url_from_config,
+    resolve_head, set_head_after_fetch, setup_sparse_checkout, symbolic_ref_target, write_index,
 };
-use crate::repo::transport::{AuthHttpClient, build_ssh_shell_command, https_to_ssh_url};
+use crate::repo::transport::{build_ssh_shell_command, https_to_ssh_url};
 
 /// Default branches fetched on clone. Sigmacatch only ever uses the default
 /// branch; `main` is the alternative in case `master` is not the default.
@@ -28,48 +26,8 @@ fn current_branch_name(git_dir: &Path) -> Result<Option<String>> {
         .and_then(|target| target.strip_prefix("refs/heads/").map(String::from)))
 }
 
-/// Clone a repository using token auth (full history).
-/// Wraps `clone_repo` by creating an `AuthHttpClient` from token.
-pub(crate) fn git_clone(url: &str, dest: &Path, token: Option<&str>) -> Result<()> {
-    let http_client = AuthHttpClient::new(token.map(|s| zeroize::Zeroizing::new(s.to_string())))?;
-    crate::repo::plumbing::clone_repo(Arc::new(http_client), url, dest)
-}
-
-/// Clone a repository using token auth with shallow clone and optional sparse checkout.
-pub(crate) fn git_clone_shallow(
-    url: &str,
-    dest: &Path,
-    token: Option<&str>,
-    sparse_checkout: bool,
-    http_timeout_secs: u64,
-) -> Result<()> {
-    let http_client = AuthHttpClient::with_timeouts(
-        token.map(|s| zeroize::Zeroizing::new(s.to_string())),
-        http_timeout_secs,
-        30, // connect timeout
-    )?;
-    crate::repo::plumbing::clone_repo_shallow(Arc::new(http_client), url, dest, sparse_checkout)
-}
-
-/// Clone a repository using token auth with partial clone (--filter=blob:none --depth=1).
-/// Uses git CLI for the initial clone since grit-lib doesn't yet support --filter.
-pub(crate) fn git_clone_partial(
-    url: &str,
-    dest: &Path,
-    token: Option<&str>,
-    sparse_checkout: bool,
-    http_timeout_secs: u64,
-) -> Result<()> {
-    let http_client = AuthHttpClient::with_timeouts(
-        token.map(|s| zeroize::Zeroizing::new(s.to_string())),
-        http_timeout_secs,
-        30, // connect timeout
-    )?;
-    crate::repo::plumbing::clone_repo_partial(Arc::new(http_client), url, dest, sparse_checkout)
-}
-
-/// Clone a repository using SSH transport (full history).
-pub(crate) fn git_clone_ssh(url: &str, dest: &Path, ssh_key_path: Option<&str>) -> Result<()> {
+/// Clone a repository over SSH (full history).
+pub(crate) fn git_clone(url: &str, dest: &Path, ssh_key_path: Option<&str>) -> Result<()> {
     let git_dir = dest.join(".git");
     if git_dir.exists() {
         info!("Repository already exists at {:?}, skipping clone", dest);
@@ -80,7 +38,7 @@ pub(crate) fn git_clone_ssh(url: &str, dest: &Path, ssh_key_path: Option<&str>) 
     init_repo(&git_dir, dest, url)?;
     let opts = fetch_options_for_branches(DEFAULT_BRANCHES);
     let ssh_mode = build_ssh_shell_command(ssh_key_path);
-    let (count, default_branch) = match fetch_remote_ssh(&git_dir, url, &ssh_mode, &opts) {
+    let (count, default_branch) = match fetch_remote(&git_dir, url, &ssh_mode, &opts) {
         Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_dir_all(&git_dir);
@@ -104,7 +62,7 @@ pub(crate) fn git_clone_ssh(url: &str, dest: &Path, ssh_key_path: Option<&str>) 
 }
 
 /// Clone a repository using SSH transport with shallow clone and optional sparse checkout.
-pub(crate) fn git_clone_ssh_shallow(
+pub(crate) fn git_clone_shallow(
     url: &str,
     dest: &Path,
     ssh_key_path: Option<&str>,
@@ -129,7 +87,7 @@ pub(crate) fn git_clone_ssh_shallow(
 
     let opts = fetch_options_for_shallow_clone(DEFAULT_BRANCHES);
     let ssh_mode = build_ssh_shell_command(ssh_key_path);
-    let (count, default_branch) = match fetch_remote_ssh(&git_dir, url, &ssh_mode, &opts) {
+    let (count, default_branch) = match fetch_remote(&git_dir, url, &ssh_mode, &opts) {
         Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_dir_all(&git_dir);
@@ -152,29 +110,9 @@ pub(crate) fn git_clone_ssh_shallow(
     Ok(())
 }
 
-/// Unshallow a shallow repository (fetch full history).
+/// Unshallow a shallow repository over SSH (fetch full history).
 /// Used before push when repo was cloned with shallow_clone=true.
-pub(crate) fn git_unshallow(git_dir: &Path, token: Option<&str>) -> Result<()> {
-    let http_client = AuthHttpClient::new(token.map(|s| zeroize::Zeroizing::new(s.to_string())))?;
-    let remote_url = read_remote_url_from_config(git_dir, "origin")?;
-    let branch = current_branch_name(git_dir)?
-        .ok_or_else(|| RepoError::State("Cannot unshallow — HEAD is detached".to_string()))?;
-    let opts = fetch_options_for_unshallow(&[branch.as_str()]);
-
-    fetch_remote(Arc::new(http_client), git_dir, &remote_url, &opts)?;
-    crate::repo::plumbing::pack_loose_objects(git_dir)?;
-
-    // Re-checkout worktree to reflect full history
-    let work_tree = git_dir
-        .parent()
-        .ok_or_else(|| RepoError::State("Cannot determine worktree from git_dir".to_string()))?;
-    checkout_main_branch(git_dir, work_tree)?;
-
-    Ok(())
-}
-
-/// Unshallow a shallow repository via SSH.
-pub(crate) fn git_unshallow_ssh(git_dir: &Path, ssh_key_path: Option<&str>) -> Result<()> {
+pub(crate) fn git_unshallow(git_dir: &Path, ssh_key_path: Option<&str>) -> Result<()> {
     let remote_url = read_remote_url_from_config(git_dir, "origin")?;
     let ssh_url = https_to_ssh_url(&remote_url).unwrap_or(remote_url);
     let ssh_mode = build_ssh_shell_command(ssh_key_path);
@@ -182,7 +120,7 @@ pub(crate) fn git_unshallow_ssh(git_dir: &Path, ssh_key_path: Option<&str>) -> R
         .ok_or_else(|| RepoError::State("Cannot unshallow — HEAD is detached".to_string()))?;
     let opts = fetch_options_for_unshallow(&[branch.as_str()]);
 
-    fetch_remote_ssh(git_dir, &ssh_url, &ssh_mode, &opts)?;
+    fetch_remote(git_dir, &ssh_url, &ssh_mode, &opts)?;
     crate::repo::plumbing::pack_loose_objects(git_dir)?;
 
     let work_tree = git_dir
@@ -193,32 +131,11 @@ pub(crate) fn git_unshallow_ssh(git_dir: &Path, ssh_key_path: Option<&str>) -> R
     Ok(())
 }
 
-/// Fetch from origin and fast-forward the current branch.
+/// Fetch from origin over SSH and fast-forward the current branch.
 ///
 /// Only the current branch is fetched (narrow refspec) — the default branch
 /// after `switch_to_tracking_branch`, never the wildcard `+refs/heads/*`.
-pub(crate) fn git_pull(git_dir: &Path, token: Option<&str>) -> Result<()> {
-    let http_client = AuthHttpClient::new(token.map(|s| zeroize::Zeroizing::new(s.to_string())))?;
-    let remote_url = read_remote_url_from_config(git_dir, "origin")?;
-    let branch = current_branch_name(git_dir)?
-        .ok_or_else(|| RepoError::State("Cannot pull — HEAD is detached".to_string()))?;
-    let opts = fetch_options_for_branches(&[branch.as_str()]);
-
-    fetch_remote(Arc::new(http_client), git_dir, &remote_url, &opts)?;
-    fast_forward_branch(git_dir)?;
-
-    crate::repo::plumbing::pack_loose_objects(git_dir)?;
-
-    // Re-checkout worktree to reflect any changes from fast-forward
-    let work_tree = git_dir
-        .parent()
-        .ok_or_else(|| RepoError::State("Cannot determine worktree from git_dir".to_string()))?;
-    checkout_main_branch(git_dir, work_tree)?;
-    Ok(())
-}
-
-/// Fetch from origin via SSH and fast-forward the current branch.
-pub(crate) fn git_pull_ssh(git_dir: &Path, ssh_key_path: Option<&str>) -> Result<()> {
+pub(crate) fn git_pull(git_dir: &Path, ssh_key_path: Option<&str>) -> Result<()> {
     let remote_url = read_remote_url_from_config(git_dir, "origin")?;
     let ssh_url = https_to_ssh_url(&remote_url).unwrap_or(remote_url);
     let ssh_mode = build_ssh_shell_command(ssh_key_path);
@@ -226,7 +143,7 @@ pub(crate) fn git_pull_ssh(git_dir: &Path, ssh_key_path: Option<&str>) -> Result
         .ok_or_else(|| RepoError::State("Cannot pull — HEAD is detached".to_string()))?;
     let opts = fetch_options_for_branches(&[branch.as_str()]);
 
-    fetch_remote_ssh(git_dir, &ssh_url, &ssh_mode, &opts)?;
+    fetch_remote(git_dir, &ssh_url, &ssh_mode, &opts)?;
     fast_forward_branch(git_dir)?;
 
     crate::repo::plumbing::pack_loose_objects(git_dir)?;
@@ -381,23 +298,35 @@ mod tests {
         assert!(err.contains("detached"), "unexpected error: {err}");
     }
 
-    #[test]
-    fn git_pull_ssh_detached_head_is_rejected() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (git_dir, _, oid) = setup_repo(tmp.path());
-        std::fs::write(git_dir.join("HEAD"), format!("{oid}\n")).unwrap();
-
-        let err = git_pull_ssh(&git_dir, None).unwrap_err().to_string();
-        assert!(err.contains("detached"), "unexpected error: {err}");
-    }
-
     /// A pre-existing `.git` short-circuits the SSH clone without touching ssh.
     #[test]
-    fn git_clone_ssh_skips_when_git_dir_exists() {
+    fn git_clone_skips_when_git_dir_exists() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
 
-        git_clone_ssh("git@github.com:u/r.git", tmp.path(), None).unwrap();
+        git_clone("git@github.com:u/r.git", tmp.path(), None).unwrap();
+    }
+
+    /// A failed fetch must remove the half-initialized `.git`: otherwise the
+    /// next run short-circuits on "Repository already exists" and works on a
+    /// repository with no refs. Shallow is the default path, so pin it there.
+    #[test]
+    fn git_clone_shallow_removes_git_dir_when_fetch_fails() {
+        let _guard = crate::repo::tests::ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("sigma");
+
+        // A nonexistent ssh binary fails immediately — no real process, no network.
+        unsafe { std::env::set_var("GIT_SSH", "/nonexistent/ssh") };
+        let result = git_clone_shallow("git@github.com:u/r.git", &dest, None, true);
+        unsafe { std::env::remove_var("GIT_SSH") };
+
+        let err = result.unwrap_err().to_string();
+        assert!(!err.is_empty(), "a failed fetch must surface an error");
+        assert!(
+            !dest.join(".git").exists(),
+            "half-initialized .git must be removed after a failed fetch"
+        );
     }
 
     #[test]
