@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Debug leftovers from the bloom/pruning session: `BUILD_TIME` build-date stamp (never set, always logged as `unknown`), `ebpf_script_trace.txt` / `ebpf_build_failure.txt` `OUT_DIR` traces (read by nothing), and the three `debug_*` registry isolation tests (the real matching test remains)
 - Git: the GitHub token path. Config keys `github_token`, `transport`, `http_timeout_secs` and `partial_clone` are removed — loading a config that still sets one fails with a migration hint; the HTTP transport (the `reqwest` and `zeroize` dependencies) and the GitHub API client are gone. The `clone_timeout_secs`, `fetch_timeout_secs` and `max_retries` keys remain and now apply to the SSH commands.
 
+### Fixed
+
+- Git clone: the clone now fetches the branch the remote advertises as its `HEAD` symref, instead of a hard-coded `master`/`main` pair. grit-lib resolves explicit fetch refspecs strictly, so a refspec for a branch the remote does not have failed the whole clone with `remote has no ref matching fetch source` (SigmaHQ/sigma only has `master`).
+
 ## [0.6.2] - 2026-09-26
 
 ### Added
