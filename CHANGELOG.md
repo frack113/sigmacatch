@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Git: clone/fetch phase timings in the log (`connect`, `Fetch done`, `Checkout done`, `Clone finished`) so a slow first run can be diagnosed from the log alone.
+
 ### Changed
 
+- Dependency updates: `grit-lib` 0.5.21 → 0.5.28. `FetchOptions` is now `#[non_exhaustive]` (built with `FetchOptions::new()` + field assignment); `PushRefSpec`/`PushOptions` gain `hook_src_ref`, `no_verify` and `resumable_threshold` fields, set to their disabled defaults. Ref updates now verify the target object exists — stricter, and the test fixtures were updated to point refs at real objects. Received packs are now indexed with a reverse index (`.rev`) alongside the V2 index.
 - Dependency updates: `rsigma-eval` / `rsigma-parser` / `rsigma-ir` 0.24 → 0.25. Two API changes adapted: `SigmaCollection::errors` is now `diagnostics: Vec<CollectionDiagnostic>` (a dropped document is a `DiagnosticSeverity::Error`, a kept-with-ignored-value document a `Warning`, so partial-parse handling matches on severity); HIR retention is no longer on by default, so the engine enables `Engine::set_retain_hir(true)` only when a `--hir-cache` path is configured — `save_hir` and the mid-run `reload_rules` rewrite both require it. The HIR cache schema moves 3 → 4, invalidating existing caches for a one-time cold start.
 - Dependency updates: `rsigma-eval` / `rsigma-parser` / `rsigma-ir` 0.22 → 0.23 (API-compatible for sigmacatch; HIR cache schema moves 1 → 2, the existing load fallback covers the one-time cold start); lockfile patches within semver ranges (`tokio 1.53.2`, `libc 0.2.190`, `cc 1.6.0`, `uuid 1.27.0`, `serde_with 3.24.0`, `yoke-derive 0.8.4` resolving its yanked-version warning, `quinn-proto 0.11.19`, `quinn-udp 0.5.16`, `mio 1.2.4`, `lazy_static 1.5.1`, `tokio-rustls 0.26.6`)
 - Git transport: SSH-only. Clone/fetch run against `sigma_repo_url` (upstream, default `git@github.com:SigmaHQ/sigma.git`); push and `sigmacatch/*` fetch run against `fork_repo_url` (default `git@github.com:<author>/sigma.git`). Legacy HTTPS URLs in an existing `.git/config` are migrated to SSH at load time.
