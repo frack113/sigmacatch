@@ -55,7 +55,7 @@ chrono = "0.4"
 crc32fast = "1.5"
 evtx = "0.15.1"
 flate2 = "1.1"
-grit-lib = "=0.5.21"
+grit-lib = "0.5.21"
 hex = { version = "0.4", optional = true }
 linux-audit-parser = "0.2"
 phf = { version = "0.14", features = ["macros"] }
