@@ -23,7 +23,7 @@ env:
 
 jobs:
   # The stable feature matrix runs in one job so every invocation shares a
-  # single target/ dir: the dependency tree (tokio, reqwest, rsigma, …) is
+  # single target/ dir: the dependency tree (tokio, rsigma, …) is
   # compiled once, and only the feature-gated deps (regex, walkdir) plus the
   # sigmacatch crate are rebuilt per feature combination.
   test:
