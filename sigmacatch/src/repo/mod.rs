@@ -1044,10 +1044,9 @@ impl Default for SigmaRepo {
 fn is_repo_complete(git_dir: &Path) -> bool {
     // A repository is usable when HEAD resolves to a commit object that is
     // readable in the ODB. This covers both real-git clones (packed refs +
-    // packs) and grit's unpack_objects-based clones (loose objects only, no
-    // `objects/pack` or `packed-refs`), which the previous check wrongly
-    // treated as incomplete — deleting and re-cloning the repository on every
-    // run.
+    // packs) and grit-lib clones (packs installed under `objects/pack/`),
+    // which the previous check wrongly treated as incomplete — deleting and
+    // re-cloning the repository on every run.
     let Ok(head) = crate::repo::plumbing::resolve_head(git_dir) else {
         return false;
     };
@@ -1146,7 +1145,7 @@ mod tests {
     pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// Build a `.git` with HEAD → refs/heads/main and one committed file
-    /// (loose objects only — exactly what a grit clone produces).
+    /// (loose objects only — what local commits produce between runs).
     fn make_committed_repo(tmp: &tempfile::TempDir) {
         let git_dir = tmp.path().join(".git");
         let work_tree = tmp.path();

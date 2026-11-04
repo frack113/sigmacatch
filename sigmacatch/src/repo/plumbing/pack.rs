@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Post-fetch pack consolidation: collect loose objects written by grit-lib's
-//! `unpack_objects` and consolidate them into a binary pack + V2 index, then
-//! delete the loose files. grit-lib writes every fetched object as a loose
-//! file (no `git gc --auto` equivalent), so for the Sigma repo (~131K objects)
-//! this reduces disk usage from ~641 MB to ~52 MB and speeds up subsequent
-//! push pack-building.
+//! Post-fetch pack consolidation: collect loose objects written by local
+//! commits (`git_add`/`git_commit` go through `Odb::write`) and consolidate
+//! them into a binary pack + V2 index, then delete the loose files. Remote
+//! fetches produce no loose objects — grit-lib installs the received pack
+//! directly under `objects/pack/` — so this keeps the object store tidy
+//! across runs and speeds up subsequent push pack-building.
 
 use crate::repo::{RepoError, Result};
 use grit_lib::objects::odb::Odb;

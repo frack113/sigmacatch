@@ -68,7 +68,7 @@ pub(crate) fn read_remote_url_from_config(git_dir: &Path, remote: &str) -> Resul
     )))
 }
 
-/// Configure HEAD and create the local tracking ref after a fetch (HTTP and SSH).
+/// Configure HEAD and create the local tracking ref after a fetch.
 /// Resolves the default branch from `refs/remotes/origin/<branch>`, falling back
 /// to `main`/`master`.
 pub(crate) fn set_head_after_fetch(git_dir: &Path, default_branch: Option<&str>) {
