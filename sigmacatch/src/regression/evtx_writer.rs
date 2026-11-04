@@ -597,7 +597,7 @@ mod tests {
         assert!(xml.contains(r#"<Provider Name="Microsoft-Windows-TaskScheduler""#));
         assert!(xml.contains("<Data Name=\"TaskName\">\\MyTask &amp; More</Data>"));
         assert!(xml.contains("<Data Name=\"TaskInstanceId\">abc-123</Data>"));
-        assert!(xml.contains(r#"<TimeCreated SystemTime="2026-01-15T10:30:45.1234567Z">"#));
+        assert!(xml.contains(r#"<TimeCreated SystemTime="2026-01-15T10:30:45.1234567Z"/>"#));
     }
 
     #[test]
@@ -727,7 +727,7 @@ mod tests {
         let record = records.next().unwrap().unwrap();
         assert!(records.next().is_none());
         let xml = std::str::from_utf8(record.data.as_bytes()).unwrap();
-        assert!(xml.contains(r#"<TimeCreated SystemTime="2026-01-15T10:30:45.1234567Z">"#));
+        assert!(xml.contains(r#"<TimeCreated SystemTime="2026-01-15T10:30:45.1234567Z"/>"#));
     }
 
     #[test]
