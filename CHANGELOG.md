@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Detection: an `EventID` carrying a `Qualifiers` attribute (`<EventID Qualifiers="16384">7045</EventID>`, Service Control Manager and most classic System/Application providers) is now a number in the detection view. It was an object, so `EventID: <n>` never matched and almost every `service: system` / `service: application` rule was dead. The raw view keeps the qualifier.
+- Detection: the Windows field map now maps `Attributes` (ADCS 4886/4887), `Entry` (4891) and `OperationType` (5136) to `Event.EventData.*`. Rules selecting on them never matched, without any error.
 - Git clone: the clone now fetches the branch the remote advertises as its `HEAD` symref, instead of a hard-coded `master`/`main` pair. grit-lib resolves explicit fetch refspecs strictly, so a refspec for a branch the remote does not have failed the whole clone with `remote has no ref matching fetch source` (SigmaHQ/sigma only has `master`).
 
 ## [0.6.2] - 2026-09-26
