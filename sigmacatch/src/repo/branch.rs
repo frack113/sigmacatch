@@ -3,17 +3,25 @@
 
 //! Branch and HEAD management: validation, creation, switching.
 //!
-//! All ref mutations go through `grit_lib::refs` (atomic lock writes, packed +
-//! loose + reftable). Creating/switching a branch is therefore two native calls
-//! rather than hand-rolled file/path handling.
+//! All ref mutations go through grit-lib's ref store (atomic lock writes, packed +
+//! loose + reftable).
 
 use crate::repo::{RepoError, Result};
-use grit_lib::refs;
-use grit_lib::refs::{RawRefLookup, read_raw_ref};
+use grit_lib::refs::RawRefLookup;
 use std::path::Path;
 use tracing::info;
 
-use crate::repo::plumbing::refs::{map_grit, read_loose_or_packed_ref, resolve_head};
+use crate::repo::plumbing::refs::{
+    map_grit, read_loose_or_packed_ref, read_raw_ref_lookup, resolve_head, write_direct_ref,
+    write_symbolic_ref,
+};
+use grit_lib::refs::store::{FilesRefStore, RefNameRef, RefStore};
+use std::sync::Arc;
+
+fn open_store(git_dir: &Path) -> Result<Arc<dyn RefStore>> {
+    let store = map_grit(FilesRefStore::from_git_dir(git_dir))?;
+    Ok(Arc::new(store))
+}
 
 fn validate_branch_name(name: &str) -> Result<()> {
     if name.is_empty() {
@@ -59,26 +67,27 @@ fn validate_branch_name(name: &str) -> Result<()> {
 /// falling back to HEAD (master after pull) for a fresh branch. Basing on the
 /// remote ref makes a new commit a fast-forward; basing on HEAD would create a
 /// sibling commit and the push would be rejected with `RejectNonFastForward`.
-/// If the branch already exists locally, `write_ref` atomically replaces it
-/// from the chosen base, so a stale/dirty local branch cannot diverge.
+/// If the branch already exists locally, the ref is atomically replaced from the
+/// chosen base, so a stale/dirty local branch cannot diverge.
 pub(crate) fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
     validate_branch_name(branch_name)?;
     let full_ref_name = format!("refs/heads/{}", branch_name);
     let remote_ref = format!("refs/remotes/origin/{}", branch_name);
 
-    let (base_oid, base_desc) = match read_raw_ref(git_dir, &remote_ref) {
+    let (base_oid, base_desc) = match read_raw_ref_lookup(git_dir, &remote_ref) {
         // The branch exists on the fork (same-day re-run): base on it so the
         // next commit is a fast-forward. A present-but-unresolvable ref must
-        // fail loudly rather than silently fall back to HEAD (which would
-        // create a sibling commit rejected as RejectNonFastForward).
+        // fail loudly rather than silently fall back to HEAD.
         Ok(RawRefLookup::Exists) => {
-            let oid = map_grit(refs::resolve_ref(git_dir, &remote_ref)).map_err(|e| {
-                RepoError::Grit(format!(
-                    "Remote tracking ref '{}' exists but cannot be resolved: {}. \
+            let store = open_store(git_dir)?;
+            let oid =
+                map_grit(store.resolve(RefNameRef::from_trusted(&remote_ref))).map_err(|e| {
+                    RepoError::Grit(format!(
+                        "Remote tracking ref '{}' exists but cannot be resolved: {}. \
                      Delete the branch on GitHub and re-run.",
-                    remote_ref, e
-                ))
-            })?;
+                        remote_ref, e
+                    ))
+                })?;
             (oid, format!("remote tracking ref '{}'", remote_ref))
         }
         Ok(_) => (resolve_head(git_dir)?, "HEAD".to_string()),
@@ -90,7 +99,7 @@ pub(crate) fn create_branch(git_dir: &Path, branch_name: &str) -> Result<()> {
         }
     };
 
-    map_grit(refs::write_ref(git_dir, &full_ref_name, &base_oid))?;
+    write_direct_ref(git_dir, &full_ref_name, &base_oid)?;
     switch_head(git_dir, branch_name)?;
     info!(
         "Created and switched to branch '{}' from {} ({})",
@@ -109,7 +118,7 @@ pub(crate) fn switch_head(git_dir: &Path, branch_name: &str) -> Result<()> {
             branch_name, local_ref
         )));
     }
-    map_grit(refs::write_symbolic_ref(git_dir, "HEAD", &local_ref))?;
+    write_symbolic_ref(git_dir, "HEAD", &local_ref)?;
     info!("Switched HEAD to branch '{}'", branch_name);
     Ok(())
 }
@@ -123,8 +132,6 @@ mod tests {
     use grit_lib::index::write_tree::write_tree_from_index;
     use grit_lib::objects::{CommitData, ObjectId, ObjectKind};
 
-    /// Init a repo with one root commit on `main` and HEAD pointing at it.
-    /// Returns `(git_dir, head_oid)`.
     fn init_with_commit(tmp: &tempfile::TempDir) -> (std::path::PathBuf, ObjectId) {
         let git_dir = tmp.path().join(".git");
         crate::repo::plumbing::init::init_repo(
@@ -174,9 +181,6 @@ mod tests {
         odb.write(ObjectKind::Commit, &raw).unwrap()
     }
 
-    /// The branch already exists on the fork: the local branch must be created
-    /// from the remote tracking ref, not from HEAD, so the next commit is a
-    /// fast-forward instead of a sibling (push rejection `RejectNonFastForward`).
     #[test]
     fn test_create_branch_bases_on_remote_tracking_ref() {
         let tmp = tempfile::tempdir().unwrap();
@@ -196,7 +200,6 @@ mod tests {
         );
     }
 
-    /// Fresh branch (nothing pushed to the fork yet): base on HEAD (master).
     #[test]
     fn test_create_branch_bases_on_head_without_remote_tracking_ref() {
         let tmp = tempfile::tempdir().unwrap();
@@ -208,8 +211,6 @@ mod tests {
         assert_eq!(local, head_oid.to_string());
     }
 
-    /// A corrupt remote tracking ref must fail loudly instead of silently
-    /// falling back to HEAD (which would create a diverging sibling).
     #[test]
     fn test_create_branch_rejects_invalid_remote_oid() {
         let tmp = tempfile::tempdir().unwrap();
@@ -241,82 +242,31 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_branch_name_null_char() {
+    fn test_validate_branch_name_invalid_chars() {
         let err = validate_branch_name("foo\x00bar").unwrap_err();
         assert!(err.to_string().to_lowercase().contains("invalid character"));
+        assert!(validate_branch_name("foo\nbar").is_err());
+        assert!(validate_branch_name("foo\\bar").is_err());
+        assert!(validate_branch_name("foo^bar").is_err());
+        assert!(validate_branch_name("foo:bar").is_err());
+        assert!(validate_branch_name("foo?bar").is_err());
+        assert!(validate_branch_name("foo*bar").is_err());
+        assert!(validate_branch_name("foo[bar").is_err());
     }
 
     #[test]
-    fn test_validate_branch_name_newline() {
-        let err = validate_branch_name("foo\nbar").unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("invalid character"));
-    }
-
-    #[test]
-    fn test_validate_branch_name_backslash() {
-        let err = validate_branch_name("foo\\bar").unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("invalid character"));
-    }
-
-    #[test]
-    fn test_validate_branch_name_tilde() {
-        let err = validate_branch_name("foo^bar").unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("invalid character"));
-    }
-
-    #[test]
-    fn test_validate_branch_name_colon() {
-        let err = validate_branch_name("foo:bar").unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("invalid character"));
-    }
-
-    #[test]
-    fn test_validate_branch_name_question_mark() {
-        let err = validate_branch_name("foo?bar").unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("invalid character"));
-    }
-
-    #[test]
-    fn test_validate_branch_name_star() {
-        let err = validate_branch_name("foo*bar").unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("invalid character"));
-    }
-
-    #[test]
-    fn test_validate_branch_name_brackets() {
-        let err = validate_branch_name("foo[bar").unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("invalid character"));
-    }
-
-    #[test]
-    fn test_validate_branch_name_empty_components() {
+    fn test_validate_branch_name_components() {
         assert!(validate_branch_name("foo//bar").is_err());
-    }
-
-    #[test]
-    fn test_validate_branch_name_dot_components() {
         assert!(validate_branch_name("foo/bar/.").is_err());
         assert!(validate_branch_name("foo/../bar").is_err());
-    }
-
-    #[test]
-    fn test_validate_branch_name_lock_suffix() {
         let err = validate_branch_name("foo/bar.lock").unwrap_err();
         assert!(err.to_string().to_lowercase().contains(".lock"));
-    }
-
-    #[test]
-    fn test_validate_branch_name_leading_slash() {
         let err = validate_branch_name("/foo/bar").unwrap_err();
         assert!(
             err.to_string()
                 .to_lowercase()
                 .contains("invalid '/' placement")
         );
-    }
-
-    #[test]
-    fn test_validate_branch_name_trailing_slash() {
         let err = validate_branch_name("foo/bar/").unwrap_err();
         assert!(
             err.to_string()
@@ -325,8 +275,6 @@ mod tests {
         );
     }
 
-    // `symbolic_ref_target` is exercised indirectly via commit_tree/branch tests
-    // elsewhere; here we assert the resolution fallback used by `switch_head`.
     #[test]
     fn test_switch_head_missing_branch_errors() {
         let tmp = tempfile::tempdir().unwrap();
@@ -337,10 +285,8 @@ mod tests {
             "https://example.com/sigma.git",
         )
         .unwrap();
-        // HEAD points at refs/heads/main (symbolic) but the ref doesn't exist yet.
         let err = switch_head(&git_dir, "sigmacatch/me").unwrap_err();
         assert!(err.to_string().to_lowercase().contains("not found"));
-        // sanity: symbolic ref resolves to the target.
         let target = symbolic_ref_target(&git_dir, "HEAD").unwrap();
         assert_eq!(target.as_deref(), Some("refs/heads/main"));
     }

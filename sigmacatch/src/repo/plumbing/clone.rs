@@ -8,12 +8,88 @@
 //! Only the sparse-checkout configuration is raw plumbing.
 
 use crate::repo::Result;
+use std::collections::BTreeSet;
 use std::path::Path;
+
+/// Build expanded cone-mode sparse-checkout lines (replicates grit-lib's
+/// `write_cone_to_file` layout). grit-lib 0.5.31 made its helper `pub(crate)`.
+fn build_expanded_cone_sparse_checkout_lines(dirs: &[String]) -> Vec<String> {
+    fn escape_cone_pattern_path(path_with_leading_slash: &str) -> String {
+        let mut out = String::with_capacity(path_with_leading_slash.len() + 8);
+        for ch in path_with_leading_slash.chars() {
+            match ch {
+                '\\' | '[' | '*' | '?' | '#' => {
+                    out.push('\\');
+                    out.push(ch);
+                }
+                _ => out.push(ch),
+            }
+        }
+        out
+    }
+
+    fn recursive_set_has_strict_ancestor(recursive: &BTreeSet<String>, path: &str) -> bool {
+        let mut cur = path.to_string();
+        while let Some(slash) = cur.rfind('/') {
+            if slash == 0 {
+                break;
+            }
+            cur.truncate(slash);
+            if recursive.contains(&cur) {
+                return true;
+            }
+        }
+        false
+    }
+
+    let mut recursive: BTreeSet<String> = BTreeSet::new();
+    for d in dirs {
+        let t = d.trim().trim_start_matches('/').trim_end_matches('/');
+        if t.is_empty() {
+            continue;
+        }
+        recursive.insert(format!("/{t}"));
+    }
+
+    let mut parents: BTreeSet<String> = BTreeSet::new();
+    for r in &recursive {
+        let mut cur = r.clone();
+        while let Some(slash) = cur.rfind('/') {
+            if slash == 0 {
+                break;
+            }
+            cur.truncate(slash);
+            parents.insert(cur.clone());
+        }
+    }
+
+    let mut out = vec!["/*".to_owned(), "!/*/".to_owned()];
+
+    for p in &parents {
+        if recursive.contains(p) {
+            continue;
+        }
+        if recursive_set_has_strict_ancestor(&recursive, p) {
+            continue;
+        }
+        let esc = escape_cone_pattern_path(p);
+        out.push(format!("{esc}/"));
+        out.push(format!("!{esc}/*/"));
+    }
+
+    for r in &recursive {
+        if recursive_set_has_strict_ancestor(&recursive, r) {
+            continue;
+        }
+        let esc = escape_cone_pattern_path(r);
+        out.push(format!("{esc}/"));
+    }
+
+    out
+}
 
 /// Set up cone-mode sparse checkout for rules/, rules-emerging-threats/, regression_data/
 pub(crate) fn setup_sparse_checkout(git_dir: &Path) -> Result<()> {
-    use grit_lib::index::sparse_checkout::build_expanded_cone_sparse_checkout_lines;
-
     let dirs = vec![
         "rules".to_string(),
         "rules-emerging-threats".to_string(),

@@ -721,9 +721,7 @@ impl SigmaRepo {
             )));
         }
         let local_ref = format!("refs/heads/{}", branch);
-        crate::repo::plumbing::refs::map_grit(grit_lib::refs::write_ref(
-            &git_dir, &local_ref, &oid,
-        ))?;
+        crate::repo::plumbing::refs::write_direct_ref(&git_dir, &local_ref, &oid)?;
         info!(
             "Reset working branch '{}' back to {} after a failed push",
             branch, oid

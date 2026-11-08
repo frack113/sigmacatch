@@ -55,8 +55,7 @@ chrono = "0.4.45"
 crc32fast = "1.5.4"
 evtx = "0.15.1"
 flate2 = "1.1.11"
-# Held: 0.5.31 breaks internal API usage (fetch/push/refs helpers made pub(crate)); migrate separately.
-grit-lib = "=0.5.28"
+grit-lib = "0.5.31"
 hex = { version = "0.4.3", optional = true }
 linux-audit-parser = "0.2.8"
 phf = { version = "0.14.0", features = ["macros"] }
