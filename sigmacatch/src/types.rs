@@ -1075,10 +1075,10 @@ fn handle_event_data(node: Node) -> Value {
     for child in node.children() {
         if child.is_element() && child.tag_name().name() == "Data" {
             let name = child.attribute("Name").unwrap_or("").to_string();
-            let value = child
-                .text()
-                .map(|t| t.trim().to_string())
-                .unwrap_or_default();
+            // Verbatim: Winevt/EVTX XML never pretty-prints inside <Data>, so
+            // surrounding whitespace is part of the value. Trimming it made
+            // `|endswith` match values the regression EVTX does not match.
+            let value = child.text().unwrap_or_default().to_string();
             // Classic PowerShell events (EventID 400/600, …) emit <Data>
             // elements *without* a Name attribute. Surface them under positional
             // keys (`Data0`, `Data1`, …) so their content (e.g. the
@@ -1116,20 +1116,14 @@ fn handle_event_data_raw(node: Node) -> Value {
             let name = child.attribute("Name").unwrap_or("").to_string();
             // Preserve original key names (with spaces) for regression data.
             // Unnamed <Data> (classic PowerShell) gets a positional key.
+            // Values stay verbatim, as in the detection view.
+            let value = child.text().unwrap_or_default();
             if !name.is_empty() {
-                let value = child
-                    .text()
-                    .map(|t| t.trim().to_string())
-                    .unwrap_or_default();
-                map.insert(name.to_string(), normalize_eventdata_value(&name, &value));
+                map.insert(name.to_string(), normalize_eventdata_value(&name, value));
             } else {
-                let value = child
-                    .text()
-                    .map(|t| t.trim().to_string())
-                    .unwrap_or_default();
                 let k = format!("Data{unnamed_idx}");
                 unnamed_idx += 1;
-                map.insert(k.clone(), normalize_eventdata_value(&k, &value));
+                map.insert(k.clone(), normalize_eventdata_value(&k, value));
             }
         }
     }
