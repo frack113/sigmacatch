@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Detection: EventData `<Data>` values are kept verbatim in the detection and raw views. They were trimmed, so a value ending with a space matched `|endswith` rules that the SigmaHQ checker (which reads the EVTX verbatim) does not match, and the committed regression set failed in CI.
 - Git clone: the clone now fetches the branch the remote advertises as its `HEAD` symref, instead of a hard-coded `master`/`main` pair. grit-lib resolves explicit fetch refspecs strictly, so a refspec for a branch the remote does not have failed the whole clone with `remote has no ref matching fetch source` (SigmaHQ/sigma only has `master`).
 
 ## [0.6.2] - 2026-09-26
