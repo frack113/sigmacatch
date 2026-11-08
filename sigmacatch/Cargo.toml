@@ -32,10 +32,10 @@ sysmon = ["builtin"]                          # Sysmon-for-Linux legacy tail
 ebpf = ["dep:aya", "dep:bytemuck", "dep:hex"]
 
 [target.'cfg(not(unix))'.dependencies]
-dunce = "1.0"
+dunce = "1.0.5"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = [
+windows = { version = "0.62.2", features = [
   "Win32_Foundation",
   "Win32_System_Console",
   "Win32_System_Com",
@@ -45,33 +45,34 @@ windows = { version = "0.62", features = [
 ] }
 
 [dependencies]
-anyhow = "1.0"
-async-trait = "0.1"
-aya = { version = "0.14", optional = true }
-bytemuck = { version = "1", default-features = false, features = [
+anyhow = "1.0.104"
+async-trait = "0.1.92"
+aya = { version = "0.14.0", optional = true }
+bytemuck = { version = "1.25.2", default-features = false, features = [
   "derive",
 ], optional = true }
-chrono = "0.4"
-crc32fast = "1.5"
+chrono = "0.4.45"
+crc32fast = "1.5.4"
 evtx = "0.15.1"
-flate2 = "1.1"
-grit-lib = "0.5.28"
-hex = { version = "0.4", optional = true }
-linux-audit-parser = "0.2"
-phf = { version = "0.14", features = ["macros"] }
-rayon = "1.12"
-regex = { version = "1", optional = true }
-roxmltree = "0.21"
-rsigma-eval = { version = "0.25", features = ["daachorse-index", "parallel"] }
-rsigma-parser = "0.25"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-serde_yaml = { package = "yaml_serde", version = "0.10" }
-sha1 = "0.11"
-sha2 = "0.11"
-ssh-key = { version = "0.6", features = ["alloc", "ed25519"] }
+flate2 = "1.1.11"
+# Held: 0.5.31 breaks internal API usage (fetch/push/refs helpers made pub(crate)); migrate separately.
+grit-lib = "=0.5.28"
+hex = { version = "0.4.3", optional = true }
+linux-audit-parser = "0.2.8"
+phf = { version = "0.14.0", features = ["macros"] }
+rayon = "1.12.0"
+regex = { version = "1.13.1", optional = true }
+roxmltree = "0.21.2"
+rsigma-eval = { version = "0.26.0", features = ["daachorse-index", "parallel"] }
+rsigma-parser = "0.26.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+serde_yaml = { package = "yaml_serde", version = "0.10.7" }
+sha1 = "0.11.0"
+sha2 = "0.11.1"
+ssh-key = { version = "0.6.7", features = ["alloc", "ed25519"] }
 thiserror.workspace = true
-tokio = { version = "1", features = [
+tokio = { version = "1.54.1", features = [
   "rt",
   "rt-multi-thread",
   "macros",
@@ -80,14 +81,14 @@ tokio = { version = "1", features = [
   "signal",
 ] }
 tracing.workspace = true
-tracing-appender = "0.2"
+tracing-appender = "0.2.5"
 tracing-subscriber.workspace = true
-uuid = { version = "1.26.1", features = ["v4", "serde"] }
-walkdir = { version = "2", optional = true }
+uuid = { version = "1.29.1", features = ["v4", "serde"] }
+walkdir = { version = "2.5.0", optional = true }
 
 [dev-dependencies]
-rand_core = { version = "0.6", features = ["getrandom"] }
-tempfile = "3"
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+tempfile = "3.27.0"
 
 # Integration tests: each requires its input features compiled in.
 [[test]]
