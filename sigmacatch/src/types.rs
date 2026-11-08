@@ -315,7 +315,13 @@ fn json_event_id(json: &Value) -> u32 {
         // object with a `#text` member, e.g. `{"#attributes": {...}, "#text": "400"}`.
         // Also handles `{"EventID": {"#text": "400"}}` and `{"EventID": 400}`.
         Some(Value::Object(o)) => {
-            if let Some(event_id) = o.get("EventID") {
+            if let Some(text) = o.get("#text") {
+                match text {
+                    Value::Number(n) => n.as_u64().unwrap_or(0) as u32,
+                    Value::String(s) => s.parse::<u64>().ok().unwrap_or(0) as u32,
+                    _ => 0,
+                }
+            } else if let Some(event_id) = o.get("EventID") {
                 match event_id {
                     Value::Number(n) => n.as_u64().unwrap_or(0) as u32,
                     Value::String(s) => s.parse::<u64>().ok().unwrap_or(0) as u32,
@@ -932,6 +938,16 @@ fn node_to_value(node: Node, _is_root: bool) -> Value {
 
     let attrs: Vec<_> = node.attributes().filter(|a| a.name() != "xmlns").collect();
 
+    // Classic providers render `<EventID Qualifiers="16384">7045</EventID>`.
+    // Sigma rules select on the bare number, so the detection view drops the
+    // qualifier (the raw view keeps it for regression data).
+    if tag == "EventID"
+        && child_elements.is_empty()
+        && let Some(n) = text.as_deref().and_then(|t| t.parse::<u64>().ok())
+    {
+        return Value::Number(n.into());
+    }
+
     if child_elements.is_empty()
         && attrs.is_empty()
         && let Some(t) = text
@@ -1419,6 +1435,17 @@ mod tests {
         let result = parse_winevt_xml(xml).unwrap();
         let system = result["Event"]["System"].as_object().unwrap();
         assert_eq!(system["EventID"].as_str().unwrap(), "abc");
+    }
+
+    #[test]
+    fn test_json_event_id_reads_text_of_qualified_event_id() {
+        let json = serde_json::json!({
+            "Event": { "System": { "EventID": {
+                "#attributes": { "Qualifiers": "16384" },
+                "#text": "7045"
+            } } }
+        });
+        assert_eq!(json_event_id(&json), 7045);
     }
 
     #[test]
