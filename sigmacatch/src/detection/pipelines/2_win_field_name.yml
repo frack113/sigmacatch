@@ -49,6 +49,7 @@ transformations:
       Application: Event.EventData.Application
       AttributeLDAPDisplayName: Event.EventData.AttributeLDAPDisplayName
       AttributeValue: Event.EventData.AttributeValue
+      Attributes: Event.EventData.Attributes
       AuditPolicyChanges: Event.EventData.AuditPolicyChanges
       AuditSourceName: Event.EventData.AuditSourceName
       AuthenticationPackageName: Event.EventData.AuthenticationPackageName
@@ -71,6 +72,7 @@ transformations:
       DeviceName: Event.EventData.DeviceName
       DistinguishedName: Event.EventData.DistinguishedName
       EncyptionUsed: Event.EventData.EncyptionUsed
+      Entry: Event.EventData.Entry
       ExceptionCode: Event.EventData.ExceptionCode
       FeatureName: Event.EventData.FeatureName
       FileName: Event.EventData.FileName
@@ -99,6 +101,7 @@ transformations:
       ObjectServer: Event.EventData.ObjectServer
       OldUacValue: Event.EventData.OldUacValue
       OldValue: Event.EventData.OldValue
+      OperationType: Event.EventData.OperationType
       Origin: Event.EventData.Origin
       PackageFullName: Event.EventData.PackageFullName
       PackagePath: Event.EventData.PackagePath
