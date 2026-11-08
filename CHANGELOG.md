@@ -5,7 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.4] - 2026-11-08
+
+### Changed
+
+- Dependency updates: `rsigma-eval` / `rsigma-parser` / `rsigma-ir` 0.25 → 0.26 (API-compatible for sigmacatch; `cargo test --lib` clean). `grit-lib` 0.5.28 → 0.5.31: git plumbing migrated to the public `Repository`/`Remote`/`RefStore` APIs (refs, fetch/push, clone sparse-checkout helper replicated locally). Cargo.toml minimums raised across direct dependencies to the resolved/tested versions (workspace: `thiserror` 2.0.21, `tracing` 0.1.44, `tracing-subscriber` 0.3.23; sigmacatch: `anyhow` 1.0.104, `async-trait` 0.1.92, `chrono` 0.4.45, `crc32fast` 1.5.4, `dunce` 1.0.5, `flate2` 1.1.11, `hex` 0.4.3, `linux-audit-parser` 0.2.8, `phf` 0.14.0, `rayon` 1.12.0, `regex` 1.13.1, `roxmltree` 0.21.2, `serde` 1.0.229, `serde_json` 1.0.154, `serde_yaml` 0.10.7, `sha1` 0.11.0, `sha2` 0.11.1, `ssh-key` 0.6.7, `tokio` 1.54.1, `tracing-appender` 0.2.5, `uuid` 1.29.1, `walkdir` 2.5.0, `windows` 0.62.2, `bytemuck` 1.25.2, `aya` 0.14.0, dev `rand_core` 0.6.4, `tempfile` 3.27.0, `grit-lib` 0.5.31). Lockfile refreshed (`cargo update`): `cc` 1.11.1, `fancy-regex` 0.20.0, `flate2` 1.1.11, `jiff` 0.2.40, `smallvec` 1.16.5, `tree-sitter` 0.27.2, `uuid` 1.29.1; removed stale `defmt` transitive entries.
+
+### Fixed
+
+- Detection: EventData `<Data>` values are kept verbatim in the detection and raw views. They were trimmed, so a value ending with a space matched `|endswith` rules that the SigmaHQ checker (which reads the EVTX verbatim) does not match, and the committed regression set failed in CI. (#133)
+- Detection: an `EventID` carrying a `Qualifiers` attribute (`<EventID Qualifiers="16384">7045</EventID>`, Service Control Manager and most classic System/Application providers) is now a number in the detection view. It was an object, so `EventID: <n>` never matched and almost every `service: system` / `service: application` rule was dead. The raw view keeps the qualifier. (#132)
+- Detection: the Windows field map now maps `Attributes` (ADCS 4886/4887), `Entry` (4891) and `OperationType` (5136) to `Event.EventData.*`. Rules selecting on them never matched, without any error. (#131)
+
+## [0.6.3] - 2026-11-04
 
 ### Added
 
@@ -25,9 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Detection: EventData `<Data>` values are kept verbatim in the detection and raw views. They were trimmed, so a value ending with a space matched `|endswith` rules that the SigmaHQ checker (which reads the EVTX verbatim) does not match, and the committed regression set failed in CI.
-- Detection: an `EventID` carrying a `Qualifiers` attribute (`<EventID Qualifiers="16384">7045</EventID>`, Service Control Manager and most classic System/Application providers) is now a number in the detection view. It was an object, so `EventID: <n>` never matched and almost every `service: system` / `service: application` rule was dead. The raw view keeps the qualifier.
-- Detection: the Windows field map now maps `Attributes` (ADCS 4886/4887), `Entry` (4891) and `OperationType` (5136) to `Event.EventData.*`. Rules selecting on them never matched, without any error.
 - Git clone: the clone now fetches the branch the remote advertises as its `HEAD` symref, instead of a hard-coded `master`/`main` pair. grit-lib resolves explicit fetch refspecs strictly, so a refspec for a branch the remote does not have failed the whole clone with `remote has no ref matching fetch source` (SigmaHQ/sigma only has `master`).
 
 ## [0.6.2] - 2026-09-26

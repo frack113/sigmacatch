@@ -58,7 +58,7 @@ pub fn https_to_ssh_url(url: &str) -> Option<String> {
 #[derive(Clone, Debug)]
 pub(crate) enum SshMode {
     /// Direct `ssh` binary execution.
-    Program(Vec<std::ffi::OsString>),
+    Program(#[allow(dead_code)] Vec<std::ffi::OsString>),
 }
 
 /// Build the SSH transport mode from environment and optional SSH key path.

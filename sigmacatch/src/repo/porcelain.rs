@@ -10,9 +10,9 @@ use tracing::{info, warn};
 
 use crate::repo::plumbing::{
     add_directory_to_index, add_file_to_index, add_tree_to_index, checkout_main_branch,
-    commit_tree, connect_with_default_branch, fast_forward_branch, fetch_options_for_branches,
-    fetch_options_for_shallow_clone, fetch_options_for_unshallow, fetch_remote, fetch_remote_on,
-    init_repo, open_odb, read_remote_url_from_config, resolve_head, set_head_after_fetch,
+    commit_tree, discover_and_fetch, fast_forward_branch, fetch_options_for_branches,
+    fetch_options_for_shallow_clone, fetch_options_for_unshallow, fetch_remote, init_repo,
+    open_odb, read_remote_url_from_config, resolve_head, set_head_after_fetch,
     setup_sparse_checkout, symbolic_ref_target, write_index,
 };
 use crate::repo::transport::{build_ssh_shell_command, https_to_ssh_url};
@@ -45,19 +45,10 @@ pub(crate) fn git_clone(url: &str, dest: &Path, ssh_key_path: Option<&str>) -> R
     let started = Instant::now();
     init_repo(&git_dir, dest, url)?;
     let ssh_mode = build_ssh_shell_command(ssh_key_path);
-    let (mut conn, default_branch) = match connect_with_default_branch(url, &ssh_mode) {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = std::fs::remove_dir_all(&git_dir);
-            return Err(e);
-        }
-    };
-    info!(
-        "Remote default branch: {default_branch} (connect {})",
-        fmt_dur(started.elapsed())
-    );
-    let opts = fetch_options_for_branches(&[default_branch.as_str()]);
-    let (count, default_branch) = match fetch_remote_on(&git_dir, &mut *conn, &opts) {
+    let (count, default_branch) = match discover_and_fetch(&git_dir, url, &ssh_mode, |branch| {
+        info!("Remote default branch: {branch}");
+        fetch_options_for_branches(&[branch])
+    }) {
         Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_dir_all(&git_dir);
@@ -72,7 +63,7 @@ pub(crate) fn git_clone(url: &str, dest: &Path, ssh_key_path: Option<&str>) -> R
     }
     info!("Fetch done in {}", fmt_dur(started.elapsed()));
 
-    set_head_after_fetch(&git_dir, default_branch.as_deref());
+    set_head_after_fetch(&git_dir, Some(default_branch.as_str()));
 
     checkout_main_branch(&git_dir, dest)?;
     info!("Checkout done in {}", fmt_dur(started.elapsed()));
@@ -109,19 +100,10 @@ pub(crate) fn git_clone_shallow(
     }
 
     let ssh_mode = build_ssh_shell_command(ssh_key_path);
-    let (mut conn, default_branch) = match connect_with_default_branch(url, &ssh_mode) {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = std::fs::remove_dir_all(&git_dir);
-            return Err(e);
-        }
-    };
-    info!(
-        "Remote default branch: {default_branch} (connect {})",
-        fmt_dur(started.elapsed())
-    );
-    let opts = fetch_options_for_shallow_clone(&[default_branch.as_str()]);
-    let (count, default_branch) = match fetch_remote_on(&git_dir, &mut *conn, &opts) {
+    let (count, default_branch) = match discover_and_fetch(&git_dir, url, &ssh_mode, |branch| {
+        info!("Remote default branch: {branch}");
+        fetch_options_for_shallow_clone(&[branch])
+    }) {
         Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_dir_all(&git_dir);
@@ -136,7 +118,7 @@ pub(crate) fn git_clone_shallow(
     }
     info!("Fetch done in {}", fmt_dur(started.elapsed()));
 
-    set_head_after_fetch(&git_dir, default_branch.as_deref());
+    set_head_after_fetch(&git_dir, Some(default_branch.as_str()));
 
     checkout_main_branch(&git_dir, dest)?;
     info!("Checkout done in {}", fmt_dur(started.elapsed()));

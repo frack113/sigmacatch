@@ -7,8 +7,13 @@
 
 use crate::repo::{RepoError, Result};
 use grit_lib::objects::ObjectId;
-use grit_lib::refs;
+use grit_lib::refs::store::{
+    Expected, FilesRefStore, RawRef, RefName, RefNameRef, RefStore, RefUpdate, RefUpdateFlags,
+};
+use grit_lib::refs::{self, RawRefLookup};
+use std::ops::ControlFlow;
 use std::path::Path;
+use std::sync::Arc;
 use tracing::{info, warn};
 
 /// Bridge grit-lib's `error::Error` into [`RepoError`] (no blanket `From` exists).
@@ -16,22 +21,46 @@ pub(crate) fn map_grit<T, E: std::fmt::Display>(r: std::result::Result<T, E>) ->
     r.map_err(|e| RepoError::Grit(e.to_string()))
 }
 
+fn open_store(git_dir: &Path) -> Result<Arc<dyn RefStore>> {
+    let store = map_grit(FilesRefStore::from_git_dir(git_dir))?;
+    Ok(Arc::new(store))
+}
+
 /// Resolve a ref name (or `"HEAD"`) to its object id, following symbolic refs.
 pub(crate) fn resolve_head(git_dir: &Path) -> Result<ObjectId> {
-    map_grit(refs::resolve_ref(git_dir, "HEAD"))
+    let store = open_store(git_dir)?;
+    map_grit(store.resolve(RefNameRef::from_trusted("HEAD")))
 }
 
 /// List every remote tracking ref under `refs/remotes/origin/sigmacatch/`
 /// (loose + packed, deduplicated, sorted) — the pending-PR branches on the fork.
 pub(crate) fn list_sigmacatch_remote_refs(git_dir: &Path) -> Result<Vec<(String, ObjectId)>> {
-    map_grit(refs::list_refs(git_dir, "refs/remotes/origin/sigmacatch/"))
+    let store = open_store(git_dir)?;
+    let mut out = Vec::new();
+    map_grit(
+        store.for_each_ref("refs/remotes/origin/sigmacatch/", &mut |entry| {
+            let oid = match &entry.value {
+                RawRef::Direct(oid) => *oid,
+                RawRef::Symbolic(target) => match store.resolve(RefNameRef::from_trusted(target)) {
+                    Ok(oid) => oid,
+                    Err(_) => return ControlFlow::Continue(()),
+                },
+            };
+            out.push((entry.name.as_str().to_string(), oid));
+            ControlFlow::Continue(())
+        }),
+    )?;
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
 }
 
 /// Resolve a ref name to its oid, returning `None` when absent (packed or loose).
 /// Mirrors grit-lib's `resolve_ref` but as an `Option` for callers that treat a
 /// missing ref as a valid "first run" case.
 pub fn read_loose_or_packed_ref(git_dir: &Path, ref_name: &str) -> Option<String> {
-    refs::resolve_ref(git_dir, ref_name)
+    let store = FilesRefStore::from_git_dir(git_dir).ok()?;
+    store
+        .resolve(RefNameRef::from_trusted(ref_name))
         .ok()
         .map(|oid| oid.to_string())
 }
@@ -39,7 +68,41 @@ pub fn read_loose_or_packed_ref(git_dir: &Path, ref_name: &str) -> Option<String
 /// Read a symbolic ref's target (e.g. HEAD -> "refs/heads/main"), or `None` for a
 /// direct/detached ref.
 pub(crate) fn symbolic_ref_target(git_dir: &Path, refname: &str) -> Result<Option<String>> {
-    map_grit(refs::read_symbolic_ref(git_dir, refname))
+    let store = open_store(git_dir)?;
+    match map_grit(store.read_raw(RefNameRef::from_trusted(refname)))? {
+        Some(RawRef::Symbolic(target)) => Ok(Some(target)),
+        _ => Ok(None),
+    }
+}
+
+/// Read raw ref existence (replaces `grit_lib::refs::read_raw_ref` removed in 0.5.31).
+pub(crate) fn read_raw_ref_lookup(git_dir: &Path, refname: &str) -> Result<RawRefLookup> {
+    let store = open_store(git_dir)?;
+    match map_grit(store.read_raw(RefNameRef::from_trusted(refname)))? {
+        Some(_) => Ok(RawRefLookup::Exists),
+        None => Ok(RawRefLookup::NotFound),
+    }
+}
+
+/// Write a direct ref to `oid`.
+pub(crate) fn write_direct_ref(git_dir: &Path, refname: &str, oid: &ObjectId) -> Result<()> {
+    let store = open_store(git_dir)?;
+    map_grit(refs::update_direct_ref_on_store(
+        &*store, git_dir, refname, oid,
+    ))
+}
+
+/// Write a symbolic ref (e.g. HEAD -> `refs/heads/main`).
+pub(crate) fn write_symbolic_ref(git_dir: &Path, refname: &str, target: &str) -> Result<()> {
+    let store = open_store(git_dir)?;
+    let update = RefUpdate {
+        name: RefName::from_trusted(refname.to_owned()),
+        new_value: Some(RawRef::Symbolic(target.to_owned())),
+        expected: Expected::Any,
+        reflog: None,
+        flags: RefUpdateFlags::default(),
+    };
+    map_grit(refs::commit_ref_update_on_store(&*store, update))
 }
 
 /// Parse remote URL from `.git/config` for a given remote name.
@@ -81,7 +144,7 @@ pub(crate) fn set_head_after_fetch(git_dir: &Path, default_branch: Option<&str>)
         let remote_ref = format!("refs/remotes/origin/{}", branch);
         if let Some(oid_str) = read_loose_or_packed_ref(git_dir, &remote_ref) {
             let local_ref = format!("refs/heads/{}", branch);
-            if let Err(e) = refs::write_symbolic_ref(git_dir, "HEAD", &local_ref) {
+            if let Err(e) = write_symbolic_ref(git_dir, "HEAD", &local_ref) {
                 warn!("Failed to set HEAD symbolic ref: {}", e);
                 return;
             }
@@ -92,7 +155,7 @@ pub(crate) fn set_head_after_fetch(git_dir: &Path, default_branch: Option<&str>)
                     return;
                 }
             };
-            let _ = refs::write_ref(git_dir, &local_ref, &oid);
+            let _ = write_direct_ref(git_dir, &local_ref, &oid);
             info!(
                 "HEAD set to {} (→ {})",
                 local_ref,
@@ -130,7 +193,7 @@ pub(crate) fn fast_forward_branch(git_dir: &Path) -> Result<()> {
     let local_ref = format!("refs/heads/{}", remote_branch);
     let oid = ObjectId::from_hex(&remote_oid)
         .map_err(|e| RepoError::InvalidRef(format!("Invalid OID for '{}': {}", remote_ref, e)))?;
-    map_grit(refs::write_ref(git_dir, &local_ref, &oid))?;
+    write_direct_ref(git_dir, &local_ref, &oid)?;
     info!(
         "Fast-forwarded '{}' to {}",
         remote_branch,
@@ -175,8 +238,6 @@ mod tests {
     }
 
     /// Write an extra commit into the repo and return its oid as a hex string.
-    /// 0.5.28+ `refs::write_ref` verifies the target object exists, so test
-    /// fixtures must point refs at real objects, not arbitrary oids.
     fn write_commit(git_dir: &std::path::Path, message: &str) -> String {
         let commit = CommitData {
             tree: grit_lib::objects::ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
@@ -251,7 +312,6 @@ mod tests {
             symbolic_ref_target(&git_dir, "HEAD").unwrap().as_deref(),
             Some("refs/heads/main")
         );
-        // Detached HEAD: direct oid, no symbolic target.
         std::fs::write(git_dir.join("HEAD"), format!("{oid}\n")).unwrap();
         assert_eq!(symbolic_ref_target(&git_dir, "HEAD").unwrap(), None);
     }
@@ -294,7 +354,6 @@ mod tests {
     fn set_head_after_fetch_explicit_branch_ignores_other_candidates() {
         let tmp = tempfile::tempdir().unwrap();
         let (git_dir, _, oid) = setup_repo(tmp.path());
-        // Only `master` exists on the remote, but the config pins `main`.
         write_loose_ref(
             &git_dir,
             "refs/remotes/origin/master",
@@ -303,7 +362,6 @@ mod tests {
 
         set_head_after_fetch(&git_dir, Some("main"));
 
-        // Nothing matched: HEAD stays where it was.
         assert_eq!(
             symbolic_ref_target(&git_dir, "HEAD").unwrap().as_deref(),
             Some("refs/heads/main")
@@ -343,7 +401,6 @@ mod tests {
 
         fast_forward_branch(&git_dir).unwrap();
 
-        // Local ref untouched.
         assert_eq!(
             read_loose_or_packed_ref(&git_dir, "refs/heads/main").as_deref(),
             Some(oid.as_str())

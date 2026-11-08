@@ -40,13 +40,13 @@ Une version compilée de cette documentation est publiée sur GitHub Pages :
 
 | | English | Français |
 |---|---|---|
-| Architecture | [EN](../architecture/) | [FR](architecture.md) |
-| Build | [EN](../build/) | [FR](build.md) |
-| Configuration | [EN](../config/) | [FR](config.md) |
-| CLI | [EN](../cli/) | [FR](cli.md) |
-| Git | [EN](../git/) | [FR](git.md) |
-| Output format | [EN](../output-format/) | [FR](output-format.md) |
-| Regression data format | [EN](../regression-data-format/) | [FR](regression-data-format.md) |
+| Architecture | [EN](../en/architecture.md) | [FR](architecture.md) |
+| Build | [EN](../en/build.md) | [FR](build.md) |
+| Configuration | [EN](../en/config.md) | [FR](config.md) |
+| CLI | [EN](../en/cli.md) | [FR](cli.md) |
+| Git | [EN](../en/git.md) | [FR](git.md) |
+| Output format | [EN](../en/output-format.md) | [FR](output-format.md) |
+| Regression data format | [EN](../en/regression-data-format.md) | [FR](regression-data-format.md) |
 
 ## Licence
 

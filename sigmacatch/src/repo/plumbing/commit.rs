@@ -6,11 +6,10 @@
 use crate::repo::{RepoError, Result};
 use grit_lib::objects::odb::Odb;
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::refs;
 use std::path::Path;
 use tracing::info;
 
-use crate::repo::plumbing::refs::{map_grit, resolve_head, symbolic_ref_target};
+use crate::repo::plumbing::refs::{resolve_head, symbolic_ref_target, write_direct_ref};
 
 /// Write a new commit object pointing at `tree_oid` with HEAD as its parent,
 /// then advance the ref currently pointed to by HEAD (or detach HEAD if it is
@@ -57,7 +56,7 @@ pub(crate) fn commit_tree(
 
     match symbolic_ref_target(git_dir, "HEAD")? {
         Some(ref_name) => {
-            map_grit(refs::write_ref(git_dir, &ref_name, &commit_oid))?;
+            write_direct_ref(git_dir, &ref_name, &commit_oid)?;
             info!(
                 "Committed {} to {}: {}",
                 commit_oid,
@@ -66,7 +65,7 @@ pub(crate) fn commit_tree(
             );
         }
         None => {
-            map_grit(refs::write_ref(git_dir, "HEAD", &commit_oid))?;
+            write_direct_ref(git_dir, "HEAD", &commit_oid)?;
             info!(
                 "Committed {} to detached HEAD: {}",
                 commit_oid,

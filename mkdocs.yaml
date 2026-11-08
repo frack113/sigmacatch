@@ -76,3 +76,9 @@ markdown_extensions:
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences
+
+validation:
+  links:
+    not_found: info
+    absolute_links: info
+    unrecognized_links: info
