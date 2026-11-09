@@ -17,7 +17,9 @@ use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
 
-use crate::ebpf_common::{DnsEvent, ExecEvent, FileCreateEvent, ListenEvent, NetEvent};
+use crate::ebpf_common::{
+    DnsEvent, ExecEvent, FileCreateEvent, FileDeleteEvent, ListenEvent, NetEvent,
+};
 use crate::types::Event;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
@@ -432,6 +434,47 @@ impl EventBuilder {
         to_event(xml)
     }
 
+    /// Build the EID 23 (file_delete) event for a kernel unlink/unlinkat
+    /// record. Relative paths are resolved against the deleter's dirfd/cwd
+    /// while it is still alive; hashes/archiving metadata are unavailable from
+    /// the syscall tracepoint and reported as `-`/`false`.
+    pub fn file_delete_event(&mut self, ev: &FileDeleteEvent) -> Event {
+        let now = Utc::now();
+        let (guid, image) = match self.parents.get(&ev.pid) {
+            Some(info) => (info.guid.clone(), info.image.clone()),
+            None => (NULL_GUID.to_string(), "-".to_string()),
+        };
+        let user = self.user_name(ev.uid);
+        let target = resolve_target_path(ev.pid, ev.dirfd, ev.path_str());
+        let xml = format!(
+            "<Event><System>{system}</System><EventData>{data}</EventData></Event>",
+            system = system_block(
+                23,
+                5,
+                TASK_FILE_DELETE,
+                &mut self.record_id,
+                now,
+                &self.hostname,
+                self.exec_pid,
+                self.euid,
+            ),
+            data = [
+                data("RuleName", "-"),
+                data("UtcTime", &utc_time(&now)),
+                data("ProcessGuid", &guid),
+                data("ProcessId", &ev.pid.to_string()),
+                data("User", &user),
+                data("Image", &image),
+                data("TargetFilename", &target),
+                data("Hashes", "-"),
+                data("IsExecutable", "false"),
+                data("Archived", "false"),
+            ]
+            .concat(),
+        );
+        to_event(xml)
+    }
+
     /// Build the extension EID 22 (dns_query) event for a kernel DNS record.
     /// Field order follows the Windows Sysmon EID 22 schema (no golden exists
     /// for Linux — sysmon-for-linux does not emit this event); QueryResults is
@@ -614,20 +657,20 @@ const TASK_PROCESS_TERMINATE: u32 = 5;
 const TASK_NETWORK_CONNECT: u32 = 3;
 const TASK_FILE_CREATE: u32 = 11;
 const TASK_DNS_QUERY: u32 = 22;
+const TASK_FILE_DELETE: u32 = 23;
 const TASK_NETWORK_LISTEN: u32 = 500;
 
 /// Absolute TargetFilename: kernel-relative paths are resolved through the
-/// opener's `/proc` handles while it is alive; dead openers keep the raw
+/// process's `/proc` handles while it is alive; dead processes keep the raw
 /// path (best effort, same trade-off as rustinel's command line).
-fn resolve_target(ev: &FileCreateEvent) -> String {
-    let raw = ev.path_str();
+fn resolve_target_path(pid: u32, dirfd: i32, raw: &str) -> String {
     if raw.starts_with('/') || raw.is_empty() {
         return raw.to_string();
     }
-    let base = if ev.dirfd >= 0 {
-        fs::read_link(format!("/proc/{}/fd/{}", ev.pid, ev.dirfd))
+    let base = if dirfd >= 0 {
+        fs::read_link(format!("/proc/{pid}/fd/{dirfd}"))
     } else {
-        fs::read_link(format!("/proc/{}/cwd", ev.pid))
+        fs::read_link(format!("/proc/{pid}/cwd"))
     }
     .map(|p| p.to_string_lossy().into_owned())
     .unwrap_or_default();
@@ -635,6 +678,10 @@ fn resolve_target(ev: &FileCreateEvent) -> String {
         "" => raw.to_string(),
         b => format!("{b}/{raw}"),
     }
+}
+
+fn resolve_target(ev: &FileCreateEvent) -> String {
+    resolve_target_path(ev.pid, ev.dirfd, ev.path_str())
 }
 
 /// Dotted quad for v4, compressed RFC-5952 for v6.
@@ -1279,6 +1326,83 @@ mod file_tests {
         let event = builder.file_create_event(&ev);
         let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
         assert!(xml.contains("<Data Name=\"TargetFilename\">sub/file.conf</Data>"));
+    }
+}
+
+#[cfg(test)]
+mod file_delete_tests {
+    use super::tests::{FAKE_PID, sample_exec};
+    use super::*;
+    use crate::ebpf_common::{AT_FDCWD, EVENT_FILE_DELETE, PATH_LEN};
+
+    fn sample_delete(pid: u32) -> FileDeleteEvent {
+        let mut ev = FileDeleteEvent {
+            kind: EVENT_FILE_DELETE,
+            pid,
+            uid: 0,
+            gid: 0,
+            dirfd: AT_FDCWD,
+            _pad0: 0,
+            path: [0; PATH_LEN],
+            comm: [0; 16],
+        };
+        let p = b"/etc/doas.conf\0";
+        ev.path[..p.len()].copy_from_slice(p);
+        ev.comm[..2].copy_from_slice(b"rm");
+        ev
+    }
+
+    #[test]
+    fn eid23_shape_order_and_category() {
+        let mut builder = EventBuilder::new();
+        let _ = builder.exec_event(&sample_exec(FAKE_PID));
+        let event = builder.file_delete_event(&sample_delete(FAKE_PID));
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
+
+        assert!(xml.contains("<EventID>23</EventID>"));
+        assert!(xml.contains("<Version>5</Version>"));
+        assert!(xml.contains("<Task>23</Task>"));
+        assert!(xml.contains("<Data Name=\"TargetFilename\">/etc/doas.conf</Data>"));
+        assert!(xml.contains("<Data Name=\"Hashes\">-</Data>"));
+        assert!(xml.contains("<Data Name=\"IsExecutable\">false</Data>"));
+        assert!(xml.contains("<Data Name=\"Archived\">false</Data>"));
+        assert!(xml.contains("<Data Name=\"Image\">/usr/bin/id</Data>"));
+        assert_eq!(event.event_json["service"], "sysmon");
+        assert_eq!(event.event_json["category"], "file_delete");
+
+        let order = [
+            "RuleName",
+            "UtcTime",
+            "ProcessGuid",
+            "ProcessId",
+            "User",
+            "Image",
+            "TargetFilename",
+            "Hashes",
+            "IsExecutable",
+            "Archived",
+        ];
+        let mut last = 0;
+        for field in order {
+            let pos = xml.find(&format!("Name=\"{field}\"")).expect(field);
+            assert!(pos > last, "field {field} out of order");
+            last = pos;
+        }
+    }
+
+    #[test]
+    fn eid23_unknown_process_falls_back() {
+        let mut builder = EventBuilder::new();
+        let event = builder.file_delete_event(&sample_delete(999_999));
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
+        assert!(xml.contains("<EventID>23</EventID>"));
+        assert!(xml.contains("<Data Name=\"Image\">-</Data>"));
+        assert!(
+            xml.contains(
+                "<Data Name=\"ProcessGuid\">{00000000-0000-0000-0000-000000000000}</Data>"
+            )
+        );
+        assert_eq!(event.event_json["category"], "file_delete");
     }
 }
 

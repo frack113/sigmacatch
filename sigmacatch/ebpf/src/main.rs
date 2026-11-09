@@ -37,14 +37,15 @@ use aya_ebpf::helpers::bpf_probe_read_user_str;
 mod ebpf_common;
 
 use ebpf_common::{
-    ARG0_LEN, DNS_PAYLOAD_LEN, EVENT_DNS, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_LISTEN,
-    EVENT_NET, DnsEvent, ExecEvent, ExitEvent, FileCreateEvent, IMAGE_LEN, ListenEvent,
-    NetEvent, PATH_LEN,
+    ARG0_LEN, DNS_PAYLOAD_LEN, EVENT_DNS, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_DELETE,
+    EVENT_LISTEN, EVENT_NET, DnsEvent, ExecEvent, ExitEvent, FileCreateEvent, FileDeleteEvent,
+    IMAGE_LEN, ListenEvent, NetEvent, PATH_LEN,
 };
 
 const MAX_ENTRIES: u32 = 1;
 const EXEC_ARGS_MAX: u32 = 4096;
 const FILE_STAGE_MAX: u32 = 4096;
+const DELETE_STAGE_MAX: u32 = 4096;
 const BIND_STAGE_MAX: u32 = 4096;
 const LISTEN_FD_MAX: u32 = 4096;
 /// `O_CREAT` bit — openat is staged only when the caller may create.
@@ -99,6 +100,10 @@ static FILE_STAGE: LruHashMap<u32, PendingFile> = LruHashMap::with_max_entries(F
 #[map(name = "FILE_SCRATCH")]
 static FILE_SCRATCH: PerCpuArray<PendingFile> =
     PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
+
+#[map(name = "DELETE_STAGE")]
+static DELETE_STAGE: LruHashMap<u32, PendingFile> =
+    LruHashMap::with_max_entries(DELETE_STAGE_MAX, 0);
 
 #[map(name = "BIND_STAGE")]
 static BIND_STAGE: LruHashMap<u64, PendingBind> = LruHashMap::with_max_entries(BIND_STAGE_MAX, 0);
@@ -564,6 +569,115 @@ fn try_emit_file_create(ctx: &TracePointContext) -> Result<(), i64> {
         // SAFETY: exclusive reserved FileCreateEvent slot; writes in bounds.
         unsafe {
             (*p).kind = EVENT_FILE;
+            (*p).pid = pid;
+            (*p).uid = uidgid as u32;
+            (*p).gid = (uidgid >> 32) as u32;
+            (*p).dirfd = staged.dirfd;
+            (*p)._pad0 = 0;
+            (*p).path = staged.path;
+            (*p).comm = comm;
+        }
+        entry.submit(0);
+    }
+    Ok(())
+}
+
+// ─── File deletion capture (B7, EID 23) ─────────────────────────────────────
+
+#[tracepoint(category = "syscalls", name = "sys_enter_unlink")]
+fn sys_enter_unlink(ctx: TracePointContext) -> i32 {
+    match try_stage_unlink(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+fn try_stage_unlink(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: offset from sys_enter_unlink format (pathname@16).
+    let pathname: *const u8 = unsafe { ctx.read_at(16)? };
+    let pid = bpf_get_current_pid_tgid() as u32;
+
+    let pending = match FILE_SCRATCH.get_ptr_mut(0) {
+        // SAFETY: index validated by get_ptr_mut; per-cpu map storage valid
+        // and unaliased for this program invocation.
+        Some(p) => unsafe { &mut *p },
+        None => return Err(-28),
+    };
+    pending.path = [0; PATH_LEN];
+    pending.dirfd = ebpf_common::AT_FDCWD;
+    read_cstr(&mut pending.path, pathname);
+
+    let _ = DELETE_STAGE.insert(&pid, pending, 0);
+    Ok(())
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_unlink")]
+fn sys_exit_unlink(ctx: TracePointContext) -> i32 {
+    match try_emit_file_delete(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_unlinkat")]
+fn sys_enter_unlinkat(ctx: TracePointContext) -> i32 {
+    match try_stage_unlinkat(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+fn try_stage_unlinkat(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: offsets from sys_enter_unlinkat format (dfd@16, pathname@24).
+    let dirfd: i32 = unsafe { ctx.read_at(16)? };
+    let pathname: *const u8 = unsafe { ctx.read_at(24)? };
+    let pid = bpf_get_current_pid_tgid() as u32;
+
+    let pending = match FILE_SCRATCH.get_ptr_mut(0) {
+        // SAFETY: index validated by get_ptr_mut; per-cpu map storage valid
+        // and unaliased for this program invocation.
+        Some(p) => unsafe { &mut *p },
+        None => return Err(-28),
+    };
+    pending.path = [0; PATH_LEN];
+    pending.dirfd = dirfd;
+    read_cstr(&mut pending.path, pathname);
+
+    let _ = DELETE_STAGE.insert(&pid, pending, 0);
+    Ok(())
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_unlinkat")]
+fn sys_exit_unlinkat(ctx: TracePointContext) -> i32 {
+    match try_emit_file_delete(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+fn try_emit_file_delete(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: bounds-checked context read of the syscall return value.
+    let ret: i64 = unsafe { ctx.read_at(16)? };
+    if ret != 0 {
+        return Ok(());
+    }
+    let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    // SAFETY: read-only map borrow, copied out immediately.
+    let Some(staged) = (unsafe { DELETE_STAGE.get(&pid) }).map(|p| PendingFile {
+        path: p.path,
+        dirfd: p.dirfd,
+    }) else {
+        return Ok(());
+    };
+    DELETE_STAGE.remove(&pid)?;
+
+    let uidgid = bpf_get_current_uid_gid();
+    let comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    if let Some(mut entry) = EVENTS.reserve::<FileDeleteEvent>(0) {
+        let p = entry.as_mut_ptr();
+        // SAFETY: exclusive reserved FileDeleteEvent slot; writes in bounds.
+        unsafe {
+            (*p).kind = EVENT_FILE_DELETE;
             (*p).pid = pid;
             (*p).uid = uidgid as u32;
             (*p).gid = (uidgid >> 32) as u32;

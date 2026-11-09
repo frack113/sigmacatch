@@ -50,6 +50,8 @@ mod inner {
     pub const EVENT_DNS: u32 = 5;
     /// Ring buffer record tag: socket entered listening state (extension).
     pub const EVENT_LISTEN: u32 = 6;
+    /// Ring buffer record tag: file deleted via unlink/unlinkat.
+    pub const EVENT_FILE_DELETE: u32 = 7;
 
     /// Directory-fd sentinel meaning "path is relative to cwd".
     pub const AT_FDCWD: i32 = -100;
@@ -252,6 +254,53 @@ mod inner {
     const _: () = assert!(
         core::mem::size_of::<FileCreateEvent>().is_multiple_of(8),
         "FileCreateEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// File deletion event emitted at `sys_exit_unlink`/`sys_exit_unlinkat`
+    /// when the staged syscall succeeded.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct FileDeleteEvent {
+        /// Always [`EVENT_FILE_DELETE`].
+        pub kind: u32,
+        /// Deleting process id.
+        pub pid: u32,
+        /// Real UID of the deleting task.
+        pub uid: u32,
+        /// Real GID of the deleting task.
+        pub gid: u32,
+        /// Directory-fd argument of unlinkat (may be [`AT_FDCWD`]).
+        pub dirfd: i32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: i32,
+        /// Path as passed to the syscall (NUL-padded; may be relative).
+        pub path: [u8; PATH_LEN],
+        /// Task comm at exit time (NUL-padded).
+        pub comm: [u8; COMM_LEN],
+    }
+
+    impl FileDeleteEvent {
+        /// Parse a ring buffer record into a typed file-delete event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Path as lossy UTF-8 up to the first NUL.
+        pub fn path_str(&self) -> &str {
+            Self::cstr(&self.path)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<FileDeleteEvent>().is_multiple_of(8),
+        "FileDeleteEvent must stay 8-byte aligned for ring buffer records"
     );
 
     /// Outbound DNS query captured from `sendto`/`sendmsg` to UDP port 53.

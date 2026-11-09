@@ -8,8 +8,8 @@
 use std::fs;
 
 use crate::ebpf_common::{
-    DnsEvent, EVENT_DNS, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_LISTEN, EVENT_NET,
-    FileCreateEvent, ListenEvent, NetEvent,
+    DnsEvent, EVENT_DNS, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_DELETE, EVENT_LISTEN,
+    EVENT_NET, FileCreateEvent, FileDeleteEvent, ListenEvent, NetEvent,
 };
 use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::{Context, bail};
@@ -87,6 +87,15 @@ const ATTACHMENTS: &[(&str, &str, &str, bool)] = &[
     ("sys_exit_open", "syscalls", "sys_exit_open", false),
     ("sys_enter_openat2", "syscalls", "sys_enter_openat2", false),
     ("sys_exit_openat2", "syscalls", "sys_exit_openat2", false),
+    ("sys_enter_unlink", "syscalls", "sys_enter_unlink", false),
+    ("sys_exit_unlink", "syscalls", "sys_exit_unlink", false),
+    (
+        "sys_enter_unlinkat",
+        "syscalls",
+        "sys_enter_unlinkat",
+        false,
+    ),
+    ("sys_exit_unlinkat", "syscalls", "sys_exit_unlinkat", false),
     ("sys_enter_bind", "syscalls", "sys_enter_bind", false),
     ("sys_enter_listen", "syscalls", "sys_enter_listen", false),
     ("sys_exit_listen", "syscalls", "sys_exit_listen", false),
@@ -241,6 +250,18 @@ impl EventProducer for EventCollector {
                         None => tracing::warn!(
                             size = bytes.len(),
                             "net record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_DELETE => match FileDeleteEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.file_delete_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-delete record with unexpected size — skipped"
                         ),
                     },
                     EVENT_LISTEN => match ListenEvent::from_bytes(bytes) {
