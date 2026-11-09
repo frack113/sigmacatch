@@ -39,9 +39,13 @@
 
 use crate::rule::SigmahqRules;
 use crate::types::{Alert, Event};
+use rayon::prelude::*;
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::pipeline::{Pipeline, parse_pipeline};
-use rsigma_eval::{Engine, LogSourceExtractor};
+use rsigma_eval::{
+    CompiledRule, Engine, EvalError, LogSourceExtractor, apply_pipelines, compile_rule,
+};
+use rsigma_parser::SigmaRule;
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -175,6 +179,47 @@ pub enum DetectionError {
     LoadHir(#[source] rsigma_eval::EvalError),
 }
 
+/// Add `rules` to `engine` like `Engine::add_rules`, but lower and compile the
+/// rules in parallel.
+///
+/// Each rule is cloned, run through `pipelines` (in the order the engine uses:
+/// stable by priority), lowered and compiled on a rayon worker; the compiled
+/// rules are then handed to the engine in input order with a single index
+/// rebuild. Errors are returned as `(index in input, error)`, like
+/// `Engine::add_rules`.
+///
+/// The compiled rules are added through `extend_compiled_rules`, which does not
+/// retain their HIR, so a caller that needs `save_hir` must use
+/// `Engine::add_rules` instead.
+fn add_rules_parallel(
+    engine: &mut Engine,
+    pipelines: &[&Pipeline],
+    rules: &[SigmaRule],
+) -> Vec<(usize, EvalError)> {
+    let mut ordered: Vec<Pipeline> = pipelines.iter().map(|p| (*p).clone()).collect();
+    ordered.sort_by_key(|p| p.priority);
+
+    let results: Vec<Result<CompiledRule, EvalError>> = rules
+        .par_iter()
+        .map(|rule| {
+            let mut transformed = rule.clone();
+            apply_pipelines(&ordered, &mut transformed)?;
+            compile_rule(&transformed)
+        })
+        .collect();
+
+    let mut compiled = Vec::with_capacity(results.len());
+    let mut errors = Vec::new();
+    for (idx, result) in results.into_iter().enumerate() {
+        match result {
+            Ok(rule) => compiled.push(rule),
+            Err(e) => errors.push((idx, e)),
+        }
+    }
+    engine.extend_compiled_rules(compiled);
+    errors
+}
+
 impl DetectionEngine {
     /// Parse the four platform pipelines and create an engine.
     /// Returns (engine, win_logsource, win_field, lnx_logsource, lnx_field).
@@ -261,7 +306,15 @@ impl DetectionEngine {
 
             // add_rules (&[SigmaRule]) instead of add_collection avoids cloning
             // the whole Vec; indexes are rebuilt once at the end.
-            let errors = engine.add_rules(rules.rules());
+            let errors = if hir_cache_path.is_some() {
+                engine.add_rules(rules.rules())
+            } else {
+                add_rules_parallel(
+                    &mut engine,
+                    &[&win_logsource, &win_field, &lnx_logsource, &lnx_field],
+                    rules.rules(),
+                )
+            };
             if !errors.is_empty() {
                 for (idx, err) in &errors {
                     tracing::error!("Rule at index {idx} failed to compile: {err}");
@@ -311,7 +364,11 @@ impl DetectionEngine {
         let (mut engine, win_logsource, win_field, lnx_logsource, lnx_field) =
             Self::create_engine_with_pipelines()?;
 
-        let errors = engine.add_rules(rules.rules());
+        let errors = add_rules_parallel(
+            &mut engine,
+            &[&win_logsource, &win_field, &lnx_logsource, &lnx_field],
+            rules.rules(),
+        );
         let failed: Vec<(usize, DetectionError)> = errors
             .into_iter()
             .map(|(idx, err)| {
@@ -364,7 +421,20 @@ impl DetectionEngine {
             engine.set_retain_hir(true);
         }
 
-        let errors = engine.add_rules(rules.rules());
+        let errors = if self.hir_cache_path.is_some() {
+            engine.add_rules(rules.rules())
+        } else {
+            add_rules_parallel(
+                &mut engine,
+                &[
+                    &self.win_logsource_pipeline,
+                    &self.win_field_pipeline,
+                    &self.lnx_logsource_pipeline,
+                    &self.lnx_field_pipeline,
+                ],
+                rules.rules(),
+            )
+        };
         if !errors.is_empty() {
             for (idx, err) in &errors {
                 tracing::warn!("Rule at index {idx} failed to compile: {err}");
@@ -674,6 +744,65 @@ detection:
 
         let engine = DetectionEngine::new(&rules).unwrap();
         assert_eq!(engine.rule_count(), 1);
+    }
+
+    /// Parallel compilation yields the same compiled rules, in the same order,
+    /// as the serial `Engine::add_rules` path (used when a HIR cache is set).
+    #[test]
+    fn test_parallel_compile_matches_serial_add_rules() {
+        let entries: Vec<(String, String)> = (0..40)
+            .map(|i| {
+                let yaml = if i % 2 == 0 {
+                    MINIMAL_RULE_YAML.to_string()
+                } else {
+                    SECOND_RULE_YAML.to_string()
+                }
+                .replace(
+                    "11111111-1111-1111-1111-111111111111",
+                    &format!("00000000-0000-4000-8000-{i:012}"),
+                )
+                .replace(
+                    "22222222-2222-2222-2222-222222222222",
+                    &format!("00000000-0000-4000-9000-{i:012}"),
+                );
+                (format!("r{i}.yml"), yaml)
+            })
+            .collect();
+        let refs: Vec<(&str, &str)> = entries
+            .iter()
+            .map(|(n, y)| (n.as_str(), y.as_str()))
+            .collect();
+        let rules = rules_from(&refs);
+        assert_eq!(rules.len(), 40);
+
+        let parallel = DetectionEngine::new(&rules).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let serial =
+            DetectionEngine::new_with_hir_cache(&rules, Some(dir.path().join("c.hir"))).unwrap();
+
+        assert_eq!(parallel.rule_count(), 40);
+        assert_eq!(
+            format!("{:?}", parallel.engine().rules()),
+            format!("{:?}", serial.engine().rules()),
+            "compiled rules must be identical and in input order"
+        );
+
+        // Same lenient behaviour on a rule set with an uncompilable rule.
+        let mut with_bad = refs.clone();
+        with_bad.push(("bad.yml", BAD_RULE_YAML));
+        let rules_bad = rules_from(&with_bad);
+        let (lenient, failed) = DetectionEngine::new_lenient(&rules_bad).unwrap();
+        assert_eq!(lenient.rule_count(), 40);
+        assert_eq!(failed.len(), 1);
+        let bad_pos = rules_bad
+            .rules()
+            .iter()
+            .position(|r| r.id.as_deref() == Some("bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb"))
+            .unwrap();
+        assert_eq!(
+            failed[0].0, bad_pos,
+            "error index is the position in the input"
+        );
     }
 
     #[test]
