@@ -438,6 +438,7 @@ impl DetectionEngine {
             &self.win_field_pipeline,
             &self.lnx_logsource_pipeline,
             &self.lnx_field_pipeline,
+            &self.engine_config,
         )?;
         engine.extend_compiled_rules(
             self.engine
