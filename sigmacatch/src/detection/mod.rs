@@ -558,10 +558,23 @@ impl DetectionEngine {
         }
         tracing::info!(events = events.len(), "processing events");
         self.stats.events_processed += events.len() as u64;
+        let alerts = self.evaluate(&events);
+        self.alerts.extend(alerts);
+    }
+
+    /// Evaluate `events` against the loaded rules and return one [`Alert`] per
+    /// match, without touching the FIFO or the counters.
+    ///
+    /// Takes `&self`, so callers that own several independent batches (such as
+    /// `regressiondata-check`) can evaluate them concurrently.
+    pub fn evaluate(&self, events: &[Event]) -> Vec<Alert> {
+        let mut alerts = Vec::new();
+        if events.is_empty() {
+            return alerts;
+        }
 
         // Build borrowed JsonEvent references for batch evaluation.
-        // These borrow from `events` which is owned here, so they're valid
-        // for the entire scope.
+        // These borrow from `events`, so they're valid for the entire scope.
         let json_events: Vec<JsonEvent<'_>> = events
             .iter()
             .map(|event| JsonEvent::borrow(&event.event_json))
@@ -590,7 +603,7 @@ impl DetectionEngine {
                     .and_then(|id| self.rule_id_map.get(id).copied())
                     .unwrap_or(Uuid::nil());
                 let rule_path = self.rule_paths.get(&rule_id).cloned();
-                let alert = Alert {
+                alerts.push(Alert {
                     rule_id,
                     rule_title: result.header.rule_title.clone(),
                     description: None,
@@ -605,10 +618,10 @@ impl DetectionEngine {
                     event_json: event.event_json.clone(),
                     event_raw: event.event_raw.clone(),
                     event_json_raw_all: event.event_json_raw_all.clone(),
-                };
-                self.alerts.push(alert);
+                });
             }
         }
+        alerts
     }
 
     /// Drain matched alerts (updates [`EngineStats::alerts_generated`]).
