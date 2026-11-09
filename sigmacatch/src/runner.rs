@@ -765,7 +765,8 @@ fn process_and_generate(mut pipeline: Pipeline) -> (Pipeline, Vec<(Uuid, Vec<Str
         for id in &retired_ids {
             pipeline.rules.remove_id(id);
         }
-        if let Err(e) = pipeline.engine.reload_rules(&pipeline.rules) {
+        let retired: HashSet<Uuid> = retired_ids.iter().copied().collect();
+        if let Err(e) = pipeline.engine.retire_rules(&retired, &pipeline.rules) {
             warn!(
                 "Failed to reload engine after retiring {} rules: {}",
                 retired_ids.len(),
