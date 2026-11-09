@@ -37,13 +37,16 @@ use aya_ebpf::helpers::bpf_probe_read_user_str;
 mod ebpf_common;
 
 use ebpf_common::{
-    ARG0_LEN, DNS_PAYLOAD_LEN, EVENT_DNS, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_NET,
-    DnsEvent, ExecEvent, ExitEvent, FileCreateEvent, IMAGE_LEN, NetEvent, PATH_LEN,
+    ARG0_LEN, DNS_PAYLOAD_LEN, EVENT_DNS, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_LISTEN,
+    EVENT_NET, DnsEvent, ExecEvent, ExitEvent, FileCreateEvent, IMAGE_LEN, ListenEvent,
+    NetEvent, PATH_LEN,
 };
 
 const MAX_ENTRIES: u32 = 1;
 const EXEC_ARGS_MAX: u32 = 4096;
 const FILE_STAGE_MAX: u32 = 4096;
+const BIND_STAGE_MAX: u32 = 4096;
+const LISTEN_FD_MAX: u32 = 4096;
 /// `O_CREAT` bit — openat is staged only when the caller may create.
 const O_CREAT: u64 = 0o100;
 #[repr(C)]
@@ -56,6 +59,16 @@ struct PendingExec {
 struct PendingFile {
     path: [u8; PATH_LEN],
     dirfd: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PendingBind {
+    family: u16,
+    _pad0: u16,
+    port_be: u16,
+    _pad1: u16,
+    addr: [u8; 16],
 }
 
 #[repr(C)]
@@ -86,6 +99,12 @@ static FILE_STAGE: LruHashMap<u32, PendingFile> = LruHashMap::with_max_entries(F
 #[map(name = "FILE_SCRATCH")]
 static FILE_SCRATCH: PerCpuArray<PendingFile> =
     PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
+
+#[map(name = "BIND_STAGE")]
+static BIND_STAGE: LruHashMap<u64, PendingBind> = LruHashMap::with_max_entries(BIND_STAGE_MAX, 0);
+
+#[map(name = "LISTEN_FD")]
+static LISTEN_FD: LruHashMap<u64, i32> = LruHashMap::with_max_entries(LISTEN_FD_MAX, 0);
 
 /// Read a NUL-terminated user string into `dst`, returning the stored length
 /// (excluding the NUL), provably bounded by `dst.len() - 1`.
@@ -263,6 +282,124 @@ fn try_emit_connect(ctx: &TracePointContext) -> Result<(), i64> {
             (*p).port_be = port_be;
             (*p)._pad1 = 0;
             (*p).addr = addr;
+            (*p).comm = comm;
+        }
+        entry.submit(0);
+    }
+    Ok(())
+}
+
+// ─── Socket listen capture (extension B6) ───────────────────────────────────
+
+fn bind_key(tgid: u32, fd: i32) -> u64 {
+    ((tgid as u64) << 32) | (fd as u32 as u64)
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_bind")]
+fn sys_enter_bind(ctx: TracePointContext) -> i32 {
+    match try_stage_bind(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+fn try_stage_bind(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: bounds-checked context reads (bind args fd, umyaddr).
+    let fd: i32 = unsafe { ctx.read_at(16)? };
+    let uservaddr: *const u8 = unsafe { ctx.read_at(24)? };
+    // SAFETY: two-byte user read; fault handled by helper → 0.
+    let family = unsafe { bpf_probe_read_user::<u16>(uservaddr.cast()) }.unwrap_or(0);
+    let (port_be, addr) = match family {
+        // AF_INET
+        2 => {
+            // SAFETY: fixed-size sockaddr_in user read; fault-tolerant helper.
+            let s: SockAddr4 = unsafe { bpf_probe_read_user(uservaddr.cast()) }?;
+            let mut a = [0u8; 16];
+            a[..4].copy_from_slice(&s.addr);
+            (s.port, a)
+        }
+        // AF_INET6
+        10 => {
+            // SAFETY: fixed-size sockaddr_in6 user read; fault-tolerant helper.
+            let s: SockAddr6 = unsafe { bpf_probe_read_user(uservaddr.cast()) }?;
+            (s.port, s.addr)
+        }
+        _ => return Ok(()),
+    };
+
+    let tgid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    let pending = PendingBind {
+        family,
+        _pad0: 0,
+        port_be,
+        _pad1: 0,
+        addr,
+    };
+    let _ = BIND_STAGE.insert(&bind_key(tgid, fd), &pending, 0);
+    Ok(())
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_listen")]
+fn sys_enter_listen(ctx: TracePointContext) -> i32 {
+    match try_stage_listen(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+fn try_stage_listen(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: bounds-checked context read (listen arg fd).
+    let fd: i32 = unsafe { ctx.read_at(16)? };
+    let tid_key = bpf_get_current_pid_tgid();
+    let _ = LISTEN_FD.insert(&tid_key, &fd, 0);
+    Ok(())
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_listen")]
+fn sys_exit_listen(ctx: TracePointContext) -> i32 {
+    match try_emit_listen(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+fn try_emit_listen(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: bounds-checked context read of the syscall return value.
+    let ret: i64 = unsafe { ctx.read_at(16)? };
+    let tid_key = bpf_get_current_pid_tgid();
+    // SAFETY: read-only map borrow of a fixed-size value.
+    let Some(fd) = (unsafe { LISTEN_FD.get(&tid_key) }).copied() else {
+        return Ok(());
+    };
+    LISTEN_FD.remove(&tid_key)?;
+
+    let tgid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    let key = bind_key(tgid, fd);
+    // SAFETY: read-only map borrow of a fixed-size value.
+    let Some(staged) = (unsafe { BIND_STAGE.get(&key) }).copied() else {
+        return Ok(());
+    };
+    // Consume staged bind regardless of listen outcome to bound map growth.
+    BIND_STAGE.remove(&key)?;
+    if ret < 0 {
+        return Ok(());
+    }
+
+    let uidgid = bpf_get_current_uid_gid();
+    let comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    if let Some(mut entry) = EVENTS.reserve::<ListenEvent>(0) {
+        let p = entry.as_mut_ptr();
+        // SAFETY: exclusive reserved ListenEvent slot; writes in bounds.
+        unsafe {
+            (*p).kind = EVENT_LISTEN;
+            (*p).pid = tgid;
+            (*p).uid = uidgid as u32;
+            (*p).gid = (uidgid >> 32) as u32;
+            (*p).family = staged.family;
+            (*p)._pad0 = 0;
+            (*p).port_be = staged.port_be;
+            (*p)._pad1 = 0;
+            (*p).addr = staged.addr;
             (*p).comm = comm;
         }
         entry.submit(0);

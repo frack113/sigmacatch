@@ -8,7 +8,8 @@
 use std::fs;
 
 use crate::ebpf_common::{
-    DnsEvent, EVENT_DNS, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_NET, FileCreateEvent, NetEvent,
+    DnsEvent, EVENT_DNS, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_LISTEN, EVENT_NET,
+    FileCreateEvent, ListenEvent, NetEvent,
 };
 use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::{Context, bail};
@@ -86,6 +87,9 @@ const ATTACHMENTS: &[(&str, &str, &str, bool)] = &[
     ("sys_exit_open", "syscalls", "sys_exit_open", false),
     ("sys_enter_openat2", "syscalls", "sys_enter_openat2", false),
     ("sys_exit_openat2", "syscalls", "sys_exit_openat2", false),
+    ("sys_enter_bind", "syscalls", "sys_enter_bind", false),
+    ("sys_enter_listen", "syscalls", "sys_enter_listen", false),
+    ("sys_exit_listen", "syscalls", "sys_exit_listen", false),
     ("sys_enter_sendto", "syscalls", "sys_enter_sendto", true),
     ("sys_enter_sendmsg", "syscalls", "sys_enter_sendmsg", true),
 ];
@@ -237,6 +241,18 @@ impl EventProducer for EventCollector {
                         None => tracing::warn!(
                             size = bytes.len(),
                             "net record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_LISTEN => match ListenEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.listen_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "listen record with unexpected size — skipped"
                         ),
                     },
                     other => tracing::warn!(tag = other, "unknown ring buffer record tag"),

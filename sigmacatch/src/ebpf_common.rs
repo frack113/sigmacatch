@@ -48,6 +48,8 @@ mod inner {
     pub const EVENT_FILE: u32 = 4;
     /// Ring buffer record tag: outbound DNS query payload (UDP port 53).
     pub const EVENT_DNS: u32 = 5;
+    /// Ring buffer record tag: socket entered listening state (extension).
+    pub const EVENT_LISTEN: u32 = 6;
 
     /// Directory-fd sentinel meaning "path is relative to cwd".
     pub const AT_FDCWD: i32 = -100;
@@ -300,6 +302,60 @@ mod inner {
     const _: () = assert!(
         core::mem::size_of::<DnsEvent>().is_multiple_of(8),
         "DnsEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// Socket listen event emitted at `sys_exit_listen` when a previously
+    /// bound socket enters the listening state (sigmacatch extension).
+    ///
+    /// The local endpoint comes from the `sys_enter_bind` staging for the
+    /// same `(pid, fd)` pair; only `AF_INET`/`AF_INET6` binds are tracked.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct ListenEvent {
+        /// Always [`EVENT_LISTEN`].
+        pub kind: u32,
+        /// Listening process id.
+        pub pid: u32,
+        /// Real UID of the listening task.
+        pub uid: u32,
+        /// Real GID of the listening task.
+        pub gid: u32,
+        /// Address family (`AF_INET` = 2, `AF_INET6` = 10).
+        pub family: u16,
+        /// Explicit padding keeping field offsets kernel-aligned (zeroed).
+        pub _pad0: u16,
+        /// Local bound port in network byte order.
+        pub port_be: u16,
+        /// Explicit padding keeping field offsets kernel-aligned (zeroed).
+        pub _pad1: u16,
+        /// IPv4 bytes occupy `[..4]`; IPv6 fills the whole array.
+        pub addr: [u8; 16],
+        /// Task comm at listen time (NUL-padded).
+        pub comm: [u8; 16],
+    }
+
+    impl ListenEvent {
+        /// Parse a ring buffer record into a typed listen event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Task comm as lossy UTF-8 up to the first NUL.
+        pub fn comm_str(&self) -> &str {
+            Self::cstr(&self.comm)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<ListenEvent>().is_multiple_of(8),
+        "ListenEvent must stay 8-byte aligned for ring buffer records"
     );
 }
 

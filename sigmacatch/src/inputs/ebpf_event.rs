@@ -17,7 +17,7 @@ use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
 
-use crate::ebpf_common::{DnsEvent, ExecEvent, FileCreateEvent, NetEvent};
+use crate::ebpf_common::{DnsEvent, ExecEvent, FileCreateEvent, ListenEvent, NetEvent};
 use crate::types::Event;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
@@ -330,6 +330,64 @@ impl EventBuilder {
         to_event(xml)
     }
 
+    /// Build the extension EID 500 (network_listen) event for a socket that
+    /// entered the listening state. This is a sigmacatch extension (not part
+    /// of SigmaHQ's Linux Sysmon taxonomy v2.1.0): local bound endpoint is
+    /// reported as `Source*`, destination fields are neutral because a passive
+    /// listener has no peer.
+    pub fn listen_event(&mut self, ev: &ListenEvent) -> Event {
+        let now = Utc::now();
+        let (guid, image) = match self.parents.get(&ev.pid) {
+            Some(info) => (info.guid.clone(), info.image.clone()),
+            None => (NULL_GUID.to_string(), "-".to_string()),
+        };
+        let user = self.user_name(ev.uid);
+        let is_v6 = ev.family == 10;
+        let bind_ip = format_addr(&ev.addr, is_v6);
+        let bind_port = u16::from_be(ev.port_be).to_string();
+        let (dest_ip, dest_v6) = if is_v6 {
+            ("::".to_string(), "true")
+        } else {
+            ("0.0.0.0".to_string(), "false")
+        };
+
+        let xml = format!(
+            "<Event><System>{system}</System><EventData>{data}</EventData></Event>",
+            system = system_block(
+                500,
+                1,
+                TASK_NETWORK_LISTEN,
+                &mut self.record_id,
+                now,
+                &self.hostname,
+                self.exec_pid,
+                self.euid,
+            ),
+            data = [
+                data("RuleName", "-"),
+                data("UtcTime", &utc_time(&now)),
+                data("ProcessGuid", &guid),
+                data("ProcessId", &ev.pid.to_string()),
+                data("Image", &image),
+                data("User", &user),
+                data("Protocol", "tcp"),
+                data("Initiated", "false"),
+                data("SourceIsIpv6", &is_v6.to_string()),
+                data("SourceIp", &bind_ip),
+                data("SourceHostname", "-"),
+                data("SourcePort", &bind_port),
+                data("SourcePortName", "-"),
+                data("DestinationIsIpv6", dest_v6),
+                data("DestinationIp", &dest_ip),
+                data("DestinationHostname", "-"),
+                data("DestinationPort", "0"),
+                data("DestinationPortName", "-"),
+            ]
+            .concat(),
+        );
+        to_event(xml)
+    }
+
     /// Build the EID 11 (file_create) event for a kernel openat(O_CREAT)
     /// record. Relative paths are resolved against the opener's dirfd/cwd
     /// while it is still alive; otherwise the raw kernel path is kept.
@@ -556,6 +614,7 @@ const TASK_PROCESS_TERMINATE: u32 = 5;
 const TASK_NETWORK_CONNECT: u32 = 3;
 const TASK_FILE_CREATE: u32 = 11;
 const TASK_DNS_QUERY: u32 = 22;
+const TASK_NETWORK_LISTEN: u32 = 500;
 
 /// Absolute TargetFilename: kernel-relative paths are resolved through the
 /// opener's `/proc` handles while it is alive; dead openers keep the raw
@@ -1324,5 +1383,71 @@ mod dns_tests {
                 .dns_event(&sample_dns(FAKE_PID, &[1, 2, 3]))
                 .is_none()
         );
+    }
+}
+
+#[cfg(test)]
+mod listen_tests {
+    use super::tests::{FAKE_PID, sample_exec};
+    use super::*;
+    use crate::ebpf_common::{EVENT_LISTEN, ListenEvent};
+
+    fn sample_listen(family: u16, port_be: u16, addr: [u8; 16]) -> ListenEvent {
+        ListenEvent {
+            kind: EVENT_LISTEN,
+            pid: FAKE_PID,
+            uid: 0,
+            gid: 0,
+            family,
+            _pad0: 0,
+            port_be,
+            _pad1: 0,
+            addr,
+            comm: *b"nginx\0\0\0\0\0\0\0\0\0\0\0",
+        }
+    }
+
+    #[test]
+    fn eid500_ipv4_shape_and_category() {
+        let mut builder = EventBuilder::new();
+        let _ = builder.exec_event(&sample_exec(FAKE_PID));
+
+        let addr = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let event = builder.listen_event(&sample_listen(2, 8080u16.to_be(), addr));
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
+
+        assert!(xml.contains("<EventID>500</EventID>"));
+        assert!(xml.contains("<Task>500</Task>"));
+        assert!(xml.contains("<Data Name=\"Protocol\">tcp</Data>"));
+        assert!(xml.contains("<Data Name=\"Initiated\">false</Data>"));
+        assert!(xml.contains("<Data Name=\"SourceIsIpv6\">false</Data>"));
+        assert!(xml.contains("<Data Name=\"SourceIp\">0.0.0.0</Data>"));
+        assert!(xml.contains("<Data Name=\"SourcePort\">8080</Data>"));
+        assert!(xml.contains("<Data Name=\"DestinationIp\">0.0.0.0</Data>"));
+        assert!(xml.contains("<Data Name=\"DestinationPort\">0</Data>"));
+        assert!(xml.contains("<Data Name=\"Image\">/usr/bin/id</Data>"));
+        assert_eq!(event.event_json["service"], "sysmon");
+        assert_eq!(event.event_json["category"], "network_listen");
+    }
+
+    #[test]
+    fn eid500_ipv6_unknown_process_falls_back() {
+        let mut builder = EventBuilder::new();
+        let addr = std::net::Ipv6Addr::UNSPECIFIED.octets();
+        let event = builder.listen_event(&sample_listen(10, 443u16.to_be(), addr));
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
+
+        assert!(xml.contains("<Data Name=\"SourceIsIpv6\">true</Data>"));
+        assert!(xml.contains("<Data Name=\"SourceIp\">::</Data>"));
+        assert!(xml.contains("<Data Name=\"SourcePort\">443</Data>"));
+        assert!(xml.contains("<Data Name=\"DestinationIsIpv6\">true</Data>"));
+        assert!(xml.contains("<Data Name=\"DestinationIp\">::</Data>"));
+        assert!(
+            xml.contains(
+                "<Data Name=\"ProcessGuid\">{00000000-0000-0000-0000-000000000000}</Data>"
+            )
+        );
+        assert!(xml.contains("<Data Name=\"Image\">-</Data>"));
+        assert_eq!(event.event_json["category"], "network_listen");
     }
 }
