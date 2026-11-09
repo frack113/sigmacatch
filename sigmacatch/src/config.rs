@@ -244,6 +244,20 @@ impl Default for RegressionConfig {
     }
 }
 
+/// Detection-engine tuning (`engine:` block of `config.yaml`).
+///
+/// Both toggles are optional rsigma-eval prefilters that never change which
+/// rules match, only how fast the engine builds and evaluates. They are off by
+/// default because they cost more than they skip on the SigmaHQ ruleset.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EngineConfig {
+    /// Cross-rule Aho-Corasick prefilter. Default: false.
+    pub cross_rule_ac: bool,
+    /// Bloom (trigram) prefilter for substring matchers. Default: false.
+    pub bloom_prefilter: bool,
+}
+
 /// Main application configuration.
 /// Root configuration document (`config.yaml`).
 #[derive(Debug, Serialize, Deserialize)]
@@ -260,6 +274,9 @@ pub struct Config {
     /// Event collection backend: `winevt`.
     #[serde(default)]
     pub regression: RegressionConfig,
+    /// Detection-engine prefilter toggles.
+    #[serde(default)]
+    pub engine: EngineConfig,
     /// Stop-control file: while it exists, the runner triggers a graceful
     /// shutdown (drain + flush + commit) on the next poll, so a continuous
     /// (`-r 0`) run can be ended without a hard kill. Relative paths resolve
@@ -280,6 +297,7 @@ impl Default for Config {
             filter: SigmaFilterConfig::default(),
             git: GitConfig::default(),
             regression: RegressionConfig::default(),
+            engine: EngineConfig::default(),
             stop_file: default_stop_file(),
             hir_cache: None,
         }
@@ -1237,6 +1255,22 @@ mod tests {
         };
         let config = Config::load_for_dry_run(&path, &cli).unwrap();
         assert_eq!(config.hir_cache.as_deref(), Some("hir.bin"));
+    }
+
+    /// The cross-rule Aho-Corasick and bloom prefilters are opt-in, and the
+    /// `engine:` block toggles them independently.
+    #[test]
+    fn test_engine_prefilters_default_off_and_configurable() {
+        assert!(!EngineConfig::default().cross_rule_ac);
+        assert!(!EngineConfig::default().bloom_prefilter);
+        assert!(!Config::default().engine.cross_rule_ac);
+
+        let parsed = Config::parse_yaml("engine:\n  bloom_prefilter: true\n").unwrap();
+        assert!(parsed.engine.bloom_prefilter);
+        assert!(!parsed.engine.cross_rule_ac);
+
+        let err = Config::parse_yaml("engine:\n  nope: true\n").unwrap_err();
+        assert!(err.to_string().contains("unknown field"), "{err}");
     }
 
     /// A cache declared in the file, with no CLI flag, is still honoured.

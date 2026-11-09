@@ -37,6 +37,7 @@
 //! # }
 //! ```
 
+use crate::config::EngineConfig;
 use crate::rule::SigmahqRules;
 use crate::types::{Alert, Event};
 use rsigma_eval::event::JsonEvent;
@@ -146,6 +147,8 @@ pub struct DetectionEngine {
     rule_id_map: HashMap<String, Uuid>,
     /// Path to the HIR cache file (None = no caching).
     hir_cache_path: Option<PathBuf>,
+    /// Engine toggles, re-applied each time the engine is rebuilt.
+    engine_config: EngineConfig,
 }
 
 /// Errors produced by the detection engine while building or persisting it.
@@ -178,8 +181,9 @@ pub enum DetectionError {
 impl DetectionEngine {
     /// Parse the four platform pipelines and create an engine.
     /// Returns (engine, win_logsource, win_field, lnx_logsource, lnx_field).
-    fn create_engine_with_pipelines()
-    -> Result<(Engine, Pipeline, Pipeline, Pipeline, Pipeline), DetectionError> {
+    fn create_engine_with_pipelines(
+        engine_config: &EngineConfig,
+    ) -> Result<(Engine, Pipeline, Pipeline, Pipeline, Pipeline), DetectionError> {
         let win_logsource =
             parse_pipeline(WIN_LOGSOURCE_PIPELINE).map_err(|source| DetectionError::Pipeline {
                 name: "win_logsource",
@@ -201,7 +205,13 @@ impl DetectionEngine {
                 source,
             })?;
 
-        let engine = Self::create_engine(&win_logsource, &win_field, &lnx_logsource, &lnx_field)?;
+        let engine = Self::create_engine(
+            &win_logsource,
+            &win_field,
+            &lnx_logsource,
+            &lnx_field,
+            engine_config,
+        )?;
 
         Ok((engine, win_logsource, win_field, lnx_logsource, lnx_field))
     }
@@ -224,8 +234,18 @@ impl DetectionEngine {
         rules: &SigmahqRules,
         hir_cache_path: Option<PathBuf>,
     ) -> Result<Self, DetectionError> {
+        Self::new_with_options(rules, hir_cache_path, &EngineConfig::default())
+    }
+
+    /// Like [`Self::new_with_hir_cache`], with explicit engine toggles
+    /// (`engine:` block of `config.yaml`).
+    pub fn new_with_options(
+        rules: &SigmahqRules,
+        hir_cache_path: Option<PathBuf>,
+        engine_config: &EngineConfig,
+    ) -> Result<Self, DetectionError> {
         let (mut engine, win_logsource, win_field, lnx_logsource, lnx_field) =
-            Self::create_engine_with_pipelines()?;
+            Self::create_engine_with_pipelines(engine_config)?;
 
         // Warm start: the loaded blob must be applied to a throwaway engine so
         // a mid-blob failure cannot leave the main engine half-populated (which
@@ -234,8 +254,13 @@ impl DetectionEngine {
         if let Some(ref cache_path) = hir_cache_path
             && let Some(blob) = read_hir_cache(cache_path, &hir_cache_key(rules))
         {
-            let mut cached =
-                Self::create_engine(&win_logsource, &win_field, &lnx_logsource, &lnx_field)?;
+            let mut cached = Self::create_engine(
+                &win_logsource,
+                &win_field,
+                &lnx_logsource,
+                &lnx_field,
+                engine_config,
+            )?;
             match cached.load_hir(&blob) {
                 Ok(()) => {
                     engine = cached;
@@ -296,6 +321,7 @@ impl DetectionEngine {
             rule_paths,
             rule_id_map,
             hir_cache_path,
+            engine_config: engine_config.clone(),
         })
     }
 
@@ -308,8 +334,9 @@ impl DetectionEngine {
     pub fn new_lenient(
         rules: &SigmahqRules,
     ) -> Result<(Self, Vec<(usize, DetectionError)>), DetectionError> {
+        let engine_config = EngineConfig::default();
         let (mut engine, win_logsource, win_field, lnx_logsource, lnx_field) =
-            Self::create_engine_with_pipelines()?;
+            Self::create_engine_with_pipelines(&engine_config)?;
 
         let errors = engine.add_rules(rules.rules());
         let failed: Vec<(usize, DetectionError)> = errors
@@ -342,6 +369,7 @@ impl DetectionEngine {
                 rule_paths,
                 rule_id_map,
                 hir_cache_path: None,
+                engine_config,
             },
             failed,
         ))
@@ -355,6 +383,7 @@ impl DetectionEngine {
             &self.win_field_pipeline,
             &self.lnx_logsource_pipeline,
             &self.lnx_field_pipeline,
+            &self.engine_config,
         )?;
 
         // Retain HIR only when a cache path is set, so `save_hir` below can
@@ -432,12 +461,13 @@ impl DetectionEngine {
         win_field: &Pipeline,
         lnx_logsource: &Pipeline,
         lnx_field: &Pipeline,
+        engine_config: &EngineConfig,
     ) -> Result<Engine, DetectionError> {
         let mut engine = Engine::new();
 
         // Toggles that are NOT serialized by save_hir: applying them on the
         // warm path matters, because load_hir → rebuild_index reads them.
-        Self::configure_optimizations(&mut engine);
+        Self::configure_optimizations(&mut engine, engine_config);
 
         engine.add_pipeline(win_logsource.clone());
         engine.add_pipeline(win_field.clone());
@@ -451,16 +481,16 @@ impl DetectionEngine {
     /// `load_hir` on the warm path, since `rebuild_index` builds the bloom
     /// index with `bloom_max_bytes` and gates the cross-rule AC index on
     /// `cross_rule_ac_enabled`.
-    fn configure_optimizations(engine: &mut Engine) {
-        // Enable cross-rule Aho-Corasick prefilter (daachorse-index feature).
-        // For rule sets > 5K rules with many shared substring patterns,
-        // this dramatically reduces the number of rules evaluated per event.
-        engine.set_cross_rule_ac(true);
+    fn configure_optimizations(engine: &mut Engine, engine_config: &EngineConfig) {
+        // Cross-rule Aho-Corasick prefilter (daachorse-index feature). Off by
+        // default: on the SigmaHQ Windows ruleset it costs more engine build
+        // and evaluation time than the rule evaluations it skips.
+        engine.set_cross_rule_ac(engine_config.cross_rule_ac);
 
-        // Enable bloom pre-filter: short-circuits positive substring matchers
+        // Bloom pre-filter: short-circuits positive substring matchers
         // (Contains, StartsWith, EndsWith) when the field value cannot possibly
-        // match based on trigram extraction. ~1µs per field probe.
-        engine.set_bloom_prefilter(true);
+        // match based on trigram extraction. Off by default for the same reason.
+        engine.set_bloom_prefilter(engine_config.bloom_prefilter);
 
         // Raise the bloom index budget: the rsigma-eval default (1 MB, shared
         // across per-field filters) starts evicting useful filters on large
@@ -674,6 +704,43 @@ detection:
 
         let engine = DetectionEngine::new(&rules).unwrap();
         assert_eq!(engine.rule_count(), 1);
+    }
+
+    /// The prefilters change speed, never the matches: the same event matches
+    /// the same rule with both toggles off (default) and on.
+    #[test]
+    fn test_engine_config_toggles_do_not_change_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let sigma_dir = dir.path().join("sigma");
+        let rules_dir = sigma_dir.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        fs::write(rules_dir.join("test_rule.yml"), MINIMAL_RULE_YAML).unwrap();
+        let rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
+
+        let event_json = serde_json::json!({"event_id": 1});
+        let mut alerts_per_config = Vec::new();
+        for (ac, bloom) in [(false, false), (true, true)] {
+            let config = EngineConfig {
+                cross_rule_ac: ac,
+                bloom_prefilter: bloom,
+            };
+            let mut engine = DetectionEngine::new_with_options(&rules, None, &config).unwrap();
+            assert_eq!(engine.engine().cross_rule_ac_enabled(), ac);
+            assert_eq!(engine.engine().bloom_prefilter_enabled(), bloom);
+            engine.put_event(Event::new(
+                event_json.clone(),
+                event_json.clone(),
+                Vec::new(),
+            ));
+            engine.process_events();
+            alerts_per_config.push(engine.get_alerts().len());
+            // A rebuild keeps the configured toggles.
+            engine.reload_rules(&rules).unwrap();
+            assert_eq!(engine.engine().cross_rule_ac_enabled(), ac);
+            assert_eq!(engine.engine().bloom_prefilter_enabled(), bloom);
+        }
+        assert_eq!(alerts_per_config[0], alerts_per_config[1]);
+        assert_eq!(alerts_per_config[0], 1);
     }
 
     #[test]
