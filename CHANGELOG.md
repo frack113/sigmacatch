@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Git: the per-rule commit patches only the trees along the changed paths instead of rewriting the whole HEAD tree.
 - Git: checkout skips files that already match the tree, and the fixed 200 ms sleep in repository init is gone.
 - EVTX input: binary XML is rendered on all cores (`num_threads(0)`) and the XML to event conversion runs in parallel over bounded chunks, preserving record order. The EventRecordID strip edits the unique JSON in place instead of deep-copying every event.
 - regressiondata-check: entries are evaluated in parallel and reported in index order; output is unchanged. New `DetectionEngine::evaluate(&self, &[Event])`.

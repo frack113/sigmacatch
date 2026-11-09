@@ -9,11 +9,11 @@ use std::time::Instant;
 use tracing::{info, warn};
 
 use crate::repo::plumbing::{
-    add_directory_to_index, add_file_to_index, add_tree_to_index, checkout_main_branch,
-    commit_tree, discover_and_fetch, fast_forward_branch, fetch_options_for_branches,
-    fetch_options_for_shallow_clone, fetch_options_for_unshallow, fetch_remote, init_repo,
-    open_odb, read_remote_url_from_config, resolve_head, set_head_after_fetch,
-    setup_sparse_checkout, symbolic_ref_target, write_index,
+    PatchTreeError, add_directory_to_index, add_file_to_index, add_tree_to_index,
+    checkout_main_branch, commit_tree, discover_and_fetch, fast_forward_branch,
+    fetch_options_for_branches, fetch_options_for_shallow_clone, fetch_options_for_unshallow,
+    fetch_remote, init_repo, open_odb, patch_tree, read_remote_url_from_config, resolve_head,
+    set_head_after_fetch, setup_sparse_checkout, symbolic_ref_target, write_index,
 };
 use crate::repo::transport::{build_ssh_shell_command, https_to_ssh_url};
 
@@ -224,18 +224,31 @@ pub(crate) fn git_commit(
     let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)
         .map_err(|e| RepoError::Grit(format!("Failed to parse HEAD commit: {}", e)))?;
 
-    // Add the full parent (HEAD) tree at stage 0, then overlay the staged
-    // entries with `add_or_replace` so staged blob content wins. There is no
-    // staged-paths filtering — that was the site of a prior tree-amputation
+    // Patch only the trees along the staged paths. A path that collides with
+    // an entry of the other kind falls back to the full-index merge below:
+    // the HEAD tree at stage 0, overlaid with the staged entries by
+    // `add_or_replace` so staged blob content wins. There is no staged-paths
+    // filtering in the fallback — that was the site of a prior tree-amputation
     // bug (inverted condition).
-    let mut merged_index = grit_lib::index::Index::new();
-    add_tree_to_index(&odb, parent_commit.tree, "", &mut merged_index)?;
-    for entry in staged_index.entries() {
-        merged_index.add_or_replace(grit_lib::index::IndexEntry { ..entry.clone() });
-    }
-
-    let tree_oid = grit_lib::index::write_tree::write_tree_from_index(&odb, &merged_index, "")
-        .map_err(|e| RepoError::Grit(format!("Failed to write tree: {}", e)))?;
+    let mut staged_sorted: Vec<&grit_lib::index::IndexEntry> = staged_index
+        .entries()
+        .iter()
+        .filter(|entry| entry.stage() == 0 && !entry.intent_to_add())
+        .collect();
+    staged_sorted.sort_by(|a, b| a.path.cmp(&b.path));
+    let tree_oid = match patch_tree(&odb, Some(parent_commit.tree), &staged_sorted, 0) {
+        Ok(oid) => oid,
+        Err(PatchTreeError::Repo(e)) => return Err(e),
+        Err(PatchTreeError::Unsupported) => {
+            let mut merged_index = grit_lib::index::Index::new();
+            add_tree_to_index(&odb, parent_commit.tree, "", &mut merged_index)?;
+            for entry in staged_index.entries() {
+                merged_index.add_or_replace(grit_lib::index::IndexEntry { ..entry.clone() });
+            }
+            grit_lib::index::write_tree::write_tree_from_index(&odb, &merged_index, "")
+                .map_err(|e| RepoError::Grit(format!("Failed to write tree: {}", e)))?
+        }
+    };
 
     // Nothing changed relative to HEAD — skip creating an empty commit.
     if tree_oid == parent_commit.tree {

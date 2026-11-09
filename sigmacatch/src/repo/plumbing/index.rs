@@ -105,6 +105,111 @@ pub(crate) fn add_tree_to_index(
     Ok(())
 }
 
+/// Why [`patch_tree`] could not build the tree.
+pub(crate) enum PatchTreeError {
+    /// A staged path collides with an entry of the other kind (a file where a
+    /// directory is, or the reverse), or a name is not valid UTF-8: the caller
+    /// falls back to the full-index merge, which defines the behaviour there.
+    Unsupported,
+    /// Reading or writing an object failed.
+    Repo(RepoError),
+}
+
+impl From<RepoError> for PatchTreeError {
+    fn from(e: RepoError) -> Self {
+        Self::Repo(e)
+    }
+}
+
+/// Build the tree that results from overlaying `staged` entries (sorted by
+/// path, stage 0, forward-slash paths) on `base`, rewriting only the trees
+/// along the staged paths and reusing every other subtree by id.
+///
+/// Gives the same tree id as loading the whole `base` tree into an index,
+/// overlaying `staged` with `add_or_replace` and calling
+/// `write_tree_from_index`, without reading or rewriting the untouched
+/// directories.
+pub(crate) fn patch_tree(
+    odb: &Odb,
+    base: Option<ObjectId>,
+    staged: &[&grit_lib::index::IndexEntry],
+    prefix_len: usize,
+) -> std::result::Result<ObjectId, PatchTreeError> {
+    use grit_lib::objects::{ObjectKind, TreeEntry, serialize_tree, tree_entry_cmp};
+
+    let mut entries: Vec<TreeEntry> = match base {
+        Some(oid) => {
+            let obj = odb
+                .read(&oid)
+                .map_err(|e| RepoError::Grit(format!("Failed to read tree {}: {}", oid, e)))?;
+            grit_lib::objects::parse_tree(&obj.data)
+                .map_err(|e| RepoError::Grit(format!("Failed to parse tree: {}", e)))?
+        }
+        None => Vec::new(),
+    };
+
+    let mut i = 0;
+    while i < staged.len() {
+        let rest = &staged[i].path[prefix_len..];
+        match rest.iter().position(|&b| b == b'/') {
+            None => {
+                // A file at this level.
+                if rest.is_empty() || std::str::from_utf8(rest).is_err() {
+                    return Err(PatchTreeError::Unsupported);
+                }
+                let mode = staged[i].mode;
+                match entries.iter().position(|e| e.name == rest) {
+                    Some(pos) => {
+                        if entries[pos].mode == 0o040000 {
+                            return Err(PatchTreeError::Unsupported);
+                        }
+                        entries[pos].mode = mode;
+                        entries[pos].oid = staged[i].oid;
+                    }
+                    None => entries.push(TreeEntry {
+                        mode,
+                        name: rest.to_vec(),
+                        oid: staged[i].oid,
+                    }),
+                }
+                i += 1;
+            }
+            Some(sep) => {
+                // A directory: take every staged path below it.
+                let name = &rest[..sep];
+                if name.is_empty() || std::str::from_utf8(name).is_err() {
+                    return Err(PatchTreeError::Unsupported);
+                }
+                let dir_prefix = &staged[i].path[..prefix_len + sep + 1];
+                let mut j = i;
+                while j < staged.len() && staged[j].path.starts_with(dir_prefix) {
+                    j += 1;
+                }
+                let existing = entries.iter().position(|e| e.name == name);
+                let child_base = match existing {
+                    Some(pos) if entries[pos].mode == 0o040000 => Some(entries[pos].oid),
+                    Some(_) => return Err(PatchTreeError::Unsupported),
+                    None => None,
+                };
+                let child = patch_tree(odb, child_base, &staged[i..j], prefix_len + sep + 1)?;
+                match existing {
+                    Some(pos) => entries[pos].oid = child,
+                    None => entries.push(TreeEntry {
+                        mode: 0o040000,
+                        name: name.to_vec(),
+                        oid: child,
+                    }),
+                }
+                i = j;
+            }
+        }
+    }
+
+    entries.sort_by(|a, b| tree_entry_cmp(&a.name, a.mode, &b.name, b.mode));
+    odb.write(ObjectKind::Tree, &serialize_tree(&entries))
+        .map_err(|e| PatchTreeError::Repo(RepoError::Grit(format!("Failed to write tree: {e}"))))
+}
+
 pub(crate) fn write_index(git_dir: &Path, index: &mut grit_lib::index::Index) -> Result<()> {
     let index_path = git_dir.join("index");
     if let Some(parent) = index_path.parent() {
@@ -340,5 +445,151 @@ mod tests {
             2,
             "committed tree should contain exactly the parent + staged files: {paths:?}"
         );
+    }
+
+    fn staged_entry(
+        odb: &Odb,
+        path: &str,
+        content: &str,
+        mode: u32,
+    ) -> grit_lib::index::IndexEntry {
+        let oid = odb
+            .write(ObjectKind::Blob, content.as_bytes())
+            .expect("blob written");
+        let path_bytes = path.as_bytes().to_vec();
+        grit_lib::index::IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid,
+            flags: (path_bytes.len().min(0xfff)) as u16,
+            flags_extended: None,
+            path: path_bytes,
+            base_index_pos: 0,
+        }
+    }
+
+    /// `patch_tree` yields the same tree id as the full merge (HEAD tree into an
+    /// index, staged entries overlaid, `write_tree_from_index`) over many
+    /// layouts, including names that sort around a directory (`a`, `a-b`,
+    /// `a.txt`, `a/x`, `a0`), new directories, replaced files, mode changes
+    /// and multi-level paths.
+    #[test]
+    fn test_patch_tree_matches_full_index_merge() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = tmp.path().join(".git");
+        init_repo(&git_dir, tmp.path(), "https://example.com/s.git").unwrap();
+        let odb = open_odb(&git_dir);
+
+        let base_paths = [
+            "a-b",
+            "a.txt",
+            "a/x",
+            "a/y/z.yml",
+            "a0",
+            "b/c/d/e.txt",
+            "b/c/f.txt",
+            "top.md",
+            "rules/windows/p/one.yml",
+            "rules/windows/p/two.yml",
+            "rules/linux/q.yml",
+        ];
+        let mut base_index = grit_lib::index::Index::new();
+        for (n, path) in base_paths.iter().enumerate() {
+            let mode = if n % 4 == 0 { 0o100755 } else { 0o100644 };
+            base_index.add_or_replace(staged_entry(&odb, path, &format!("base {n}"), mode));
+        }
+        let base_tree =
+            grit_lib::index::write_tree::write_tree_from_index(&odb, &base_index, "").unwrap();
+
+        let candidates = [
+            "a-b",
+            "a.txt",
+            "a/x",
+            "a/new.yml",
+            "a/y/z.yml",
+            "a/y/w/deep.yml",
+            "a0",
+            "a1",
+            "b/c/d/e.txt",
+            "b/c/d/g.txt",
+            "b/h.txt",
+            "top.md",
+            "zz/new/dir/f.evtx",
+            "rules/windows/p/one.yml",
+            "rules/windows/p/three.yml",
+            "rules/windows/r/info.yml",
+            "rules/linux/q.yml",
+            "rules/macos/m.yml",
+            "regression_data/rules/windows/p/i.yml",
+        ];
+        let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
+        for round in 0..200 {
+            let mut staged: Vec<grit_lib::index::IndexEntry> = Vec::new();
+            for path in &candidates {
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                if matches!((seed >> 33) % 3, 0) {
+                    let mode = if matches!((seed >> 40) % 5, 0) {
+                        0o100755
+                    } else {
+                        0o100644
+                    };
+                    staged.push(staged_entry(
+                        &odb,
+                        path,
+                        &format!("staged {round} {path}"),
+                        mode,
+                    ));
+                }
+            }
+            if staged.is_empty() {
+                continue;
+            }
+
+            let mut merged = grit_lib::index::Index::new();
+            add_tree_to_index(&odb, base_tree, "", &mut merged).unwrap();
+            for entry in &staged {
+                merged.add_or_replace(entry.clone());
+            }
+            let expected =
+                grit_lib::index::write_tree::write_tree_from_index(&odb, &merged, "").unwrap();
+
+            let mut sorted: Vec<&grit_lib::index::IndexEntry> = staged.iter().collect();
+            sorted.sort_by(|a, b| a.path.cmp(&b.path));
+            let got = match patch_tree(&odb, Some(base_tree), &sorted, 0) {
+                Ok(oid) => oid,
+                Err(_) => panic!("patch_tree must support this layout (round {round})"),
+            };
+            assert_eq!(got, expected, "tree id differs in round {round}");
+        }
+    }
+
+    /// A staged file where HEAD has a directory is not handled by the patch
+    /// path: it reports `Unsupported` so the caller falls back.
+    #[test]
+    fn test_patch_tree_reports_file_directory_collision() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = tmp.path().join(".git");
+        init_repo(&git_dir, tmp.path(), "https://example.com/s.git").unwrap();
+        let odb = open_odb(&git_dir);
+        let mut base_index = grit_lib::index::Index::new();
+        base_index.add_or_replace(staged_entry(&odb, "d/f.txt", "x", 0o100644));
+        let base_tree =
+            grit_lib::index::write_tree::write_tree_from_index(&odb, &base_index, "").unwrap();
+        let staged = [staged_entry(&odb, "d", "now a file", 0o100644)];
+        let refs: Vec<&grit_lib::index::IndexEntry> = staged.iter().collect();
+        assert!(matches!(
+            patch_tree(&odb, Some(base_tree), &refs, 0),
+            Err(PatchTreeError::Unsupported)
+        ));
     }
 }

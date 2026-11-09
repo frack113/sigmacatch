@@ -24,7 +24,10 @@ pub(crate) use fetch::{
     discover_and_fetch, fetch_options_for_branches, fetch_options_for_shallow_clone,
     fetch_options_for_sigmacatch_namespace, fetch_options_for_unshallow, fetch_remote,
 };
-pub(crate) use index::{add_directory_to_index, add_file_to_index, add_tree_to_index, write_index};
+pub(crate) use index::{
+    PatchTreeError, add_directory_to_index, add_file_to_index, add_tree_to_index, patch_tree,
+    write_index,
+};
 pub(crate) use init::init_repo;
 pub(crate) use pack::pack_loose_objects;
 pub(crate) use push::push_branch;
