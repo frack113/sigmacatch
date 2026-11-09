@@ -412,10 +412,8 @@ impl SigmahqRules {
             return;
         }
         let ids: std::collections::HashSet<String> = ids.iter().map(Uuid::to_string).collect();
-        self.rules.retain(|r| {
-            r.id.as_deref()
-                .is_none_or(|id| !ids.contains(id))
-        });
+        self.rules
+            .retain(|r| r.id.as_deref().is_none_or(|id| !ids.contains(id)));
         self.rule_paths.retain(|k, _| !ids.contains(&k.to_string()));
         self.source_digests.retain(|k, _| !ids.contains(k));
     }
