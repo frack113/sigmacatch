@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Runner: retiring matched rules no longer recompiles the whole engine. The surviving compiled rules are kept and only the engine indexes are rebuilt (`DetectionEngine::retire_rules`). With a HIR cache configured the full reload is kept, since the cache must be rewritten.
 - Detection: events are evaluated through a dotted-path index (`IndexedEvent`) borrowing the detection JSON, so rsigma field probes are one hash lookup instead of a path parse. Arrays, bracket paths and dotted keys fall back to the previous lookup; matches are unchanged.
 - HIR cache: the cache key hashes the rule file bytes (ignoring the `regression_tests_path:` annotation) instead of re-serializing every rule, is computed once per start, and includes the sigmacatch version. Cold start with `--hir-cache` is about 1 s cheaper, a warm start about 0.3 s; the cache is still not faster than no cache.
+- Detection: rules are lowered and compiled in parallel (rayon) when no HIR cache is configured; the compiled rules and their order are unchanged.
 - Detection: the rsigma-eval cross-rule Aho-Corasick and bloom prefilters are now opt-in through a new `engine:` block (`cross_rule_ac`, `bloom_prefilter`, both default `false`). On the SigmaHQ Windows ruleset they cost more engine build and evaluation time than they skip; matches are unchanged.
 
 ## [0.6.4] - 2026-11-08
