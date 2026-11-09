@@ -196,6 +196,12 @@ impl EventBuilder {
     /// Build the EID 3 (network_connection) event for a kernel connect
     /// record. Process identity comes from our exec cache; unknown processes
     /// render `-` fields exactly like sysmon does for untracked parents.
+    ///
+    /// Source endpoint enrichment is best-effort: `sys_enter_connect` runs
+    /// before the local address/port is always assigned, so we resolve the
+    /// local endpoint from `/proc/<pid>/net/tcp{,6}` by matching the remote
+    /// destination. On any ambiguity, race or read failure we fall back to
+    /// the previous neutral values (`0.0.0.0`/`::`, port `0`).
     pub fn net_event(&mut self, ev: &NetEvent) -> Event {
         let now = Utc::now();
         let (guid, image, _) = match self.parents.get(&ev.pid) {
@@ -205,8 +211,15 @@ impl EventBuilder {
         let user = self.user_name(ev.uid);
         let is_v6 = ev.family == 10;
         let dest_ip = format_addr(&ev.addr, is_v6);
-        let port = u16::from_be(ev.port_be).to_string();
-        let source_ip = if is_v6 { "::" } else { "0.0.0.0" };
+        let dest_port = u16::from_be(ev.port_be);
+        let dest_port_s = dest_port.to_string();
+        let (source_ip, source_port_s) =
+            resolve_source_endpoint(ev.pid, is_v6, &ev.addr, dest_port).unwrap_or_else(|| {
+                (
+                    if is_v6 { "::" } else { "0.0.0.0" }.to_string(),
+                    "0".to_string(),
+                )
+            });
 
         let xml = format!(
             "<Event><System>{system}</System><EventData>{data}</EventData></Event>",
@@ -230,14 +243,14 @@ impl EventBuilder {
                 data("Protocol", "tcp"),
                 data("Initiated", "true"),
                 data("SourceIsIpv6", &is_v6.to_string()),
-                data("SourceIp", source_ip),
+                data("SourceIp", &source_ip),
                 data("SourceHostname", "-"),
-                data("SourcePort", "0"),
+                data("SourcePort", &source_port_s),
                 data("SourcePortName", "-"),
                 data("DestinationIsIpv6", &is_v6.to_string()),
                 data("DestinationIp", &dest_ip),
                 data("DestinationHostname", "-"),
-                data("DestinationPort", &port),
+                data("DestinationPort", &dest_port_s),
                 data("DestinationPortName", "-"),
             ]
             .concat(),
@@ -500,6 +513,136 @@ fn format_addr(addr: &[u8; 16], is_v6: bool) -> String {
     } else {
         format!("{}.{}.{}.{}", addr[0], addr[1], addr[2], addr[3])
     }
+}
+
+/// Best-effort local endpoint for a connect event, resolved from the
+/// process's `/proc/<pid>/net/tcp{,6}` table by matching the remote
+/// destination. Returns `None` on any read/parse/ambiguity failure so the
+/// caller can keep the neutral fallback.
+fn resolve_source_endpoint(
+    pid: u32,
+    is_v6: bool,
+    dest_addr: &[u8; 16],
+    dest_port: u16,
+) -> Option<(String, String)> {
+    let table = if is_v6 { "tcp6" } else { "tcp" };
+    let path = format!("/proc/{pid}/net/{table}");
+    let content = fs::read_to_string(path).ok()?;
+    resolve_source_endpoint_from_proc(&content, is_v6, dest_addr, dest_port)
+}
+
+/// Parse a `/proc/net/tcp` or `tcp6` table and return the local endpoint of a
+/// socket whose remote address/port matches `dest`. Prefers `ESTABLISHED`
+/// (`01`) but accepts any non-`LISTEN` socket with a matching remote, since
+/// `sys_enter_connect` may be observed around state transitions.
+fn resolve_source_endpoint_from_proc(
+    content: &str,
+    is_v6: bool,
+    dest_addr: &[u8; 16],
+    dest_port: u16,
+) -> Option<(String, String)> {
+    let mut fallback = None;
+    for line in content.lines().skip(1) {
+        let Some(entry) = parse_proc_net_line(line, is_v6) else {
+            continue;
+        };
+        if entry.remote_port != dest_port || !proc_addr_eq(&entry.remote_addr, dest_addr, is_v6) {
+            continue;
+        }
+        // 0A = LISTEN (no remote); never a connect endpoint.
+        if entry.state == 0x0A {
+            continue;
+        }
+        let local = (
+            format_proc_addr(&entry.local_addr, is_v6),
+            entry.local_port.to_string(),
+        );
+        if entry.state == 0x01 {
+            return Some(local);
+        }
+        if fallback.is_none() {
+            fallback = Some(local);
+        }
+    }
+    fallback
+}
+
+fn proc_addr_eq(parsed: &[u8; 16], dest: &[u8; 16], is_v6: bool) -> bool {
+    if is_v6 {
+        parsed == dest
+    } else {
+        parsed[..4] == dest[..4]
+    }
+}
+
+fn format_proc_addr(addr: &[u8; 16], is_v6: bool) -> String {
+    if is_v6 {
+        std::net::Ipv6Addr::from(*addr).to_string()
+    } else {
+        format!("{}.{}.{}.{}", addr[0], addr[1], addr[2], addr[3])
+    }
+}
+
+struct ProcNetLine {
+    local_addr: [u8; 16],
+    local_port: u16,
+    remote_addr: [u8; 16],
+    remote_port: u16,
+    state: u8,
+}
+
+/// Parse one data line of `/proc/net/tcp{,6}`.
+fn parse_proc_net_line(line: &str, is_v6: bool) -> Option<ProcNetLine> {
+    let mut fields = line.split_whitespace();
+    let _sl = fields.next()?;
+    let local = fields.next()?;
+    let remote = fields.next()?;
+    let st = fields.next()?;
+    let (local_addr, local_port) = parse_proc_endpoint(local, is_v6)?;
+    let (remote_addr, remote_port) = parse_proc_endpoint(remote, is_v6)?;
+    let state = u8::from_str_radix(st, 16).ok()?;
+    Some(ProcNetLine {
+        local_addr,
+        local_port,
+        remote_addr,
+        remote_port,
+        state,
+    })
+}
+
+fn parse_proc_endpoint(token: &str, is_v6: bool) -> Option<([u8; 16], u16)> {
+    let (addr_hex, port_hex) = token.split_once(':')?;
+    let port = u16::from_str_radix(port_hex, 16).ok()?;
+    let addr = if is_v6 {
+        parse_proc_ipv6(addr_hex)?
+    } else {
+        parse_proc_ipv4(addr_hex)?
+    };
+    Some((addr, port))
+}
+
+fn parse_proc_ipv4(hex: &str) -> Option<[u8; 16]> {
+    if hex.len() != 8 {
+        return None;
+    }
+    let v = u32::from_str_radix(hex, 16).ok()?;
+    let b = v.to_le_bytes();
+    let mut out = [0u8; 16];
+    out[..4].copy_from_slice(&b);
+    Some(out)
+}
+
+fn parse_proc_ipv6(hex: &str) -> Option<[u8; 16]> {
+    if hex.len() != 32 {
+        return None;
+    }
+    let mut out = [0u8; 16];
+    for (i, chunk) in (0..4).enumerate() {
+        let start = chunk * 8;
+        let v = u32::from_str_radix(&hex[start..start + 8], 16).ok()?;
+        out[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    Some(out)
 }
 
 fn utc_time(now: &chrono::DateTime<Utc>) -> String {
@@ -867,6 +1010,41 @@ mod net_tests {
         );
         assert!(xml.contains("<Data Name=\"Image\">-</Data>"));
         assert_eq!(event.event_json["category"], "network_connection");
+    }
+
+    #[test]
+    fn resolve_source_endpoint_from_tcp_table() {
+        // dest 127.0.0.1 (0100007F LE hex) port 22 (0016), local 10.0.2.15 (0F02000A) port 45678 (B26E)
+        let table = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n\
+   0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1 1 0 100 0 0 10 0\n\
+   5: 0F02000A:B26E 0100007F:0016 01 00000000:00000000 00:00000000 00000000  1000        0 12345 1 0 20 4 30 10 -1\n";
+        let mut dest = [0u8; 16];
+        dest[..4].copy_from_slice(&[127, 0, 0, 1]);
+        let (src_ip, src_port) =
+            resolve_source_endpoint_from_proc(table, false, &dest, 22).expect("resolved");
+        assert_eq!(src_ip, "10.0.2.15");
+        assert_eq!(src_port, "45678");
+    }
+
+    #[test]
+    fn resolve_source_endpoint_from_tcp6_table() {
+        // dest ::1 port 8080 (1F90), local ::1 port 50000 (C350), ESTABLISHED
+        let table = "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n\
+   0: 00000000000000000000000001000000:C350 00000000000000000000000001000000:1F90 01 00000000:00000000 00:00000000 00000000     0        0 99 1 0 20 4 30 10 -1\n";
+        let dest = std::net::Ipv6Addr::LOCALHOST.octets();
+        let (src_ip, src_port) =
+            resolve_source_endpoint_from_proc(table, true, &dest, 8080).expect("resolved");
+        assert_eq!(src_ip, "::1");
+        assert_eq!(src_port, "50000");
+    }
+
+    #[test]
+    fn resolve_source_endpoint_falls_back_when_unmatched() {
+        let table = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n\
+   0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1 1 0 100 0 0 10 0\n";
+        let mut dest = [0u8; 16];
+        dest[..4].copy_from_slice(&[127, 0, 0, 1]);
+        assert!(resolve_source_endpoint_from_proc(table, false, &dest, 22).is_none());
     }
 }
 
