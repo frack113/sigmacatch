@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Rules: rule files are read and parsed in parallel and merged in sorted-path order, so the duplicate-id winner no longer depends on `read_dir` order. `SigmahqRules::remove_ids` removes the skip set in one pass.
+- Detection: the rsigma-eval cross-rule Aho-Corasick and bloom prefilters are now opt-in through a new `engine:` block (`cross_rule_ac`, `bloom_prefilter`, both default `false`). On the SigmaHQ Windows ruleset they cost more engine build and evaluation time than they skip; matches are unchanged.
 
 ## [0.6.4] - 2026-11-08
 
