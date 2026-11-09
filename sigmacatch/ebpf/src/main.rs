@@ -410,6 +410,27 @@ fn fill_dns(
         read_user_bytes(&mut scratch.payload, buf, size.min(DNS_PAYLOAD_LEN)) as u32;
 }
 
+/// Cheap kernel-side guard: drop payloads that cannot be DNS queries before
+/// they cross the ring buffer. This mirrors the userspace parser's header
+/// rules (QR=0 response flag clear, QDCOUNT>=1) without depending on the
+/// destination socket address, so it stays safe for connected and
+/// unconnected `sendto`/`sendmsg`. On a user-memory read failure we return
+/// `true` and let userspace decide (conservative).
+fn dns_query_plausible(buf: *const u8, size: usize) -> bool {
+    if size < 12 || buf.is_null() {
+        return false;
+    }
+    // SAFETY: fixed 12-byte read of the DNS header; the helper is
+    // fault-tolerant and returns Err on unmapped user pages.
+    let hdr: [u8; 12] = match unsafe { bpf_probe_read_user(buf.cast()) } {
+        Ok(v) => v,
+        Err(_) => return true,
+    };
+    let flags = u16::from_be_bytes([hdr[2], hdr[3]]);
+    let qdcount = u16::from_be_bytes([hdr[4], hdr[5]]);
+    flags & 0x8000 == 0 && qdcount != 0
+}
+
 #[tracepoint(category = "syscalls", name = "sys_enter_sendto")]
 fn sys_enter_sendto(ctx: TracePointContext) -> i32 {
     match try_dns_sendto(&ctx) {
@@ -423,8 +444,12 @@ fn try_dns_sendto(ctx: &TracePointContext) -> Result<(), i64> {
     // SAFETY: bounds-checked context reads (sendto args buf/len).
     let buf: *const u8 = unsafe { ctx.read_at(24)? };
     let size: usize = unsafe { ctx.read_at(32)? };
-    // No kernel-side port filter: destination resolution proved flaky across
-    // connected/unconnected sockets; userspace DNS parsing is the filter.
+    if !dns_query_plausible(buf, size) {
+        return Ok(());
+    }
+    // No kernel-side destination port filter: port resolution proved flaky
+    // across connected/unconnected sockets; the header guard above plus the
+    // userspace parser keep false positives out.
     // SAFETY: bounds-checked context read of the addr argument (unused).
     let _addr: *const u8 = unsafe { ctx.read_at(48)? };
     let ids = bpf_get_current_pid_tgid();
@@ -463,6 +488,9 @@ fn try_dns_sendmsg(ctx: &TracePointContext) -> Result<(), i64> {
     let msg_iov: *const u8 = unsafe { bpf_probe_read_user(msghdr.wrapping_add(16).cast()) }?;
     let iov_base: *const u8 = unsafe { bpf_probe_read_user(msg_iov.cast()) }?;
     let iov_len: usize = unsafe { bpf_probe_read_user(msg_iov.wrapping_add(8).cast()) }?;
+    if !dns_query_plausible(iov_base, iov_len) {
+        return Ok(());
+    }
 
     let ids = bpf_get_current_pid_tgid();
     let uidgid = bpf_get_current_uid_gid();
