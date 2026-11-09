@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Runner: retiring matched rules no longer recompiles the whole engine. The surviving compiled rules are kept and only the engine indexes are rebuilt (`DetectionEngine::retire_rules`). With a HIR cache configured the full reload is kept, since the cache must be rewritten.
+- Detection: the rsigma-eval cross-rule Aho-Corasick and bloom prefilters are now opt-in through a new `engine:` block (`cross_rule_ac`, `bloom_prefilter`, both default `false`). On the SigmaHQ Windows ruleset they cost more engine build and evaluation time than they skip; matches are unchanged.
 
 ## [0.6.4] - 2026-11-08
 
