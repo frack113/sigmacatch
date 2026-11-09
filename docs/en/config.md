@@ -35,6 +35,9 @@ filter:
 regression:
   max_failed_cycles: 3          # block a rule after N consecutive failure cycles
   add_json_output: false        # also write the auxiliary <rule_id>.json alongside the data file
+engine:
+  cross_rule_ac: false          # rsigma-eval cross-rule Aho-Corasick prefilter (off: slower on the SigmaHQ ruleset)
+  bloom_prefilter: false        # rsigma-eval bloom prefilter for substring matchers (off: slower on the SigmaHQ ruleset)
 hir_cache: ""                   # path to persistent HIR cache file (warm-start engine; empty = compile every run)
 stop_file: ".sigmacatch.stop"   # create this file to gracefully stop a continuous (-r 0) run
 ```
@@ -85,6 +88,15 @@ All filters are optional; unset means no filtering.
 |---|---|---|
 | `max_failed_cycles` | `3` | After N consecutive failed capture cycles a rule is blocked (logged, removed from the skip set, no more re-capture). Min 1. |
 | `add_json_output` | `false` | Also write the auxiliary `<rule_id>.json` (raw event) next to the data file. See [Output Format](output-format.md). |
+
+## engine
+
+| Key | Default | Description |
+|---|---|---|
+| `cross_rule_ac` | `false` | Enable rsigma-eval's cross-rule Aho-Corasick prefilter. |
+| `bloom_prefilter` | `false` | Enable rsigma-eval's bloom (trigram) prefilter for substring matchers. |
+
+Both prefilters are optional and never change which rules match, only how fast the engine builds and evaluates. They are off by default: on the SigmaHQ Windows ruleset they cost more engine build and evaluation time than they save. Turn them on to compare on your own workload.
 
 ## hir_cache
 

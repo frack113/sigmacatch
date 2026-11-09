@@ -26,6 +26,7 @@ pub mod info;
 pub mod logtype;
 mod long_path;
 
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -162,18 +163,11 @@ impl SigmahqRegression {
     pub fn new_from_path(regression_path: &Path) -> Result<Self> {
         let mut entries = Vec::new();
         if regression_path.exists() {
-            let info_paths = list_all(regression_path);
-            for path in &info_paths {
-                match InfoYml::load(path) {
-                    Ok(info) => {
-                        let entry = RegressionEntry::from_info(&info, path);
-                        entries.push((path.clone(), info, entry));
-                    }
-                    // An unparsable entry must not vanish silently: it would
-                    // leave the rule out of the skip set and get re-captured
-                    // over existing data on the next cycle.
-                    Err(e) => tracing::warn!("skipping {}: {e}", path.display()),
-                }
+            // `load_all` has already dropped every unparsable `info.yml` (and
+            // those without `rule_metadata`), so each file is read once.
+            for (path, info) in load_all(regression_path) {
+                let entry = RegressionEntry::from_info(&info, &path);
+                entries.push((path, info, entry));
             }
         }
         Ok(Self {
@@ -753,27 +747,35 @@ pub(crate) fn update_regression_tests_path(rule_yaml_path: &Path, tests_path: &s
     }
 }
 
-pub(crate) fn try_read_rule_id(info_path: &Path) -> Result<Uuid> {
-    let info = InfoYml::load(info_path)?;
-    info.rule_metadata.first().map(|m| m.id).ok_or_else(|| {
-        RegressionError::Invalid(format!("No rule_metadata in {}", info_path.display()))
-    })
-}
-
 // ─── list_all ──────────────────────────────────────────────────────────
 
 /// Recursively list every parsable `info.yml` under `dir`, sorted.
 pub fn list_all(dir: &Path) -> Vec<PathBuf> {
+    load_all(dir).into_iter().map(|(path, _)| path).collect()
+}
+
+/// Recursively load every parsable `info.yml` under `dir` (one that declares at
+/// least one `rule_metadata` entry), sorted by path. Each file is read and
+/// parsed once, in parallel.
+pub(crate) fn load_all(dir: &Path) -> Vec<(PathBuf, InfoYml)> {
     if !dir.exists() {
         warn!("list_all: directory does not exist: {}", dir.display());
         return Vec::new();
     }
-    let mut paths = Vec::new();
-    walk(dir, &mut paths, 0);
-    paths.sort();
-    paths
+    let mut candidates = Vec::new();
+    walk(dir, &mut candidates, 0);
+    let mut loaded: Vec<(PathBuf, InfoYml)> = candidates
+        .into_par_iter()
+        .filter_map(|path| match InfoYml::load(&path) {
+            Ok(info) if !info.rule_metadata.is_empty() => Some((path, info)),
+            _ => None,
+        })
+        .collect();
+    loaded.sort_by(|a, b| a.0.cmp(&b.0));
+    loaded
 }
 
+/// Collect every `info.yml` candidate under `dir` (symlinks are not followed).
 fn walk(dir: &Path, paths: &mut Vec<PathBuf>, depth: u32) {
     if depth > 64 {
         warn!("walk: depth limit at {:?}", dir);
@@ -792,9 +794,7 @@ fn walk(dir: &Path, paths: &mut Vec<PathBuf>, depth: u32) {
         }
         if path.is_dir() {
             walk(&path, paths, depth + 1);
-        } else if path.file_name().is_some_and(|n| n == "info.yml")
-            && try_read_rule_id(&path).is_ok()
-        {
+        } else if path.file_name().is_some_and(|n| n == "info.yml") {
             paths.push(path);
         }
     }
@@ -1628,5 +1628,42 @@ mod tests {
 
         clean_partial_artifacts(&base);
         assert!(!partial.exists(), "partial dir with .log removed");
+    }
+
+    /// `load_all` returns every parsable `info.yml` (sorted by path, each parsed
+    /// once) and drops unparsable files and files without `rule_metadata`.
+    #[test]
+    fn test_load_all_sorted_and_skips_unusable_info() {
+        let tmp = tempfile::tempdir().unwrap();
+        let valid = |id: &str| {
+            format!(
+                "id: a1b2c3d4-e5f6-7890-abcd-ef1234567890\ndescription: N/A\ndate: 2024-01-15\n\
+                 author: sigmacatch\nrule_metadata:\n  - id: {id}\n    title: T\n"
+            )
+        };
+        let write = |dir: &str, content: &str| {
+            let d = tmp.path().join(dir);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("info.yml"), content).unwrap();
+        };
+        write("z/rule", &valid("22222222-2222-4222-8222-222222222222"));
+        write("a/rule", &valid("11111111-1111-4111-8111-111111111111"));
+        write("m/garbage", "::: not yaml :::\n\t- [");
+        write(
+            "m/empty",
+            "id: a1b2c3d4-e5f6-7890-abcd-ef1234567890\ndescription: N/A\ndate: 2024-01-15\nauthor: x\nrule_metadata: []\n",
+        );
+
+        let loaded = load_all(tmp.path());
+        assert_eq!(loaded.len(), 2);
+        assert!(loaded[0].0.ends_with("a/rule/info.yml"));
+        assert!(loaded[1].0.ends_with("z/rule/info.yml"));
+        assert_eq!(
+            list_all(tmp.path()),
+            loaded.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>()
+        );
+
+        let reg = SigmahqRegression::new_from_path(tmp.path()).unwrap();
+        assert_eq!(reg.len(), 2);
     }
 }
