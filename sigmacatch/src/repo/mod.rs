@@ -301,13 +301,15 @@ impl SigmaRepo {
 
         // Retry repo_exists check a few times to handle filesystem race conditions
         // after external clean commands (e.g., rmdir on Windows).
-        let repo_exists = (0..3).fold(false, |acc, _| {
-            if acc {
+        // The common case (repository present) answers immediately; the sleep
+        // only happens while it is still missing.
+        let repo_exists = (0..3).any(|_| {
+            if git_dir.exists() {
                 return true;
             }
             std::thread::sleep(Duration::from_millis(200));
-            git_dir.exists()
-        });
+            false
+        }) || git_dir.exists();
 
         if repo_exists {
             if !self.is_head_on_working_branch() {

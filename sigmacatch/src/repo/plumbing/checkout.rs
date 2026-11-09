@@ -103,7 +103,12 @@ fn checkout_tree(odb: &Odb, tree_oid: ObjectId, base_path: &Path, prefix: &str) 
             let blob = odb.read(&entry.oid).map_err(|e| {
                 RepoError::Grit(format!("Failed to read blob {}: {}", entry.oid, e))
             })?;
-            std::fs::write(&full_path, &blob.data)?;
+            // Re-checkouts mostly find the file already in place: skip the
+            // write (create + truncate + write) when the bytes already match.
+            let up_to_date = std::fs::read(&full_path).is_ok_and(|on_disk| on_disk == blob.data);
+            if !up_to_date {
+                std::fs::write(&full_path, &blob.data)?;
+            }
             if cfg!(unix) {
                 set_executable(&full_path, entry.mode)?;
             }
@@ -206,12 +211,12 @@ fn set_executable(path: &Path, mode: u32) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let metadata = std::fs::metadata(path)?;
     let mut perms = metadata.permissions();
-    if mode == 0o100755 {
-        perms.set_mode(0o100755);
-    } else {
-        perms.set_mode(0o100644);
+    let wanted = if mode == 0o100755 { 0o755 } else { 0o644 };
+    // Only touch the inode when the permission bits actually differ.
+    if perms.mode() & 0o7777 != wanted {
+        perms.set_mode(wanted);
+        std::fs::set_permissions(path, perms)?;
     }
-    std::fs::set_permissions(path, perms)?;
     Ok(())
 }
 
@@ -311,6 +316,148 @@ mod tests {
             "empty stale dir must be removed"
         );
         assert!(git_dir.exists(), ".git must never be touched");
+    }
+
+    /// A re-checkout leaves an up-to-date file untouched (same inode content,
+    /// same mtime) and restores a modified one.
+    #[test]
+    fn test_recheckout_skips_unchanged_and_restores_modified() {
+        let tmp = tempfile::tempdir().unwrap();
+        build_committed_repo(&tmp);
+        let git_dir = tmp.path().join(".git");
+        checkout_main_branch(&git_dir, tmp.path()).unwrap();
+
+        let keep = tmp.path().join("keep.txt");
+        let a = tmp.path().join("rules/a.yml");
+        // Age the files, so an unwanted rewrite would show in the mtime.
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        for path in [&keep, &a] {
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(old)
+                .unwrap();
+        }
+        std::fs::write(&a, "title: locally edited\n").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&a)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+
+        checkout_main_branch(&git_dir, tmp.path()).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&keep).unwrap(), "keep\n");
+        assert_eq!(
+            std::fs::metadata(&keep).unwrap().modified().unwrap(),
+            old,
+            "an up-to-date file must not be rewritten"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&a).unwrap(),
+            "title: a\n",
+            "a modified file must be restored from the tree"
+        );
+    }
+
+    /// A tracked file whose permission bits drifted is put back to 0644.
+    #[cfg(unix)]
+    #[test]
+    fn test_recheckout_fixes_drifted_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        build_committed_repo(&tmp);
+        let git_dir = tmp.path().join(".git");
+        checkout_main_branch(&git_dir, tmp.path()).unwrap();
+        let keep = tmp.path().join("keep.txt");
+        std::fs::set_permissions(&keep, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        checkout_main_branch(&git_dir, tmp.path()).unwrap();
+
+        let mode = std::fs::metadata(&keep).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode, 0o644);
+    }
+
+    /// On a nested tree, a re-checkout over a dirty worktree (edited, deleted
+    /// and stray files) ends with exactly the committed bytes and paths.
+    #[test]
+    fn test_recheckout_mirrors_nested_tree_exactly() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git_dir = tmp.path().join(".git");
+        crate::repo::plumbing::init::init_repo(&git_dir, tmp.path(), "https://example.com/s.git")
+            .unwrap();
+        let odb = open_odb(&git_dir);
+        let mut index = Index::new();
+        let mut expected = std::collections::BTreeMap::new();
+        for i in 0..120 {
+            let rel = format!("d{}/e{}/f{i}.yml", i % 5, i % 7);
+            let body = format!("title: rule {i}\n{}", "x".repeat(i * 7));
+            let full = tmp.path().join(&rel);
+            std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+            std::fs::write(&full, &body).unwrap();
+            crate::repo::plumbing::add_file_to_index(&git_dir, &full, tmp.path(), &mut index)
+                .unwrap();
+            expected.insert(rel, body);
+        }
+        let tree = write_tree_from_index(&odb, &index, "").unwrap();
+        let commit = CommitData {
+            tree,
+            parents: Vec::new(),
+            author: "t <t@example.com> 0 +0000".to_string(),
+            committer: "t <t@example.com> 0 +0000".to_string(),
+            message: "init\n".to_string(),
+            encoding: None,
+            author_raw: Vec::new(),
+            committer_raw: Vec::new(),
+            raw_message: None,
+            extra_headers: Vec::new(),
+        };
+        let cid = odb
+            .write(
+                ObjectKind::Commit,
+                &grit_lib::objects::serialize_commit(&commit),
+            )
+            .unwrap();
+        std::fs::create_dir_all(git_dir.join("refs/heads")).unwrap();
+        std::fs::write(git_dir.join("refs/heads/main"), format!("{cid}\n")).unwrap();
+        std::fs::write(git_dir.join("HEAD"), b"ref: refs/heads/main\n").unwrap();
+
+        // Dirty the worktree: edit some files, delete some, add strays.
+        for (n, rel) in expected.keys().enumerate() {
+            match n % 4 {
+                0 => std::fs::write(tmp.path().join(rel), "edited").unwrap(),
+                1 => std::fs::remove_file(tmp.path().join(rel)).unwrap(),
+                _ => {}
+            }
+        }
+        std::fs::write(tmp.path().join("d0/stray.txt"), "stray").unwrap();
+
+        checkout_main_branch(&git_dir, tmp.path()).unwrap();
+
+        fn collect(dir: &Path, root: &Path, out: &mut std::collections::BTreeMap<String, String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let entry = entry.unwrap();
+                if entry.file_name() == ".git" {
+                    continue;
+                }
+                let path = entry.path();
+                if path.is_dir() {
+                    collect(&path, root, out);
+                } else {
+                    let rel = path
+                        .strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    out.insert(rel, std::fs::read_to_string(&path).unwrap());
+                }
+            }
+        }
+        let mut on_disk = std::collections::BTreeMap::new();
+        collect(tmp.path(), tmp.path(), &mut on_disk);
+        assert_eq!(on_disk, expected);
     }
 
     /// Reconciliation is a no-op on a clean mirror.
