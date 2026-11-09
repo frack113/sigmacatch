@@ -43,7 +43,7 @@ use rsigma_eval::event::JsonEvent;
 use rsigma_eval::pipeline::{Pipeline, parse_pipeline};
 use rsigma_eval::{Engine, LogSourceExtractor};
 use sha1::{Digest, Sha1};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
@@ -382,6 +382,51 @@ impl DetectionEngine {
         {
             write_hir_cache(cache_path, &hir_cache_key(rules), &hir);
         }
+        Ok(())
+    }
+
+    /// Drop the `retired` rules from the live engine without recompiling the
+    /// survivors, then sync the rule bookkeeping to `rules` (which must already
+    /// have had the retired ids removed).
+    ///
+    /// [`Self::reload_rules`] re-lowers and recompiles every remaining rule
+    /// (about 3 s on the SigmaHQ Windows set) to get the same result: the
+    /// survivors keep their already-compiled form and only the engine indexes
+    /// are rebuilt. With a HIR cache configured the cache must be rewritten
+    /// from freshly compiled rules, so that case falls back to a full reload.
+    pub fn retire_rules(
+        &mut self,
+        retired: &HashSet<Uuid>,
+        rules: &SigmahqRules,
+    ) -> Result<(), DetectionError> {
+        if self.hir_cache_path.is_some() {
+            return self.reload_rules(rules);
+        }
+        let retired_ids: HashSet<String> = retired.iter().map(Uuid::to_string).collect();
+
+        let mut engine = Self::create_engine(
+            &self.win_logsource_pipeline,
+            &self.win_field_pipeline,
+            &self.lnx_logsource_pipeline,
+            &self.lnx_field_pipeline,
+        )?;
+        engine.extend_compiled_rules(
+            self.engine
+                .rules()
+                .iter()
+                .filter(|rule| {
+                    !rule
+                        .id
+                        .as_deref()
+                        .is_some_and(|id| retired_ids.contains(id))
+                })
+                .cloned(),
+        );
+
+        self.engine = engine;
+        let rule_paths = rules.rule_paths().clone();
+        self.rule_id_map = Self::build_rule_id_map(&rule_paths);
+        self.rule_paths = Arc::new(rule_paths);
         Ok(())
     }
 
@@ -729,6 +774,40 @@ detection:
         rules.remove_id(&rule_id);
         engine.reload_rules(&rules).unwrap();
         assert_eq!(engine.rule_count(), 0);
+    }
+
+    /// Retiring a rule drops exactly that rule: the survivors still match, the
+    /// retired one no longer does, and the engine keeps its toggles.
+    #[test]
+    fn test_retire_rules_keeps_survivors_without_recompiling() {
+        let mut rules = rules_from(&[("a.yml", MINIMAL_RULE_YAML), ("b.yml", SECOND_RULE_YAML)]);
+        let mut engine = DetectionEngine::new(&rules).unwrap();
+        assert_eq!(engine.rule_count(), 2);
+
+        let b_id = Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap();
+        rules.remove_id(&b_id);
+        engine.retire_rules(&HashSet::from([b_id]), &rules).unwrap();
+        assert_eq!(engine.rule_count(), 1);
+
+        // The survivor keeps matching and keeps its rule path bookkeeping.
+        let reference = {
+            let only_a = rules_from(&[("a.yml", MINIMAL_RULE_YAML)]);
+            let mut fresh = DetectionEngine::new(&only_a).unwrap();
+            let json = serde_json::json!({"event_id": 1});
+            fresh.put_event(Event::new(json.clone(), json, Vec::new()));
+            fresh.process_events();
+            fresh
+                .get_alerts()
+                .iter()
+                .map(|a| a.rule_id)
+                .collect::<Vec<_>>()
+        };
+        let json = serde_json::json!({"event_id": 1});
+        engine.put_event(Event::new(json.clone(), json, Vec::new()));
+        engine.process_events();
+        let got: Vec<Uuid> = engine.get_alerts().iter().map(|a| a.rule_id).collect();
+        assert_eq!(got, reference);
+        assert_eq!(got.len(), 1);
     }
 
     fn rule_with_category(id: &str, category: &str) -> String {
