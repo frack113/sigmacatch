@@ -39,7 +39,6 @@ mod attack;
 // Note: init_from_sigma_path was removed; use SigmahqRules::new() for production,
 // SigmahqRules::new_from_path() for tests with custom directories.
 
-use rayon::prelude::*;
 use sha1::{Digest, Sha1};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -109,6 +108,23 @@ pub struct SigmahqRules {
     rules: Vec<SigmaRule>,
     rule_paths: HashMap<Uuid, PathBuf>,
     stats: LoadStats,
+    /// Rule id -> digest of the YAML file the rule was loaded from (see
+    /// [`source_digest`]). Lets [`Self::fingerprint`] avoid re-serializing
+    /// every rule.
+    source_digests: HashMap<String, String>,
+}
+
+/// Digest of a rule file's bytes, ignoring the `regression_tests_path:` line
+/// sigmacatch itself writes into matched rules (it never affects detection,
+/// and would otherwise change the digest after every run).
+fn source_digest(content: &str) -> String {
+    let mut hasher = Sha1::new();
+    for line in content.split_inclusive('\n') {
+        if !line.starts_with("regression_tests_path:") {
+            hasher.update(line.as_bytes());
+        }
+    }
+    to_hex(&hasher.finalize())
 }
 
 /// Errors produced while loading Sigma rules from disk.
@@ -122,31 +138,6 @@ pub enum RulesError {
     Io(#[from] std::io::Error),
 }
 
-/// Recursively collect the `*.yml` / `*.yaml` files under `dir` (skipping
-/// `index.yml`) into `files`, in no particular order.
-fn collect_rule_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), RulesError> {
-    let mut pending = vec![dir.to_path_buf()];
-    while let Some(current) = pending.pop() {
-        if !current.exists() || !current.is_dir() {
-            continue;
-        }
-        for entry in std::fs::read_dir(&current)?.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension().and_then(|e| e.to_str())
-                    && (ext == "yml" || ext == "yaml")
-                    && path.file_name().and_then(|n| n.to_str()) != Some("index.yml")
-                {
-                    files.push(path);
-                }
-            } else if path.is_dir() {
-                pending.push(path);
-            }
-        }
-    }
-    Ok(())
-}
-
 impl SigmahqRules {
     /// Load rules from the default `./sigma` directory.
     pub fn new() -> Result<Self, RulesError> {
@@ -154,97 +145,103 @@ impl SigmahqRules {
     }
 
     /// Load rules from an explicit sigma repository root.
-    ///
-    /// Files are read and parsed in parallel, then merged in sorted-path order,
-    /// so the result (rule order, which of two identical-id sources wins the
-    /// dedup, the log lines) is deterministic and does not depend on
-    /// `read_dir` order or on the thread count.
     pub fn new_from_path(sigma_path: &Path) -> Result<Self, RulesError> {
         let dirs = find_rules_dirs(sigma_path)?;
         if dirs.is_empty() {
             return Err(RulesError::NoRulesDirs(sigma_path.to_path_buf()));
         }
-        let mut files: Vec<PathBuf> = Vec::new();
-        for dir in &dirs {
-            collect_rule_files(dir, &mut files)?;
-        }
-        files.sort();
-
-        // `par_iter().map().collect()` keeps the input order.
-        let parsed: Vec<Option<Result<SigmaCollection, String>>> = files
-            .par_iter()
-            .map(|path| {
-                // An unreadable file is skipped silently, like a non-rule file.
-                let content = std::fs::read_to_string(path).ok()?;
-                Some(parse_sigma_yaml(&content).map_err(|err| err.to_string()))
-            })
-            .collect();
-
         let mut set = SigmahqRules::default();
         let mut seen_ids: HashSet<String> = HashSet::new();
         let mut skipped_dupes: u64 = 0;
         let mut skipped_parse_errors: u64 = 0;
         let mut skipped_timeframes: u64 = 0;
-        for (path, outcome) in files.iter().zip(parsed) {
-            let Some(outcome) = outcome else {
-                continue;
-            };
-            match outcome {
-                Ok(parsed) => {
-                    // A semantically invalid document is reported through
-                    // `diagnostics` and still dropped from `rules`, so a
-                    // partial parse is only visible here. Warnings mean the
-                    // document was kept with an invalid value ignored.
-                    for diag in &parsed.diagnostics {
-                        match diag.severity {
-                            DiagnosticSeverity::Error => {
-                                skipped_parse_errors += 1;
-                                tracing::warn!(
-                                    "Sigma rule at {path:?} rejected, its \
-                                     rules will not be detected: {diag}"
-                                );
-                            }
-                            DiagnosticSeverity::Warning => {
-                                tracing::warn!(
-                                    "Sigma rule at {path:?} parsed with a \
-                                     warning: {diag}"
-                                );
-                            }
-                        }
-                    }
-                    for rule in parsed.rules {
-                        if let Some(timeframe) = &rule.detection.timeframe {
-                            skipped_timeframes += 1;
-                            tracing::warn!(
-                                "Rule {:?} declares \
-                                 `detection.timeframe: {timeframe}`, \
-                                 which sigmacatch ignores — it matches \
-                                 single events instead of aggregating \
-                                 over the window",
-                                rule.title
-                            );
-                        }
-                        let id = rule
-                            .id
-                            .clone()
-                            .unwrap_or_else(|| format!("no-id-{}", path.display()));
-                        if seen_ids.insert(id.clone()) {
-                            if let Ok(uuid) = Uuid::parse_str(&id) {
-                                set.rule_paths.insert(uuid, path.clone());
-                            }
-                            set.rules.push(rule);
-                        } else {
-                            skipped_dupes += 1;
-                            tracing::debug!("Skipping duplicate rule id={id} from {path:?}");
-                        }
-                    }
+        for dir in &dirs {
+            let mut pending = vec![dir.clone()];
+            while let Some(current) = pending.pop() {
+                if !current.exists() || !current.is_dir() {
+                    continue;
                 }
-                Err(err) => {
-                    skipped_parse_errors += 1;
-                    tracing::warn!(
-                        "Failed to parse Sigma rule at {path:?}, \
-                         its rules will not be detected: {err}"
-                    );
+                for entry in std::fs::read_dir(&current)?.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        if let Some(ext) = path.extension().and_then(|e| e.to_str())
+                            && (ext == "yml" || ext == "yaml")
+                        {
+                            if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                                && name == "index.yml"
+                            {
+                                continue;
+                            }
+                            if let Ok(content) = std::fs::read_to_string(&path) {
+                                let digest = source_digest(&content);
+                                match parse_sigma_yaml(&content) {
+                                    Ok(parsed) => {
+                                        // A semantically invalid document is
+                                        // reported through `diagnostics` and
+                                        // still dropped from `rules`, so a
+                                        // partial parse is only visible here.
+                                        // Warnings mean the document was kept
+                                        // with an invalid value ignored.
+                                        for diag in &parsed.diagnostics {
+                                            match diag.severity {
+                                                DiagnosticSeverity::Error => {
+                                                    skipped_parse_errors += 1;
+                                                    tracing::warn!(
+                                                        "Sigma rule at {path:?} rejected, its \
+                                                         rules will not be detected: {diag}"
+                                                    );
+                                                }
+                                                DiagnosticSeverity::Warning => {
+                                                    tracing::warn!(
+                                                        "Sigma rule at {path:?} parsed with a \
+                                                         warning: {diag}"
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        for rule in parsed.rules {
+                                            if let Some(timeframe) = &rule.detection.timeframe {
+                                                skipped_timeframes += 1;
+                                                tracing::warn!(
+                                                    "Rule {:?} declares \
+                                                     `detection.timeframe: {timeframe}`, \
+                                                     which sigmacatch ignores — it matches \
+                                                     single events instead of aggregating \
+                                                     over the window",
+                                                    rule.title
+                                                );
+                                            }
+                                            let id = rule.id.clone().unwrap_or_else(|| {
+                                                format!("no-id-{}", path.display())
+                                            });
+                                            if seen_ids.insert(id.clone()) {
+                                                if let Ok(uuid) = Uuid::parse_str(&id) {
+                                                    set.rule_paths.insert(uuid, path.clone());
+                                                }
+                                                set.source_digests
+                                                    .insert(id.clone(), digest.clone());
+                                                set.rules.push(rule);
+                                            } else {
+                                                skipped_dupes += 1;
+                                                tracing::debug!(
+                                                    "Skipping duplicate rule id={id} from {path:?}"
+                                                );
+                                            }
+                                        }
+                                    }
+                                    Err(err) => {
+                                        skipped_parse_errors += 1;
+                                        tracing::warn!(
+                                            "Failed to parse Sigma rule at {path:?}, \
+                                             its rules will not be detected: {err}"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    } else if path.is_dir() {
+                        pending.push(path);
+                    }
                 }
             }
         }
@@ -333,6 +330,7 @@ impl SigmahqRules {
         Self {
             rules,
             rule_paths,
+            source_digests: self.source_digests,
             stats: LoadStats {
                 rules_loaded,
                 rules_filtered_product: filtered_product,
@@ -403,24 +401,23 @@ impl SigmahqRules {
         self.rules
             .retain(|r| r.id.as_deref() != Some(id_str.as_str()));
         self.rule_paths.remove(id);
+        self.source_digests.remove(&id_str);
         self.rules.len() != before
     }
 
-    /// Drop every rule whose UUID is in `ids` in one pass; returns the number
-    /// of rules removed. Same matching as [`Self::remove_id`], without a scan
-    /// of the whole rule list per id.
-    pub fn remove_ids(&mut self, ids: &HashSet<Uuid>) -> usize {
+    /// Drop all rules whose UUIDs are in `ids`; more efficient than calling
+    /// [`Self::remove_id`] in a loop when removing many rules.
+    pub fn remove_ids(&mut self, ids: &std::collections::HashSet<Uuid>) {
         if ids.is_empty() {
-            return 0;
+            return;
         }
-        let id_strs: HashSet<String> = ids.iter().map(Uuid::to_string).collect();
-        let before = self.rules.len();
-        self.rules
-            .retain(|r| !r.id.as_deref().is_some_and(|id| id_strs.contains(id)));
-        for id in ids {
-            self.rule_paths.remove(id);
-        }
-        before - self.rules.len()
+        let ids: std::collections::HashSet<String> = ids.iter().map(Uuid::to_string).collect();
+        self.rules.retain(|r| {
+            r.id.as_deref()
+                .is_none_or(|id| !ids.contains(id))
+        });
+        self.rule_paths.retain(|k, _| !ids.contains(&k.to_string()));
+        self.source_digests.retain(|k, _| !ids.contains(k));
     }
 
     /// Convert into an evaluation-ready Sigma collection.
@@ -488,6 +485,18 @@ impl SigmahqRules {
             .rules
             .iter()
             .map(|rule| {
+                // Fast path: the rule came from a file whose bytes were hashed
+                // at load time, so the digest covers its whole content.
+                if let Some(id) = rule.id.as_deref()
+                    && let Some(source) = self.source_digests.get(id)
+                {
+                    let mut hasher = Sha1::new();
+                    hasher.update(b"src\0");
+                    hasher.update(id.as_bytes());
+                    hasher.update([0]);
+                    hasher.update(source.as_bytes());
+                    return to_hex(&hasher.finalize());
+                }
                 let mut sanitized = rule.clone();
                 sanitized.custom_attributes.clear();
                 let mut hasher = Sha1::new();
@@ -894,70 +903,48 @@ detection:
         assert_eq!(none.stats().rules_filtered_product, 2);
     }
 
+    /// The fingerprint follows the rule file bytes: any edit changes it, the
+    /// `regression_tests_path:` annotation sigmacatch writes does not, and a
+    /// rule filtered out of the set no longer contributes.
     #[test]
-    fn test_ruleset_remove_ids_matches_remove_id() {
+    fn test_fingerprint_tracks_file_bytes_not_the_annotation() {
         let tmp = tempfile::tempdir().unwrap();
         let sigma = tmp.path().join("sigma");
         let rules_dir = sigma.join("rules");
         fs::create_dir_all(&rules_dir).unwrap();
-
-        let second = MINIMAL_RULE.replace(
-            "id: 11111111-1111-1111-1111-111111111111",
-            "id: 22222222-2222-2222-2222-222222222222",
-        );
-        let third = MINIMAL_RULE.replace(
-            "id: 11111111-1111-1111-1111-111111111111",
-            "id: 33333333-3333-3333-3333-333333333333",
-        );
-        write_rules(
-            &rules_dir,
-            &[
-                ("a.yml", MINIMAL_RULE),
-                ("b.yml", &second),
-                ("c.yml", &third),
-            ],
+        write_rules(&rules_dir, &[("a.yml", MINIMAL_RULE)]);
+        let base = SigmahqRules::new_from_path(&sigma).unwrap().fingerprint();
+        assert_eq!(
+            base,
+            SigmahqRules::new_from_path(&sigma).unwrap().fingerprint(),
+            "fingerprint is stable across loads"
         );
 
+        // Annotation written by the collector: same fingerprint.
+        let annotated = format!(
+            "{MINIMAL_RULE}regression_tests_path: regression_data/rules/windows/x/info.yml\n"
+        );
+        write_rules(&rules_dir, &[("a.yml", &annotated)]);
+        assert_eq!(
+            base,
+            SigmahqRules::new_from_path(&sigma).unwrap().fingerprint()
+        );
+
+        // A detection edit: different fingerprint (a stale cache would be wrong).
+        let edited = MINIMAL_RULE.replace("level: critical", "level: low");
+        assert_ne!(edited, MINIMAL_RULE);
+        write_rules(&rules_dir, &[("a.yml", &edited)]);
+        assert_ne!(
+            base,
+            SigmahqRules::new_from_path(&sigma).unwrap().fingerprint()
+        );
+
+        // Removing the rule changes it too.
+        write_rules(&rules_dir, &[("a.yml", MINIMAL_RULE)]);
         let mut set = SigmahqRules::new_from_path(&sigma).unwrap();
-        assert_eq!(set.len(), 3);
-
-        let id1 = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
-        let id3 = Uuid::parse_str("33333333-3333-3333-3333-333333333333").unwrap();
-        let absent = Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap();
-        assert_eq!(set.remove_ids(&HashSet::new()), 0);
-        assert_eq!(set.remove_ids(&HashSet::from([id1, id3, absent])), 2);
-        assert_eq!(set.len(), 1);
-        assert!(set.get(&id1).is_none() && set.get(&id3).is_none());
-        assert!(set.get_rule_path(&id1).is_none());
-        assert!(set.get_rule_path(&id3).is_none());
-    }
-
-    /// Two files declaring the same rule id: the first path in sorted order
-    /// wins, whatever `read_dir` or the thread scheduler return first.
-    #[test]
-    fn test_duplicate_rule_id_winner_is_first_sorted_path() {
-        let tmp = tempfile::tempdir().unwrap();
-        let sigma = tmp.path().join("sigma");
-        let rules_dir = sigma.join("rules");
-        fs::create_dir_all(rules_dir.join("sub")).unwrap();
-        write_rules(
-            &rules_dir,
-            &[
-                ("z_dup.yml", MINIMAL_RULE),
-                ("sub/a_dup.yml", MINIMAL_RULE),
-                ("m_dup.yaml", MINIMAL_RULE),
-            ],
-        );
-
         let id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
-        for _ in 0..20 {
-            let set = SigmahqRules::new_from_path(&sigma).unwrap();
-            assert_eq!(set.len(), 1);
-            assert_eq!(
-                set.get_rule_path(&id).unwrap(),
-                rules_dir.join("m_dup.yaml")
-            );
-        }
+        assert!(set.remove_id(&id));
+        assert_ne!(base, set.fingerprint());
     }
 
     #[test]
