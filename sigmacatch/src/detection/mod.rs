@@ -76,7 +76,7 @@ mod channel_resolver;
 
 /// Version tag of the HIR cache file format. Bump whenever the cache key
 /// derivation or the on-disk layout changes.
-const HIR_CACHE_VERSION: &str = "sigmacatch-hir-cache-v1";
+const HIR_CACHE_VERSION: &str = "sigmacatch-hir-cache-v2";
 
 /// Derive the cache key for a rule set.
 ///
@@ -88,6 +88,9 @@ const HIR_CACHE_VERSION: &str = "sigmacatch-hir-cache-v1";
 fn hir_cache_key(rules: &SigmahqRules) -> String {
     let mut hasher = Sha1::new();
     hasher.update(HIR_CACHE_VERSION.as_bytes());
+    hasher.update(b"\n");
+    // The lowering code lives in this crate: a new release invalidates the cache.
+    hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
     hasher.update(b"\n");
     hasher.update(WIN_LOGSOURCE_PIPELINE.as_bytes());
     hasher.update(WIN_FIELD_PIPELINE.as_bytes());
@@ -231,8 +234,11 @@ impl DetectionEngine {
         // a mid-blob failure cannot leave the main engine half-populated (which
         // would then duplicate rules in the cold path below).
         let mut loaded = false;
+        // The key is derived once and reused for the read and the cold write.
+        let cache_key = hir_cache_path.as_ref().map(|_| hir_cache_key(rules));
         if let Some(ref cache_path) = hir_cache_path
-            && let Some(blob) = read_hir_cache(cache_path, &hir_cache_key(rules))
+            && let Some(ref key) = cache_key
+            && let Some(blob) = read_hir_cache(cache_path, key)
         {
             let mut cached =
                 Self::create_engine(&win_logsource, &win_field, &lnx_logsource, &lnx_field)?;
@@ -273,9 +279,9 @@ impl DetectionEngine {
             }
 
             // Persist HIR cache after first compilation.
-            if let Some(ref cache_path) = hir_cache_path {
+            if let (Some(cache_path), Some(key)) = (&hir_cache_path, &cache_key) {
                 match engine.save_hir() {
-                    Ok(hir) => write_hir_cache(cache_path, &hir_cache_key(rules), &hir),
+                    Ok(hir) => write_hir_cache(cache_path, key, &hir),
                     Err(e) => tracing::warn!("HIR cache {} not written: {e}", cache_path.display()),
                 }
             }

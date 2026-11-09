@@ -108,6 +108,23 @@ pub struct SigmahqRules {
     rules: Vec<SigmaRule>,
     rule_paths: HashMap<Uuid, PathBuf>,
     stats: LoadStats,
+    /// Rule id -> digest of the YAML file the rule was loaded from (see
+    /// [`source_digest`]). Lets [`Self::fingerprint`] avoid re-serializing
+    /// every rule.
+    source_digests: HashMap<String, String>,
+}
+
+/// Digest of a rule file's bytes, ignoring the `regression_tests_path:` line
+/// sigmacatch itself writes into matched rules (it never affects detection,
+/// and would otherwise change the digest after every run).
+fn source_digest(content: &str) -> String {
+    let mut hasher = Sha1::new();
+    for line in content.split_inclusive('\n') {
+        if !line.starts_with("regression_tests_path:") {
+            hasher.update(line.as_bytes());
+        }
+    }
+    to_hex(&hasher.finalize())
 }
 
 /// Errors produced while loading Sigma rules from disk.
@@ -156,6 +173,7 @@ impl SigmahqRules {
                                 continue;
                             }
                             if let Ok(content) = std::fs::read_to_string(&path) {
+                                let digest = source_digest(&content);
                                 match parse_sigma_yaml(&content) {
                                     Ok(parsed) => {
                                         // A semantically invalid document is
@@ -200,6 +218,8 @@ impl SigmahqRules {
                                                 if let Ok(uuid) = Uuid::parse_str(&id) {
                                                     set.rule_paths.insert(uuid, path.clone());
                                                 }
+                                                set.source_digests
+                                                    .insert(id.clone(), digest.clone());
                                                 set.rules.push(rule);
                                             } else {
                                                 skipped_dupes += 1;
@@ -310,6 +330,7 @@ impl SigmahqRules {
         Self {
             rules,
             rule_paths,
+            source_digests: self.source_digests,
             stats: LoadStats {
                 rules_loaded,
                 rules_filtered_product: filtered_product,
@@ -448,6 +469,18 @@ impl SigmahqRules {
             .rules
             .iter()
             .map(|rule| {
+                // Fast path: the rule came from a file whose bytes were hashed
+                // at load time, so the digest covers its whole content.
+                if let Some(id) = rule.id.as_deref()
+                    && let Some(source) = self.source_digests.get(id)
+                {
+                    let mut hasher = Sha1::new();
+                    hasher.update(b"src\0");
+                    hasher.update(id.as_bytes());
+                    hasher.update([0]);
+                    hasher.update(source.as_bytes());
+                    return to_hex(&hasher.finalize());
+                }
                 let mut sanitized = rule.clone();
                 sanitized.custom_attributes.clear();
                 let mut hasher = Sha1::new();
@@ -852,6 +885,50 @@ detection:
         assert!(none.is_empty());
         assert_eq!(none.stats().rules_total_candidate, 2);
         assert_eq!(none.stats().rules_filtered_product, 2);
+    }
+
+    /// The fingerprint follows the rule file bytes: any edit changes it, the
+    /// `regression_tests_path:` annotation sigmacatch writes does not, and a
+    /// rule filtered out of the set no longer contributes.
+    #[test]
+    fn test_fingerprint_tracks_file_bytes_not_the_annotation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sigma = tmp.path().join("sigma");
+        let rules_dir = sigma.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        write_rules(&rules_dir, &[("a.yml", MINIMAL_RULE)]);
+        let base = SigmahqRules::new_from_path(&sigma).unwrap().fingerprint();
+        assert_eq!(
+            base,
+            SigmahqRules::new_from_path(&sigma).unwrap().fingerprint(),
+            "fingerprint is stable across loads"
+        );
+
+        // Annotation written by the collector: same fingerprint.
+        let annotated = format!(
+            "{MINIMAL_RULE}regression_tests_path: regression_data/rules/windows/x/info.yml\n"
+        );
+        write_rules(&rules_dir, &[("a.yml", &annotated)]);
+        assert_eq!(
+            base,
+            SigmahqRules::new_from_path(&sigma).unwrap().fingerprint()
+        );
+
+        // A detection edit: different fingerprint (a stale cache would be wrong).
+        let edited = MINIMAL_RULE.replace("level: critical", "level: low");
+        assert_ne!(edited, MINIMAL_RULE);
+        write_rules(&rules_dir, &[("a.yml", &edited)]);
+        assert_ne!(
+            base,
+            SigmahqRules::new_from_path(&sigma).unwrap().fingerprint()
+        );
+
+        // Removing the rule changes it too.
+        write_rules(&rules_dir, &[("a.yml", MINIMAL_RULE)]);
+        let mut set = SigmahqRules::new_from_path(&sigma).unwrap();
+        let id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+        assert!(set.remove_id(&id));
+        assert_ne!(base, set.fingerprint());
     }
 
     #[test]
