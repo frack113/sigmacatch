@@ -40,6 +40,7 @@
 use crate::config::EngineConfig;
 use crate::rule::SigmahqRules;
 use crate::types::{Alert, Event};
+use rayon::prelude::*;
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::pipeline::{Pipeline, parse_pipeline};
 use rsigma_eval::{Engine, LogSourceExtractor};
@@ -49,6 +50,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
+
+mod indexed_event;
+use indexed_event::IndexedEvent;
 
 /// Lowercase hex encoding for the sha1 digests used by the cache key.
 fn to_hex(bytes: &[u8]) -> String {
@@ -649,19 +653,25 @@ impl DetectionEngine {
             return alerts;
         }
 
-        // Build borrowed JsonEvent references for batch evaluation.
-        // These borrow from `events`, so they're valid for the entire scope.
-        let json_events: Vec<JsonEvent<'_>> = events
-            .iter()
-            .map(|event| JsonEvent::borrow(&event.event_json))
-            .collect();
-        let json_event_refs: Vec<&JsonEvent<'_>> = json_events.iter().collect();
+        // Evaluate in bounded chunks. Each event gets a dotted-path index
+        // (borrowing its JSON), so rsigma's field probes are one hash lookup
+        // instead of a path parse; the indexes are dropped after each chunk
+        // to keep the transient memory small.
+        const CHUNK: usize = 2048;
+        let mut all_matches = Vec::with_capacity(events.len());
+        for chunk in events.chunks(CHUNK) {
+            let indexed: Vec<IndexedEvent<'_>> = chunk
+                .par_iter()
+                .map(|event| IndexedEvent::new(&event.event_json))
+                .collect();
+            let refs: Vec<&IndexedEvent<'_>> = indexed.iter().collect();
 
-        // Batch evaluation: single call to rsigma-eval's optimized engine,
-        // which uses the CandidateIndex, bloom pre-filter, cross-rule
-        // Aho-Corasick prefilter, and logsource extractor to skip
-        // non-matching rules efficiently.
-        let all_matches = self.engine.evaluate_batch(&json_event_refs);
+            // Batch evaluation: single call to rsigma-eval's optimized engine,
+            // which uses the CandidateIndex, bloom pre-filter, cross-rule
+            // Aho-Corasick prefilter, and logsource extractor to skip
+            // non-matching rules efficiently.
+            all_matches.extend(self.engine.evaluate_batch(&refs));
+        }
 
         for (event, matches) in events.iter().zip(all_matches.iter()) {
             if !matches.is_empty() {
