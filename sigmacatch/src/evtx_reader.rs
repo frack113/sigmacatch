@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use crate::types::{Event, EventProducer, ParseError, ProducerError};
 use async_trait::async_trait;
+use rayon::prelude::*;
 use tracing::warn;
 
 /// Errors produced while reading EVTX files.
@@ -53,21 +54,39 @@ impl EventCollector {
     }
 
     /// Load a single EVTX file into a buffer.
+    ///
+    /// Binary-XML rendering runs on all cores (`num_threads(0)`) and the
+    /// XML -> [`Event`] conversion, the dominant cost, runs in parallel over
+    /// bounded chunks of records. Both stages keep record order, so the events
+    /// come out in exactly the order of the file.
     fn load_evtx(path: &Path) -> Result<Vec<Event>> {
-        let mut parser = evtx::EvtxParser::from_path(path).map_err(|e| {
-            EvtxError::Parse(format!("Failed to open EVTX {}: {e}", path.display()))
-        })?;
+        /// Records converted per parallel step: bounds the transient XML held
+        /// in memory next to the events.
+        const CHUNK: usize = 2048;
+
+        let mut parser = evtx::EvtxParser::from_path(path)
+            .map_err(|e| EvtxError::Parse(format!("Failed to open EVTX {}: {e}", path.display())))?
+            .with_configuration(evtx::ParserSettings::default().num_threads(0));
 
         let mut events = Vec::new();
-
-        for record in parser.records() {
-            let record = record.map_err(|e| {
-                EvtxError::Parse(format!("EVTX record error in {}: {e}", path.display()))
-            })?;
-            let xml = std::str::from_utf8(record.data.as_bytes())
-                .map_err(|_| EvtxError::Parse("Invalid UTF-8 in EVTX record".to_string()))?;
-            let event = Event::from_xml_injected(xml, "windows", None)?;
-            events.push(event);
+        let mut xml_chunk: Vec<String> = Vec::with_capacity(CHUNK);
+        let mut records = parser.records();
+        loop {
+            xml_chunk.clear();
+            for record in records.by_ref().take(CHUNK) {
+                let record = record.map_err(|e| {
+                    EvtxError::Parse(format!("EVTX record error in {}: {e}", path.display()))
+                })?;
+                xml_chunk.push(record.data);
+            }
+            if xml_chunk.is_empty() {
+                break;
+            }
+            let converted: std::result::Result<Vec<Event>, ParseError> = xml_chunk
+                .par_iter()
+                .map(|xml| Event::from_xml_injected(xml, "windows", None))
+                .collect();
+            events.extend(converted?);
         }
 
         Ok(events)
@@ -87,8 +106,8 @@ impl Default for EventCollector {
 /// `EvtExportLog` (which queries the live log and finds nothing).  Stripping
 /// the record id forces the pure-Rust EVTX writer path instead.
 ///
-/// The JSON is `Arc`-shared, so the strip is applied to a fresh copy that
-/// replaces the shared one.
+/// The event was just built, so its JSON `Arc` is unique and is edited in
+/// place; `Arc::make_mut` only copies if the JSON were shared.
 fn strip_record_id(event: &mut Event) {
     let has_record_id = event
         .event_json
@@ -99,15 +118,13 @@ fn strip_record_id(event: &mut Event) {
     if !has_record_id {
         return;
     }
-    let mut json = (*event.event_json).clone();
-    if let Some(system) = json
+    if let Some(system) = Arc::make_mut(&mut event.event_json)
         .get_mut("Event")
         .and_then(|v| v.get_mut("System"))
         .and_then(|v| v.as_object_mut())
     {
         system.remove("EventRecordID");
     }
-    event.event_json = Arc::new(json);
 }
 
 #[async_trait]
@@ -178,6 +195,49 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    /// The parallel load yields exactly the events of a plain serial read, in
+    /// the same order.
+    #[test]
+    fn test_parallel_load_keeps_record_order() {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.evtx");
+        if !fixture.exists() {
+            return; // fixture absent in some packaging contexts
+        }
+        let mut serial = evtx::EvtxParser::from_path(&fixture).unwrap();
+        let expected: Vec<Vec<u8>> = serial
+            .records()
+            .map(|r| r.unwrap().data.into_bytes())
+            .collect();
+
+        let loaded = parse_evtx_file(&fixture).unwrap();
+        let got: Vec<&[u8]> = loaded.iter().map(|e| e.event_raw.as_slice()).collect();
+        assert!(!expected.is_empty());
+        assert_eq!(got.len(), expected.len());
+        for (g, e) in got.iter().zip(&expected) {
+            assert_eq!(*g, e.as_slice());
+        }
+    }
+
+    /// `strip_record_id` edits the unique JSON in place and keeps the rest.
+    #[test]
+    fn test_strip_record_id_removes_only_the_record_id() {
+        let json = serde_json::json!({
+            "Event": {"System": {"EventRecordID": 7, "EventID": 1}},
+            "product": "windows"
+        });
+        let mut event = Event::new(json.clone(), json, Vec::new());
+        strip_record_id(&mut event);
+        assert!(
+            event.event_json["Event"]["System"]
+                .get("EventRecordID")
+                .is_none()
+        );
+        assert_eq!(event.event_json["Event"]["System"]["EventID"], 1);
+        assert_eq!(event.event_json["product"], "windows");
+        // The raw view is a separate value and keeps the record id.
+        assert_eq!(event.event_json_raw["Event"]["System"]["EventRecordID"], 7);
+    }
 
     /// A corrupt file is skipped with a warning, the remaining files are still
     /// collected, and the producer completes successfully.

@@ -23,6 +23,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use rayon::prelude::*;
 use serde::Serialize;
 use serde_json::{Map, Value as JsonValue};
 use sigmacatch::detection::DetectionEngine;
@@ -52,6 +53,294 @@ const HELP: &str = "regressiondata-check — validate regression data against lo
     \n\
     Notes:\n\
       Auxiliary .json files are validated as JSON or JSONL (one object per line).";
+
+/// Counters and output of one regression entry, so entries can be evaluated in
+/// parallel and still be reported in index order.
+#[derive(Default)]
+struct EntryResult {
+    total: usize,
+    passed: usize,
+    skipped: usize,
+    ignored: usize,
+    dropped_audit_lines: usize,
+    failed: Option<CheckFail>,
+    /// Console lines for this entry (text mode only).
+    lines: Vec<String>,
+}
+
+/// Queue one console line on an [`EntryResult`].
+macro_rules! out {
+    ($r:ident, $($arg:tt)*) => {
+        $r.lines.push(format!($($arg)*))
+    };
+}
+
+/// Validate one regression entry against the engine. Pure with respect to
+/// shared state: nothing is printed, the caller reports the result.
+fn check_entry(
+    idx: usize,
+    regression: &SigmahqRegression,
+    engine: &DetectionEngine,
+    sigma_root: &Path,
+    json_output: bool,
+    ignore_invalid: bool,
+) -> EntryResult {
+    let mut r = EntryResult::default();
+    let entry = match regression.get_entry(idx) {
+        Some(e) => e,
+        None => {
+            if ignore_invalid {
+                r.ignored += 1;
+                if !json_output {
+                    out!(r, "[IGNORE] No entry");
+                }
+            } else {
+                r.total += 1;
+                if !json_output {
+                    out!(r, "[FAIL] No entry");
+                }
+            }
+            return r;
+        }
+    };
+
+    // Validate auxiliary JSON files for every declared rule: must exist
+    // (if any), be valid JSON, and end with exactly one \n.
+    let mut json_err = None;
+    match regression.get_info(idx) {
+        Some(info) if info.rule_metadata.is_empty() => {
+            json_err = Some("rule_metadata is empty".to_string());
+        }
+        Some(info) => {
+            for m in &info.rule_metadata {
+                if let Some(err) = validate_json_auxiliary(idx, &m.id, regression) {
+                    json_err = Some(err);
+                    break;
+                }
+            }
+        }
+        None => {}
+    }
+    if let Some(json_err) = json_err {
+        r.total += 1;
+        r.failed = Some(CheckFail {
+            rule_name: entry.rule_name.clone(),
+            error: json_err,
+        });
+        if !json_output {
+            out!(r, "[FAIL] JSON — {}", entry.rule_name);
+        }
+        return r;
+    }
+
+    // Validate info.yml indentation matches SigmaHQ 4-space style.
+    if let Some(indent_err) = validate_yaml_indentation(idx, regression) {
+        r.total += 1;
+        r.failed = Some(CheckFail {
+            rule_name: entry.rule_name.clone(),
+            error: indent_err,
+        });
+        if !json_output {
+            out!(r, "[FAIL] YAML indentation — {}", entry.rule_name);
+        }
+        return r;
+    }
+
+    // Detect info.yml with empty/commented regression_tests_info section.
+    if regression
+        .get_info(idx)
+        .is_some_and(|i| i.regression_tests_info.is_empty())
+    {
+        let msg = "invalid info.yml — empty or missing regression_tests_info";
+        if ignore_invalid {
+            r.ignored += 1;
+            if !json_output {
+                out!(r, "[IGNORE] {msg} — {}", entry.rule_name);
+            }
+        } else {
+            r.total += 1;
+            r.failed = Some(CheckFail {
+                rule_name: entry.rule_name.clone(),
+                error: msg.to_string(),
+            });
+            if !json_output {
+                out!(r, "[FAIL] {msg} — {}", entry.rule_name);
+            }
+        }
+        return r;
+    }
+
+    // Every declared test entry must resolve — not only the first one, which
+    // is the only entry `RegressionEntry` carries.
+    if let Some(info) = regression.get_info(idx) {
+        let errs = validate_declared_tests(info, sigma_root);
+        if !errs.is_empty() {
+            let msg = errs.join("; ");
+            r.total += 1;
+            r.failed = Some(CheckFail {
+                rule_name: entry.rule_name.clone(),
+                error: msg.clone(),
+            });
+            if !json_output {
+                out!(r, "[FAIL] {msg} — {}", entry.rule_name);
+            }
+            return r;
+        }
+    }
+
+    let raw = match regression.get_raw_data(idx) {
+        Some(r) => r,
+        None => {
+            if ignore_invalid {
+                r.ignored += 1;
+                if !json_output {
+                    out!(r, "[IGNORE] No raw data");
+                }
+            } else {
+                r.total += 1;
+                r.failed = Some(CheckFail {
+                    rule_name: entry.rule_name.clone(),
+                    error: "No raw data".to_string(),
+                });
+                if !json_output {
+                    out!(r, "[FAIL] No raw data");
+                }
+            }
+            return r;
+        }
+    };
+
+    let events: Vec<Event> = match entry.logtype {
+        sigmacatch::regression::logtype::LogType::Evtx => {
+            match sigmacatch::evtx_reader::parse_evtx_bytes(&raw) {
+                Ok(evts) => evts,
+                Err(e) => {
+                    r.total += 1;
+                    r.failed = Some(CheckFail {
+                        rule_name: entry.rule_name.clone(),
+                        error: format!("EVTX parse error: {e}"),
+                    });
+                    if !json_output {
+                        out!(r, "[FAIL] EVTX parse error: {e}");
+                    }
+                    return r;
+                }
+            }
+        }
+        sigmacatch::regression::logtype::LogType::Log => {
+            let (events, dropped) = parse_auditd_lines(&raw);
+            r.dropped_audit_lines += dropped;
+            events
+        }
+        sigmacatch::regression::logtype::LogType::Json => parse_json_lines(&raw),
+        sigmacatch::regression::logtype::LogType::Raw => {
+            r.skipped += 1;
+            if !json_output {
+                out!(r, "[SKIP] Raw logtype — skipped");
+            }
+            r.total += 1;
+            return r;
+        }
+    };
+
+    if events.is_empty() {
+        if ignore_invalid {
+            r.ignored += 1;
+            if !json_output {
+                out!(r, "[IGNORE] No events produced from raw data");
+            }
+        } else {
+            r.total += 1;
+            r.failed = Some(CheckFail {
+                rule_name: entry.rule_name.clone(),
+                error: "EMPTY — no events produced from raw data".to_string(),
+            });
+            if !json_output {
+                out!(r, "[FAIL] EMPTY — no events produced from raw data");
+            }
+        }
+        return r;
+    }
+
+    let alerts = engine.evaluate(&events);
+    let matched_ids: HashSet<Uuid> = alerts.iter().map(|a| a.rule_id).collect();
+
+    if !matched_ids.contains(&entry.rule_id) {
+        let matched: Vec<String> = matched_ids.iter().map(|s| s.to_string()).collect();
+        r.total += 1;
+        r.failed = Some(CheckFail {
+            rule_name: entry.rule_name.clone(),
+            error: format!(
+                "RULE NOT MATCHED — expected '{}' ({} alert(s), matched: {})",
+                entry.rule_id,
+                alerts.len(),
+                matched.join(", ")
+            ),
+        });
+        if !json_output {
+            out!(
+                r,
+                "[FAIL] RULE NOT MATCHED — expected '{}' ({} alert(s), matched: {})",
+                entry.rule_id,
+                alerts.len(),
+                matched.join(", ")
+            );
+        }
+        return r;
+    }
+
+    let rule_alert_count = alerts.iter().filter(|a| a.rule_id == entry.rule_id).count();
+    if rule_alert_count < 1 {
+        r.total += 1;
+        r.failed = Some(CheckFail {
+            rule_name: entry.rule_name.clone(),
+            error: "MATCH COUNT MISMATCH — expected >= 1 (got 0)".to_string(),
+        });
+        if !json_output {
+            out!(r, "[FAIL] MATCH COUNT MISMATCH — expected >= 1 (got 0)");
+        }
+        return r;
+    }
+
+    // Validate the declared match_count against the actual hit count when a
+    // JSON auxiliary file is present alongside the data. The JSON mirrors
+    // the raw event, so its hit count must equal info.yml's match_count.
+    // Presence is decided by a successful parse of either export layout
+    // (one document or ndjson) — a whole-file `from_str` would report a
+    // multi-record export as absent and silently skip this cross-check.
+    let expected = regression
+        .get_info(idx)
+        .and_then(|info| info.regression_tests_info.first())
+        .map(|t| t.match_count)
+        .unwrap_or(0);
+    let json_present = regression.get_json_records(idx).is_some();
+    if json_present && expected > 0 && rule_alert_count != expected {
+        r.total += 1;
+        let msg = format!(
+            "MATCH COUNT MISMATCH — expected {} hit(s), got {}",
+            expected, rule_alert_count
+        );
+        r.failed = Some(CheckFail {
+            rule_name: entry.rule_name.clone(),
+            error: msg,
+        });
+        if !json_output {
+            out!(
+                r,
+                "[FAIL] {}",
+                r.failed.as_ref().expect("failed entry just set").error
+            );
+        }
+        return r;
+    }
+
+    r.total += 1;
+    r.passed += 1;
+    if !json_output {
+        out!(r, "[PASS] {} alert(s), rule matched", rule_alert_count);
+    }
+    r
+}
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -178,7 +467,7 @@ fn main() -> anyhow::Result<()> {
         warnings.push(msg);
     }
 
-    let (mut engine, failed_rules) = DetectionEngine::new_lenient(&rules)?;
+    let (engine, failed_rules) = DetectionEngine::new_lenient(&rules)?;
 
     if !failed_rules.is_empty() {
         let msg = format!(
@@ -199,260 +488,29 @@ fn main() -> anyhow::Result<()> {
     let mut dropped_audit_lines = 0usize;
     let mut ignored = 0usize;
 
-    for idx in 0..regression.len() {
-        let entry = match regression.get_entry(idx) {
-            Some(e) => e,
-            None => {
-                if ignore_invalid {
-                    ignored += 1;
-                    if !json_output {
-                        println!("[IGNORE] No entry");
-                    }
-                } else {
-                    total += 1;
-                    if !json_output {
-                        println!("[FAIL] No entry");
-                    }
-                }
-                continue;
-            }
-        };
-
-        // Validate auxiliary JSON files for every declared rule: must exist
-        // (if any), be valid JSON, and end with exactly one \n.
-        let mut json_err = None;
-        match regression.get_info(idx) {
-            Some(info) if info.rule_metadata.is_empty() => {
-                json_err = Some("rule_metadata is empty".to_string());
-            }
-            Some(info) => {
-                for m in &info.rule_metadata {
-                    if let Some(err) = validate_json_auxiliary(idx, &m.id, &regression) {
-                        json_err = Some(err);
-                        break;
-                    }
-                }
-            }
-            None => {}
+    let results: Vec<EntryResult> = (0..regression.len())
+        .into_par_iter()
+        .map(|idx| {
+            check_entry(
+                idx,
+                &regression,
+                &engine,
+                sigma_root,
+                json_output,
+                ignore_invalid,
+            )
+        })
+        .collect();
+    for r in results {
+        for line in &r.lines {
+            println!("{line}");
         }
-        if let Some(json_err) = json_err {
-            total += 1;
-            failed.push(CheckFail {
-                rule_name: entry.rule_name.clone(),
-                error: json_err,
-            });
-            if !json_output {
-                println!("[FAIL] JSON — {}", entry.rule_name);
-            }
-            continue;
-        }
-
-        // Validate info.yml indentation matches SigmaHQ 4-space style.
-        if let Some(indent_err) = validate_yaml_indentation(idx, &regression) {
-            total += 1;
-            failed.push(CheckFail {
-                rule_name: entry.rule_name.clone(),
-                error: indent_err,
-            });
-            if !json_output {
-                println!("[FAIL] YAML indentation — {}", entry.rule_name);
-            }
-            continue;
-        }
-
-        // Detect info.yml with empty/commented regression_tests_info section.
-        if regression
-            .get_info(idx)
-            .is_some_and(|i| i.regression_tests_info.is_empty())
-        {
-            let msg = "invalid info.yml — empty or missing regression_tests_info";
-            if ignore_invalid {
-                ignored += 1;
-                if !json_output {
-                    println!("[IGNORE] {msg} — {}", entry.rule_name);
-                }
-            } else {
-                total += 1;
-                failed.push(CheckFail {
-                    rule_name: entry.rule_name.clone(),
-                    error: msg.to_string(),
-                });
-                if !json_output {
-                    println!("[FAIL] {msg} — {}", entry.rule_name);
-                }
-            }
-            continue;
-        }
-
-        // Every declared test entry must resolve — not only the first one, which
-        // is the only entry `RegressionEntry` carries.
-        if let Some(info) = regression.get_info(idx) {
-            let errs = validate_declared_tests(info, sigma_root);
-            if !errs.is_empty() {
-                let msg = errs.join("; ");
-                total += 1;
-                failed.push(CheckFail {
-                    rule_name: entry.rule_name.clone(),
-                    error: msg.clone(),
-                });
-                if !json_output {
-                    println!("[FAIL] {msg} — {}", entry.rule_name);
-                }
-                continue;
-            }
-        }
-
-        let raw = match regression.get_raw_data(idx) {
-            Some(r) => r,
-            None => {
-                if ignore_invalid {
-                    ignored += 1;
-                    if !json_output {
-                        println!("[IGNORE] No raw data");
-                    }
-                } else {
-                    total += 1;
-                    failed.push(CheckFail {
-                        rule_name: entry.rule_name.clone(),
-                        error: "No raw data".to_string(),
-                    });
-                    if !json_output {
-                        println!("[FAIL] No raw data");
-                    }
-                }
-                continue;
-            }
-        };
-
-        let events: Vec<Event> = match entry.logtype {
-            sigmacatch::regression::logtype::LogType::Evtx => {
-                match sigmacatch::evtx_reader::parse_evtx_bytes(&raw) {
-                    Ok(evts) => evts,
-                    Err(e) => {
-                        total += 1;
-                        failed.push(CheckFail {
-                            rule_name: entry.rule_name.clone(),
-                            error: format!("EVTX parse error: {e}"),
-                        });
-                        if !json_output {
-                            println!("[FAIL] EVTX parse error: {e}");
-                        }
-                        continue;
-                    }
-                }
-            }
-            sigmacatch::regression::logtype::LogType::Log => {
-                let (events, dropped) = parse_auditd_lines(&raw);
-                dropped_audit_lines += dropped;
-                events
-            }
-            sigmacatch::regression::logtype::LogType::Json => parse_json_lines(&raw),
-            sigmacatch::regression::logtype::LogType::Raw => {
-                skipped += 1;
-                if !json_output {
-                    println!("[SKIP] Raw logtype — skipped");
-                }
-                total += 1;
-                continue;
-            }
-        };
-
-        if events.is_empty() {
-            if ignore_invalid {
-                ignored += 1;
-                if !json_output {
-                    println!("[IGNORE] No events produced from raw data");
-                }
-            } else {
-                total += 1;
-                failed.push(CheckFail {
-                    rule_name: entry.rule_name.clone(),
-                    error: "EMPTY — no events produced from raw data".to_string(),
-                });
-                if !json_output {
-                    println!("[FAIL] EMPTY — no events produced from raw data");
-                }
-            }
-            continue;
-        }
-
-        engine.put_events(events);
-        engine.process_events();
-        let alerts = engine.get_alerts();
-        let matched_ids: HashSet<Uuid> = alerts.iter().map(|a| a.rule_id).collect();
-
-        if !matched_ids.contains(&entry.rule_id) {
-            let matched: Vec<String> = matched_ids.iter().map(|s| s.to_string()).collect();
-            total += 1;
-            failed.push(CheckFail {
-                rule_name: entry.rule_name.clone(),
-                error: format!(
-                    "RULE NOT MATCHED — expected '{}' ({} alert(s), matched: {})",
-                    entry.rule_id,
-                    alerts.len(),
-                    matched.join(", ")
-                ),
-            });
-            if !json_output {
-                println!(
-                    "[FAIL] RULE NOT MATCHED — expected '{}' ({} alert(s), matched: {})",
-                    entry.rule_id,
-                    alerts.len(),
-                    matched.join(", ")
-                );
-            }
-            continue;
-        }
-
-        let rule_alert_count = alerts.iter().filter(|a| a.rule_id == entry.rule_id).count();
-        if rule_alert_count < 1 {
-            total += 1;
-            failed.push(CheckFail {
-                rule_name: entry.rule_name.clone(),
-                error: "MATCH COUNT MISMATCH — expected >= 1 (got 0)".to_string(),
-            });
-            if !json_output {
-                println!("[FAIL] MATCH COUNT MISMATCH — expected >= 1 (got 0)");
-            }
-            continue;
-        }
-
-        // Validate the declared match_count against the actual hit count when a
-        // JSON auxiliary file is present alongside the data. The JSON mirrors
-        // the raw event, so its hit count must equal info.yml's match_count.
-        // Presence is decided by a successful parse of either export layout
-        // (one document or ndjson) — a whole-file `from_str` would report a
-        // multi-record export as absent and silently skip this cross-check.
-        let expected = regression
-            .get_info(idx)
-            .and_then(|info| info.regression_tests_info.first())
-            .map(|t| t.match_count)
-            .unwrap_or(0);
-        let json_present = regression.get_json_records(idx).is_some();
-        if json_present && expected > 0 && rule_alert_count != expected {
-            total += 1;
-            let msg = format!(
-                "MATCH COUNT MISMATCH — expected {} hit(s), got {}",
-                expected, rule_alert_count
-            );
-            failed.push(CheckFail {
-                rule_name: entry.rule_name.clone(),
-                error: msg,
-            });
-            if !json_output {
-                println!(
-                    "[FAIL] {}",
-                    failed.last().expect("failed entry just pushed").error
-                );
-            }
-            continue;
-        }
-
-        total += 1;
-        passed += 1;
-        if !json_output {
-            println!("[PASS] {} alert(s), rule matched", rule_alert_count);
-        }
+        total += r.total;
+        passed += r.passed;
+        skipped += r.skipped;
+        ignored += r.ignored;
+        dropped_audit_lines += r.dropped_audit_lines;
+        failed.extend(r.failed);
     }
 
     let pass_rate = if total > 0 {

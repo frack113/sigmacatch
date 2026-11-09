@@ -262,9 +262,7 @@ pub async fn run_with_cli<C: CollectorKind>(
 
     let mut rules = SigmahqRules::new_from_path(&sigma_repo_path)?;
 
-    for id in &existing_rules {
-        rules.remove_id(id);
-    }
+    rules.remove_ids(&existing_rules);
 
     config.filter.normalize();
     let rules = rules.filter(config.filter.clone());
@@ -295,8 +293,11 @@ pub async fn run_with_cli<C: CollectorKind>(
 
     let custom_map =
         crate::config::load_custom_channel_mapping(PathBuf::from("custom_channels.yaml").as_path());
-    let engine =
-        DetectionEngine::new_with_hir_cache(&rules, config.hir_cache.as_ref().map(PathBuf::from))?;
+    let engine = DetectionEngine::new_with_options(
+        &rules,
+        config.hir_cache.as_ref().map(PathBuf::from),
+        &config.engine,
+    )?;
     let cycle_channels = match kind.channels(&engine, &custom_map) {
         Some(channels) => {
             if channels.is_empty() {
@@ -658,7 +659,7 @@ fn run_dry(config: &Config) -> Result<()> {
     // the cache instead of always recompiling. A cache that loads cleanly is
     // itself a validation; a rejected one is reported and recompiled.
     let hir_cache_path: Option<PathBuf> = config.hir_cache.as_ref().map(PathBuf::from);
-    DetectionEngine::new_with_hir_cache(&rules, hir_cache_path.clone())?;
+    DetectionEngine::new_with_options(&rules, hir_cache_path.clone(), &config.engine)?;
     eprintln!(
         "Dry-run OK — {} rules loaded ({} candidates), {} filtered by product, {} by status, {} by level, {} by author",
         stats.rules_loaded,
