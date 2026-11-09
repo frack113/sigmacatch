@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Detection: the rsigma-eval cross-rule Aho-Corasick and bloom prefilters are now opt-in through a new `engine:` block (`cross_rule_ac`, `bloom_prefilter`, both default `false`). On the SigmaHQ Windows ruleset they cost more engine build and evaluation time than they skip; matches are unchanged.
+
 ## [0.6.4] - 2026-11-08
 
 ### Changed

@@ -36,6 +36,9 @@ filter:
 regression:
   max_failed_cycles: 3          # bloquer une règle après N cycles d'échec consécutifs
   add_json_output: false        # écrire aussi le <rule_id>.json auxiliaire à côté du fichier de données
+engine:
+  cross_rule_ac: false          # préfiltre Aho-Corasick inter-règles de rsigma-eval (désactivé : plus lent sur les règles SigmaHQ)
+  bloom_prefilter: false        # préfiltre bloom de rsigma-eval pour les matchers de sous-chaîne (désactivé : plus lent sur les règles SigmaHQ)
 hir_cache: ""                   # chemin vers le fichier de cache HIR persistant (warm-start moteur ; vide = recompilation à chaque run)
 stop_file: ".sigmacatch.stop"   # créez ce fichier pour arrêter proprement un run continu (-r 0)
 ```
@@ -86,6 +89,15 @@ Tous les filtres sont optionnels ; non défini = pas de filtrage.
 |---|---|---|
 | `max_failed_cycles` | `3` | Après N cycles de capture d'échec consécutifs, une règle est bloquée (loggée, retirée du skip set, plus de re-capture). Min 1. |
 | `add_json_output` | `false` | Écrit aussi le `<rule_id>.json` auxiliaire (événement brut) à côté du fichier de données. Voir [Format de Sortie](output-format.md). |
+
+## engine
+
+| Clé | Défaut | Description |
+|---|---|---|
+| `cross_rule_ac` | `false` | Active le préfiltre Aho-Corasick inter-règles de rsigma-eval. |
+| `bloom_prefilter` | `false` | Active le préfiltre bloom (trigrammes) de rsigma-eval pour les matchers de sous-chaîne. |
+
+Les deux préfiltres sont optionnels et ne changent jamais les règles qui matchent, seulement la vitesse de construction et d'évaluation du moteur. Ils sont désactivés par défaut : sur le jeu de règles SigmaHQ Windows ils coûtent plus qu'ils ne font gagner. Activez-les pour comparer sur votre propre charge.
 
 ## hir_cache
 
