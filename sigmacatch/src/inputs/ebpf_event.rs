@@ -18,7 +18,7 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use crate::ebpf_common::{
-    DnsEvent, ExecEvent, FileCreateEvent, FileDeleteEvent, ListenEvent, NetEvent,
+    DnsEvent, DriverLoadEvent, ExecEvent, FileCreateEvent, FileDeleteEvent, ListenEvent, NetEvent,
     ProcessAccessEvent,
 };
 use crate::types::Event;
@@ -527,6 +527,51 @@ impl EventBuilder {
         (NULL_GUID.to_string(), image)
     }
 
+    /// Build the EID 6 (driver_load / kernel module load) event for a
+    /// `finit_module` syscall. `ImageLoaded` is resolved from the module fd;
+    /// signature/hash metadata is unavailable and reported with safe defaults.
+    pub fn driver_load_event(&mut self, ev: &DriverLoadEvent) -> Event {
+        let now = Utc::now();
+        let (guid, image) = self.resolve_process_info(ev.pid);
+        let user = self.user_name(ev.uid);
+        let image_loaded = if ev.fd >= 0 {
+            fs::read_link(format!("/proc/{}/fd/{}", ev.pid, ev.fd))
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "-".to_string())
+        } else {
+            "-".to_string()
+        };
+        let xml = format!(
+            "<Event><System>{system}</System><EventData>{data}</EventData></Event>",
+            system = system_block(
+                6,
+                3,
+                TASK_DRIVER_LOAD,
+                &mut self.record_id,
+                now,
+                &self.hostname,
+                self.exec_pid,
+                self.euid,
+            ),
+            data = [
+                data("RuleName", "-"),
+                data("UtcTime", &utc_time(&now)),
+                data("ProcessGuid", &guid),
+                data("ProcessId", &ev.pid.to_string()),
+                data("Image", &image),
+                data("ImageLoaded", &image_loaded),
+                data("Hashes", "-"),
+                data("Signed", "false"),
+                data("Signature", "-"),
+                data("SignatureStatus", "Unavailable"),
+                data("User", &user),
+            ]
+            .concat(),
+        );
+        to_event(xml)
+    }
+
     /// Build the extension EID 22 (dns_query) event for a kernel DNS record.
     /// Field order follows the Windows Sysmon EID 22 schema (no golden exists
     /// for Linux — sysmon-for-linux does not emit this event); QueryResults is
@@ -707,6 +752,7 @@ pub fn parse_query_name(payload: &[u8]) -> Option<String> {
 const TASK_PROCESS_CREATE: u32 = 1;
 const TASK_PROCESS_TERMINATE: u32 = 5;
 const TASK_NETWORK_CONNECT: u32 = 3;
+const TASK_DRIVER_LOAD: u32 = 6;
 const TASK_PROCESS_ACCESS: u32 = 10;
 const TASK_FILE_CREATE: u32 = 11;
 const TASK_DNS_QUERY: u32 = 22;
@@ -1708,5 +1754,78 @@ mod process_access_tests {
             "<Data Name=\"SourceProcessGUID\">{00000000-0000-0000-0000-000000000000}</Data>"
         ));
         assert_eq!(event.event_json["category"], "process_access");
+    }
+}
+
+#[cfg(test)]
+mod driver_load_tests {
+    use super::tests::{FAKE_PID, sample_exec};
+    use super::*;
+    use crate::ebpf_common::{DriverLoadEvent, EVENT_DRIVER_LOAD};
+
+    fn sample_driver(pid: u32) -> DriverLoadEvent {
+        DriverLoadEvent {
+            kind: EVENT_DRIVER_LOAD,
+            pid,
+            uid: 0,
+            gid: 0,
+            fd: -1,
+            _pad0: 0,
+            comm: *b"modprobe\0\0\0\0\0\0\0\0",
+        }
+    }
+
+    #[test]
+    fn eid6_shape_order_and_category() {
+        let mut builder = EventBuilder::new();
+        let _ = builder.exec_event(&sample_exec(FAKE_PID));
+        let event = builder.driver_load_event(&sample_driver(FAKE_PID));
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
+
+        assert!(xml.contains("<EventID>6</EventID>"));
+        assert!(xml.contains("<Version>3</Version>"));
+        assert!(xml.contains("<Task>6</Task>"));
+        assert!(xml.contains("<Data Name=\"Image\">/usr/bin/id</Data>"));
+        assert!(xml.contains("<Data Name=\"ImageLoaded\">-</Data>"));
+        assert!(xml.contains("<Data Name=\"Hashes\">-</Data>"));
+        assert!(xml.contains("<Data Name=\"Signed\">false</Data>"));
+        assert!(xml.contains("<Data Name=\"SignatureStatus\">Unavailable</Data>"));
+        assert_eq!(event.event_json["service"], "sysmon");
+        assert_eq!(event.event_json["category"], "driver_load");
+
+        let order = [
+            "RuleName",
+            "UtcTime",
+            "ProcessGuid",
+            "ProcessId",
+            "Image",
+            "ImageLoaded",
+            "Hashes",
+            "Signed",
+            "Signature",
+            "SignatureStatus",
+            "User",
+        ];
+        let mut last = 0;
+        for field in order {
+            let pos = xml.find(&format!("Name=\"{field}\"")).expect(field);
+            assert!(pos > last, "field {field} out of order");
+            last = pos;
+        }
+    }
+
+    #[test]
+    fn eid6_unknown_process_falls_back() {
+        let mut builder = EventBuilder::new();
+        let event = builder.driver_load_event(&sample_driver(999_996));
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
+        assert!(xml.contains("<EventID>6</EventID>"));
+        assert!(xml.contains("<Data Name=\"Image\">-</Data>"));
+        assert!(
+            xml.contains(
+                "<Data Name=\"ProcessGuid\">{00000000-0000-0000-0000-000000000000}</Data>"
+            )
+        );
+        assert_eq!(event.event_json["category"], "driver_load");
     }
 }

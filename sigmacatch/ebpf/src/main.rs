@@ -37,15 +37,17 @@ use aya_ebpf::helpers::bpf_probe_read_user_str;
 mod ebpf_common;
 
 use ebpf_common::{
-    ARG0_LEN, DNS_PAYLOAD_LEN, EVENT_DNS, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_DELETE,
-    EVENT_LISTEN, EVENT_NET, EVENT_PROCESS_ACCESS, DnsEvent, ExecEvent, ExitEvent, FileCreateEvent,
-    FileDeleteEvent, IMAGE_LEN, ListenEvent, NetEvent, PATH_LEN, ProcessAccessEvent,
+    ARG0_LEN, DNS_PAYLOAD_LEN, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE,
+    EVENT_FILE_DELETE, EVENT_LISTEN, EVENT_NET, EVENT_PROCESS_ACCESS, DnsEvent, DriverLoadEvent,
+    ExecEvent, ExitEvent, FileCreateEvent, FileDeleteEvent, IMAGE_LEN, ListenEvent, NetEvent,
+    PATH_LEN, ProcessAccessEvent,
 };
 
 const MAX_ENTRIES: u32 = 1;
 const EXEC_ARGS_MAX: u32 = 4096;
 const FILE_STAGE_MAX: u32 = 4096;
 const DELETE_STAGE_MAX: u32 = 4096;
+const FINIT_STAGE_MAX: u32 = 4096;
 const BIND_STAGE_MAX: u32 = 4096;
 const LISTEN_FD_MAX: u32 = 4096;
 /// `O_CREAT` bit — openat is staged only when the caller may create.
@@ -104,6 +106,10 @@ static FILE_SCRATCH: PerCpuArray<PendingFile> =
 #[map(name = "DELETE_STAGE")]
 static DELETE_STAGE: LruHashMap<u32, PendingFile> =
     LruHashMap::with_max_entries(DELETE_STAGE_MAX, 0);
+
+#[map(name = "FINIT_STAGE")]
+static FINIT_STAGE: LruHashMap<u64, i32> =
+    LruHashMap::with_max_entries(FINIT_STAGE_MAX, 0);
 
 #[map(name = "BIND_STAGE")]
 static BIND_STAGE: LruHashMap<u64, PendingBind> = LruHashMap::with_max_entries(BIND_STAGE_MAX, 0);
@@ -620,6 +626,65 @@ fn try_emit_ptrace(ctx: &TracePointContext) -> Result<(), i64> {
             (*p).target_pid = target_pid;
             (*p)._pad1 = 0;
             (*p).request = request as u64;
+            (*p).comm = comm;
+        }
+        entry.submit(0);
+    }
+    Ok(())
+}
+
+// ─── Driver/module load capture (B9, EID 6) ─────────────────────────────────
+
+#[tracepoint(category = "syscalls", name = "sys_enter_finit_module")]
+fn sys_enter_finit_module(ctx: TracePointContext) -> i32 {
+    match try_stage_finit_module(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+fn try_stage_finit_module(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: offset from sys_enter_finit_module format (fd@16).
+    let fd: i32 = unsafe { ctx.read_at(16)? };
+    let tid_key = bpf_get_current_pid_tgid();
+    let _ = FINIT_STAGE.insert(&tid_key, &fd, 0);
+    Ok(())
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_finit_module")]
+fn sys_exit_finit_module(ctx: TracePointContext) -> i32 {
+    match try_emit_finit_module(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+fn try_emit_finit_module(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: bounds-checked context read of the syscall return value.
+    let ret: i64 = unsafe { ctx.read_at(16)? };
+    let tid_key = bpf_get_current_pid_tgid();
+    // SAFETY: read-only map borrow of a fixed-size value.
+    let Some(fd) = (unsafe { FINIT_STAGE.get(&tid_key) }).copied() else {
+        return Ok(());
+    };
+    FINIT_STAGE.remove(&tid_key)?;
+    if ret != 0 {
+        return Ok(());
+    }
+
+    let ids = bpf_get_current_pid_tgid();
+    let uidgid = bpf_get_current_uid_gid();
+    let comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    if let Some(mut entry) = EVENTS.reserve::<DriverLoadEvent>(0) {
+        let p = entry.as_mut_ptr();
+        // SAFETY: exclusive reserved DriverLoadEvent slot; writes in bounds.
+        unsafe {
+            (*p).kind = EVENT_DRIVER_LOAD;
+            (*p).pid = (ids >> 32) as u32;
+            (*p).uid = uidgid as u32;
+            (*p).gid = (uidgid >> 32) as u32;
+            (*p).fd = fd;
+            (*p)._pad0 = 0;
             (*p).comm = comm;
         }
         entry.submit(0);

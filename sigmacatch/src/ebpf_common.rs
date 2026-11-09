@@ -54,6 +54,8 @@ mod inner {
     pub const EVENT_FILE_DELETE: u32 = 7;
     /// Ring buffer record tag: process access (ptrace / process_vm_*).
     pub const EVENT_PROCESS_ACCESS: u32 = 8;
+    /// Ring buffer record tag: kernel module load (finit_module).
+    pub const EVENT_DRIVER_LOAD: u32 = 9;
 
     /// Directory-fd sentinel meaning "path is relative to cwd".
     pub const AT_FDCWD: i32 = -100;
@@ -458,6 +460,51 @@ mod inner {
     const _: () = assert!(
         core::mem::size_of::<ProcessAccessEvent>().is_multiple_of(8),
         "ProcessAccessEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// Kernel module load event emitted at `sys_exit_finit_module` on success.
+    /// Userspace resolves the module file path via `/proc/<pid>/fd/<fd>`.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct DriverLoadEvent {
+        /// Always [`EVENT_DRIVER_LOAD`].
+        pub kind: u32,
+        /// Loading process id (tgid).
+        pub pid: u32,
+        /// Real UID of the loading task.
+        pub uid: u32,
+        /// Real GID of the loading task.
+        pub gid: u32,
+        /// File descriptor argument of `finit_module`.
+        pub fd: i32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: i32,
+        /// Task comm at load time (NUL-padded).
+        pub comm: [u8; 16],
+    }
+
+    impl DriverLoadEvent {
+        /// Parse a ring buffer record into a typed driver-load event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Task comm as lossy UTF-8 up to the first NUL.
+        pub fn comm_str(&self) -> &str {
+            Self::cstr(&self.comm)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<DriverLoadEvent>().is_multiple_of(8),
+        "DriverLoadEvent must stay 8-byte aligned for ring buffer records"
     );
 }
 
