@@ -52,6 +52,8 @@ mod inner {
     pub const EVENT_LISTEN: u32 = 6;
     /// Ring buffer record tag: file deleted via unlink/unlinkat.
     pub const EVENT_FILE_DELETE: u32 = 7;
+    /// Ring buffer record tag: process access (ptrace / process_vm_*).
+    pub const EVENT_PROCESS_ACCESS: u32 = 8;
 
     /// Directory-fd sentinel meaning "path is relative to cwd".
     pub const AT_FDCWD: i32 = -100;
@@ -405,6 +407,57 @@ mod inner {
     const _: () = assert!(
         core::mem::size_of::<ListenEvent>().is_multiple_of(8),
         "ListenEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// Process access event emitted at `sys_enter_ptrace` (and optionally
+    /// `process_vm_*`). `request` carries the ptrace request code.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct ProcessAccessEvent {
+        /// Always [`EVENT_PROCESS_ACCESS`].
+        pub kind: u32,
+        /// Source (accessing) process id (tgid).
+        pub source_pid: u32,
+        /// Source thread id.
+        pub source_tid: u32,
+        /// Real UID of the source task.
+        pub source_uid: u32,
+        /// Real GID of the source task.
+        pub source_gid: u32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: u32,
+        /// Target process id being accessed.
+        pub target_pid: u32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad1: u32,
+        /// Access request (e.g. ptrace request code).
+        pub request: u64,
+        /// Source task comm at access time (NUL-padded).
+        pub comm: [u8; 16],
+    }
+
+    impl ProcessAccessEvent {
+        /// Parse a ring buffer record into a typed process-access event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Source task comm as lossy UTF-8 up to the first NUL.
+        pub fn comm_str(&self) -> &str {
+            Self::cstr(&self.comm)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<ProcessAccessEvent>().is_multiple_of(8),
+        "ProcessAccessEvent must stay 8-byte aligned for ring buffer records"
     );
 }
 

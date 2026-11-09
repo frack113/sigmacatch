@@ -19,6 +19,7 @@ use std::time::SystemTime;
 
 use crate::ebpf_common::{
     DnsEvent, ExecEvent, FileCreateEvent, FileDeleteEvent, ListenEvent, NetEvent,
+    ProcessAccessEvent,
 };
 use crate::types::Event;
 use chrono::Utc;
@@ -475,6 +476,57 @@ impl EventBuilder {
         to_event(xml)
     }
 
+    /// Build the EID 10 (process_access) event for a kernel ptrace record.
+    /// `GrantedAccess` reflects the ptrace request code in hex; `CallTrace`
+    /// is unavailable from a tracepoint and reported as `-`.
+    pub fn process_access_event(&mut self, ev: &ProcessAccessEvent) -> Event {
+        let now = Utc::now();
+        let (src_guid, src_image) = self.resolve_process_info(ev.source_pid);
+        let (tgt_guid, tgt_image) = self.resolve_process_info(ev.target_pid);
+        let source_user = self.user_name(ev.source_uid);
+        let granted = format!("0x{:x}", ev.request);
+        let xml = format!(
+            "<Event><System>{system}</System><EventData>{data}</EventData></Event>",
+            system = system_block(
+                10,
+                3,
+                TASK_PROCESS_ACCESS,
+                &mut self.record_id,
+                now,
+                &self.hostname,
+                self.exec_pid,
+                self.euid,
+            ),
+            data = [
+                data("RuleName", "-"),
+                data("UtcTime", &utc_time(&now)),
+                data("SourceProcessGUID", &src_guid),
+                data("SourceProcessId", &ev.source_pid.to_string()),
+                data("SourceThreadId", &ev.source_tid.to_string()),
+                data("SourceImage", &src_image),
+                data("TargetProcessGUID", &tgt_guid),
+                data("TargetProcessId", &ev.target_pid.to_string()),
+                data("TargetImage", &tgt_image),
+                data("GrantedAccess", &granted),
+                data("CallTrace", "-"),
+                data("SourceUser", &source_user),
+            ]
+            .concat(),
+        );
+        to_event(xml)
+    }
+
+    fn resolve_process_info(&mut self, pid: u32) -> (String, String) {
+        if let Some(info) = self.parents.get(&pid) {
+            return (info.guid.clone(), info.image.clone());
+        }
+        let image = fs::read_link(format!("/proc/{pid}/exe"))
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "-".to_string());
+        (NULL_GUID.to_string(), image)
+    }
+
     /// Build the extension EID 22 (dns_query) event for a kernel DNS record.
     /// Field order follows the Windows Sysmon EID 22 schema (no golden exists
     /// for Linux — sysmon-for-linux does not emit this event); QueryResults is
@@ -655,6 +707,7 @@ pub fn parse_query_name(payload: &[u8]) -> Option<String> {
 const TASK_PROCESS_CREATE: u32 = 1;
 const TASK_PROCESS_TERMINATE: u32 = 5;
 const TASK_NETWORK_CONNECT: u32 = 3;
+const TASK_PROCESS_ACCESS: u32 = 10;
 const TASK_FILE_CREATE: u32 = 11;
 const TASK_DNS_QUERY: u32 = 22;
 const TASK_FILE_DELETE: u32 = 23;
@@ -1573,5 +1626,87 @@ mod listen_tests {
         );
         assert!(xml.contains("<Data Name=\"Image\">-</Data>"));
         assert_eq!(event.event_json["category"], "network_listen");
+    }
+}
+
+#[cfg(test)]
+mod process_access_tests {
+    use super::tests::{FAKE_PID, sample_exec};
+    use super::*;
+    use crate::ebpf_common::{EVENT_PROCESS_ACCESS, ProcessAccessEvent};
+
+    fn sample_access(source_pid: u32, target_pid: u32, request: u64) -> ProcessAccessEvent {
+        ProcessAccessEvent {
+            kind: EVENT_PROCESS_ACCESS,
+            source_pid,
+            source_tid: source_pid,
+            source_uid: 0,
+            source_gid: 0,
+            _pad0: 0,
+            target_pid,
+            _pad1: 0,
+            request,
+            comm: *b"strace\0\0\0\0\0\0\0\0\0\0",
+        }
+    }
+
+    #[test]
+    fn eid10_shape_order_and_category() {
+        let mut builder = EventBuilder::new();
+        let target = 42_424u32;
+        let _ = builder.exec_event(&sample_exec(FAKE_PID));
+        let mut target_ev = sample_exec(target);
+        target_ev.image[..11].copy_from_slice(b"/usr/bin/ls");
+        let _ = builder.exec_event(&target_ev);
+
+        let event = builder.process_access_event(&sample_access(FAKE_PID, target, 16));
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
+
+        assert!(xml.contains("<EventID>10</EventID>"));
+        assert!(xml.contains("<Version>3</Version>"));
+        assert!(xml.contains("<Task>10</Task>"));
+        assert!(xml.contains(&format!("<Data Name=\"SourceProcessId\">{FAKE_PID}</Data>")));
+        assert!(xml.contains(&format!("<Data Name=\"TargetProcessId\">{target}</Data>")));
+        assert!(xml.contains("<Data Name=\"SourceImage\">/usr/bin/id</Data>"));
+        assert!(xml.contains("<Data Name=\"TargetImage\">/usr/bin/ls</Data>"));
+        assert!(xml.contains("<Data Name=\"GrantedAccess\">0x10</Data>"));
+        assert!(xml.contains("<Data Name=\"CallTrace\">-</Data>"));
+        assert!(xml.contains("<Data Name=\"SourceUser\">"));
+        assert_eq!(event.event_json["service"], "sysmon");
+        assert_eq!(event.event_json["category"], "process_access");
+
+        let order = [
+            "RuleName",
+            "UtcTime",
+            "SourceProcessGUID",
+            "SourceProcessId",
+            "SourceThreadId",
+            "SourceImage",
+            "TargetProcessGUID",
+            "TargetProcessId",
+            "TargetImage",
+            "GrantedAccess",
+            "CallTrace",
+            "SourceUser",
+        ];
+        let mut last = 0;
+        for field in order {
+            let pos = xml.find(&format!("Name=\"{field}\"")).expect(field);
+            assert!(pos > last, "field {field} out of order");
+            last = pos;
+        }
+    }
+
+    #[test]
+    fn eid10_unknown_processes_fall_back() {
+        let mut builder = EventBuilder::new();
+        let event = builder.process_access_event(&sample_access(999_997, 999_998, 1));
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
+        assert!(xml.contains("<EventID>10</EventID>"));
+        assert!(xml.contains("<Data Name=\"SourceImage\">-</Data>"));
+        assert!(xml.contains(
+            "<Data Name=\"SourceProcessGUID\">{00000000-0000-0000-0000-000000000000}</Data>"
+        ));
+        assert_eq!(event.event_json["category"], "process_access");
     }
 }

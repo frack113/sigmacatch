@@ -9,7 +9,8 @@ use std::fs;
 
 use crate::ebpf_common::{
     DnsEvent, EVENT_DNS, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_DELETE, EVENT_LISTEN,
-    EVENT_NET, FileCreateEvent, FileDeleteEvent, ListenEvent, NetEvent,
+    EVENT_NET, EVENT_PROCESS_ACCESS, FileCreateEvent, FileDeleteEvent, ListenEvent, NetEvent,
+    ProcessAccessEvent,
 };
 use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::{Context, bail};
@@ -96,6 +97,7 @@ const ATTACHMENTS: &[(&str, &str, &str, bool)] = &[
         false,
     ),
     ("sys_exit_unlinkat", "syscalls", "sys_exit_unlinkat", false),
+    ("sys_enter_ptrace", "syscalls", "sys_enter_ptrace", false),
     ("sys_enter_bind", "syscalls", "sys_enter_bind", false),
     ("sys_enter_listen", "syscalls", "sys_enter_listen", false),
     ("sys_exit_listen", "syscalls", "sys_exit_listen", false),
@@ -262,6 +264,18 @@ impl EventProducer for EventCollector {
                         None => tracing::warn!(
                             size = bytes.len(),
                             "file-delete record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_PROCESS_ACCESS => match ProcessAccessEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.process_access_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "process-access record with unexpected size — skipped"
                         ),
                     },
                     EVENT_LISTEN => match ListenEvent::from_bytes(bytes) {
