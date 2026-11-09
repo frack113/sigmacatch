@@ -316,6 +316,93 @@ fn sys_exit_openat(ctx: TracePointContext) -> i32 {
     }
 }
 
+#[tracepoint(category = "syscalls", name = "sys_enter_open")]
+fn sys_enter_open(ctx: TracePointContext) -> i32 {
+    match try_stage_open(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+fn try_stage_open(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: offsets from sys_enter_open format (filename@16, flags@24).
+    let pathname: *const u8 = unsafe { ctx.read_at(16)? };
+    let flags: u64 = unsafe { ctx.read_at(24)? };
+    if flags & O_CREAT == 0 {
+        return Ok(());
+    }
+    let pid = bpf_get_current_pid_tgid() as u32;
+
+    let pending = match FILE_SCRATCH.get_ptr_mut(0) {
+        // SAFETY: index validated by get_ptr_mut; per-cpu map storage valid
+        // and unaliased for this program invocation.
+        Some(p) => unsafe { &mut *p },
+        None => return Err(-28),
+    };
+    pending.path = [0; PATH_LEN];
+    pending.dirfd = ebpf_common::AT_FDCWD;
+    read_cstr(&mut pending.path, pathname);
+
+    let _ = FILE_STAGE.insert(&pid, pending, 0);
+    Ok(())
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_open")]
+fn sys_exit_open(ctx: TracePointContext) -> i32 {
+    match try_emit_file_create(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_openat2")]
+fn sys_enter_openat2(ctx: TracePointContext) -> i32 {
+    match try_stage_openat2(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+fn try_stage_openat2(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: offsets from sys_enter_openat2 format
+    // (dfd@16, filename@24, how@32, usize@40).
+    let dirfd: i32 = unsafe { ctx.read_at(16)? };
+    let pathname: *const u8 = unsafe { ctx.read_at(24)? };
+    let how: *const u8 = unsafe { ctx.read_at(32)? };
+    let usize_arg: usize = unsafe { ctx.read_at(40)? };
+    if how.is_null() || usize_arg < 8 {
+        return Ok(());
+    }
+    // struct open_how starts with __u64 flags.
+    // SAFETY: fixed 8-byte user read; fault-tolerant helper.
+    let flags: u64 = unsafe { bpf_probe_read_user(how.cast()) }.unwrap_or(0);
+    if flags & O_CREAT == 0 {
+        return Ok(());
+    }
+    let pid = bpf_get_current_pid_tgid() as u32;
+
+    let pending = match FILE_SCRATCH.get_ptr_mut(0) {
+        // SAFETY: index validated by get_ptr_mut; per-cpu map storage valid
+        // and unaliased for this program invocation.
+        Some(p) => unsafe { &mut *p },
+        None => return Err(-28),
+    };
+    pending.path = [0; PATH_LEN];
+    pending.dirfd = dirfd;
+    read_cstr(&mut pending.path, pathname);
+
+    let _ = FILE_STAGE.insert(&pid, pending, 0);
+    Ok(())
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_openat2")]
+fn sys_exit_openat2(ctx: TracePointContext) -> i32 {
+    match try_emit_file_create(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
 fn try_emit_file_create(ctx: &TracePointContext) -> Result<(), i64> {
     // SAFETY: bounds-checked context read of the syscall return value.
     let ret: i64 = unsafe { ctx.read_at(16)? };
