@@ -262,9 +262,7 @@ pub async fn run_with_cli<C: CollectorKind>(
 
     let mut rules = SigmahqRules::new_from_path(&sigma_repo_path)?;
 
-    for id in &existing_rules {
-        rules.remove_id(id);
-    }
+    rules.remove_ids(&existing_rules);
 
     config.filter.normalize();
     let rules = rules.filter(config.filter.clone());

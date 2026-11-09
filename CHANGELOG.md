@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Rules: rule files are read and parsed in parallel and merged in sorted-path order, so the duplicate-id winner no longer depends on `read_dir` order. `SigmahqRules::remove_ids` removes the skip set in one pass.
+
 ## [0.6.4] - 2026-11-08
 
 ### Changed
