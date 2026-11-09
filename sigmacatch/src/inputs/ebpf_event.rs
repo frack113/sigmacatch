@@ -58,12 +58,14 @@ impl Default for EventBuilder {
 }
 
 impl EventBuilder {
-    /// Builder primed with this host's hostname.
+    /// Builder primed with this host's hostname and a best-effort snapshot of
+    /// already-running processes so exits/identity lookups for pre-existing
+    /// pids do not degrade to unknown `-` fields.
     pub fn new() -> Self {
         let hostname = fs::read_to_string("/proc/sys/kernel/hostname")
             .map(|s| s.trim().to_string())
             .unwrap_or_else(|_| "localhost".to_string());
-        Self {
+        let mut builder = Self {
             record_id: 0,
             hostname,
             exec_pid: std::process::id(),
@@ -72,7 +74,77 @@ impl EventBuilder {
             users: HashMap::new(),
             hashes: HashMap::new(),
             hash_order: VecDeque::new(),
+        };
+        builder.seed_from_proc();
+        builder
+    }
+
+    /// Best-effort process table seeding from `/proc`. Synthetic GUIDs are
+    /// generated for processes we did not observe starting; real exec events
+    /// overwrite these entries when the same pid is seen again.
+    fn seed_from_proc(&mut self) {
+        let Ok(entries) = fs::read_dir("/proc") else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(pid) = name.to_str().and_then(|s| s.parse::<u32>().ok()) else {
+                continue;
+            };
+            if self.parents.contains_key(&pid) {
+                continue;
+            }
+            let Some(info) = Self::read_proc_info(pid, &mut self.users) else {
+                continue;
+            };
+            self.parents.insert(pid, info);
         }
+    }
+
+    fn read_proc_info(pid: u32, users: &mut HashMap<u32, String>) -> Option<ParentInfo> {
+        let image = fs::read_link(format!("/proc/{pid}/exe"))
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| {
+                fs::read_to_string(format!("/proc/{pid}/comm"))
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default()
+            });
+        if image.is_empty() {
+            return None;
+        }
+        let cmdline = fs::read(format!("/proc/{pid}/cmdline"))
+            .ok()
+            .map(|raw| {
+                raw.split(|&b| b == 0)
+                    .filter(|part| !part.is_empty())
+                    .map(|part| String::from_utf8_lossy(part))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| image.clone());
+        let uid = fs::read_to_string(format!("/proc/{pid}/status"))
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .find_map(|l| l.strip_prefix("Uid:"))
+                    .and_then(|rest| rest.split_whitespace().next()?.parse::<u32>().ok())
+            })
+            .unwrap_or(0);
+        let user = if let Some(name) = users.get(&uid) {
+            name.clone()
+        } else {
+            let name = lookup_user(uid).unwrap_or_else(|| uid.to_string());
+            users.insert(uid, name.clone());
+            name
+        };
+        Some(ParentInfo {
+            guid: new_guid(),
+            image,
+            cmdline,
+            user,
+        })
     }
 
     /// Build the EID 1 (process_create) event for a kernel exec record.
@@ -930,6 +1002,15 @@ mod tests {
         assert!(
             !xml[xml.find("<Data Name=\"CommandLine\"").expect("cmdline")..].contains("<script>")
         );
+    }
+
+    #[test]
+    fn seed_from_proc_is_best_effort() {
+        let mut users = HashMap::new();
+        assert!(EventBuilder::read_proc_info(FAKE_PID, &mut users).is_none());
+        // Must not panic even if /proc is partially unreadable.
+        let builder = EventBuilder::new();
+        let _ = builder.parents.len();
     }
 }
 
