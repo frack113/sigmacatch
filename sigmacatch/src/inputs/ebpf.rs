@@ -8,7 +8,11 @@
 use std::fs;
 
 use crate::ebpf_common::{
-    DnsEvent, EVENT_DNS, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_NET, FileCreateEvent, NetEvent,
+    DnsEvent, DriverLoadEvent, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE,
+    EVENT_FILE_DELETE, EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CONNECT, EVENT_PIPE_CREATE,
+    EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, FileCreateEvent,
+    FileDeleteEvent, ListenEvent, NetEvent, PipeConnectEvent, PipeCreateEvent, ProcessAccessEvent,
+    ProcessTamperingEvent, RawAccessEvent,
 };
 use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::{Context, bail};
@@ -71,16 +75,60 @@ fn cap_eff(status: &str) -> Option<u64> {
         .and_then(|rest| u64::from_str_radix(rest.trim(), 16).ok())
 }
 
-/// (probe name, tracepoint category, tracepoint name)
-const ATTACHMENTS: &[(&str, &str, &str)] = &[
-    ("sys_enter_execve", "syscalls", "sys_enter_execve"),
-    ("sched_process_exec", "sched", "sched_process_exec"),
-    ("sched_process_exit", "sched", "sched_process_exit"),
-    ("sys_enter_connect", "syscalls", "sys_enter_connect"),
-    ("sys_enter_openat", "syscalls", "sys_enter_openat"),
-    ("sys_exit_openat", "syscalls", "sys_exit_openat"),
-    ("sys_enter_sendto", "syscalls", "sys_enter_sendto"),
-    ("sys_enter_sendmsg", "syscalls", "sys_enter_sendmsg"),
+/// (probe name, tracepoint category, tracepoint name, required)
+/// Required attachments abort initialization on failure; optional ones are
+/// best-effort so kernels missing a tracepoint (e.g. `open`/`openat2`
+/// variants) still get the rest of the coverage.
+const ATTACHMENTS: &[(&str, &str, &str, bool)] = &[
+    ("sys_enter_execve", "syscalls", "sys_enter_execve", true),
+    ("sched_process_exec", "sched", "sched_process_exec", true),
+    ("sched_process_exit", "sched", "sched_process_exit", true),
+    ("sys_enter_connect", "syscalls", "sys_enter_connect", true),
+    ("sys_enter_openat", "syscalls", "sys_enter_openat", true),
+    ("sys_exit_openat", "syscalls", "sys_exit_openat", true),
+    ("sys_enter_open", "syscalls", "sys_enter_open", false),
+    ("sys_exit_open", "syscalls", "sys_exit_open", false),
+    ("sys_enter_openat2", "syscalls", "sys_enter_openat2", false),
+    ("sys_exit_openat2", "syscalls", "sys_exit_openat2", false),
+    ("sys_enter_unlink", "syscalls", "sys_enter_unlink", false),
+    ("sys_exit_unlink", "syscalls", "sys_exit_unlink", false),
+    (
+        "sys_enter_unlinkat",
+        "syscalls",
+        "sys_enter_unlinkat",
+        false,
+    ),
+    ("sys_exit_unlinkat", "syscalls", "sys_exit_unlinkat", false),
+    ("sys_enter_ptrace", "syscalls", "sys_enter_ptrace", false),
+    (
+        "sys_enter_finit_module",
+        "syscalls",
+        "sys_enter_finit_module",
+        false,
+    ),
+    (
+        "sys_exit_finit_module",
+        "syscalls",
+        "sys_exit_finit_module",
+        false,
+    ),
+    ("sys_enter_mknodat", "syscalls", "sys_enter_mknodat", false),
+    ("sys_exit_mknodat", "syscalls", "sys_exit_mknodat", false),
+    ("sys_enter_mknod", "syscalls", "sys_enter_mknod", false),
+    ("sys_exit_mknod", "syscalls", "sys_exit_mknod", false),
+    ("sys_exit_pipe", "syscalls", "sys_exit_pipe", false),
+    ("sys_exit_pipe2", "syscalls", "sys_exit_pipe2", false),
+    (
+        "sys_enter_process_vm_writev",
+        "syscalls",
+        "sys_enter_process_vm_writev",
+        false,
+    ),
+    ("sys_enter_bind", "syscalls", "sys_enter_bind", false),
+    ("sys_enter_listen", "syscalls", "sys_enter_listen", false),
+    ("sys_exit_listen", "syscalls", "sys_exit_listen", false),
+    ("sys_enter_sendto", "syscalls", "sys_enter_sendto", true),
+    ("sys_enter_sendmsg", "syscalls", "sys_enter_sendmsg", true),
 ];
 
 /// eBPF-backed sysmon collector (feature `ebpf`): loads the embedded probe
@@ -88,6 +136,7 @@ const ATTACHMENTS: &[(&str, &str, &str)] = &[
 pub struct EventCollector {
     _ebpf: Ebpf,
     builder: EventBuilder,
+    attached: usize,
 }
 
 impl EventCollector {
@@ -107,23 +156,35 @@ impl EventCollector {
 
         // Attachments stay live for the process lifetime; aya 0.13 tracks
         // them inside each program (ids only needed to detach explicitly).
-        for (name, category, tp) in ATTACHMENTS {
-            let program: &mut TracePoint = ebpf
-                .program_mut(name)
-                .with_context(|| format!("probe {name} missing from object"))?
-                .try_into()
-                .with_context(|| format!("probe {name} is not a tracepoint"))?;
-            program
-                .load()
-                .with_context(|| format!("loading probe {name}"))?;
-            program
-                .attach(category, tp)
-                .with_context(|| format!("attaching probe {name} to {category}:{tp}"))?;
+        let mut attached = 0usize;
+        for (name, category, tp, required) in ATTACHMENTS {
+            let outcome = (|| -> anyhow::Result<()> {
+                let program: &mut TracePoint = ebpf
+                    .program_mut(name)
+                    .with_context(|| format!("probe {name} missing from object"))?
+                    .try_into()
+                    .with_context(|| format!("probe {name} is not a tracepoint"))?;
+                program
+                    .load()
+                    .with_context(|| format!("loading probe {name}"))?;
+                program
+                    .attach(category, tp)
+                    .with_context(|| format!("attaching probe {name} to {category}:{tp}"))?;
+                Ok(())
+            })();
+            match outcome {
+                Ok(()) => attached += 1,
+                Err(e) if *required => return Err(e),
+                Err(e) => {
+                    tracing::debug!("optional probe {name} unavailable: {e:#}");
+                }
+            }
         }
 
         Ok(Self {
             _ebpf: ebpf,
             builder: EventBuilder::new(),
+            attached,
         })
     }
 }
@@ -137,7 +198,7 @@ impl EventProducer for EventCollector {
     ) -> Result<(), ProducerError> {
         info!(
             "sysmon(ebpf) collector starting ({} tracepoints)",
-            ATTACHMENTS.len()
+            self.attached
         );
         let Some(data) = self._ebpf.map_mut("EVENTS") else {
             return Err(ProducerError::Message(
@@ -217,6 +278,102 @@ impl EventProducer for EventCollector {
                         None => tracing::warn!(
                             size = bytes.len(),
                             "net record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_DELETE => match FileDeleteEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.file_delete_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-delete record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_PROCESS_ACCESS => match ProcessAccessEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.process_access_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "process-access record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_DRIVER_LOAD => match DriverLoadEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.driver_load_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "driver-load record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_RAW_ACCESS => match RawAccessEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.raw_access_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "raw-access record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_PIPE_CREATE => match PipeCreateEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.pipe_create_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "pipe-create record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_PIPE_CONNECT => match PipeConnectEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.pipe_connect_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "pipe-connect record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_PROCESS_TAMPERING => match ProcessTamperingEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.process_tampering_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "process-tampering record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_LISTEN => match ListenEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.listen_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "listen record with unexpected size — skipped"
                         ),
                     },
                     other => tracing::warn!(tag = other, "unknown ring buffer record tag"),

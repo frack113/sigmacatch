@@ -48,6 +48,22 @@ mod inner {
     pub const EVENT_FILE: u32 = 4;
     /// Ring buffer record tag: outbound DNS query payload (UDP port 53).
     pub const EVENT_DNS: u32 = 5;
+    /// Ring buffer record tag: socket entered listening state (extension).
+    pub const EVENT_LISTEN: u32 = 6;
+    /// Ring buffer record tag: file deleted via unlink/unlinkat.
+    pub const EVENT_FILE_DELETE: u32 = 7;
+    /// Ring buffer record tag: process access (ptrace / process_vm_*).
+    pub const EVENT_PROCESS_ACCESS: u32 = 8;
+    /// Ring buffer record tag: kernel module load (finit_module).
+    pub const EVENT_DRIVER_LOAD: u32 = 9;
+    /// Ring buffer record tag: raw device access (open on block/raw devices).
+    pub const EVENT_RAW_ACCESS: u32 = 10;
+    /// Ring buffer record tag: named pipe / FIFO created (EID 17).
+    pub const EVENT_PIPE_CREATE: u32 = 11;
+    /// Ring buffer record tag: pipe connected (EID 18).
+    pub const EVENT_PIPE_CONNECT: u32 = 12;
+    /// Ring buffer record tag: process tampering heuristic (EID 25).
+    pub const EVENT_PROCESS_TAMPERING: u32 = 13;
 
     /// Directory-fd sentinel meaning "path is relative to cwd".
     pub const AT_FDCWD: i32 = -100;
@@ -252,6 +268,53 @@ mod inner {
         "FileCreateEvent must stay 8-byte aligned for ring buffer records"
     );
 
+    /// File deletion event emitted at `sys_exit_unlink`/`sys_exit_unlinkat`
+    /// when the staged syscall succeeded.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct FileDeleteEvent {
+        /// Always [`EVENT_FILE_DELETE`].
+        pub kind: u32,
+        /// Deleting process id.
+        pub pid: u32,
+        /// Real UID of the deleting task.
+        pub uid: u32,
+        /// Real GID of the deleting task.
+        pub gid: u32,
+        /// Directory-fd argument of unlinkat (may be [`AT_FDCWD`]).
+        pub dirfd: i32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: i32,
+        /// Path as passed to the syscall (NUL-padded; may be relative).
+        pub path: [u8; PATH_LEN],
+        /// Task comm at exit time (NUL-padded).
+        pub comm: [u8; COMM_LEN],
+    }
+
+    impl FileDeleteEvent {
+        /// Parse a ring buffer record into a typed file-delete event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Path as lossy UTF-8 up to the first NUL.
+        pub fn path_str(&self) -> &str {
+            Self::cstr(&self.path)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<FileDeleteEvent>().is_multiple_of(8),
+        "FileDeleteEvent must stay 8-byte aligned for ring buffer records"
+    );
+
     /// Outbound DNS query captured from `sendto`/`sendmsg` to UDP port 53.
     ///
     /// Only the bounded raw wire payload crosses the ring buffer; `QueryName`
@@ -300,6 +363,331 @@ mod inner {
     const _: () = assert!(
         core::mem::size_of::<DnsEvent>().is_multiple_of(8),
         "DnsEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// Socket listen event emitted at `sys_exit_listen` when a previously
+    /// bound socket enters the listening state (sigmacatch extension).
+    ///
+    /// The local endpoint comes from the `sys_enter_bind` staging for the
+    /// same `(pid, fd)` pair; only `AF_INET`/`AF_INET6` binds are tracked.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct ListenEvent {
+        /// Always [`EVENT_LISTEN`].
+        pub kind: u32,
+        /// Listening process id.
+        pub pid: u32,
+        /// Real UID of the listening task.
+        pub uid: u32,
+        /// Real GID of the listening task.
+        pub gid: u32,
+        /// Address family (`AF_INET` = 2, `AF_INET6` = 10).
+        pub family: u16,
+        /// Explicit padding keeping field offsets kernel-aligned (zeroed).
+        pub _pad0: u16,
+        /// Local bound port in network byte order.
+        pub port_be: u16,
+        /// Explicit padding keeping field offsets kernel-aligned (zeroed).
+        pub _pad1: u16,
+        /// IPv4 bytes occupy `[..4]`; IPv6 fills the whole array.
+        pub addr: [u8; 16],
+        /// Task comm at listen time (NUL-padded).
+        pub comm: [u8; 16],
+    }
+
+    impl ListenEvent {
+        /// Parse a ring buffer record into a typed listen event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Task comm as lossy UTF-8 up to the first NUL.
+        pub fn comm_str(&self) -> &str {
+            Self::cstr(&self.comm)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<ListenEvent>().is_multiple_of(8),
+        "ListenEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// Process access event emitted at `sys_enter_ptrace` (and optionally
+    /// `process_vm_*`). `request` carries the ptrace request code.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct ProcessAccessEvent {
+        /// Always [`EVENT_PROCESS_ACCESS`].
+        pub kind: u32,
+        /// Source (accessing) process id (tgid).
+        pub source_pid: u32,
+        /// Source thread id.
+        pub source_tid: u32,
+        /// Real UID of the source task.
+        pub source_uid: u32,
+        /// Real GID of the source task.
+        pub source_gid: u32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: u32,
+        /// Target process id being accessed.
+        pub target_pid: u32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad1: u32,
+        /// Access request (e.g. ptrace request code).
+        pub request: u64,
+        /// Source task comm at access time (NUL-padded).
+        pub comm: [u8; 16],
+    }
+
+    impl ProcessAccessEvent {
+        /// Parse a ring buffer record into a typed process-access event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Source task comm as lossy UTF-8 up to the first NUL.
+        pub fn comm_str(&self) -> &str {
+            Self::cstr(&self.comm)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<ProcessAccessEvent>().is_multiple_of(8),
+        "ProcessAccessEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// Kernel module load event emitted at `sys_exit_finit_module` on success.
+    /// Userspace resolves the module file path via `/proc/<pid>/fd/<fd>`.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct DriverLoadEvent {
+        /// Always [`EVENT_DRIVER_LOAD`].
+        pub kind: u32,
+        /// Loading process id (tgid).
+        pub pid: u32,
+        /// Real UID of the loading task.
+        pub uid: u32,
+        /// Real GID of the loading task.
+        pub gid: u32,
+        /// File descriptor argument of `finit_module`.
+        pub fd: i32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: i32,
+        /// Task comm at load time (NUL-padded).
+        pub comm: [u8; 16],
+    }
+
+    impl DriverLoadEvent {
+        /// Parse a ring buffer record into a typed driver-load event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Task comm as lossy UTF-8 up to the first NUL.
+        pub fn comm_str(&self) -> &str {
+            Self::cstr(&self.comm)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<DriverLoadEvent>().is_multiple_of(8),
+        "DriverLoadEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// Raw device access event emitted at `sys_exit_open*` when the path
+    /// targets a raw/block device (EID 9).
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct RawAccessEvent {
+        /// Always [`EVENT_RAW_ACCESS`].
+        pub kind: u32,
+        /// Accessing process id.
+        pub pid: u32,
+        /// Real UID of the accessing task.
+        pub uid: u32,
+        /// Real GID of the accessing task.
+        pub gid: u32,
+        /// Directory-fd argument (may be [`AT_FDCWD`]).
+        pub dirfd: i32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: i32,
+        /// Device path (NUL-padded; may be relative).
+        pub path: [u8; PATH_LEN],
+        /// Task comm at access time (NUL-padded).
+        pub comm: [u8; COMM_LEN],
+    }
+
+    impl RawAccessEvent {
+        /// Parse a ring buffer record into a typed raw-access event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Path as lossy UTF-8 up to the first NUL.
+        pub fn path_str(&self) -> &str {
+            Self::cstr(&self.path)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<RawAccessEvent>().is_multiple_of(8),
+        "RawAccessEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// Named pipe (FIFO) creation event (EID 17).
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct PipeCreateEvent {
+        /// Always [`EVENT_PIPE_CREATE`].
+        pub kind: u32,
+        /// Creating process id.
+        pub pid: u32,
+        /// Real UID of the creating task.
+        pub uid: u32,
+        /// Real GID of the creating task.
+        pub gid: u32,
+        /// Directory-fd argument (may be [`AT_FDCWD`]).
+        pub dirfd: i32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: i32,
+        /// Pipe name/path (NUL-padded; may be relative).
+        pub pipe_name: [u8; PATH_LEN],
+        /// Task comm at creation time (NUL-padded).
+        pub comm: [u8; COMM_LEN],
+    }
+
+    impl PipeCreateEvent {
+        /// Parse a ring buffer record into a typed pipe-create event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Pipe name as lossy UTF-8 up to the first NUL.
+        pub fn pipe_name_str(&self) -> &str {
+            Self::cstr(&self.pipe_name)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<PipeCreateEvent>().is_multiple_of(8),
+        "PipeCreateEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// Pipe connection event (EID 18). Best-effort: emitted for opens of
+    /// paths tracked as named pipes.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct PipeConnectEvent {
+        /// Always [`EVENT_PIPE_CONNECT`].
+        pub kind: u32,
+        /// Connecting process id.
+        pub pid: u32,
+        /// Real UID of the connecting task.
+        pub uid: u32,
+        /// Real GID of the connecting task.
+        pub gid: u32,
+        /// Directory-fd argument (may be [`AT_FDCWD`]).
+        pub dirfd: i32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: i32,
+        /// Pipe name/path (NUL-padded; may be relative).
+        pub pipe_name: [u8; PATH_LEN],
+        /// Task comm at connect time (NUL-padded).
+        pub comm: [u8; COMM_LEN],
+    }
+
+    impl PipeConnectEvent {
+        /// Parse a ring buffer record into a typed pipe-connect event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Pipe name as lossy UTF-8 up to the first NUL.
+        pub fn pipe_name_str(&self) -> &str {
+            Self::cstr(&self.pipe_name)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<PipeConnectEvent>().is_multiple_of(8),
+        "PipeConnectEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// Process tampering heuristic event (EID 25), emitted for cross-process
+    /// memory writes (`process_vm_writev` to another pid). Partial/heuristic.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct ProcessTamperingEvent {
+        /// Always [`EVENT_PROCESS_TAMPERING`].
+        pub kind: u32,
+        /// Source (writing) process id.
+        pub source_pid: u32,
+        /// Target (written) process id.
+        pub target_pid: u32,
+        /// Real UID of the source task.
+        pub uid: u32,
+        /// Real GID of the source task.
+        pub gid: u32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: u32,
+        /// Source task comm at tamper time (NUL-padded).
+        pub comm: [u8; COMM_LEN],
+    }
+
+    impl ProcessTamperingEvent {
+        /// Parse a ring buffer record into a typed process-tampering event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<ProcessTamperingEvent>().is_multiple_of(8),
+        "ProcessTamperingEvent must stay 8-byte aligned for ring buffer records"
     );
 }
 

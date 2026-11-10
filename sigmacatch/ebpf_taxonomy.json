@@ -1,0 +1,240 @@
+{
+  "version": 1,
+  "description": "Internal sigmacatch taxonomy: eBPF/kernel event fields to Sigma fields for Linux (no Sysmon/XML dependency).",
+  "events": {
+    "process_creation": {
+      "event_id": 1,
+      "sigma_category": "process_creation",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "FileVersion": "file_version",
+        "Description": "description",
+        "Product": "product_name",
+        "Company": "company",
+        "OriginalFileName": "original_file_name",
+        "CommandLine": "command_line",
+        "CurrentDirectory": "current_directory",
+        "User": "user",
+        "LogonGuid": "logon_guid",
+        "LogonId": "logon_id",
+        "TerminalSessionId": "terminal_session_id",
+        "IntegrityLevel": "integrity_level",
+        "Hashes": "hashes",
+        "ParentProcessGuid": "parent_process_guid",
+        "ParentProcessId": "parent_process_id",
+        "ParentImage": "parent_image",
+        "ParentCommandLine": "parent_command_line",
+        "ParentUser": "parent_user"
+      }
+    },
+    "process_termination": {
+      "event_id": 5,
+      "sigma_category": "process_termination",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user"
+      }
+    },
+    "network_connection": {
+      "event_id": 3,
+      "sigma_category": "network_connection",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "Protocol": "protocol",
+        "Initiated": "initiated",
+        "SourceIsIpv6": "source_is_ipv6",
+        "SourceIp": "source_ip",
+        "SourceHostname": "source_hostname",
+        "SourcePort": "source_port",
+        "SourcePortName": "source_port_name",
+        "DestinationIsIpv6": "destination_is_ipv6",
+        "DestinationIp": "destination_ip",
+        "DestinationHostname": "destination_hostname",
+        "DestinationPort": "destination_port",
+        "DestinationPortName": "destination_port_name"
+      }
+    },
+    "file_create": {
+      "event_id": 11,
+      "sigma_category": "file_event",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "TargetFilename": "target_filename",
+        "CreationUtcTime": "creation_utc_time",
+        "User": "user"
+      }
+    },
+    "file_delete": {
+      "event_id": 23,
+      "sigma_category": "file_delete",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "User": "user",
+        "Image": "image",
+        "TargetFilename": "target_filename",
+        "Hashes": "hashes",
+        "IsExecutable": "is_executable",
+        "Archived": "archived"
+      }
+    },
+    "dns_query": {
+      "event_id": 22,
+      "sigma_category": "dns_query",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "QueryName": "query_name",
+        "QueryStatus": "query_status",
+        "QueryResults": "query_results"
+      }
+    },
+    "process_access": {
+      "event_id": 10,
+      "sigma_category": "process_access",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "fields": {
+        "UtcTime": "utc_time",
+        "SourceProcessGUID": "source_process_guid",
+        "SourceProcessId": "source_process_id",
+        "SourceThreadId": "source_thread_id",
+        "SourceImage": "source_image",
+        "TargetProcessGUID": "target_process_guid",
+        "TargetProcessId": "target_process_id",
+        "TargetImage": "target_image",
+        "GrantedAccess": "granted_access",
+        "CallTrace": "call_trace",
+        "SourceUser": "source_user"
+      }
+    },
+    "raw_access": {
+      "event_id": 9,
+      "sigma_category": "raw_access_thread",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "Device": "device"
+      }
+    },
+    "pipe_create": {
+      "event_id": 17,
+      "sigma_category": "pipe_created",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "PipeName": "pipe_name",
+        "Image": "image",
+        "User": "user"
+      }
+    },
+    "pipe_connect": {
+      "event_id": 18,
+      "sigma_category": "pipe_created",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "PipeName": "pipe_name",
+        "Image": "image",
+        "User": "user"
+      }
+    },
+    "driver_load": {
+      "event_id": 6,
+      "sigma_category": "driver_load",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "ImageLoaded": "image_loaded",
+        "Hashes": "hashes",
+        "Signed": "signed",
+        "Signature": "signature",
+        "SignatureStatus": "signature_status",
+        "User": "user"
+      }
+    },
+    "process_tampering": {
+      "event_id": 25,
+      "sigma_category": "process_tampering",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "Type": "type",
+        "User": "user"
+      }
+    },
+    "network_listen": {
+      "event_id": 500,
+      "sigma_category": "network_connection",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "Protocol": "protocol",
+        "Initiated": "initiated",
+        "SourceIsIpv6": "source_is_ipv6",
+        "SourceIp": "source_ip",
+        "SourceHostname": "source_hostname",
+        "SourcePort": "source_port",
+        "SourcePortName": "source_port_name",
+        "DestinationIsIpv6": "destination_is_ipv6",
+        "DestinationIp": "destination_ip",
+        "DestinationHostname": "destination_hostname",
+        "DestinationPort": "destination_port",
+        "DestinationPortName": "destination_port_name"
+      },
+      "note": "sigmacatch extension (not part of SigmaHQ Linux Sysmon taxonomy v2.1.0)"
+    }
+  }
+}

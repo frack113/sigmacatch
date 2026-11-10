@@ -661,6 +661,7 @@ static CHANNEL_EVENT_TO_CATEGORY: phf::Map<&'static str, &'static str> = phf::ph
     "Microsoft-Windows-Sysmon/Operational:27" => "file_block_executable",
     "Microsoft-Windows-Sysmon/Operational:28" => "file_block_shredding",
     "Microsoft-Windows-Sysmon/Operational:29" => "file_executable_detected",
+    "Microsoft-Windows-Sysmon/Operational:500" => "network_listen",
     "Microsoft-Windows-Sysmon/Operational:255" => "sysmon_error",
     "Security:4688" => "process_creation",
     "Windows PowerShell:400" => "ps_classic_start",
@@ -1586,6 +1587,7 @@ mod tests {
             (11, "file_event"),
             (22, "dns_query"),
             (23, "file_delete"),
+            (500, "network_listen"),
         ] {
             let json = serde_json::json!({
                 "Event": {
