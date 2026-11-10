@@ -27,6 +27,8 @@
 //!     comm: [0; 16],
 //!     image: [0; 128],
 //!     arg0: [0; 128],
+//!     arg1: [0; 64],
+//!     arg2: [0; 64],
 //!     _pad1: 0,
 //! };
 //! assert_eq!(event.kind, EVENT_EXEC);
@@ -74,16 +76,19 @@ mod inner {
 
     /// Bounded executable-path buffer carried by [`ExecEvent`].
     pub const IMAGE_LEN: usize = 128;
-    /// First argv element captured in-kernel (race-free naming floor); the full
-    /// command line is enriched from `/proc` in userspace.
+    /// Bounded argv[0] buffer captured in-kernel (race-free).
     pub const ARG0_LEN: usize = 128;
+    /// Bounded argv[1] buffer captured in-kernel (race-free).
+    pub const ARG1_LEN: usize = 64;
+    /// Bounded argv[2] buffer captured in-kernel (race-free).
+    pub const ARG2_LEN: usize = 64;
     const COMM_LEN: usize = 16;
 
     /// Process execution event emitted at `sched_process_exec`.
     ///
-    /// The kernel captures what is race-free there (`image`, first argv element,
-    /// uid/gid, comm); userspace enriches with `/proc/<pid>/cmdline` into the
-    /// full Sysmon command line.
+    /// The kernel captures what is race-free there (`image`, first argv
+    /// elements, uid/gid, comm); userspace prefers `/proc/<pid>/cmdline` for the
+    /// full command line when the process is still alive.
     #[repr(C)]
     #[derive(Debug, Clone, Copy, Pod, Zeroable)]
     pub struct ExecEvent {
@@ -101,8 +106,12 @@ mod inner {
         pub comm: [u8; COMM_LEN],
         /// Executable path passed to execve (NUL-padded).
         pub image: [u8; IMAGE_LEN],
-        /// First argv element (NUL-padded) — race-free fallback for CommandLine.
+        /// argv[0] captured at execve time (NUL-padded, bounded).
         pub arg0: [u8; ARG0_LEN],
+        /// argv[1] captured at execve time (NUL-padded, bounded).
+        pub arg1: [u8; ARG1_LEN],
+        /// argv[2] captured at execve time (NUL-padded, bounded).
+        pub arg2: [u8; ARG2_LEN],
         /// Explicit padding keeping the record size a multiple of 8 (zeroed).
         pub _pad1: u32,
     }
@@ -128,9 +137,43 @@ mod inner {
             Self::cstr(&self.image)
         }
 
-        /// First argv element as lossy UTF-8 up to the first NUL.
+        /// argv[0] as lossy UTF-8 up to the first NUL.
         pub fn arg0_str(&self) -> &str {
             Self::cstr(&self.arg0)
+        }
+
+        /// argv[1] as lossy UTF-8 up to the first NUL.
+        pub fn arg1_str(&self) -> &str {
+            Self::cstr(&self.arg1)
+        }
+
+        /// argv[2] as lossy UTF-8 up to the first NUL.
+        pub fn arg2_str(&self) -> &str {
+            Self::cstr(&self.arg2)
+        }
+
+        /// Kernel-captured command line reconstructed from argv[0..2].
+        pub fn cmdline_str(&self) -> &str {
+            // Callers needing an owned joined string should use `cmdline_string`;
+            // this returns argv[0] as a cheap &str for simple checks.
+            self.arg0_str()
+        }
+
+        /// Kernel-captured command line reconstructed from available argv fields.
+        #[cfg(not(target_arch = "bpf"))]
+        pub fn cmdline_string(&self) -> String {
+            let mut parts = [self.arg0_str(), self.arg1_str(), self.arg2_str()]
+                .into_iter()
+                .filter(|s| !s.is_empty());
+            let Some(first) = parts.next() else {
+                return String::new();
+            };
+            let mut out = first.to_string();
+            for p in parts {
+                out.push(' ');
+                out.push_str(p);
+            }
+            out
         }
 
         /// Task comm as lossy UTF-8 up to the first NUL.

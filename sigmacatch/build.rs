@@ -28,6 +28,10 @@ const PROBE_ARTIFACT: &str = "target/bpfel-unknown-none/release/sigmacatch-ebpf"
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=ebpf/src/main.rs");
+    println!("cargo:rerun-if-changed=ebpf/Cargo.toml");
+    println!("cargo:rerun-if-changed=ebpf/.cargo/config.toml");
+    println!("cargo:rerun-if-changed=src/ebpf_common.rs");
     println!("cargo:rerun-if-env-changed=SIGMACATCH_EBPF_OBJECT");
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));

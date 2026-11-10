@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Enrichment of kernel ring buffer records into native Linux JSON events.
+//! Enrichment of kernel ring buffer records into Sysmon-for-Linux compatible events.
 //!
-//! Events are emitted as flat Sigma-field objects (no Sysmon/XML wrapper)
-//! with `product: linux` and the matching `category` injected for detection.
-//! The JSON shape follows the internal eBPF taxonomy
-//! (`sigmacatch/ebpf_taxonomy.json`) mapping kernel-captured fields to Sigma
-//! fields so Linux rules can match directly.
+//! Events are emitted as nested winevt-shaped JSON (`Event.System`,
+//! `Event.EventData`) on channel `Linux-Sysmon/Operational` with logsource fields
+//! (`product: linux`, `service: sysmon`, `category`) injected, so the existing
+//! Linux detection pipelines (`3_lnx_logsource.yml`, `4_lnx_field_name.yml`) and
+//! regression generation work unchanged.
 //!
-//! Hashes are `-` for now when the image is unreadable — in-kernel SHA256
-//! is out of scope; userspace hashing with cache is used when possible.
+//! The field mapping follows the internal eBPF taxonomy
+//! (`sigmacatch/ebpf_taxonomy.json`) from kernel-captured data to Sigma/Sysmon
+//! fields.
+//!
+//! Hashes are `-` when the image is unreadable; userspace SHA256 with mtime-based
+//! caching is used when possible.
 
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -171,37 +175,37 @@ impl EventBuilder {
                 ),
             };
 
-        let mut m = base_event("process_creation", &now, &self.hostname);
-        insert_str(&mut m, "UtcTime", &utc_time(&now));
-        insert_str(&mut m, "ProcessGuid", &guid);
-        insert_str(&mut m, "ProcessId", &ev.pid.to_string());
-        insert_str(&mut m, "Image", &image);
-        insert_str(&mut m, "FileVersion", "-");
-        insert_str(&mut m, "Description", "-");
-        insert_str(&mut m, "Product", "-");
-        insert_str(&mut m, "Company", "-");
-        insert_str(&mut m, "OriginalFileName", "-");
-        insert_str(&mut m, "CommandLine", &cmdline);
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "FileVersion", "-");
+        insert_str(&mut data, "Description", "-");
+        insert_str(&mut data, "Product", "-");
+        insert_str(&mut data, "Company", "-");
+        insert_str(&mut data, "OriginalFileName", "-");
+        insert_str(&mut data, "CommandLine", &cmdline);
         insert_str(
-            &mut m,
+            &mut data,
             "CurrentDirectory",
             &read_cwd(ev.pid).unwrap_or_else(|| "-".to_string()),
         );
-        insert_str(&mut m, "User", &user);
-        insert_str(&mut m, "LogonGuid", NULL_GUID);
-        insert_str(&mut m, "LogonId", "0");
+        insert_str(&mut data, "User", &user);
+        insert_str(&mut data, "LogonGuid", NULL_GUID);
+        insert_str(&mut data, "LogonId", "0");
         insert_str(
-            &mut m,
+            &mut data,
             "TerminalSessionId",
             &read_session_id(ev.pid).unwrap_or(0).to_string(),
         );
-        insert_str(&mut m, "IntegrityLevel", "no level");
-        insert_str(&mut m, "Hashes", &self.image_hash(ev.pid, &image));
-        insert_str(&mut m, "ParentProcessGuid", &parent_guid);
-        insert_str(&mut m, "ParentProcessId", &parent_pid);
-        insert_str(&mut m, "ParentImage", &parent_image);
-        insert_str(&mut m, "ParentCommandLine", &parent_cmdline);
-        insert_str(&mut m, "ParentUser", &parent_user);
+        insert_str(&mut data, "IntegrityLevel", "no level");
+        insert_str(&mut data, "Hashes", &self.image_hash(ev.pid, &image));
+        insert_str(&mut data, "ParentProcessGuid", &parent_guid);
+        insert_str(&mut data, "ParentProcessId", &parent_pid);
+        insert_str(&mut data, "ParentImage", &parent_image);
+        insert_str(&mut data, "ParentCommandLine", &parent_cmdline);
+        insert_str(&mut data, "ParentUser", &parent_user);
 
         self.parents.insert(
             ev.pid,
@@ -212,7 +216,7 @@ impl EventBuilder {
                 user,
             },
         );
-        to_json_event(m, "process_creation")
+        to_sysmon_event(1, &self.hostname, &now, data)
     }
 
     /// Build a process_termination (EID 5) event; `None` when the process is
@@ -220,13 +224,13 @@ impl EventBuilder {
     pub fn exit_event(&mut self, pid: u32) -> Option<Event> {
         let info = self.parents.remove(&pid)?;
         let now = Utc::now();
-        let mut m = base_event("process_termination", &now, &self.hostname);
-        insert_str(&mut m, "UtcTime", &utc_time(&now));
-        insert_str(&mut m, "ProcessGuid", &info.guid);
-        insert_str(&mut m, "ProcessId", &pid.to_string());
-        insert_str(&mut m, "Image", &info.image);
-        insert_str(&mut m, "User", &info.user);
-        Some(to_json_event(m, "process_termination"))
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &info.guid);
+        insert_str(&mut data, "ProcessId", &pid.to_string());
+        insert_str(&mut data, "Image", &info.image);
+        insert_str(&mut data, "User", &info.user);
+        Some(to_sysmon_event(5, &self.hostname, &now, data))
     }
 
     /// Build a network_connection (EID 3) event.
@@ -249,28 +253,28 @@ impl EventBuilder {
                 )
             });
 
-        let mut m = base_event("network_connection", &now, &self.hostname);
-        insert_str(&mut m, "UtcTime", &utc_time(&now));
-        insert_str(&mut m, "ProcessGuid", &guid);
-        insert_str(&mut m, "ProcessId", &ev.pid.to_string());
-        insert_str(&mut m, "Image", &image);
-        insert_str(&mut m, "User", &user);
-        insert_str(&mut m, "Protocol", "tcp");
-        insert_str(&mut m, "Initiated", "true");
-        insert_str(&mut m, "SourceIsIpv6", &is_v6.to_string());
-        insert_str(&mut m, "SourceIp", &source_ip);
-        insert_str(&mut m, "SourceHostname", "-");
-        insert_str(&mut m, "SourcePort", &source_port_s);
-        insert_str(&mut m, "SourcePortName", "-");
-        insert_str(&mut m, "DestinationIsIpv6", &is_v6.to_string());
-        insert_str(&mut m, "DestinationIp", &dest_ip);
-        insert_str(&mut m, "DestinationHostname", "-");
-        insert_str(&mut m, "DestinationPort", &dest_port_s);
-        insert_str(&mut m, "DestinationPortName", "-");
-        to_json_event(m, "network_connection")
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "User", &user);
+        insert_str(&mut data, "Protocol", "tcp");
+        insert_str(&mut data, "Initiated", "true");
+        insert_str(&mut data, "SourceIsIpv6", &is_v6.to_string());
+        insert_str(&mut data, "SourceIp", &source_ip);
+        insert_str(&mut data, "SourceHostname", "-");
+        insert_str(&mut data, "SourcePort", &source_port_s);
+        insert_str(&mut data, "SourcePortName", "-");
+        insert_str(&mut data, "DestinationIsIpv6", &is_v6.to_string());
+        insert_str(&mut data, "DestinationIp", &dest_ip);
+        insert_str(&mut data, "DestinationHostname", "-");
+        insert_str(&mut data, "DestinationPort", &dest_port_s);
+        insert_str(&mut data, "DestinationPortName", "-");
+        to_sysmon_event(3, &self.hostname, &now, data)
     }
 
-    /// Build a network_listen (extension EID 500) event.
+    /// Build a network listen event as EID 3 with `Initiated=false`.
     pub fn listen_event(&mut self, ev: &ListenEvent) -> Event {
         let now = Utc::now();
         let (guid, image) = match self.parents.get(&ev.pid) {
@@ -287,25 +291,25 @@ impl EventBuilder {
             ("0.0.0.0".to_string(), "false")
         };
 
-        let mut m = base_event("network_connection", &now, &self.hostname);
-        insert_str(&mut m, "UtcTime", &utc_time(&now));
-        insert_str(&mut m, "ProcessGuid", &guid);
-        insert_str(&mut m, "ProcessId", &ev.pid.to_string());
-        insert_str(&mut m, "Image", &image);
-        insert_str(&mut m, "User", &user);
-        insert_str(&mut m, "Protocol", "tcp");
-        insert_str(&mut m, "Initiated", "false");
-        insert_str(&mut m, "SourceIsIpv6", &is_v6.to_string());
-        insert_str(&mut m, "SourceIp", &bind_ip);
-        insert_str(&mut m, "SourceHostname", "-");
-        insert_str(&mut m, "SourcePort", &bind_port);
-        insert_str(&mut m, "SourcePortName", "-");
-        insert_str(&mut m, "DestinationIsIpv6", &dest_v6);
-        insert_str(&mut m, "DestinationIp", &dest_ip);
-        insert_str(&mut m, "DestinationHostname", "-");
-        insert_str(&mut m, "DestinationPort", "0");
-        insert_str(&mut m, "DestinationPortName", "-");
-        to_json_event(m, "network_connection")
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "User", &user);
+        insert_str(&mut data, "Protocol", "tcp");
+        insert_str(&mut data, "Initiated", "false");
+        insert_str(&mut data, "SourceIsIpv6", &is_v6.to_string());
+        insert_str(&mut data, "SourceIp", &bind_ip);
+        insert_str(&mut data, "SourceHostname", "-");
+        insert_str(&mut data, "SourcePort", &bind_port);
+        insert_str(&mut data, "SourcePortName", "-");
+        insert_str(&mut data, "DestinationIsIpv6", dest_v6);
+        insert_str(&mut data, "DestinationIp", &dest_ip);
+        insert_str(&mut data, "DestinationHostname", "-");
+        insert_str(&mut data, "DestinationPort", "0");
+        insert_str(&mut data, "DestinationPortName", "-");
+        to_sysmon_event(3, &self.hostname, &now, data)
     }
 
     /// Build a file_create (EID 11, category file_event) event.
@@ -323,15 +327,15 @@ impl EventBuilder {
             .unwrap_or_else(|| "-".to_string());
         let user = self.user_name(ev.uid);
         let target = resolve_target(ev);
-        let mut m = base_event("file_event", &now, &self.hostname);
-        insert_str(&mut m, "UtcTime", &utc_time(&now));
-        insert_str(&mut m, "ProcessGuid", &guid);
-        insert_str(&mut m, "ProcessId", &ev.pid.to_string());
-        insert_str(&mut m, "Image", &image);
-        insert_str(&mut m, "TargetFilename", &target);
-        insert_str(&mut m, "CreationUtcTime", &utc_time(&now));
-        insert_str(&mut m, "User", &user);
-        to_json_event(m, "file_event")
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "TargetFilename", &target);
+        insert_str(&mut data, "CreationUtcTime", &utc_time(&now));
+        insert_str(&mut data, "User", &user);
+        to_sysmon_event(11, &self.hostname, &now, data)
     }
 
     /// Build a file_delete (EID 23) event.
@@ -343,17 +347,17 @@ impl EventBuilder {
         };
         let user = self.user_name(ev.uid);
         let target = resolve_target_path(ev.pid, ev.dirfd, ev.path_str());
-        let mut m = base_event("file_delete", &now, &self.hostname);
-        insert_str(&mut m, "UtcTime", &utc_time(&now));
-        insert_str(&mut m, "ProcessGuid", &guid);
-        insert_str(&mut m, "ProcessId", &ev.pid.to_string());
-        insert_str(&mut m, "User", &user);
-        insert_str(&mut m, "Image", &image);
-        insert_str(&mut m, "TargetFilename", &target);
-        insert_str(&mut m, "Hashes", "-");
-        insert_str(&mut m, "IsExecutable", "false");
-        insert_str(&mut m, "Archived", "false");
-        to_json_event(m, "file_delete")
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "User", &user);
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "TargetFilename", &target);
+        insert_str(&mut data, "Hashes", "-");
+        insert_str(&mut data, "IsExecutable", "false");
+        insert_str(&mut data, "Archived", "false");
+        to_sysmon_event(23, &self.hostname, &now, data)
     }
 
     /// Build a process_access (EID 10) event.
@@ -363,19 +367,19 @@ impl EventBuilder {
         let (tgt_guid, tgt_image) = self.resolve_process_info(ev.target_pid);
         let source_user = self.user_name(ev.source_uid);
         let granted = format!("0x{:x}", ev.request);
-        let mut m = base_event("process_access", &now, &self.hostname);
-        insert_str(&mut m, "UtcTime", &utc_time(&now));
-        insert_str(&mut m, "SourceProcessGUID", &src_guid);
-        insert_str(&mut m, "SourceProcessId", &ev.source_pid.to_string());
-        insert_str(&mut m, "SourceThreadId", &ev.source_tid.to_string());
-        insert_str(&mut m, "SourceImage", &src_image);
-        insert_str(&mut m, "TargetProcessGUID", &tgt_guid);
-        insert_str(&mut m, "TargetProcessId", &ev.target_pid.to_string());
-        insert_str(&mut m, "TargetImage", &tgt_image);
-        insert_str(&mut m, "GrantedAccess", &granted);
-        insert_str(&mut m, "CallTrace", "-");
-        insert_str(&mut m, "SourceUser", &source_user);
-        to_json_event(m, "process_access")
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "SourceProcessGUID", &src_guid);
+        insert_str(&mut data, "SourceProcessId", &ev.source_pid.to_string());
+        insert_str(&mut data, "SourceThreadId", &ev.source_tid.to_string());
+        insert_str(&mut data, "SourceImage", &src_image);
+        insert_str(&mut data, "TargetProcessGUID", &tgt_guid);
+        insert_str(&mut data, "TargetProcessId", &ev.target_pid.to_string());
+        insert_str(&mut data, "TargetImage", &tgt_image);
+        insert_str(&mut data, "GrantedAccess", &granted);
+        insert_str(&mut data, "CallTrace", "-");
+        insert_str(&mut data, "SourceUser", &source_user);
+        to_sysmon_event(10, &self.hostname, &now, data)
     }
 
     fn resolve_process_info(&mut self, pid: u32) -> (String, String) {
@@ -394,13 +398,13 @@ impl EventBuilder {
         let now = Utc::now();
         let (guid, image) = self.resolve_process_info(ev.pid);
         let device = resolve_target_path(ev.pid, ev.dirfd, ev.path_str());
-        let mut m = base_event("raw_access_thread", &now, &self.hostname);
-        insert_str(&mut m, "UtcTime", &utc_time(&now));
-        insert_str(&mut m, "ProcessGuid", &guid);
-        insert_str(&mut m, "ProcessId", &ev.pid.to_string());
-        insert_str(&mut m, "Image", &image);
-        insert_str(&mut m, "Device", &device);
-        to_json_event(m, "raw_access_thread")
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "Device", &device);
+        to_sysmon_event(9, &self.hostname, &now, data)
     }
 
     /// Build a pipe_created (EID 17) event.
@@ -414,14 +418,14 @@ impl EventBuilder {
         } else {
             resolve_target_path(ev.pid, ev.dirfd, raw)
         };
-        let mut m = base_event("pipe_created", &now, &self.hostname);
-        insert_str(&mut m, "UtcTime", &utc_time(&now));
-        insert_str(&mut m, "ProcessGuid", &guid);
-        insert_str(&mut m, "ProcessId", &ev.pid.to_string());
-        insert_str(&mut m, "PipeName", &pipe_name);
-        insert_str(&mut m, "Image", &image);
-        insert_str(&mut m, "User", &user);
-        to_json_event(m, "pipe_created")
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "PipeName", &pipe_name);
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "User", &user);
+        to_sysmon_event(17, &self.hostname, &now, data)
     }
 
     /// Build a pipe_connected (EID 18) event.
@@ -435,14 +439,14 @@ impl EventBuilder {
         } else {
             resolve_target_path(ev.pid, ev.dirfd, raw)
         };
-        let mut m = base_event("pipe_created", &now, &self.hostname);
-        insert_str(&mut m, "UtcTime", &utc_time(&now));
-        insert_str(&mut m, "ProcessGuid", &guid);
-        insert_str(&mut m, "ProcessId", &ev.pid.to_string());
-        insert_str(&mut m, "PipeName", &pipe_name);
-        insert_str(&mut m, "Image", &image);
-        insert_str(&mut m, "User", &user);
-        to_json_event(m, "pipe_created")
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "PipeName", &pipe_name);
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "User", &user);
+        to_sysmon_event(18, &self.hostname, &now, data)
     }
 
     /// Build a driver_load (EID 6) event.
@@ -458,18 +462,18 @@ impl EventBuilder {
         } else {
             "-".to_string()
         };
-        let mut m = base_event("driver_load", &now, &self.hostname);
-        insert_str(&mut m, "UtcTime", &utc_time(&now));
-        insert_str(&mut m, "ProcessGuid", &guid);
-        insert_str(&mut m, "ProcessId", &ev.pid.to_string());
-        insert_str(&mut m, "Image", &image);
-        insert_str(&mut m, "ImageLoaded", &image_loaded);
-        insert_str(&mut m, "Hashes", "-");
-        insert_str(&mut m, "Signed", "false");
-        insert_str(&mut m, "Signature", "-");
-        insert_str(&mut m, "SignatureStatus", "Unavailable");
-        insert_str(&mut m, "User", &user);
-        to_json_event(m, "driver_load")
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "ImageLoaded", &image_loaded);
+        insert_str(&mut data, "Hashes", "-");
+        insert_str(&mut data, "Signed", "false");
+        insert_str(&mut data, "Signature", "-");
+        insert_str(&mut data, "SignatureStatus", "Unavailable");
+        insert_str(&mut data, "User", &user);
+        to_sysmon_event(6, &self.hostname, &now, data)
     }
 
     /// Build a process_tampering (EID 25) event.
@@ -477,14 +481,14 @@ impl EventBuilder {
         let now = Utc::now();
         let (guid, image) = self.resolve_process_info(ev.source_pid);
         let user = self.user_name(ev.uid);
-        let mut m = base_event("process_tampering", &now, &self.hostname);
-        insert_str(&mut m, "UtcTime", &utc_time(&now));
-        insert_str(&mut m, "ProcessGuid", &guid);
-        insert_str(&mut m, "ProcessId", &ev.source_pid.to_string());
-        insert_str(&mut m, "Image", &image);
-        insert_str(&mut m, "Type", "CrossProcessMemoryWrite");
-        insert_str(&mut m, "User", &user);
-        to_json_event(m, "process_tampering")
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.source_pid.to_string());
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "Type", "CrossProcessMemoryWrite");
+        insert_str(&mut data, "User", &user);
+        to_sysmon_event(25, &self.hostname, &now, data)
     }
 
     /// Build a dns_query (EID 22) event.
@@ -501,16 +505,16 @@ impl EventBuilder {
             None => (new_guid(), "-".to_string()),
         };
         let user = self.user_name(ev.uid);
-        let mut m = base_event("dns_query", &now, &self.hostname);
-        insert_str(&mut m, "UtcTime", &utc_time(&now));
-        insert_str(&mut m, "ProcessGuid", &guid);
-        insert_str(&mut m, "ProcessId", &ev.pid.to_string());
-        insert_str(&mut m, "Image", &image);
-        insert_str(&mut m, "User", &user);
-        insert_str(&mut m, "QueryName", &query_name);
-        insert_str(&mut m, "QueryStatus", "0");
-        insert_str(&mut m, "QueryResults", "-");
-        Some(to_json_event(m, "dns_query"))
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "User", &user);
+        insert_str(&mut data, "QueryName", &query_name);
+        insert_str(&mut data, "QueryStatus", "0");
+        insert_str(&mut data, "QueryResults", "-");
+        Some(to_sysmon_event(22, &self.hostname, &now, data))
     }
 
     fn user_name(&mut self, uid: u32) -> String {
@@ -570,35 +574,47 @@ fn compute_sha256(path: &Path) -> Option<String> {
 
 const NULL_GUID: &str = "{00000000-0000-0000-0000-000000000000}";
 
-fn base_event(category: &str, now: &chrono::DateTime<Utc>, hostname: &str) -> Map<String, Value> {
-    let mut m = Map::new();
-    insert_str(&mut m, "Computer", hostname);
-    insert_str(&mut m, "EventTime", &now.to_rfc3339());
-    insert_str(&mut m, "EventCategory", category);
-    m
-}
-
 fn insert_str(m: &mut Map<String, Value>, k: &str, v: &str) {
     m.insert(k.to_string(), Value::String(v.to_string()));
 }
 
-/// Build the final Event: flat Sigma-field JSON, with logsource injected
-/// (product: linux, category) and no Sysmon/service dependency.
-fn to_json_event(fields: Map<String, Value>, category: &str) -> Event {
-    let json = Value::Object(fields);
+/// Build a Sysmon-for-Linux compatible nested event (`Event.System`,
+/// `Event.EventData`) so the existing linux detection pipelines (which add
+/// `Event.System.EventID` conditions and map fields to `Event.EventData.*`)
+/// can match eBPF-captured events. Logsource fields are injected from the
+/// `Linux-Sysmon/Operational` channel like the legacy sysmon tail.
+fn to_sysmon_event(
+    event_id: u32,
+    hostname: &str,
+    now: &chrono::DateTime<Utc>,
+    data: Map<String, Value>,
+) -> Event {
+    let mut system = Map::new();
+    let mut provider = Map::new();
+    let mut provider_attrs = Map::new();
+    provider_attrs.insert("Name".into(), Value::String("Linux-Sysmon".into()));
+    provider.insert("#attributes".into(), Value::Object(provider_attrs));
+    system.insert("Provider".into(), Value::Object(provider));
+    system.insert("EventID".into(), Value::Number(event_id.into()));
+    system.insert(
+        "TimeCreated".into(),
+        serde_json::json!({ "#attributes": { "SystemTime": now.to_rfc3339() } }),
+    );
+    system.insert("Computer".into(), Value::String(hostname.to_string()));
+    system.insert(
+        "Channel".into(),
+        Value::String("Linux-Sysmon/Operational".into()),
+    );
+
+    let mut event = Map::new();
+    event.insert("System".into(), Value::Object(system));
+    event.insert("EventData".into(), Value::Object(data));
+
+    let mut root = Map::new();
+    root.insert("Event".into(), Value::Object(event));
+    let json = Value::Object(root);
     let raw_bytes = serde_json::to_vec(&json).unwrap_or_default();
-    // Use the same JSON for detection/raw views; inject linux logsource.
-    let mut det = json.clone();
-    if let Some(m) = det.as_object_mut() {
-        m.insert("product".into(), Value::String("linux".into()));
-        m.insert("category".into(), Value::String(category.into()));
-    }
-    Event {
-        event_json_raw: std::sync::Arc::new(json),
-        event_json: std::sync::Arc::new(det),
-        event_raw: std::sync::Arc::new(raw_bytes),
-        event_json_raw_all: None,
-    }
+    Event::new_injected(json.clone(), json, raw_bytes, "linux", None)
 }
 
 /// Extract the question name from a raw DNS wire payload.
@@ -807,13 +823,15 @@ fn full_cmdline(ev: &ExecEvent) -> String {
             return joined;
         }
     }
-    let arg0 = ev.arg0_str();
+    let kernel_cmdline = ev.cmdline_string();
+    if !kernel_cmdline.is_empty() {
+        return kernel_cmdline;
+    }
     let image = ev.image_str();
-    match (arg0.is_empty(), image.is_empty()) {
-        (true, true) => String::new(),
-        (true, false) => image.to_string(),
-        (false, true) => arg0.to_string(),
-        (false, false) => format!("{image} {arg0}"),
+    if image.is_empty() {
+        String::new()
+    } else {
+        image.to_string()
     }
 }
 
@@ -855,7 +873,9 @@ fn read_session_id(pid: u32) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ebpf_common::{ARG0_LEN, EVENT_EXEC, EVENT_NET, ExecEvent, IMAGE_LEN, NetEvent};
+    use crate::ebpf_common::{
+        ARG0_LEN, ARG1_LEN, ARG2_LEN, EVENT_EXEC, EVENT_NET, ExecEvent, IMAGE_LEN, NetEvent,
+    };
 
     const FAKE_PID: u32 = u32::MAX;
 
@@ -869,6 +889,8 @@ mod tests {
             comm: *b"bash\0\0\0\0\0\0\0\0\0\0\0\0",
             image: [0; IMAGE_LEN],
             arg0: [0; ARG0_LEN],
+            arg1: [0; ARG1_LEN],
+            arg2: [0; ARG2_LEN],
             _pad1: 0,
         };
         ev.image[..12].copy_from_slice(b"/usr/bin/id\0");
@@ -892,37 +914,55 @@ mod tests {
     }
 
     #[test]
-    fn exec_event_emits_native_linux_json() {
+    fn exec_event_emits_sysmon_linux_json() {
         let mut b = EventBuilder::new();
         let event = b.exec_event(&sample_exec(FAKE_PID));
         assert_eq!(event.event_json["product"], "linux");
+        assert_eq!(event.event_json["service"], "sysmon");
         assert_eq!(event.event_json["category"], "process_creation");
-        assert!(
-            event.event_json.get("service").is_none(),
-            "no sysmon service"
+        assert_eq!(event.event_json["Event"]["System"]["EventID"], 1);
+        assert_eq!(
+            event.event_json["Event"]["System"]["Channel"],
+            "Linux-Sysmon/Operational"
         );
-        assert_eq!(event.event_json["Image"], "/usr/bin/id");
-        assert_eq!(event.event_json["CommandLine"], "/usr/bin/id /usr/bin/id");
-        assert_eq!(event.event_json["ProcessId"], FAKE_PID.to_string());
-        assert_eq!(event.event_json["User"], "root");
-        // raw is JSON bytes of the event
+        assert_eq!(
+            event.event_json["Event"]["EventData"]["Image"],
+            "/usr/bin/id"
+        );
+        assert_eq!(
+            event.event_json["Event"]["EventData"]["CommandLine"],
+            "/usr/bin/id"
+        );
+        assert_eq!(
+            event.event_json["Event"]["EventData"]["ProcessId"],
+            FAKE_PID.to_string()
+        );
+        assert_eq!(event.event_json["Event"]["EventData"]["User"], "root");
         let raw: serde_json::Value = serde_json::from_slice(&event.event_raw).unwrap();
-        assert_eq!(raw["Image"], "/usr/bin/id");
-        assert_eq!(raw["EventCategory"], "process_creation");
+        assert_eq!(raw["Event"]["EventData"]["Image"], "/usr/bin/id");
+        assert_eq!(raw["Event"]["System"]["EventID"], 1);
     }
 
     #[test]
-    fn net_event_emits_native_linux_json() {
+    fn net_event_emits_sysmon_linux_json() {
         let mut b = EventBuilder::new();
         let _ = b.exec_event(&sample_exec(FAKE_PID));
         let addr = [127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         let event = b.net_event(&sample_net(2, 22u16.to_be(), addr));
         assert_eq!(event.event_json["product"], "linux");
+        assert_eq!(event.event_json["service"], "sysmon");
         assert_eq!(event.event_json["category"], "network_connection");
-        assert_eq!(event.event_json["DestinationIp"], "127.0.0.1");
-        assert_eq!(event.event_json["DestinationPort"], "22");
-        assert_eq!(event.event_json["Protocol"], "tcp");
-        assert_eq!(event.event_json["Initiated"], "true");
+        assert_eq!(event.event_json["Event"]["System"]["EventID"], 3);
+        assert_eq!(
+            event.event_json["Event"]["EventData"]["DestinationIp"],
+            "127.0.0.1"
+        );
+        assert_eq!(
+            event.event_json["Event"]["EventData"]["DestinationPort"],
+            "22"
+        );
+        assert_eq!(event.event_json["Event"]["EventData"]["Protocol"], "tcp");
+        assert_eq!(event.event_json["Event"]["EventData"]["Initiated"], "true");
     }
 
     #[test]

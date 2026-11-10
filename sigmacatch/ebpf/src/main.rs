@@ -16,6 +16,8 @@
 
 use core::ptr;
 
+#[allow(deprecated)]
+use aya_ebpf::helpers::bpf_probe_read_user_str;
 use aya_ebpf::{
     helpers::{
         bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_get_current_uid_gid,
@@ -25,8 +27,6 @@ use aya_ebpf::{
     maps::{LruHashMap, PerCpuArray, RingBuf},
     programs::TracePointContext,
 };
-#[allow(deprecated)]
-use aya_ebpf::helpers::bpf_probe_read_user_str;
 
 // Shared wire-format types: same single source as the userspace loader
 // (sigmacatch/src/ebpf_common.rs, included via #[path]). The probe only uses
@@ -37,11 +37,11 @@ use aya_ebpf::helpers::bpf_probe_read_user_str;
 mod ebpf_common;
 
 use ebpf_common::{
-    ARG0_LEN, DNS_PAYLOAD_LEN, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE,
-    EVENT_FILE_DELETE, EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS,
-    EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, DnsEvent, DriverLoadEvent, ExecEvent, ExitEvent,
-    FileCreateEvent, FileDeleteEvent, IMAGE_LEN, ListenEvent, NetEvent, PATH_LEN, PipeCreateEvent,
-    ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
+    ARG0_LEN, ARG1_LEN, ARG2_LEN, DNS_PAYLOAD_LEN, DnsEvent, DriverLoadEvent, EVENT_DNS,
+    EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_DELETE, EVENT_LISTEN,
+    EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS,
+    ExecEvent, ExitEvent, FileCreateEvent, FileDeleteEvent, IMAGE_LEN, ListenEvent, NetEvent,
+    PATH_LEN, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
 };
 
 const MAX_ENTRIES: u32 = 1;
@@ -59,6 +59,8 @@ const O_CREAT: u64 = 0o100;
 struct PendingExec {
     image: [u8; IMAGE_LEN],
     arg0: [u8; ARG0_LEN],
+    arg1: [u8; ARG1_LEN],
+    arg2: [u8; ARG2_LEN],
 }
 
 #[repr(C)]
@@ -95,32 +97,27 @@ static EXEC_ARGS: LruHashMap<u32, PendingExec> = LruHashMap::with_max_entries(EX
 
 // BPF stack is 512 bytes: the ~256-byte staging buffer must live in a map.
 #[map(name = "STAGE_SCRATCH")]
-static STAGE_SCRATCH: PerCpuArray<PendingExec> =
-    PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
+static STAGE_SCRATCH: PerCpuArray<PendingExec> = PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
 
 #[map(name = "FILE_STAGE")]
 static FILE_STAGE: LruHashMap<u32, PendingFile> = LruHashMap::with_max_entries(FILE_STAGE_MAX, 0);
 
 // Same stack constraint applies to the ~260-byte file staging buffer.
 #[map(name = "FILE_SCRATCH")]
-static FILE_SCRATCH: PerCpuArray<PendingFile> =
-    PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
+static FILE_SCRATCH: PerCpuArray<PendingFile> = PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
 
 #[map(name = "DELETE_STAGE")]
 static DELETE_STAGE: LruHashMap<u32, PendingFile> =
     LruHashMap::with_max_entries(DELETE_STAGE_MAX, 0);
 
 #[map(name = "RAW_STAGE")]
-static RAW_STAGE: LruHashMap<u32, PendingFile> =
-    LruHashMap::with_max_entries(RAW_STAGE_MAX, 0);
+static RAW_STAGE: LruHashMap<u32, PendingFile> = LruHashMap::with_max_entries(RAW_STAGE_MAX, 0);
 
 #[map(name = "PIPE_STAGE")]
-static PIPE_STAGE: LruHashMap<u32, PendingFile> =
-    LruHashMap::with_max_entries(PIPE_STAGE_MAX, 0);
+static PIPE_STAGE: LruHashMap<u32, PendingFile> = LruHashMap::with_max_entries(PIPE_STAGE_MAX, 0);
 
 #[map(name = "FINIT_STAGE")]
-static FINIT_STAGE: LruHashMap<u64, i32> =
-    LruHashMap::with_max_entries(FINIT_STAGE_MAX, 0);
+static FINIT_STAGE: LruHashMap<u64, i32> = LruHashMap::with_max_entries(FINIT_STAGE_MAX, 0);
 
 #[map(name = "BIND_STAGE")]
 static BIND_STAGE: LruHashMap<u64, PendingBind> = LruHashMap::with_max_entries(BIND_STAGE_MAX, 0);
@@ -167,12 +164,28 @@ fn try_stage_execve(ctx: &TracePointContext) -> Result<(), i64> {
     };
     pending.image = [0; IMAGE_LEN];
     pending.arg0 = [0; ARG0_LEN];
+    pending.arg1 = [0; ARG1_LEN];
+    pending.arg2 = [0; ARG2_LEN];
     read_cstr(&mut pending.image, filename);
-    // argv[0]: one indirection, fixed-size destination — trivially provable.
-    // SAFETY: argv_base points to user memory (validated non-faulting by the
-    // helper); a fixed-size pointer read whose failure degrades to null.
-    let arg0p: *const u8 = unsafe { bpf_probe_read_user(argv_base) }.unwrap_or(ptr::null());
-    read_cstr(&mut pending.arg0, arg0p);
+
+    // Capture a bounded, race-free command line from argv[0..2] at exec time.
+    // This is essential for short-lived processes where userspace can no longer
+    // read /proc/<pid>/cmdline by the time the ring-buffer event is handled.
+    // Each argument is read into a fixed buffer (verifier-friendly).
+    // SAFETY: argv_base points to a user argv pointer array; fixed-size pointer
+    // reads are fault-tolerant via the helper.
+    let arg0p: *const u8 = unsafe { bpf_probe_read_user(argv_base.add(0)) }.unwrap_or(ptr::null());
+    if !arg0p.is_null() {
+        read_cstr(&mut pending.arg0, arg0p);
+    }
+    let arg1p: *const u8 = unsafe { bpf_probe_read_user(argv_base.add(1)) }.unwrap_or(ptr::null());
+    if !arg1p.is_null() {
+        read_cstr(&mut pending.arg1, arg1p);
+    }
+    let arg2p: *const u8 = unsafe { bpf_probe_read_user(argv_base.add(2)) }.unwrap_or(ptr::null());
+    if !arg2p.is_null() {
+        read_cstr(&mut pending.arg2, arg2p);
+    }
 
     let _ = EXEC_ARGS.insert(&pid, pending, 0);
     Ok(())
@@ -213,6 +226,9 @@ fn try_emit_exec() -> Result<(), i64> {
             (*p).comm = comm;
             (*p).image = staged.image;
             (*p).arg0 = staged.arg0;
+            (*p).arg1 = staged.arg1;
+            (*p).arg2 = staged.arg2;
+            (*p)._pad1 = 0;
         }
         entry.submit(0);
     }
