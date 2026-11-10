@@ -31,9 +31,12 @@ pub enum DataFormat {
     /// Windows Winevt — `.evtx`, re-exported from the live log
     /// (`EvtExportLog`) or synthesized with the pure-Rust writer.
     Evtx,
-    /// Raw text lines (auditd) — `.log`, written from the event's original
+    /// Raw text lines (auditd/sysmon tail) — `.log`, written from the event's original
     /// lines.
     Log,
+    /// JSON regression data — `.json`, one JSON object per event written as
+    /// newline-delimited records when multiple alerts are batched.
+    Json,
 }
 
 impl DataFormat {
@@ -42,6 +45,7 @@ impl DataFormat {
         match self {
             Self::Evtx => "evtx",
             Self::Log => "log",
+            Self::Json => "json",
         }
     }
 
@@ -53,10 +57,9 @@ impl DataFormat {
     /// Provider written to `info.yml`. Evtx events carry their provider in
     /// the event XML — an empty one means a malformed event and fails
     /// generation rather than committing wrong contribution metadata (a
-    /// Sysmon provider on a Windows rule discredits the whole PR). Log
-    /// events use their XML provider when present (Sysmon for Linux writes
-    /// winevt XML into syslog); plain text lines (auditd) have none and
-    /// fall back to the collector identity.
+    /// Sysmon provider on a Windows rule discredits the whole PR). Log/JSON
+    /// events use their XML/provider field when present; plain text/json
+    /// lines with no provider fall back to the collector identity.
     pub fn resolve_provider(self, alert: &Alert) -> Result<String> {
         match self {
             Self::Evtx => {
@@ -69,10 +72,14 @@ impl DataFormat {
                 }
                 Ok(provider.to_string())
             }
-            Self::Log => {
+            Self::Log | Self::Json => {
                 let provider = alert.provider();
                 if provider.is_empty() {
-                    Ok("auditd".to_string())
+                    Ok(match self {
+                        Self::Log => "auditd".to_string(),
+                        Self::Json => "sigmacatch-ebpf".to_string(),
+                        Self::Evtx => unreachable!(),
+                    })
                 } else {
                     Ok(provider.to_string())
                 }
@@ -92,7 +99,7 @@ impl DataFormat {
             Self::Log => {
                 if alert.event_raw.len() > self.max_blob_size() {
                     return Err(RegressionError::Invalid(format!(
-                        "audit event exceeds {} MiB — refusing to write {}",
+                        "event exceeds {} MiB — refusing to write {}",
                         self.max_blob_size() / 1024 / 1024,
                         path.display()
                     )));
@@ -100,6 +107,22 @@ impl DataFormat {
                 std::fs::write(path, &alert.event_raw[..]).map_err(|e| {
                     RegressionError::Invalid(format!(
                         "Failed to write log data {}: {e}",
+                        path.display()
+                    ))
+                })
+            }
+            Self::Json => {
+                let bytes = alert.event_raw.as_ref();
+                if bytes.len() > self.max_blob_size() {
+                    return Err(RegressionError::Invalid(format!(
+                        "json event exceeds {} MiB — refusing to write {}",
+                        self.max_blob_size() / 1024 / 1024,
+                        path.display()
+                    )));
+                }
+                std::fs::write(path, bytes).map_err(|e| {
+                    RegressionError::Invalid(format!(
+                        "Failed to write json data {}: {e}",
                         path.display()
                     ))
                 })
@@ -141,6 +164,7 @@ impl DataFormat {
         match self {
             Self::Evtx => header_is_evtx(path),
             Self::Log => prefix_is_text(path, meta.len()),
+            Self::Json => prefix_is_json(path, meta.len()),
         }
     }
 }
@@ -189,6 +213,34 @@ fn prefix_is_text(path: &Path, size: u64) -> bool {
             );
             false
         }
+    }
+}
+
+/// Cheap check that a `.json`/ndjson data file starts like JSON.
+fn prefix_is_json(path: &Path, size: u64) -> bool {
+    let Some(buf) = read_prefix(path, size as usize) else {
+        warn!(
+            "{} unreadable — excluded from skip-set, will be re-captured",
+            path.display()
+        );
+        return false;
+    };
+    let Ok(text) = std::str::from_utf8(&buf) else {
+        warn!(
+            "{} is not UTF-8 — excluded from skip-set, will be re-captured",
+            path.display()
+        );
+        return false;
+    };
+    let trimmed = text.trim_start();
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        true
+    } else {
+        warn!(
+            "{} does not look like JSON — excluded from skip-set, will be re-captured",
+            path.display()
+        );
+        false
     }
 }
 

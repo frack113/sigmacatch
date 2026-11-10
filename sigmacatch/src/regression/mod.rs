@@ -630,7 +630,7 @@ impl RegressionData {
                 for alert in &self.alerts {
                     if alert.event_raw.len() > self.format.max_blob_size() {
                         return Err(RegressionError::Invalid(format!(
-                            "audit event exceeds {} MiB — refusing to write {}",
+                            "event exceeds {} MiB — refusing to write {}",
                             self.format.max_blob_size() / 1024 / 1024,
                             data_path.display()
                         )));
@@ -648,6 +648,30 @@ impl RegressionData {
                     )));
                 }
                 self.format.write(alert, data_path)?;
+            }
+            DataFormat::Json => {
+                // Write the primary regression data as JSON: a single pretty
+                // object for one alert, ndjson (one compact object per line)
+                // for multiple alerts.
+                let records: Vec<&serde_json::Value> = self
+                    .alerts
+                    .iter()
+                    .flat_map(|alert| match &alert.event_json_raw_all {
+                        Some(all) => all.iter().collect::<Vec<_>>(),
+                        None => vec![alert.event_json_raw.as_ref()],
+                    })
+                    .collect();
+                let mut data_file = std::fs::File::create(data_path)?;
+                if records.len() <= 1 {
+                    let doc = serde_json::to_string_pretty(
+                        records.first().copied().unwrap_or(&serde_json::Value::Null),
+                    )?;
+                    writeln!(data_file, "{doc}")?;
+                } else {
+                    for rec in records {
+                        writeln!(data_file, "{}", serde_json::to_string(rec)?)?;
+                    }
+                }
             }
         }
         Ok(())

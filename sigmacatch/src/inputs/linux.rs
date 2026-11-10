@@ -211,6 +211,14 @@ impl CollectorKind for LinuxCollector {
     }
 
     fn regression_format(&self) -> DataFormat {
+        // eBPF emits native JSON events (no Sysmon/XML hard link); other
+        // Linux tail inputs keep line-oriented .log regression data.
+        #[cfg(feature = "ebpf")]
+        {
+            if ebpf_planned() {
+                return DataFormat::Json;
+            }
+        }
         DataFormat::Log
     }
 }
