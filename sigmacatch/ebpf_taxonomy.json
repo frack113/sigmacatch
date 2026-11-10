@@ -199,7 +199,7 @@
       }
     },
     "network_listen": {
-      "sigma_category": "network_connection",
+      "sigma_category": "network_listen",
       "sigma_product": "linux",
       "sigma_service": null,
       "fields": {

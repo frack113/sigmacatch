@@ -274,7 +274,8 @@ impl EventBuilder {
         to_sysmon_event(3, &self.hostname, &now, data)
     }
 
-    /// Build a network listen event as EID 3 with `Initiated=false`.
+    /// Build a network_listen event (EID 500, Sysmon extension) with
+    /// `Initiated=false`.
     pub fn listen_event(&mut self, ev: &ListenEvent) -> Event {
         let now = Utc::now();
         let (guid, image) = match self.parents.get(&ev.pid) {
@@ -309,7 +310,7 @@ impl EventBuilder {
         insert_str(&mut data, "DestinationHostname", "-");
         insert_str(&mut data, "DestinationPort", "0");
         insert_str(&mut data, "DestinationPortName", "-");
-        to_sysmon_event(3, &self.hostname, &now, data)
+        to_sysmon_event(500, &self.hostname, &now, data)
     }
 
     /// Build a file_create (EID 11, category file_event) event.

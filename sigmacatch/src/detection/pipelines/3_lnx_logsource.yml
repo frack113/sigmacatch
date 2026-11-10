@@ -33,6 +33,16 @@ transformations:
         category: network_connection
         product: linux
 
+  # EventID 500: network_listen (sigmacatch extension)
+  - id: win_network_listen
+    type: add_condition
+    conditions:
+      Event.System.EventID: 500
+    rule_conditions:
+      - type: logsource
+        category: network_listen
+        product: linux
+
   # EventID 5: process_termination
   - id: win_process_termination
     type: add_condition
@@ -313,6 +323,13 @@ transformations:
     rule_conditions:
       - type: logsource
         category: network_connection
+        product: linux
+  - id: win_route_network_listen
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: network_listen
         product: linux
   - id: win_route_process_termination
     type: change_logsource
