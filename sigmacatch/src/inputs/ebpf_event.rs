@@ -19,7 +19,7 @@ use std::time::SystemTime;
 
 use crate::ebpf_common::{
     DnsEvent, DriverLoadEvent, ExecEvent, FileCreateEvent, FileDeleteEvent, ListenEvent, NetEvent,
-    ProcessAccessEvent, RawAccessEvent,
+    PipeConnectEvent, PipeCreateEvent, ProcessAccessEvent, RawAccessEvent,
 };
 use crate::types::Event;
 use chrono::Utc;
@@ -558,6 +558,82 @@ impl EventBuilder {
         to_event(xml)
     }
 
+    /// Build the EID 17 (pipe_created) event for a named FIFO creation or
+    /// anonymous pipe.
+    pub fn pipe_create_event(&mut self, ev: &PipeCreateEvent) -> Event {
+        let now = Utc::now();
+        let (guid, image) = self.resolve_process_info(ev.pid);
+        let user = self.user_name(ev.uid);
+        let raw = ev.pipe_name_str();
+        let pipe_name = if raw == "-" || raw.is_empty() {
+            raw.to_string()
+        } else {
+            resolve_target_path(ev.pid, ev.dirfd, raw)
+        };
+        let xml = format!(
+            "<Event><System>{system}</System><EventData>{data}</EventData></Event>",
+            system = system_block(
+                17,
+                1,
+                TASK_PIPE_CREATE,
+                &mut self.record_id,
+                now,
+                &self.hostname,
+                self.exec_pid,
+                self.euid,
+            ),
+            data = [
+                data("RuleName", "-"),
+                data("UtcTime", &utc_time(&now)),
+                data("ProcessGuid", &guid),
+                data("ProcessId", &ev.pid.to_string()),
+                data("PipeName", &pipe_name),
+                data("Image", &image),
+                data("User", &user),
+            ]
+            .concat(),
+        );
+        to_event(xml)
+    }
+
+    /// Build the EID 18 (pipe_connected) event. Best-effort: emitted when the
+    /// kernel-side heuristics identify a pipe connection.
+    pub fn pipe_connect_event(&mut self, ev: &PipeConnectEvent) -> Event {
+        let now = Utc::now();
+        let (guid, image) = self.resolve_process_info(ev.pid);
+        let user = self.user_name(ev.uid);
+        let raw = ev.pipe_name_str();
+        let pipe_name = if raw.is_empty() {
+            "-".to_string()
+        } else {
+            resolve_target_path(ev.pid, ev.dirfd, raw)
+        };
+        let xml = format!(
+            "<Event><System>{system}</System><EventData>{data}</EventData></Event>",
+            system = system_block(
+                18,
+                1,
+                TASK_PIPE_CONNECT,
+                &mut self.record_id,
+                now,
+                &self.hostname,
+                self.exec_pid,
+                self.euid,
+            ),
+            data = [
+                data("RuleName", "-"),
+                data("UtcTime", &utc_time(&now)),
+                data("ProcessGuid", &guid),
+                data("ProcessId", &ev.pid.to_string()),
+                data("PipeName", &pipe_name),
+                data("Image", &image),
+                data("User", &user),
+            ]
+            .concat(),
+        );
+        to_event(xml)
+    }
+
     /// Build the EID 6 (driver_load / kernel module load) event for a
     /// `finit_module` syscall. `ImageLoaded` is resolved from the module fd;
     /// signature/hash metadata is unavailable and reported with safe defaults.
@@ -787,6 +863,8 @@ const TASK_DRIVER_LOAD: u32 = 6;
 const TASK_RAW_ACCESS: u32 = 9;
 const TASK_PROCESS_ACCESS: u32 = 10;
 const TASK_FILE_CREATE: u32 = 11;
+const TASK_PIPE_CREATE: u32 = 17;
+const TASK_PIPE_CONNECT: u32 = 18;
 const TASK_DNS_QUERY: u32 = 22;
 const TASK_FILE_DELETE: u32 = 23;
 const TASK_NETWORK_LISTEN: u32 = 500;
@@ -1929,5 +2007,104 @@ mod raw_access_tests {
             )
         );
         assert_eq!(event.event_json["category"], "raw_access_thread");
+    }
+}
+
+#[cfg(test)]
+mod pipe_tests {
+    use super::tests::{FAKE_PID, sample_exec};
+    use super::*;
+    use crate::ebpf_common::{
+        AT_FDCWD, EVENT_PIPE_CONNECT, EVENT_PIPE_CREATE, PATH_LEN, PipeConnectEvent,
+        PipeCreateEvent,
+    };
+
+    fn sample_pipe_create(pid: u32, name: &[u8]) -> PipeCreateEvent {
+        let mut ev = PipeCreateEvent {
+            kind: EVENT_PIPE_CREATE,
+            pid,
+            uid: 0,
+            gid: 0,
+            dirfd: AT_FDCWD,
+            _pad0: 0,
+            pipe_name: [0; PATH_LEN],
+            comm: [0; 16],
+        };
+        let n = name.len().min(PATH_LEN - 1);
+        ev.pipe_name[..n].copy_from_slice(&name[..n]);
+        ev.comm = *b"mkfifo\0\0\0\0\0\0\0\0\0\0";
+        ev
+    }
+
+    fn sample_pipe_connect(pid: u32, name: &[u8]) -> PipeConnectEvent {
+        let mut ev = PipeConnectEvent {
+            kind: EVENT_PIPE_CONNECT,
+            pid,
+            uid: 0,
+            gid: 0,
+            dirfd: AT_FDCWD,
+            _pad0: 0,
+            pipe_name: [0; PATH_LEN],
+            comm: [0; 16],
+        };
+        let n = name.len().min(PATH_LEN - 1);
+        ev.pipe_name[..n].copy_from_slice(&name[..n]);
+        ev.comm = *b"cat\0\0\0\0\0\0\0\0\0\0\0\0\0";
+        ev
+    }
+
+    #[test]
+    fn eid17_named_fifo_shape_and_category() {
+        let mut builder = EventBuilder::new();
+        let _ = builder.exec_event(&sample_exec(FAKE_PID));
+        let event = builder.pipe_create_event(&sample_pipe_create(FAKE_PID, b"/tmp/my.fifo\0"));
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
+
+        assert!(xml.contains("<EventID>17</EventID>"));
+        assert!(xml.contains("<Version>1</Version>"));
+        assert!(xml.contains("<Task>17</Task>"));
+        assert!(xml.contains("<Data Name=\"PipeName\">/tmp/my.fifo</Data>"));
+        assert!(xml.contains("<Data Name=\"Image\">/usr/bin/id</Data>"));
+        assert_eq!(event.event_json["service"], "sysmon");
+        assert_eq!(event.event_json["category"], "pipe_created");
+
+        let order = [
+            "RuleName",
+            "UtcTime",
+            "ProcessGuid",
+            "ProcessId",
+            "PipeName",
+            "Image",
+            "User",
+        ];
+        let mut last = 0;
+        for field in order {
+            let pos = xml.find(&format!("Name=\"{field}\"")).expect(field);
+            assert!(pos > last, "field {field} out of order");
+            last = pos;
+        }
+    }
+
+    #[test]
+    fn eid17_anonymous_pipe_keeps_marker() {
+        let mut builder = EventBuilder::new();
+        let event = builder.pipe_create_event(&sample_pipe_create(FAKE_PID, b"-\0"));
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
+        assert!(xml.contains("<EventID>17</EventID>"));
+        assert!(xml.contains("<Data Name=\"PipeName\">-</Data>"));
+        assert_eq!(event.event_json["category"], "pipe_created");
+    }
+
+    #[test]
+    fn eid18_shape_and_category() {
+        let mut builder = EventBuilder::new();
+        let _ = builder.exec_event(&sample_exec(FAKE_PID));
+        let event = builder.pipe_connect_event(&sample_pipe_connect(FAKE_PID, b"/tmp/my.fifo\0"));
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
+
+        assert!(xml.contains("<EventID>18</EventID>"));
+        assert!(xml.contains("<Task>18</Task>"));
+        assert!(xml.contains("<Data Name=\"PipeName\">/tmp/my.fifo</Data>"));
+        assert_eq!(event.event_json["category"], "pipe_created");
     }
 }

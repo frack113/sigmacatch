@@ -38,9 +38,10 @@ mod ebpf_common;
 
 use ebpf_common::{
     ARG0_LEN, DNS_PAYLOAD_LEN, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE,
-    EVENT_FILE_DELETE, EVENT_LISTEN, EVENT_NET, EVENT_PROCESS_ACCESS, EVENT_RAW_ACCESS, DnsEvent,
-    DriverLoadEvent, ExecEvent, ExitEvent, FileCreateEvent, FileDeleteEvent, IMAGE_LEN,
-    ListenEvent, NetEvent, PATH_LEN, ProcessAccessEvent, RawAccessEvent,
+    EVENT_FILE_DELETE, EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS,
+    EVENT_RAW_ACCESS, DnsEvent, DriverLoadEvent, ExecEvent, ExitEvent, FileCreateEvent,
+    FileDeleteEvent, IMAGE_LEN, ListenEvent, NetEvent, PATH_LEN, PipeCreateEvent,
+    ProcessAccessEvent, RawAccessEvent,
 };
 
 const MAX_ENTRIES: u32 = 1;
@@ -49,6 +50,7 @@ const FILE_STAGE_MAX: u32 = 4096;
 const DELETE_STAGE_MAX: u32 = 4096;
 const FINIT_STAGE_MAX: u32 = 4096;
 const RAW_STAGE_MAX: u32 = 4096;
+const PIPE_STAGE_MAX: u32 = 4096;
 const BIND_STAGE_MAX: u32 = 4096;
 const LISTEN_FD_MAX: u32 = 4096;
 /// `O_CREAT` bit — openat is staged only when the caller may create.
@@ -111,6 +113,10 @@ static DELETE_STAGE: LruHashMap<u32, PendingFile> =
 #[map(name = "RAW_STAGE")]
 static RAW_STAGE: LruHashMap<u32, PendingFile> =
     LruHashMap::with_max_entries(RAW_STAGE_MAX, 0);
+
+#[map(name = "PIPE_STAGE")]
+static PIPE_STAGE: LruHashMap<u32, PendingFile> =
+    LruHashMap::with_max_entries(PIPE_STAGE_MAX, 0);
 
 #[map(name = "FINIT_STAGE")]
 static FINIT_STAGE: LruHashMap<u64, i32> =
@@ -712,6 +718,165 @@ fn try_emit_finit_module(ctx: &TracePointContext) -> Result<(), i64> {
         entry.submit(0);
     }
     Ok(())
+}
+
+// ─── Pipe create capture (B11, EID 17) ──────────────────────────────────────
+
+const S_IFMT: u64 = 0o170000;
+const S_IFIFO: u64 = 0o010000;
+
+#[tracepoint(category = "syscalls", name = "sys_enter_mknodat")]
+fn sys_enter_mknodat(ctx: TracePointContext) -> i32 {
+    match try_stage_mknodat(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+fn try_stage_mknodat(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: offsets from sys_enter_mknodat format (dfd@16, filename@24, mode@32).
+    let dirfd: i32 = unsafe { ctx.read_at(16)? };
+    let pathname: *const u8 = unsafe { ctx.read_at(24)? };
+    let mode: u64 = unsafe { ctx.read_at(32)? };
+    if mode & S_IFMT != S_IFIFO {
+        return Ok(());
+    }
+    let pid = bpf_get_current_pid_tgid() as u32;
+
+    let pending = match FILE_SCRATCH.get_ptr_mut(0) {
+        // SAFETY: index validated by get_ptr_mut; per-cpu exclusivity.
+        Some(p) => unsafe { &mut *p },
+        None => return Err(-28),
+    };
+    pending.path = [0; PATH_LEN];
+    pending.dirfd = dirfd;
+    read_cstr(&mut pending.path, pathname);
+    let _ = PIPE_STAGE.insert(&pid, pending, 0);
+    Ok(())
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_mknodat")]
+fn sys_exit_mknodat(ctx: TracePointContext) -> i32 {
+    match try_emit_pipe_create(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_mknod")]
+fn sys_enter_mknod(ctx: TracePointContext) -> i32 {
+    match try_stage_mknod(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+fn try_stage_mknod(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: offsets from sys_enter_mknod format (filename@16, mode@24).
+    let pathname: *const u8 = unsafe { ctx.read_at(16)? };
+    let mode: u64 = unsafe { ctx.read_at(24)? };
+    if mode & S_IFMT != S_IFIFO {
+        return Ok(());
+    }
+    let pid = bpf_get_current_pid_tgid() as u32;
+
+    let pending = match FILE_SCRATCH.get_ptr_mut(0) {
+        // SAFETY: index validated by get_ptr_mut; per-cpu exclusivity.
+        Some(p) => unsafe { &mut *p },
+        None => return Err(-28),
+    };
+    pending.path = [0; PATH_LEN];
+    pending.dirfd = ebpf_common::AT_FDCWD;
+    read_cstr(&mut pending.path, pathname);
+    let _ = PIPE_STAGE.insert(&pid, pending, 0);
+    Ok(())
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_mknod")]
+fn sys_exit_mknod(ctx: TracePointContext) -> i32 {
+    match try_emit_pipe_create(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+fn try_emit_pipe_create(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: bounds-checked context read of the syscall return value.
+    let ret: i64 = unsafe { ctx.read_at(16)? };
+    if ret != 0 {
+        return Ok(());
+    }
+    let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    // SAFETY: read-only map borrow, copied out immediately.
+    let Some(staged) = (unsafe { PIPE_STAGE.get(&pid) }).map(|p| PendingFile {
+        path: p.path,
+        dirfd: p.dirfd,
+    }) else {
+        return Ok(());
+    };
+    PIPE_STAGE.remove(&pid)?;
+
+    let uidgid = bpf_get_current_uid_gid();
+    let comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    if let Some(mut entry) = EVENTS.reserve::<PipeCreateEvent>(0) {
+        let p = entry.as_mut_ptr();
+        // SAFETY: exclusive reserved PipeCreateEvent slot; writes in bounds.
+        unsafe {
+            (*p).kind = EVENT_PIPE_CREATE;
+            (*p).pid = pid;
+            (*p).uid = uidgid as u32;
+            (*p).gid = (uidgid >> 32) as u32;
+            (*p).dirfd = staged.dirfd;
+            (*p)._pad0 = 0;
+            (*p).pipe_name = staged.path;
+            (*p).comm = comm;
+        }
+        entry.submit(0);
+    }
+    Ok(())
+}
+
+fn emit_anonymous_pipe() {
+    let ids = bpf_get_current_pid_tgid();
+    let uidgid = bpf_get_current_uid_gid();
+    let comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    if let Some(mut entry) = EVENTS.reserve::<PipeCreateEvent>(0) {
+        let p = entry.as_mut_ptr();
+        // SAFETY: exclusive reserved PipeCreateEvent slot; writes in bounds.
+        unsafe {
+            (*p).kind = EVENT_PIPE_CREATE;
+            (*p).pid = (ids >> 32) as u32;
+            (*p).uid = uidgid as u32;
+            (*p).gid = (uidgid >> 32) as u32;
+            (*p).dirfd = ebpf_common::AT_FDCWD;
+            (*p)._pad0 = 0;
+            (*p).pipe_name = [0; PATH_LEN];
+            // best-effort anonymous marker
+            (*p).pipe_name[0] = b'-';
+            (*p).comm = comm;
+        }
+        entry.submit(0);
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_pipe")]
+fn sys_exit_pipe(ctx: TracePointContext) -> i32 {
+    // SAFETY: bounds-checked context read of the syscall return value.
+    let ret: i64 = unsafe { ctx.read_at(16).unwrap_or(-1) };
+    if ret == 0 {
+        emit_anonymous_pipe();
+    }
+    0
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_pipe2")]
+fn sys_exit_pipe2(ctx: TracePointContext) -> i32 {
+    // SAFETY: bounds-checked context read of the syscall return value.
+    let ret: i64 = unsafe { ctx.read_at(16).unwrap_or(-1) };
+    if ret == 0 {
+        emit_anonymous_pipe();
+    }
+    0
 }
 
 // ─── File deletion capture (B7, EID 23) ─────────────────────────────────────
