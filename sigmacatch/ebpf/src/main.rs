@@ -38,9 +38,9 @@ mod ebpf_common;
 
 use ebpf_common::{
     ARG0_LEN, DNS_PAYLOAD_LEN, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE,
-    EVENT_FILE_DELETE, EVENT_LISTEN, EVENT_NET, EVENT_PROCESS_ACCESS, DnsEvent, DriverLoadEvent,
-    ExecEvent, ExitEvent, FileCreateEvent, FileDeleteEvent, IMAGE_LEN, ListenEvent, NetEvent,
-    PATH_LEN, ProcessAccessEvent,
+    EVENT_FILE_DELETE, EVENT_LISTEN, EVENT_NET, EVENT_PROCESS_ACCESS, EVENT_RAW_ACCESS, DnsEvent,
+    DriverLoadEvent, ExecEvent, ExitEvent, FileCreateEvent, FileDeleteEvent, IMAGE_LEN,
+    ListenEvent, NetEvent, PATH_LEN, ProcessAccessEvent, RawAccessEvent,
 };
 
 const MAX_ENTRIES: u32 = 1;
@@ -48,6 +48,7 @@ const EXEC_ARGS_MAX: u32 = 4096;
 const FILE_STAGE_MAX: u32 = 4096;
 const DELETE_STAGE_MAX: u32 = 4096;
 const FINIT_STAGE_MAX: u32 = 4096;
+const RAW_STAGE_MAX: u32 = 4096;
 const BIND_STAGE_MAX: u32 = 4096;
 const LISTEN_FD_MAX: u32 = 4096;
 /// `O_CREAT` bit — openat is staged only when the caller may create.
@@ -106,6 +107,10 @@ static FILE_SCRATCH: PerCpuArray<PendingFile> =
 #[map(name = "DELETE_STAGE")]
 static DELETE_STAGE: LruHashMap<u32, PendingFile> =
     LruHashMap::with_max_entries(DELETE_STAGE_MAX, 0);
+
+#[map(name = "RAW_STAGE")]
+static RAW_STAGE: LruHashMap<u32, PendingFile> =
+    LruHashMap::with_max_entries(RAW_STAGE_MAX, 0);
 
 #[map(name = "FINIT_STAGE")]
 static FINIT_STAGE: LruHashMap<u64, i32> =
@@ -423,132 +428,113 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
-#[tracepoint(category = "syscalls", name = "sys_enter_openat")]
-fn sys_enter_openat(ctx: TracePointContext) -> i32 {
-    match try_stage_openat(&ctx) {
-        Ok(()) => 0,
-        Err(e) => e as i32,
+fn path_starts_with(path: &[u8; PATH_LEN], prefix: &[u8]) -> bool {
+    let n = prefix.len();
+    if n > PATH_LEN {
+        return false;
     }
+    let mut i = 0;
+    while i < n {
+        if path[i] != prefix[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
 }
 
-fn try_stage_openat(ctx: &TracePointContext) -> Result<(), i64> {
-    // SAFETY: read_at offsets are bounds-checked against the syscall
-    // tracepoint context (args[0..2]).
-    let dirfd: i32 = unsafe { ctx.read_at(16)? };
-    let pathname: *const u8 = unsafe { ctx.read_at(24)? };
-    let flags: u64 = unsafe { ctx.read_at(32)? };
-    if flags & O_CREAT == 0 {
-        return Ok(());
-    }
-    let pid = bpf_get_current_pid_tgid() as u32;
+fn is_raw_device_path(path: &[u8; PATH_LEN]) -> bool {
+    path_starts_with(path, b"/dev/mem\0")
+        || path_starts_with(path, b"/dev/kmem\0")
+        || path_starts_with(path, b"/dev/sd")
+        || path_starts_with(path, b"/dev/hd")
+        || path_starts_with(path, b"/dev/vd")
+        || path_starts_with(path, b"/dev/xvd")
+        || path_starts_with(path, b"/dev/nvme")
+        || path_starts_with(path, b"/dev/loop")
+        || path_starts_with(path, b"/dev/dm-")
+        || path_starts_with(path, b"/dev/md")
+        || path_starts_with(path, b"/dev/mmcblk")
+        || path_starts_with(path, b"/dev/pmem")
+        || path_starts_with(path, b"/dev/disk/")
+}
 
+fn stage_open_path(pathname: *const u8, dirfd: i32, flags: u64, check_create: bool) {
+    let pid = bpf_get_current_pid_tgid() as u32;
     let pending = match FILE_SCRATCH.get_ptr_mut(0) {
         // SAFETY: index validated by get_ptr_mut; per-cpu map storage valid
         // and unaliased for this program invocation.
         Some(p) => unsafe { &mut *p },
-        None => return Err(-28),
+        None => return,
     };
     pending.path = [0; PATH_LEN];
     pending.dirfd = dirfd;
     read_cstr(&mut pending.path, pathname);
 
-    let _ = FILE_STAGE.insert(&pid, pending, 0);
-    Ok(())
+    let wants_create = check_create && (flags & O_CREAT != 0);
+    let wants_raw = is_raw_device_path(&pending.path);
+    if wants_create {
+        let _ = FILE_STAGE.insert(&pid, &*pending, 0);
+    }
+    if wants_raw {
+        let _ = RAW_STAGE.insert(&pid, &*pending, 0);
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_openat")]
+fn sys_enter_openat(ctx: TracePointContext) -> i32 {
+    // SAFETY: bounds-checked reads from tracepoint context.
+    let dirfd: i32 = unsafe { ctx.read_at(16).unwrap_or(-100) };
+    let pathname: *const u8 = unsafe { ctx.read_at(24).unwrap_or(ptr::null()) };
+    let flags: u64 = unsafe { ctx.read_at(32).unwrap_or(0) };
+    stage_open_path(pathname, dirfd, flags, true);
+    0
 }
 
 #[tracepoint(category = "syscalls", name = "sys_exit_openat")]
 fn sys_exit_openat(ctx: TracePointContext) -> i32 {
-    match try_emit_file_create(&ctx) {
-        Ok(()) => 0,
-        Err(e) => e as i32,
-    }
+    let _ = try_emit_file_create(&ctx);
+    let _ = try_emit_raw_access(&ctx);
+    0
 }
 
 #[tracepoint(category = "syscalls", name = "sys_enter_open")]
 fn sys_enter_open(ctx: TracePointContext) -> i32 {
-    match try_stage_open(&ctx) {
-        Ok(()) => 0,
-        Err(e) => e as i32,
-    }
-}
-
-fn try_stage_open(ctx: &TracePointContext) -> Result<(), i64> {
-    // SAFETY: offsets from sys_enter_open format (filename@16, flags@24).
-    let pathname: *const u8 = unsafe { ctx.read_at(16)? };
-    let flags: u64 = unsafe { ctx.read_at(24)? };
-    if flags & O_CREAT == 0 {
-        return Ok(());
-    }
-    let pid = bpf_get_current_pid_tgid() as u32;
-
-    let pending = match FILE_SCRATCH.get_ptr_mut(0) {
-        // SAFETY: index validated by get_ptr_mut; per-cpu map storage valid
-        // and unaliased for this program invocation.
-        Some(p) => unsafe { &mut *p },
-        None => return Err(-28),
-    };
-    pending.path = [0; PATH_LEN];
-    pending.dirfd = ebpf_common::AT_FDCWD;
-    read_cstr(&mut pending.path, pathname);
-
-    let _ = FILE_STAGE.insert(&pid, pending, 0);
-    Ok(())
+    // SAFETY: bounds-checked reads from tracepoint context.
+    let pathname: *const u8 = unsafe { ctx.read_at(16).unwrap_or(ptr::null()) };
+    let flags: u64 = unsafe { ctx.read_at(24).unwrap_or(0) };
+    stage_open_path(pathname, ebpf_common::AT_FDCWD, flags, true);
+    0
 }
 
 #[tracepoint(category = "syscalls", name = "sys_exit_open")]
 fn sys_exit_open(ctx: TracePointContext) -> i32 {
-    match try_emit_file_create(&ctx) {
-        Ok(()) => 0,
-        Err(e) => e as i32,
-    }
+    let _ = try_emit_file_create(&ctx);
+    let _ = try_emit_raw_access(&ctx);
+    0
 }
 
 #[tracepoint(category = "syscalls", name = "sys_enter_openat2")]
 fn sys_enter_openat2(ctx: TracePointContext) -> i32 {
-    match try_stage_openat2(&ctx) {
-        Ok(()) => 0,
-        Err(e) => e as i32,
-    }
-}
-
-fn try_stage_openat2(ctx: &TracePointContext) -> Result<(), i64> {
-    // SAFETY: offsets from sys_enter_openat2 format
-    // (dfd@16, filename@24, how@32, usize@40).
-    let dirfd: i32 = unsafe { ctx.read_at(16)? };
-    let pathname: *const u8 = unsafe { ctx.read_at(24)? };
-    let how: *const u8 = unsafe { ctx.read_at(32)? };
-    let usize_arg: usize = unsafe { ctx.read_at(40)? };
+    // SAFETY: bounds-checked reads from tracepoint context.
+    let dirfd: i32 = unsafe { ctx.read_at(16).unwrap_or(-100) };
+    let pathname: *const u8 = unsafe { ctx.read_at(24).unwrap_or(ptr::null()) };
+    let how: *const u8 = unsafe { ctx.read_at(32).unwrap_or(ptr::null()) };
+    let usize_arg: usize = unsafe { ctx.read_at(40).unwrap_or(0) };
     if how.is_null() || usize_arg < 8 {
-        return Ok(());
+        return 0;
     }
-    // struct open_how starts with __u64 flags.
     // SAFETY: fixed 8-byte user read; fault-tolerant helper.
     let flags: u64 = unsafe { bpf_probe_read_user(how.cast()) }.unwrap_or(0);
-    if flags & O_CREAT == 0 {
-        return Ok(());
-    }
-    let pid = bpf_get_current_pid_tgid() as u32;
-
-    let pending = match FILE_SCRATCH.get_ptr_mut(0) {
-        // SAFETY: index validated by get_ptr_mut; per-cpu map storage valid
-        // and unaliased for this program invocation.
-        Some(p) => unsafe { &mut *p },
-        None => return Err(-28),
-    };
-    pending.path = [0; PATH_LEN];
-    pending.dirfd = dirfd;
-    read_cstr(&mut pending.path, pathname);
-
-    let _ = FILE_STAGE.insert(&pid, pending, 0);
-    Ok(())
+    stage_open_path(pathname, dirfd, flags, true);
+    0
 }
 
 #[tracepoint(category = "syscalls", name = "sys_exit_openat2")]
 fn sys_exit_openat2(ctx: TracePointContext) -> i32 {
-    match try_emit_file_create(&ctx) {
-        Ok(()) => 0,
-        Err(e) => e as i32,
-    }
+    let _ = try_emit_file_create(&ctx);
+    let _ = try_emit_raw_access(&ctx);
+    0
 }
 
 fn try_emit_file_create(ctx: &TracePointContext) -> Result<(), i64> {
@@ -575,6 +561,42 @@ fn try_emit_file_create(ctx: &TracePointContext) -> Result<(), i64> {
         // SAFETY: exclusive reserved FileCreateEvent slot; writes in bounds.
         unsafe {
             (*p).kind = EVENT_FILE;
+            (*p).pid = pid;
+            (*p).uid = uidgid as u32;
+            (*p).gid = (uidgid >> 32) as u32;
+            (*p).dirfd = staged.dirfd;
+            (*p)._pad0 = 0;
+            (*p).path = staged.path;
+            (*p).comm = comm;
+        }
+        entry.submit(0);
+    }
+    Ok(())
+}
+
+fn try_emit_raw_access(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: bounds-checked context read of the syscall return value.
+    let ret: i64 = unsafe { ctx.read_at(16)? };
+    if ret < 0 {
+        return Ok(());
+    }
+    let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    // SAFETY: read-only map borrow, copied out immediately.
+    let Some(staged) = (unsafe { RAW_STAGE.get(&pid) }).map(|p| PendingFile {
+        path: p.path,
+        dirfd: p.dirfd,
+    }) else {
+        return Ok(());
+    };
+    RAW_STAGE.remove(&pid)?;
+
+    let uidgid = bpf_get_current_uid_gid();
+    let comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    if let Some(mut entry) = EVENTS.reserve::<RawAccessEvent>(0) {
+        let p = entry.as_mut_ptr();
+        // SAFETY: exclusive reserved RawAccessEvent slot; writes in bounds.
+        unsafe {
+            (*p).kind = EVENT_RAW_ACCESS;
             (*p).pid = pid;
             (*p).uid = uidgid as u32;
             (*p).gid = (uidgid >> 32) as u32;

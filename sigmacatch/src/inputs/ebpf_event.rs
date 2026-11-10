@@ -19,7 +19,7 @@ use std::time::SystemTime;
 
 use crate::ebpf_common::{
     DnsEvent, DriverLoadEvent, ExecEvent, FileCreateEvent, FileDeleteEvent, ListenEvent, NetEvent,
-    ProcessAccessEvent,
+    ProcessAccessEvent, RawAccessEvent,
 };
 use crate::types::Event;
 use chrono::Utc;
@@ -527,6 +527,37 @@ impl EventBuilder {
         (NULL_GUID.to_string(), image)
     }
 
+    /// Build the EID 9 (raw_access_read/thread) event for an open on a
+    /// raw/block device path.
+    pub fn raw_access_event(&mut self, ev: &RawAccessEvent) -> Event {
+        let now = Utc::now();
+        let (guid, image) = self.resolve_process_info(ev.pid);
+        let device = resolve_target_path(ev.pid, ev.dirfd, ev.path_str());
+        let xml = format!(
+            "<Event><System>{system}</System><EventData>{data}</EventData></Event>",
+            system = system_block(
+                9,
+                2,
+                TASK_RAW_ACCESS,
+                &mut self.record_id,
+                now,
+                &self.hostname,
+                self.exec_pid,
+                self.euid,
+            ),
+            data = [
+                data("RuleName", "-"),
+                data("UtcTime", &utc_time(&now)),
+                data("ProcessGuid", &guid),
+                data("ProcessId", &ev.pid.to_string()),
+                data("Image", &image),
+                data("Device", &device),
+            ]
+            .concat(),
+        );
+        to_event(xml)
+    }
+
     /// Build the EID 6 (driver_load / kernel module load) event for a
     /// `finit_module` syscall. `ImageLoaded` is resolved from the module fd;
     /// signature/hash metadata is unavailable and reported with safe defaults.
@@ -753,6 +784,7 @@ const TASK_PROCESS_CREATE: u32 = 1;
 const TASK_PROCESS_TERMINATE: u32 = 5;
 const TASK_NETWORK_CONNECT: u32 = 3;
 const TASK_DRIVER_LOAD: u32 = 6;
+const TASK_RAW_ACCESS: u32 = 9;
 const TASK_PROCESS_ACCESS: u32 = 10;
 const TASK_FILE_CREATE: u32 = 11;
 const TASK_DNS_QUERY: u32 = 22;
@@ -1827,5 +1859,75 @@ mod driver_load_tests {
             )
         );
         assert_eq!(event.event_json["category"], "driver_load");
+    }
+}
+
+#[cfg(test)]
+mod raw_access_tests {
+    use super::tests::{FAKE_PID, sample_exec};
+    use super::*;
+    use crate::ebpf_common::{AT_FDCWD, EVENT_RAW_ACCESS, PATH_LEN, RawAccessEvent};
+
+    fn sample_raw(pid: u32, device: &[u8]) -> RawAccessEvent {
+        let mut ev = RawAccessEvent {
+            kind: EVENT_RAW_ACCESS,
+            pid,
+            uid: 0,
+            gid: 0,
+            dirfd: AT_FDCWD,
+            _pad0: 0,
+            path: [0; PATH_LEN],
+            comm: [0; 16],
+        };
+        let n = device.len().min(PATH_LEN - 1);
+        ev.path[..n].copy_from_slice(&device[..n]);
+        ev.comm[..2].copy_from_slice(b"dd");
+        ev
+    }
+
+    #[test]
+    fn eid9_shape_order_and_category() {
+        let mut builder = EventBuilder::new();
+        let _ = builder.exec_event(&sample_exec(FAKE_PID));
+        let event = builder.raw_access_event(&sample_raw(FAKE_PID, b"/dev/sda\0"));
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
+
+        assert!(xml.contains("<EventID>9</EventID>"));
+        assert!(xml.contains("<Version>2</Version>"));
+        assert!(xml.contains("<Task>9</Task>"));
+        assert!(xml.contains("<Data Name=\"Image\">/usr/bin/id</Data>"));
+        assert!(xml.contains("<Data Name=\"Device\">/dev/sda</Data>"));
+        assert_eq!(event.event_json["service"], "sysmon");
+        assert_eq!(event.event_json["category"], "raw_access_thread");
+
+        let order = [
+            "RuleName",
+            "UtcTime",
+            "ProcessGuid",
+            "ProcessId",
+            "Image",
+            "Device",
+        ];
+        let mut last = 0;
+        for field in order {
+            let pos = xml.find(&format!("Name=\"{field}\"")).expect(field);
+            assert!(pos > last, "field {field} out of order");
+            last = pos;
+        }
+    }
+
+    #[test]
+    fn eid9_unknown_process_falls_back() {
+        let mut builder = EventBuilder::new();
+        let event = builder.raw_access_event(&sample_raw(999_995, b"/dev/mem\0"));
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
+        assert!(xml.contains("<EventID>9</EventID>"));
+        assert!(xml.contains("<Data Name=\"Image\">-</Data>"));
+        assert!(
+            xml.contains(
+                "<Data Name=\"ProcessGuid\">{00000000-0000-0000-0000-000000000000}</Data>"
+            )
+        );
+        assert_eq!(event.event_json["category"], "raw_access_thread");
     }
 }

@@ -56,6 +56,8 @@ mod inner {
     pub const EVENT_PROCESS_ACCESS: u32 = 8;
     /// Ring buffer record tag: kernel module load (finit_module).
     pub const EVENT_DRIVER_LOAD: u32 = 9;
+    /// Ring buffer record tag: raw device access (open on block/raw devices).
+    pub const EVENT_RAW_ACCESS: u32 = 10;
 
     /// Directory-fd sentinel meaning "path is relative to cwd".
     pub const AT_FDCWD: i32 = -100;
@@ -505,6 +507,53 @@ mod inner {
     const _: () = assert!(
         core::mem::size_of::<DriverLoadEvent>().is_multiple_of(8),
         "DriverLoadEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// Raw device access event emitted at `sys_exit_open*` when the path
+    /// targets a raw/block device (EID 9).
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct RawAccessEvent {
+        /// Always [`EVENT_RAW_ACCESS`].
+        pub kind: u32,
+        /// Accessing process id.
+        pub pid: u32,
+        /// Real UID of the accessing task.
+        pub uid: u32,
+        /// Real GID of the accessing task.
+        pub gid: u32,
+        /// Directory-fd argument (may be [`AT_FDCWD`]).
+        pub dirfd: i32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: i32,
+        /// Device path (NUL-padded; may be relative).
+        pub path: [u8; PATH_LEN],
+        /// Task comm at access time (NUL-padded).
+        pub comm: [u8; COMM_LEN],
+    }
+
+    impl RawAccessEvent {
+        /// Parse a ring buffer record into a typed raw-access event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Path as lossy UTF-8 up to the first NUL.
+        pub fn path_str(&self) -> &str {
+            Self::cstr(&self.path)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<RawAccessEvent>().is_multiple_of(8),
+        "RawAccessEvent must stay 8-byte aligned for ring buffer records"
     );
 }
 

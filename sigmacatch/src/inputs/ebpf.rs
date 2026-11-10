@@ -9,8 +9,8 @@ use std::fs;
 
 use crate::ebpf_common::{
     DnsEvent, DriverLoadEvent, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE,
-    EVENT_FILE_DELETE, EVENT_LISTEN, EVENT_NET, EVENT_PROCESS_ACCESS, FileCreateEvent,
-    FileDeleteEvent, ListenEvent, NetEvent, ProcessAccessEvent,
+    EVENT_FILE_DELETE, EVENT_LISTEN, EVENT_NET, EVENT_PROCESS_ACCESS, EVENT_RAW_ACCESS,
+    FileCreateEvent, FileDeleteEvent, ListenEvent, NetEvent, ProcessAccessEvent, RawAccessEvent,
 };
 use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::{Context, bail};
@@ -300,6 +300,18 @@ impl EventProducer for EventCollector {
                         None => tracing::warn!(
                             size = bytes.len(),
                             "driver-load record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_RAW_ACCESS => match RawAccessEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.raw_access_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "raw-access record with unexpected size — skipped"
                         ),
                     },
                     EVENT_LISTEN => match ListenEvent::from_bytes(bytes) {
