@@ -817,7 +817,6 @@ fn full_cmdline(ev: &ExecEvent) -> String {
     }
 }
 
-
 fn lookup_user(uid: u32) -> Option<String> {
     let passwd = fs::read_to_string("/etc/passwd").ok()?;
     passwd.lines().find_map(|line| {
@@ -856,7 +855,7 @@ fn read_session_id(pid: u32) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ebpf_common::{EVENT_EXEC, ExecEvent, IMAGE_LEN, ARG0_LEN, NetEvent, EVENT_NET};
+    use crate::ebpf_common::{ARG0_LEN, EVENT_EXEC, EVENT_NET, ExecEvent, IMAGE_LEN, NetEvent};
 
     const FAKE_PID: u32 = u32::MAX;
 
@@ -898,7 +897,10 @@ mod tests {
         let event = b.exec_event(&sample_exec(FAKE_PID));
         assert_eq!(event.event_json["product"], "linux");
         assert_eq!(event.event_json["category"], "process_creation");
-        assert!(event.event_json.get("service").is_none(), "no sysmon service");
+        assert!(
+            event.event_json.get("service").is_none(),
+            "no sysmon service"
+        );
         assert_eq!(event.event_json["Image"], "/usr/bin/id");
         assert_eq!(event.event_json["CommandLine"], "/usr/bin/id /usr/bin/id");
         assert_eq!(event.event_json["ProcessId"], FAKE_PID.to_string());
@@ -928,6 +930,9 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(EBPF_TAXONOMY_JSON).unwrap();
         assert_eq!(v["version"], 1);
         assert!(v["events"]["process_creation"].is_object());
-        assert_eq!(v["events"]["process_creation"]["sigma_category"], "process_creation");
+        assert_eq!(
+            v["events"]["process_creation"]["sigma_category"],
+            "process_creation"
+        );
     }
 }
