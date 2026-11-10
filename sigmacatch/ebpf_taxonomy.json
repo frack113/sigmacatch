@@ -3,7 +3,6 @@
   "description": "Internal sigmacatch taxonomy: eBPF/kernel event fields to Sigma fields for Linux (no Sysmon/XML dependency).",
   "events": {
     "process_creation": {
-      "event_id": 1,
       "sigma_category": "process_creation",
       "sigma_product": "linux",
       "sigma_service": null,
@@ -33,7 +32,6 @@
       }
     },
     "process_termination": {
-      "event_id": 5,
       "sigma_category": "process_termination",
       "sigma_product": "linux",
       "sigma_service": null,
@@ -46,7 +44,6 @@
       }
     },
     "network_connection": {
-      "event_id": 3,
       "sigma_category": "network_connection",
       "sigma_product": "linux",
       "sigma_service": null,
@@ -71,7 +68,6 @@
       }
     },
     "file_create": {
-      "event_id": 11,
       "sigma_category": "file_event",
       "sigma_product": "linux",
       "sigma_service": null,
@@ -86,7 +82,6 @@
       }
     },
     "file_delete": {
-      "event_id": 23,
       "sigma_category": "file_delete",
       "sigma_product": "linux",
       "sigma_service": null,
@@ -103,7 +98,6 @@
       }
     },
     "dns_query": {
-      "event_id": 22,
       "sigma_category": "dns_query",
       "sigma_product": "linux",
       "sigma_service": null,
@@ -119,7 +113,6 @@
       }
     },
     "process_access": {
-      "event_id": 10,
       "sigma_category": "process_access",
       "sigma_product": "linux",
       "sigma_service": null,
@@ -138,7 +131,6 @@
       }
     },
     "raw_access": {
-      "event_id": 9,
       "sigma_category": "raw_access_thread",
       "sigma_product": "linux",
       "sigma_service": null,
@@ -151,7 +143,6 @@
       }
     },
     "pipe_create": {
-      "event_id": 17,
       "sigma_category": "pipe_created",
       "sigma_product": "linux",
       "sigma_service": null,
@@ -165,7 +156,6 @@
       }
     },
     "pipe_connect": {
-      "event_id": 18,
       "sigma_category": "pipe_created",
       "sigma_product": "linux",
       "sigma_service": null,
@@ -179,7 +169,6 @@
       }
     },
     "driver_load": {
-      "event_id": 6,
       "sigma_category": "driver_load",
       "sigma_product": "linux",
       "sigma_service": null,
@@ -197,7 +186,6 @@
       }
     },
     "process_tampering": {
-      "event_id": 25,
       "sigma_category": "process_tampering",
       "sigma_product": "linux",
       "sigma_service": null,
@@ -211,7 +199,6 @@
       }
     },
     "network_listen": {
-      "event_id": 500,
       "sigma_category": "network_connection",
       "sigma_product": "linux",
       "sigma_service": null,
