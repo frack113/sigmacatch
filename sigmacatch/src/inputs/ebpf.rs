@@ -10,8 +10,9 @@ use std::fs;
 use crate::ebpf_common::{
     DnsEvent, DriverLoadEvent, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE,
     EVENT_FILE_DELETE, EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CONNECT, EVENT_PIPE_CREATE,
-    EVENT_PROCESS_ACCESS, EVENT_RAW_ACCESS, FileCreateEvent, FileDeleteEvent, ListenEvent,
-    NetEvent, PipeConnectEvent, PipeCreateEvent, ProcessAccessEvent, RawAccessEvent,
+    EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, FileCreateEvent,
+    FileDeleteEvent, ListenEvent, NetEvent, PipeConnectEvent, PipeCreateEvent, ProcessAccessEvent,
+    ProcessTamperingEvent, RawAccessEvent,
 };
 use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::{Context, bail};
@@ -117,6 +118,12 @@ const ATTACHMENTS: &[(&str, &str, &str, bool)] = &[
     ("sys_exit_mknod", "syscalls", "sys_exit_mknod", false),
     ("sys_exit_pipe", "syscalls", "sys_exit_pipe", false),
     ("sys_exit_pipe2", "syscalls", "sys_exit_pipe2", false),
+    (
+        "sys_enter_process_vm_writev",
+        "syscalls",
+        "sys_enter_process_vm_writev",
+        false,
+    ),
     ("sys_enter_bind", "syscalls", "sys_enter_bind", false),
     ("sys_enter_listen", "syscalls", "sys_enter_listen", false),
     ("sys_exit_listen", "syscalls", "sys_exit_listen", false),
@@ -343,6 +350,18 @@ impl EventProducer for EventCollector {
                         None => tracing::warn!(
                             size = bytes.len(),
                             "pipe-connect record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_PROCESS_TAMPERING => match ProcessTamperingEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.process_tampering_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "process-tampering record with unexpected size — skipped"
                         ),
                     },
                     EVENT_LISTEN => match ListenEvent::from_bytes(bytes) {

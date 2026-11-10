@@ -62,6 +62,8 @@ mod inner {
     pub const EVENT_PIPE_CREATE: u32 = 11;
     /// Ring buffer record tag: pipe connected (EID 18).
     pub const EVENT_PIPE_CONNECT: u32 = 12;
+    /// Ring buffer record tag: process tampering heuristic (EID 25).
+    pub const EVENT_PROCESS_TAMPERING: u32 = 13;
 
     /// Directory-fd sentinel meaning "path is relative to cwd".
     pub const AT_FDCWD: i32 = -100;
@@ -651,6 +653,41 @@ mod inner {
     const _: () = assert!(
         core::mem::size_of::<PipeConnectEvent>().is_multiple_of(8),
         "PipeConnectEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// Process tampering heuristic event (EID 25), emitted for cross-process
+    /// memory writes (`process_vm_writev` to another pid). Partial/heuristic.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct ProcessTamperingEvent {
+        /// Always [`EVENT_PROCESS_TAMPERING`].
+        pub kind: u32,
+        /// Source (writing) process id.
+        pub source_pid: u32,
+        /// Target (written) process id.
+        pub target_pid: u32,
+        /// Real UID of the source task.
+        pub uid: u32,
+        /// Real GID of the source task.
+        pub gid: u32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: u32,
+        /// Source task comm at tamper time (NUL-padded).
+        pub comm: [u8; COMM_LEN],
+    }
+
+    impl ProcessTamperingEvent {
+        /// Parse a ring buffer record into a typed process-tampering event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<ProcessTamperingEvent>().is_multiple_of(8),
+        "ProcessTamperingEvent must stay 8-byte aligned for ring buffer records"
     );
 }
 

@@ -19,7 +19,7 @@ use std::time::SystemTime;
 
 use crate::ebpf_common::{
     DnsEvent, DriverLoadEvent, ExecEvent, FileCreateEvent, FileDeleteEvent, ListenEvent, NetEvent,
-    PipeConnectEvent, PipeCreateEvent, ProcessAccessEvent, RawAccessEvent,
+    PipeConnectEvent, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
 };
 use crate::types::Event;
 use chrono::Utc;
@@ -679,6 +679,38 @@ impl EventBuilder {
         to_event(xml)
     }
 
+    /// Build the EID 25 (process_tampering) event for a cross-process memory
+    /// write heuristic (`process_vm_writev`). Partial/heuristic coverage.
+    pub fn process_tampering_event(&mut self, ev: &ProcessTamperingEvent) -> Event {
+        let now = Utc::now();
+        let (guid, image) = self.resolve_process_info(ev.source_pid);
+        let user = self.user_name(ev.uid);
+        let xml = format!(
+            "<Event><System>{system}</System><EventData>{data}</EventData></Event>",
+            system = system_block(
+                25,
+                5,
+                TASK_PROCESS_TAMPERING,
+                &mut self.record_id,
+                now,
+                &self.hostname,
+                self.exec_pid,
+                self.euid,
+            ),
+            data = [
+                data("RuleName", "-"),
+                data("UtcTime", &utc_time(&now)),
+                data("ProcessGuid", &guid),
+                data("ProcessId", &ev.source_pid.to_string()),
+                data("Image", &image),
+                data("Type", "CrossProcessMemoryWrite"),
+                data("User", &user),
+            ]
+            .concat(),
+        );
+        to_event(xml)
+    }
+
     /// Build the extension EID 22 (dns_query) event for a kernel DNS record.
     /// Field order follows the Windows Sysmon EID 22 schema (no golden exists
     /// for Linux — sysmon-for-linux does not emit this event); QueryResults is
@@ -867,6 +899,7 @@ const TASK_PIPE_CREATE: u32 = 17;
 const TASK_PIPE_CONNECT: u32 = 18;
 const TASK_DNS_QUERY: u32 = 22;
 const TASK_FILE_DELETE: u32 = 23;
+const TASK_PROCESS_TAMPERING: u32 = 25;
 const TASK_NETWORK_LISTEN: u32 = 500;
 
 /// Absolute TargetFilename: kernel-relative paths are resolved through the
@@ -2106,5 +2139,58 @@ mod pipe_tests {
         assert!(xml.contains("<Task>18</Task>"));
         assert!(xml.contains("<Data Name=\"PipeName\">/tmp/my.fifo</Data>"));
         assert_eq!(event.event_json["category"], "pipe_created");
+    }
+}
+
+#[cfg(test)]
+mod process_tampering_tests {
+    use super::tests::{FAKE_PID, sample_exec};
+    use super::*;
+    use crate::ebpf_common::{EVENT_PROCESS_TAMPERING, ProcessTamperingEvent};
+
+    fn sample_tamper(source_pid: u32, target_pid: u32) -> ProcessTamperingEvent {
+        let mut ev = ProcessTamperingEvent {
+            kind: EVENT_PROCESS_TAMPERING,
+            source_pid,
+            target_pid,
+            uid: 0,
+            gid: 0,
+            _pad0: 0,
+            comm: [0; 16],
+        };
+        ev.comm = *b"python3\0\0\0\0\0\0\0\0\0";
+        ev
+    }
+
+    #[test]
+    fn eid25_shape_and_category() {
+        let mut builder = EventBuilder::new();
+        let _ = builder.exec_event(&sample_exec(FAKE_PID));
+        let event = builder.process_tampering_event(&sample_tamper(FAKE_PID, 1234));
+        let xml = String::from_utf8(event.event_raw.as_ref().clone()).expect("utf8");
+
+        assert!(xml.contains("<EventID>25</EventID>"));
+        assert!(xml.contains("<Version>5</Version>"));
+        assert!(xml.contains("<Task>25</Task>"));
+        assert!(xml.contains("<Data Name=\"Image\">/usr/bin/id</Data>"));
+        assert!(xml.contains("<Data Name=\"Type\">CrossProcessMemoryWrite</Data>"));
+        assert_eq!(event.event_json["service"], "sysmon");
+        assert_eq!(event.event_json["category"], "process_tampering");
+
+        let order = [
+            "RuleName",
+            "UtcTime",
+            "ProcessGuid",
+            "ProcessId",
+            "Image",
+            "Type",
+            "User",
+        ];
+        let mut last = 0;
+        for field in order {
+            let pos = xml.find(&format!("Name=\"{field}\"")).expect(field);
+            assert!(pos > last, "field {field} out of order");
+            last = pos;
+        }
     }
 }

@@ -39,9 +39,9 @@ mod ebpf_common;
 use ebpf_common::{
     ARG0_LEN, DNS_PAYLOAD_LEN, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE,
     EVENT_FILE_DELETE, EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS,
-    EVENT_RAW_ACCESS, DnsEvent, DriverLoadEvent, ExecEvent, ExitEvent, FileCreateEvent,
-    FileDeleteEvent, IMAGE_LEN, ListenEvent, NetEvent, PATH_LEN, PipeCreateEvent,
-    ProcessAccessEvent, RawAccessEvent,
+    EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, DnsEvent, DriverLoadEvent, ExecEvent, ExitEvent,
+    FileCreateEvent, FileDeleteEvent, IMAGE_LEN, ListenEvent, NetEvent, PATH_LEN, PipeCreateEvent,
+    ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
 };
 
 const MAX_ENTRIES: u32 = 1;
@@ -654,6 +654,47 @@ fn try_emit_ptrace(ctx: &TracePointContext) -> Result<(), i64> {
             (*p).target_pid = target_pid;
             (*p)._pad1 = 0;
             (*p).request = request as u64;
+            (*p).comm = comm;
+        }
+        entry.submit(0);
+    }
+    Ok(())
+}
+
+// ─── Process tampering capture (B12, EID 25, heuristic) ─────────────────────
+
+#[tracepoint(category = "syscalls", name = "sys_enter_process_vm_writev")]
+fn sys_enter_process_vm_writev(ctx: TracePointContext) -> i32 {
+    match try_emit_process_tampering(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+fn try_emit_process_tampering(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: offsets from sys_enter_process_vm_writev format (pid@16).
+    let target: i64 = unsafe { ctx.read_at(16)? };
+    if target <= 0 {
+        return Ok(());
+    }
+    let ids = bpf_get_current_pid_tgid();
+    let source_pid = (ids >> 32) as u32;
+    let target_pid = target as u32;
+    if target_pid == source_pid {
+        return Ok(());
+    }
+    let uidgid = bpf_get_current_uid_gid();
+    let comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    if let Some(mut entry) = EVENTS.reserve::<ProcessTamperingEvent>(0) {
+        let p = entry.as_mut_ptr();
+        // SAFETY: exclusive reserved ProcessTamperingEvent slot; writes in bounds.
+        unsafe {
+            (*p).kind = EVENT_PROCESS_TAMPERING;
+            (*p).source_pid = source_pid;
+            (*p).target_pid = target_pid;
+            (*p).uid = uidgid as u32;
+            (*p).gid = (uidgid >> 32) as u32;
+            (*p)._pad0 = 0;
             (*p).comm = comm;
         }
         entry.submit(0);
