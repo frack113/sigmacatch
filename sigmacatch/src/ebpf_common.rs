@@ -88,6 +88,11 @@ mod inner {
     /// Ring buffer record tag: inbound DNS response, EID 508 (extension).
     pub const EVENT_DNS_RESPONSE: u32 = 23;
 
+    /// Map proving that a prebuilt probe object matches this wire format.
+    /// Bump the suffix for every incompatible record-layout change so an
+    /// older `SIGMACATCH_EBPF_OBJECT` is rejected at load time.
+    pub const EVENTS_ABI_MAP: &str = "EVENTS_ABI_V2";
+
     /// Directory-fd sentinel meaning "path is relative to cwd".
     pub const AT_FDCWD: i32 = -100;
     /// Bounded path buffer carried by [`FileCreateEvent`].
@@ -143,8 +148,13 @@ mod inner {
     pub struct ExitEvent {
         /// Always [`EVENT_EXIT`].
         pub kind: u32,
-        /// Terminating process id.
+        /// Terminating process id (tgid).
         pub pid: u32,
+        /// Terminating task id. Differs from `pid` for a thread; emitted for
+        /// every task so userspace can clean up internal lineage state.
+        pub tid: u32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: u32,
     }
 
     impl ExecEvent {
@@ -222,9 +232,11 @@ mod inner {
     pub struct ForkEvent {
         /// Always [`EVENT_FORK`].
         pub kind: u32,
-        /// Parent process id (tgid).
-        pub parent_pid: u32,
-        /// Child process id (tgid).
+        /// Parent process id (tgid), which is the key used by `/proc` parent
+        /// resolution even when a non-leader thread performed the fork.
+        pub parent_tgid: u32,
+        /// Child task id. It equals the future tgid when the child is a
+        /// process, and still identifies the task when it is a thread.
         pub child_pid: u32,
         /// Explicit padding keeping the record size a multiple of 8 (zeroed).
         pub _pad0: u32,
@@ -248,8 +260,9 @@ mod inner {
     /// `initiated = 1`) or `sys_exit_accept`/`sys_exit_accept4` (inbound,
     /// `initiated = 0`).
     ///
-    /// Only the remote endpoint is captured in the ring buffer payload;
-    /// `port_be` keeps the network byte order as read from the sockaddr.
+    /// The tracepoint captures the remote endpoint when a user `sockaddr` is
+    /// available; `fd` lets userspace resolve both endpoints through `/proc`
+    /// when it is not (connected UDP, `accept(..., NULL, NULL)`).
     #[repr(C)]
     #[derive(Debug, Clone, Copy, Pod, Zeroable)]
     pub struct NetEvent {
@@ -261,16 +274,22 @@ mod inner {
         pub uid: u32,
         /// Real GID of the task.
         pub gid: u32,
+        /// Connected or accepted socket descriptor. Userspace resolves the
+        /// endpoints through `/proc/<pid>/fd` when the tracepoint could not
+        /// capture a user `sockaddr` (e.g. `accept(..., NULL, NULL)`).
+        pub fd: i32,
         /// Address family (`AF_INET` = 2, `AF_INET6` = 10); others dropped.
         pub family: u16,
         /// Explicit padding keeping field offsets kernel-aligned (zeroed).
         pub _pad0: u16,
-        /// Remote port in network byte order.
+        /// Captured remote port in network byte order; zero when unknown.
         pub port_be: u16,
         /// `1` for outbound/connect, `0` for inbound/accept.
         pub initiated: u8,
         /// Explicit padding keeping the record size a multiple of 8 (zeroed).
         pub _pad1: u8,
+        /// Explicit padding keeping the address aligned (zeroed).
+        pub _pad2: u32,
         /// IPv4 bytes occupy `[..4]`; IPv6 fills the whole array.
         pub addr: [u8; 16],
         /// Task comm at event time (NUL-padded).
@@ -1220,8 +1239,17 @@ mod inner {
         pub gid: u32,
         /// Bytes of valid payload written into [`DnsResponseEvent::payload`].
         pub payload_len: u32,
+        /// Socket descriptor receiving the response.
+        pub fd: i32,
+        /// Source port in network byte order when the tracepoint could read
+        /// the `recvfrom` address; zero otherwise.
+        pub source_port_be: u16,
+        /// `1` when `source_port_be` was captured and validated as port 53.
+        pub source_valid: u8,
         /// Explicit padding keeping the record size a multiple of 8 (zeroed).
-        pub _pad0: u32,
+        pub _pad0: u8,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad1: u32,
         /// Task comm at receive time (NUL-padded).
         pub comm: [u8; 16],
         /// Raw DNS wire bytes (header + sections as received).

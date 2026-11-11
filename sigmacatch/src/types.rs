@@ -1596,6 +1596,14 @@ mod tests {
             (22, "dns_query"),
             (23, "file_delete"),
             (500, "network_listen"),
+            (501, "credential_change"),
+            (502, "capability_change"),
+            (503, "file_rename"),
+            (504, "file_chmod"),
+            (505, "file_chown"),
+            (506, "file_truncate"),
+            (507, "module_unload"),
+            (508, "dns_response"),
         ] {
             let json = serde_json::json!({
                 "Event": {

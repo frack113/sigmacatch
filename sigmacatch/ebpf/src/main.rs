@@ -24,7 +24,7 @@ use aya_ebpf::{
         bpf_probe_read_user, bpf_probe_read_user_buf,
     },
     macros::{map, tracepoint},
-    maps::{LruHashMap, PerCpuArray, RingBuf},
+    maps::{Array, LruHashMap, PerCpuArray, RingBuf},
     programs::TracePointContext,
 };
 
@@ -39,18 +39,19 @@ mod ebpf_common;
 use ebpf_common::{
     ARG0_LEN, ARG1_LEN, ARG2_LEN, AT_FDCWD, CAP_CAPSET, CAP_PRCTL, CHMOD_CHMOD, CHMOD_FCHMOD,
     CHMOD_FCHMODAT, CHMOD_FCHMODAT2, CHOWN_CHOWN, CHOWN_FCHOWN, CHOWN_FCHOWNAT, CHOWN_LCHOWN,
-    CRED_SETFSUID, CRED_SETFSGID, CRED_SETGID, CRED_SETGROUPS, CRED_SETREGID, CRED_SETRESGID,
+    CRED_SETFSGID, CRED_SETFSUID, CRED_SETGID, CRED_SETGROUPS, CRED_SETREGID, CRED_SETRESGID,
     CRED_SETRESUID, CRED_SETREUID, CRED_SETUID, CapabilityChangeEvent, CredentialChangeEvent,
-    DNS_PAYLOAD_LEN, DnsEvent, DriverLoadEvent, EVENT_CAPABILITY_CHANGE, EVENT_CREDENTIAL_CHANGE,
-    EVENT_DNS, EVENT_DNS_RESPONSE, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE,
-    EVENT_FILE_CHMOD, EVENT_FILE_CHOWN, EVENT_FILE_DELETE, EVENT_FILE_RENAME, EVENT_FILE_TRUNCATE,
-    EVENT_FORK, EVENT_FILE_CHANGE, EVENT_LISTEN, EVENT_MODULE_UNLOAD, EVENT_NET, EVENT_PIPE_CREATE,
-    EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, DnsResponseEvent, ExecEvent,
-    ExitEvent, FileChangeEvent, FileChmodEvent, FileChownEvent, FileCreateEvent, FileDeleteEvent,
+    DNS_PAYLOAD_LEN, DnsEvent, DnsResponseEvent, DriverLoadEvent, EVENT_CAPABILITY_CHANGE,
+    EVENT_CREDENTIAL_CHANGE, EVENT_DNS, EVENT_DNS_RESPONSE, EVENT_DRIVER_LOAD, EVENT_EXEC,
+    EVENT_EXIT, EVENT_FILE, EVENT_FILE_CHANGE, EVENT_FILE_CHMOD, EVENT_FILE_CHOWN,
+    EVENT_FILE_DELETE, EVENT_FILE_RENAME, EVENT_FILE_TRUNCATE, EVENT_FORK, EVENT_LISTEN,
+    EVENT_MODULE_UNLOAD, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS,
+    EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, EVENTS_ABI_MAP, ExecEvent, ExitEvent,
+    FileChangeEvent, FileChmodEvent, FileChownEvent, FileCreateEvent, FileDeleteEvent,
     FileRenameEvent, FileTruncateEvent, ForkEvent, IMAGE_LEN, ListenEvent, ModuleUnloadEvent,
-    NetEvent, PATH_LEN, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent,
-    RENAME_RENAME, RENAME_RENAMEAT, RENAME_RENAMEAT2, RawAccessEvent, TRUNCATE_FTRUNCATE,
-    TRUNCATE_TRUNCATE, WRITE_PWRITE64, WRITE_PWRITEV, WRITE_PWRITEV2, WRITE_WRITE, WRITE_WRITEV,
+    NetEvent, PATH_LEN, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RENAME_RENAME,
+    RENAME_RENAMEAT, RENAME_RENAMEAT2, RawAccessEvent, TRUNCATE_FTRUNCATE, TRUNCATE_TRUNCATE,
+    WRITE_PWRITE64, WRITE_PWRITEV, WRITE_PWRITEV2, WRITE_WRITE, WRITE_WRITEV,
 };
 
 const MAX_ENTRIES: u32 = 1;
@@ -117,6 +118,14 @@ struct DnsQuery {
 #[derive(Clone, Copy)]
 struct PendingDnsRecv {
     buf: u64,
+    addr: u64,
+    fd: i32,
+    _pad0: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PendingAccept {
     addr: u64,
 }
 
@@ -203,6 +212,13 @@ struct PendingModUnload {
 #[map(name = "EVENTS")]
 static EVENTS: RingBuf = RingBuf::with_byte_size(1 << 20, 0);
 
+// Presence of this map is the ABI marker checked by userspace. Rename it
+// together with EVENTS_ABI_MAP for every incompatible wire-layout change.
+#[map(name = "EVENTS_ABI_V2")]
+static EVENTS_ABI: Array<u64> = Array::with_max_entries(1, 0);
+
+const _: () = assert!(EVENTS_ABI_MAP.len() <= 15);
+
 #[map(name = "EXEC_ARGS")]
 static EXEC_ARGS: LruHashMap<u32, PendingExec> = LruHashMap::with_max_entries(EXEC_ARGS_MAX, 0);
 
@@ -237,7 +253,8 @@ static BIND_STAGE: LruHashMap<u64, PendingBind> = LruHashMap::with_max_entries(B
 static LISTEN_FD: LruHashMap<u64, i32> = LruHashMap::with_max_entries(LISTEN_FD_MAX, 0);
 
 #[map(name = "ACCEPT_STAGE")]
-static ACCEPT_STAGE: LruHashMap<u64, u64> = LruHashMap::with_max_entries(ACCEPT_STAGE_MAX, 0);
+static ACCEPT_STAGE: LruHashMap<u64, PendingAccept> =
+    LruHashMap::with_max_entries(ACCEPT_STAGE_MAX, 0);
 
 #[map(name = "CRED_STAGE")]
 static CRED_STAGE: LruHashMap<u64, PendingCred> = LruHashMap::with_max_entries(CRED_STAGE_MAX, 0);
@@ -253,13 +270,15 @@ static RENAME_STAGE: LruHashMap<u32, PendingRename> =
 static RENAME_SCRATCH: PerCpuArray<PendingRename> = PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
 
 #[map(name = "CHMOD_STAGE")]
-static CHMOD_STAGE: LruHashMap<u32, PendingChmod> = LruHashMap::with_max_entries(CHMOD_STAGE_MAX, 0);
+static CHMOD_STAGE: LruHashMap<u32, PendingChmod> =
+    LruHashMap::with_max_entries(CHMOD_STAGE_MAX, 0);
 
 #[map(name = "CHMOD_SCRATCH")]
 static CHMOD_SCRATCH: PerCpuArray<PendingChmod> = PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
 
 #[map(name = "CHOWN_STAGE")]
-static CHOWN_STAGE: LruHashMap<u32, PendingChown> = LruHashMap::with_max_entries(CHOWN_STAGE_MAX, 0);
+static CHOWN_STAGE: LruHashMap<u32, PendingChown> =
+    LruHashMap::with_max_entries(CHOWN_STAGE_MAX, 0);
 
 #[map(name = "CHOWN_SCRATCH")]
 static CHOWN_SCRATCH: PerCpuArray<PendingChown> = PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
@@ -273,7 +292,8 @@ static TRUNCATE_SCRATCH: PerCpuArray<PendingTruncate> =
     PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
 
 #[map(name = "WRITE_STAGE")]
-static WRITE_STAGE: LruHashMap<u32, PendingWrite> = LruHashMap::with_max_entries(WRITE_STAGE_MAX, 0);
+static WRITE_STAGE: LruHashMap<u32, PendingWrite> =
+    LruHashMap::with_max_entries(WRITE_STAGE_MAX, 0);
 
 #[map(name = "MODUNLOAD_STAGE")]
 static MODUNLOAD_STAGE: LruHashMap<u64, PendingModUnload> =
@@ -282,6 +302,17 @@ static MODUNLOAD_STAGE: LruHashMap<u64, PendingModUnload> =
 #[map(name = "MODUNLOAD_SCRATCH")]
 static MODUNLOAD_SCRATCH: PerCpuArray<PendingModUnload> =
     PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
+
+/// Decode a tracepoint `__data_loc` field into its payload offset. Recent
+/// kernels use dynamic strings for `sched_process_fork` (offset@8,
+/// child_pid@20); older kernels keep fixed 16-byte comm arrays
+/// (child_pid@44). A fixed comm array starts with a non-empty process name, so
+/// its first u32 never looks like a bounded `(length, offset)` pair.
+fn dynamic_field_offset(field: u32) -> Option<usize> {
+    let len = (field >> 16) as usize;
+    let offset = (field & 0xffff) as usize;
+    (len > 0 && len <= 256 && offset >= 24 && offset < 4096).then_some(offset)
+}
 
 /// Read a NUL-terminated user string into `dst`, returning the stored length
 /// (excluding the NUL), provably bounded by `dst.len() - 1`.
@@ -438,14 +469,12 @@ fn try_emit_exec() -> Result<(), i64> {
 #[tracepoint(category = "sched", name = "sched_process_exit")]
 fn sched_process_exit(_ctx: TracePointContext) -> i32 {
     let ids = bpf_get_current_pid_tgid();
-    // Group leaders only: threads terminate silently.
-    if (ids >> 32) != (ids & 0xffff_ffff) {
-        return 0;
-    }
     if let Some(mut entry) = EVENTS.reserve::<ExitEvent>(0) {
         entry.write(ExitEvent {
             kind: EVENT_EXIT,
             pid: (ids >> 32) as u32,
+            tid: ids as u32,
+            _pad0: 0,
         });
         entry.submit(0);
     }
@@ -461,14 +490,24 @@ fn sched_process_fork(ctx: TracePointContext) -> i32 {
 }
 
 fn try_emit_fork(ctx: &TracePointContext) -> Result<(), i64> {
-    // SAFETY: offsets match the sched_process_fork tracepoint format
-    // (parent_pid@24, child_pid@44).
-    let parent_pid: u32 = unsafe { ctx.read_at::<i32>(24)? } as u32;
-    let child_pid: u32 = unsafe { ctx.read_at::<i32>(44)? } as u32;
+    // `parent_pid` in the tracepoint is a task id. The tracepoint runs in the
+    // parent task, so read its tgid from the current task instead: `parents`
+    // is keyed by tgid and a non-leader thread may have performed the fork.
+    let parent_tgid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    // SAFETY: field@8 is either a fixed parent_comm array or a __data_loc
+    // string; both are four-byte context fields.
+    let parent_comm: u32 = unsafe { ctx.read_at(8)? };
+    let child_pid_offset = if dynamic_field_offset(parent_comm).is_some() {
+        20 // dynamic parent_comm@8, parent_pid@12, child_comm@16, child_pid@20
+    } else {
+        44 // parent_comm[16]@8, parent_pid@24, child_comm[16]@28, child_pid@44
+    };
+    // SAFETY: the chosen offset is one of the two kernel tracepoint layouts.
+    let child_pid: u32 = unsafe { ctx.read_at::<i32>(child_pid_offset)? } as u32;
     if let Some(mut entry) = EVENTS.reserve::<ForkEvent>(0) {
         entry.write(ForkEvent {
             kind: EVENT_FORK,
-            parent_pid,
+            parent_tgid,
             child_pid,
             _pad0: 0,
         });
@@ -506,6 +545,7 @@ fn sys_enter_connect(ctx: TracePointContext) -> i32 {
 
 fn try_emit_connect(ctx: &TracePointContext) -> Result<(), i64> {
     // SAFETY: read_at bounds-checked against the tracepoint context.
+    let fd: u64 = unsafe { ctx.read_at(16)? };
     let uservaddr: *const u8 = unsafe { ctx.read_at(24)? };
     // SAFETY: two-byte user read; fault handled by helper → 0.
     let family = unsafe { bpf_probe_read_user::<u16>(uservaddr.cast()) }.unwrap_or(0);
@@ -540,11 +580,13 @@ fn try_emit_connect(ctx: &TracePointContext) -> Result<(), i64> {
             (*p).pid = (ids >> 32) as u32;
             (*p).uid = uidgid as u32;
             (*p).gid = (uidgid >> 32) as u32;
+            (*p).fd = fd as i32;
             (*p).family = family;
             (*p)._pad0 = 0;
             (*p).port_be = port_be;
             (*p).initiated = 1;
             (*p)._pad1 = 0;
+            (*p)._pad2 = 0;
             (*p).addr = addr;
             (*p).comm = comm;
         }
@@ -2376,14 +2418,14 @@ fn sys_exit_pwritev2(ctx: TracePointContext) -> i32 {
     }
 }
 
-
 // ─── Inbound connection capture (accept/accept4, EID 3) ─────────────────────
 
 fn try_stage_accept(ctx: &TracePointContext) -> Result<(), i64> {
     let tid_key = bpf_get_current_pid_tgid();
-    // SAFETY: bounds-checked context read (accept/accept4 arg upeer_sockaddr@24).
-    let addr_ptr: u64 = unsafe { ctx.read_at(24)? };
-    let _ = ACCEPT_STAGE.insert(&tid_key, &addr_ptr, 0);
+    // SAFETY: accept/accept4 arg upeer_sockaddr@24; bounds-checked context read.
+    let addr: u64 = unsafe { ctx.read_at(24)? };
+    let pending = PendingAccept { addr };
+    let _ = ACCEPT_STAGE.insert(&tid_key, &pending, 0);
     Ok(())
 }
 
@@ -2392,32 +2434,40 @@ fn try_emit_accept(ctx: &TracePointContext) -> Result<(), i64> {
     let ret: i64 = unsafe { ctx.read_at(16)? };
     let tid_key = bpf_get_current_pid_tgid();
     // SAFETY: read-only map borrow of a fixed-size value.
-    let Some(addr_ptr) = (unsafe { ACCEPT_STAGE.get(&tid_key) }).copied() else {
+    let Some(staged) = (unsafe { ACCEPT_STAGE.get(&tid_key) }).copied() else {
         return Ok(());
     };
     ACCEPT_STAGE.remove(&tid_key)?;
-    if ret < 0 || addr_ptr == 0 {
+    if ret < 0 {
         return Ok(());
     }
-    let uservaddr = addr_ptr as *const u8;
-    // SAFETY: two-byte user read; fault handled by helper → 0.
-    let family = unsafe { bpf_probe_read_user::<u16>(uservaddr.cast()) }.unwrap_or(0);
-    let (port_be, addr) = match family {
-        // AF_INET
-        2 => {
-            // SAFETY: fixed-size sockaddr_in user read; fault-tolerant helper.
-            let s: SockAddr4 = unsafe { bpf_probe_read_user(uservaddr.cast()) }?;
-            let mut a = [0u8; 16];
-            a[..4].copy_from_slice(&s.addr);
-            (s.port, a)
+
+    // `addr` is optional on Linux: accept(fd, NULL, NULL) is valid. Emit the
+    // accepted fd even when no user sockaddr was supplied; userspace resolves
+    // both endpoints through /proc/<pid>/fd/<fd>.
+    let (family, port_be, addr) = if staged.addr == 0 {
+        (0u16, 0u16, [0u8; 16])
+    } else {
+        let uservaddr = staged.addr as *const u8;
+        // SAFETY: two-byte user read; fault handled by helper → 0.
+        let family = unsafe { bpf_probe_read_user::<u16>(uservaddr.cast()) }.unwrap_or(0);
+        match family {
+            // AF_INET
+            2 => {
+                // SAFETY: fixed-size sockaddr_in user read; fault-tolerant helper.
+                let s: SockAddr4 = unsafe { bpf_probe_read_user(uservaddr.cast()) }?;
+                let mut a = [0u8; 16];
+                a[..4].copy_from_slice(&s.addr);
+                (family, s.port, a)
+            }
+            // AF_INET6
+            10 => {
+                // SAFETY: fixed-size sockaddr_in6 user read; fault-tolerant helper.
+                let s: SockAddr6 = unsafe { bpf_probe_read_user(uservaddr.cast()) }?;
+                (family, s.port, s.addr)
+            }
+            _ => (0, 0, [0u8; 16]),
         }
-        // AF_INET6
-        10 => {
-            // SAFETY: fixed-size sockaddr_in6 user read; fault-tolerant helper.
-            let s: SockAddr6 = unsafe { bpf_probe_read_user(uservaddr.cast()) }?;
-            (s.port, s.addr)
-        }
-        _ => return Ok(()),
     };
 
     let ids = bpf_get_current_pid_tgid();
@@ -2431,11 +2481,13 @@ fn try_emit_accept(ctx: &TracePointContext) -> Result<(), i64> {
             (*p).pid = (ids >> 32) as u32;
             (*p).uid = uidgid as u32;
             (*p).gid = (uidgid >> 32) as u32;
+            (*p).fd = ret as i32;
             (*p).family = family;
             (*p)._pad0 = 0;
             (*p).port_be = port_be;
             (*p).initiated = 0;
             (*p)._pad1 = 0;
+            (*p)._pad2 = 0;
             (*p).addr = addr;
             (*p).comm = comm;
         }
@@ -2476,7 +2528,6 @@ fn sys_exit_accept4(ctx: TracePointContext) -> i32 {
     }
 }
 
-
 // ─── DNS response capture (EID 508, extension) ──────────────────────────────
 
 fn dns_response_plausible(buf: *const u8, size: usize) -> bool {
@@ -2495,10 +2546,17 @@ fn dns_response_plausible(buf: *const u8, size: usize) -> bool {
 
 fn try_stage_dns_recv(ctx: &TracePointContext) -> Result<(), i64> {
     let tid_key = bpf_get_current_pid_tgid();
-    // SAFETY: bounds-checked context reads (recvfrom/recvmsg-like staging).
+    // SAFETY: recvfrom arg sockfd@16, buf@24, src_addr@48; bounds-checked
+    // context reads.
+    let fd: u64 = unsafe { ctx.read_at(16)? };
     let buf: u64 = unsafe { ctx.read_at(24)? };
     let addr: u64 = unsafe { ctx.read_at(48)? };
-    let pending = PendingDnsRecv { buf, addr };
+    let pending = PendingDnsRecv {
+        buf,
+        addr,
+        fd: fd as i32,
+        _pad0: 0,
+    };
     let _ = DNS_RECV_STAGE.insert(&tid_key, &pending, 0);
     Ok(())
 }
@@ -2512,24 +2570,31 @@ fn try_emit_dns_recv(ctx: &TracePointContext) -> Result<(), i64> {
         return Ok(());
     };
     DNS_RECV_STAGE.remove(&tid_key)?;
-    if ret <= 0 || staged.buf == 0 || staged.addr == 0 {
+    if ret <= 0 || staged.buf == 0 {
         return Ok(());
     }
     let size = ret as usize;
-    // Best-effort: keep only responses coming from UDP port 53.
-    let addr_ptr = staged.addr as *const u8;
-    // SAFETY: two-byte user reads; fault-tolerant helpers.
-    let family = unsafe { bpf_probe_read_user::<u16>(addr_ptr.cast()) }.unwrap_or(0);
-    if family != 2 && family != 10 {
-        return Ok(());
-    }
-    let port_be = match unsafe { bpf_probe_read_user::<u16>(addr_ptr.add(2).cast()) } {
-        Ok(v) => v,
-        Err(_) => return Ok(()),
+    // When recvfrom supplies a source address, require UDP port 53 here. With
+    // src_addr=NULL (valid on connected sockets), userspace validates the peer
+    // port through the socket descriptor instead.
+    let (source_port_be, source_valid) = if staged.addr == 0 {
+        (0u16, 0u8)
+    } else {
+        let addr_ptr = staged.addr as *const u8;
+        // SAFETY: two-byte user reads; fault-tolerant helpers.
+        let family = unsafe { bpf_probe_read_user::<u16>(addr_ptr.cast()) }.unwrap_or(0);
+        if family != 2 && family != 10 {
+            return Ok(());
+        }
+        let port_be = match unsafe { bpf_probe_read_user::<u16>(addr_ptr.add(2).cast()) } {
+            Ok(v) => v,
+            Err(_) => return Ok(()),
+        };
+        if u16::from_be(port_be) != 53 {
+            return Ok(());
+        }
+        (port_be, 1u8)
     };
-    if u16::from_be(port_be) != 53 {
-        return Ok(());
-    }
     let buf = staged.buf as *const u8;
     if !dns_response_plausible(buf, size) {
         return Ok(());
@@ -2547,7 +2612,11 @@ fn try_emit_dns_recv(ctx: &TracePointContext) -> Result<(), i64> {
     scratch.pid = (ids >> 32) as u32;
     scratch.uid = uidgid as u32;
     scratch.gid = (uidgid >> 32) as u32;
+    scratch.fd = staged.fd;
+    scratch.source_port_be = source_port_be;
+    scratch.source_valid = source_valid;
     scratch._pad0 = 0;
+    scratch._pad1 = 0;
     scratch.comm = comm;
     scratch.payload = [0; DNS_PAYLOAD_LEN];
     scratch.payload_len =

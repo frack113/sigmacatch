@@ -4,7 +4,11 @@ Regression data format for Sigma rules, compatible with SigmaHQ.
 
 ## Purpose
 
-A regression test set consists per rule of an `info.yml` file (metadata) and a **data file** (`<rule_id>.evtx` for Windows, `<rule_id>.log` for Linux). An auxiliary `.json` (raw event) can be added via the `regression.add_json_output` option (default: `false`). This allows validating that a Sigma engine always produces the same results for a given rule against a known event.
+A regression test set consists per rule of an `info.yml` file (metadata) and a **data file**
+(`<rule_id>.evtx` for Windows, `<rule_id>.log` for Linux line collectors, `<rule_id>.json`
+for the Linux eBPF collector). An auxiliary `.json` (raw event) can also be added to an
+EVTX/log set via `regression.add_json_output` (default: `false`). This allows validating that
+a Sigma engine always produces the same results for a given rule against a known event.
 
 ## Directory tree
 
@@ -27,13 +31,17 @@ Each rule with regression contains a directory (slug) with:
 ```text
 <slug>/
 ├── info.yml                    # Metadata + test results
-├── <rule_id>.evtx              # Valid EVTX (EvtExportLog or pure Rust writer)
-└── <rule_id>.json              # Optional (regression.add_json_output) — raw event
+├── <rule_id>.evtx              # Windows (EvtExportLog or pure Rust writer)
+├── <rule_id>.log               # Linux auditd/syslog/Sysmon tail
+└── <rule_id>.json              # Linux eBPF data, or optional auxiliary raw event
 ```
 
 The `<rule_id>` is always the **UUID** contained in `rule_metadata[0].id` of the `info.yml` file. It is never the directory name.
 
-Variants: some rules (e.g. cisco) use `.raw` when the EVTX format is not applicable. Linux rules use `.log` (complete original lines: auditd, syslog or Sysmon-for-Linux XML). The data file + `info.yml` are the mandatory output; the `.json` is an optional extra.
+Variants: some rules (e.g. cisco) use `.raw` when the EVTX format is not applicable. Linux
+auditd/syslog/Sysmon-tail rules use `.log` (complete original lines); the Linux eBPF collector
+uses `.json` (nested Sysmon-shaped JSON, single document or NDJSON). The data file + `info.yml`
+are the mandatory output; for EVTX/log data, a `.json` export is an optional extra.
 
 ## `info.yml` schema
 
@@ -72,7 +80,7 @@ rule_metadata:
 ```yaml
 regression_tests_info:
     - name: Positive Detection Test
-      type: evtx                  # or "raw" for cisco, "log" for Linux (auditd/syslog/sysmon)
+      type: evtx                  # raw for cisco; log for auditd/syslog/sysmon tail; json/ndjson for eBPF
       provider: <ProviderName>    # dynamically extracted from event's XML ProviderName (e.g., Microsoft-Windows-Sysmon, or "auditd")
       match_count: <int>          # Number of matches found
       path: regression_data/.../<rule_id>.evtx  # Relative path to the data file
@@ -150,7 +158,7 @@ regression_tests_info:
 | `info.yml` | YAML | Always `info.yml` | Metadata + results |
 | `<rule_id>.evtx` | Binary | UUID v4 | Valid EVTX (EvtExportLog or pure Rust writer; validated ≥ 1 record at write time) |
 | `<rule_id>.log` | Text | UUID v4 | Complete event (multi-record auditd lines, syslog lines, or Sysmon-for-Linux XML) |
-| `<rule_id>.json` | JSON | UUID v4 | Optional (`regression.add_json_output`) — raw event (nested Winevt JSON or flat Linux JSON; single JSON object or JSONL, exactly one trailing newline, validated by `regressiondata-check`) |
+| `<rule_id>.json` | JSON/NDJSON | UUID v4 | Linux eBPF primary data (single pretty JSON document, or NDJSON for several records), or optional `regression.add_json_output` raw event (nested Winevt JSON or flat Linux JSON) |
 
 The `<rule_id>` in file names is always the UUID from `rule_metadata[0].id`.
 
@@ -167,19 +175,19 @@ A set is **complete** if:
 - `info.yml` exists
 - the data file referenced by `regression_tests_info[0].path` exists and is valid (EVTX magic / non-empty text, size ≤ 64 MiB)
 
-The auxiliary `.json` is not part of the validity check.
+For an EVTX/log data set, an auxiliary `.json` is not part of the validity check. For eBPF,
+the `.json` named by `path` is the data file and must be valid.
 
 ### `type` must describe the data file
 
 `regression_tests_info[0].type` qualifies the file named by
-`regression_tests_info[0].path` — nothing else. The only accepted values are
-`evtx`, `log`, `json` and `raw`, matching the data file's extension.
+`regression_tests_info[0].path` — nothing else. Accepted values are `evtx`, `log`, `json`,
+`ndjson` and `raw`. `json` means one JSON document; `ndjson` means one compact JSON object per
+line.
 
-The auxiliary `<rule_id>.json` is a review artifact, not the data file, so
-enabling `regression.add_json_output` never changes `type`. `type: ndjson` over
-an `.evtx` path is not a valid combination: `ndjson` describes the *layout of
-the auxiliary export* (single document for one event, JSONL for several), not
-the data file.
+For EVTX/log data, enabling `regression.add_json_output` never changes `type`. `type: ndjson`
+over an `.evtx` path is not a valid combination and is resolved from the data-file extension.
+`type: ndjson` over a `.json` path is the normal multi-record eBPF layout.
 
 > **SigmaHQ spec vs sigmacatch extensions.** The upstream regression spec defines
 > only four `type` values — `evtx`, `json`, `ndjson` and `jsonl` — and its runner
@@ -227,12 +235,17 @@ Some network rules use native formats (`.raw` instead of `.json` + `.evtx`). The
 
 ### Linux (auditd / syslog / sysmon)
 
-Three collectors run in parallel, each guarded by its source — the full specification
-(tailed files, guards, parsing) lives in [architecture.md](architecture.md). All their
-regression data uses `.log` (complete original lines: auditd records grouped by
-`timestamp:sequence`, RFC3164 syslog lines, or Sysmon-for-Linux XML).
+The auditd, syslog and Sysmon-tail collectors run in parallel, each guarded by its source —
+the full specification (tailed files, guards, parsing) lives in
+[architecture.md](architecture.md). Their regression data uses `.log` (complete original
+lines: auditd records grouped by `timestamp:sequence`, RFC3164 syslog lines, or
+Sysmon-for-Linux XML).
 
-On hosts forwarding audit records into syslog (audisp/rsyslog), both pipelines capture the same activity: an auditd-based rule and a syslog-based rule can both produce regression data from it. The provider written to `info.yml` comes from the event XML when present (`Linux-Sysmon` for Sysmon-for-Linux events), falling back to `auditd` for plain-text events.
+The eBPF collector uses `.json`: a single pretty-printed Sysmon-shaped event (`type: json`) or
+NDJSON (`type: ndjson`) when several records are grouped. When eBPF and auditd run in the same
+binary, auditd alerts still produce `.log`; the format is selected per alert, not globally.
+
+On hosts forwarding audit records into syslog (audisp/rsyslog), both pipelines capture the same activity: an auditd-based rule and a syslog-based rule can both produce regression data from it. The provider written to `info.yml` comes from the event XML when present (`Linux-Sysmon` for Sysmon-for-Linux events), falling back to `auditd` for plain-text events and `sigmacatch-ebpf` for eBPF events without a provider.
 
 ### Emerging Threats
 

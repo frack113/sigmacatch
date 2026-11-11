@@ -21,10 +21,11 @@ regressiondata-check [--json] [--ignore] [--fix] [--path <DIR>]
 - `--help`, `-h` — affiche l'usage et sort.
 
 **Fonction :** validation approfondie de toutes les données de régression dans le
-`regression_data/` de la racine sigma (`./sigma/regression_data` par défaut). Les
-entrées sont parses selon leur `LogType` : `.evtx` via
-`evtx_reader::parse_evtx_bytes`, `.log` via le parser auditd, lignes JSON directes.
-Le logtype `Raw` est sauté (compté dans `Skipped`).
+`regression_data/` de la racine sigma (`./sigma/regression_data` par défaut). Les entrées
+sont parsées selon leur `LogType` : `.evtx` via `evtx_reader::parse_evtx_bytes`, `.log` via
+le parser auditd, JSON/NDJSON via un désérialiseur de flux. Les événements JSON réinjectent
+le logsource Linux (`auditd` ou `sysmon`) au lieu du défaut Windows. Le logtype `Raw` est
+sauté (compté dans `Skipped`).
 
 ### Pipeline
 
@@ -41,9 +42,9 @@ Le logtype `Raw` est sauté (compté dans `Skipped`).
    - Valide l'`info.yml` : `rule_metadata` non vide (toujours un échec), indentation au
      style SigmaHQ 4 espaces, `regression_tests_info` non vide (vide → échec, ou ignoré
      avec `--ignore`)
-   - Valide le `.json` auxiliaire s'il est présent : JSON **ou JSONL** (un objet par
+   - Valide le `.json` auxiliaire s'il est présent : JSON **ou NDJSON** (un objet par
      ligne) valide, exactement une fin de ligne
-   - Charge la donnée brute selon le `logtype` (`.evtx`, `.log`, lignes JSON), parse les événements
+   - Charge la donnée brute selon le `logtype` (`.evtx`, `.log`, JSON/NDJSON), parse les événements
    - Évalue les événements contre la règle
    - Valide : la règle DOIT matcher (test de détection positive)
    - Quand un `.json` auxiliaire est présent, valide le `match_count` déclaré contre le
@@ -197,8 +198,8 @@ Les commandes ci-dessous sont des sous-commandes de `sigmacatch`, **toujours com
 | `sigmacatch` (toute plateforme) | `check-filter`, `list-rules` |
 
 Une sous-commande inconnue ou absente → `sigmacatch` démarre sa boucle de collecte normale
-(ou, avec `--evtx`, la passe one-shot EVTX). La valeur de `filter.product` vient de la
-config.
+(ou, avec `--evtx`, la passe one-shot EVTX). Une valeur explicite de `filter.product` dans la
+config gagne ; si la clé est absente, le collecteur choisit `windows` ou `linux`.
 
 > **Prérequis commun :** chaque sous-commande charge `config.yaml` via `Config::load`, qui
 > exécute la validation **complète** (git.author/email/clé SSH comprise) — pas seulement la

@@ -32,8 +32,10 @@ cargo build --release -p sigmacatch --no-default-features --features auditd,buil
 cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,sysmon
 
 # + native eBPF probes (root/CAP_BPF+CAP_PERFMON required at runtime, kernel 5.14+/BTF,
-#   nightly toolchain + bpf-linker to build the probes — otherwise a placeholder falls
-#   back to the tail locally; on CI the empty placeholder is a hard build error, never a fallback)
+#   nightly toolchain + bpf-linker to build the probes). Without that toolchain a local
+#   build embeds an empty placeholder that the loader rejects; a build without `sysmon`
+#   then runs auditd/syslog with no sysmon source. On CI an empty placeholder is a hard
+#   build error, never a fallback.
 cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,ebpf
 
 # Lint (separate variants — sysmon and ebpf are never merged into a single build)
@@ -44,6 +46,10 @@ cargo clippy -p sigmacatch --no-default-features --features auditd,builtin,ebpf 
 It runs, in parallel, the **auditd** collector (when `/var/log/audit/audit.log` exists) and the
 **builtin syslog** collectors (central, authpriv, cron — every existing file).
 Full specification of the collectors and paths: [architecture.md](architecture.md).
+
+`SIGMACATCH_EBPF_OBJECT` may point at a prebuilt probe object. It must be built from the
+current wire format and expose the `EVENTS_ABI_V2` map; an older object is rejected at load
+time instead of decoding records with stale layouts.
 
 The `winevt` feature (default) compiles as no-op stubs on Linux: toggling to a Linux
 build always uses `--no-default-features`.

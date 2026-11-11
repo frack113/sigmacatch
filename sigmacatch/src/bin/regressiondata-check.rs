@@ -52,7 +52,7 @@ const HELP: &str = "regressiondata-check — validate regression data against lo
       --help, -h    Print this help and exit\n\
     \n\
     Notes:\n\
-      Auxiliary .json files are validated as JSON or JSONL (one object per line).";
+      JSON/NDJSON data and auxiliary .json files accept one document or one object per line.";
 
 /// Counters and output of one regression entry, so entries can be evaluated in
 /// parallel and still be reported in index order.
@@ -210,6 +210,12 @@ fn check_entry(
         }
     };
 
+    let provider = regression
+        .get_info(idx)
+        .and_then(|info| info.regression_tests_info.first())
+        .map(|test| test.provider.as_str())
+        .unwrap_or("");
+
     let events: Vec<Event> = match entry.logtype {
         sigmacatch::regression::logtype::LogType::Evtx => {
             match sigmacatch::evtx_reader::parse_evtx_bytes(&raw) {
@@ -232,7 +238,7 @@ fn check_entry(
             r.dropped_audit_lines += dropped;
             events
         }
-        sigmacatch::regression::logtype::LogType::Json => parse_json_lines(&raw),
+        sigmacatch::regression::logtype::LogType::Json => parse_json_events(&raw, provider),
         sigmacatch::regression::logtype::LogType::Raw => {
             r.skipped += 1;
             if !json_output {
@@ -840,14 +846,31 @@ fn value_to_json(value: &linux_audit_parser::Value<'_>) -> Option<JsonValue> {
     }
 }
 
-fn parse_json_lines(raw: &[u8]) -> Vec<Event> {
-    raw.split(|b| *b == b'\n')
-        .filter(|line| !line.is_empty())
-        .filter_map(|line| {
-            let value: JsonValue = serde_json::from_slice(line).ok()?;
-            let mut event = Event::new(value.clone(), value, line.to_vec());
-            event.inject_logsource_fields();
-            Some(event)
+fn parse_json_events(raw: &[u8], provider: &str) -> Vec<Event> {
+    // Accept one pretty-printed document and NDJSON: the stream deserializer
+    // walks concatenated JSON values without depending on line boundaries.
+    let values: Vec<JsonValue> = match serde_json::Deserializer::from_slice(raw)
+        .into_iter::<JsonValue>()
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(values) => values,
+        Err(_) => return Vec::new(),
+    };
+    values
+        .into_iter()
+        .map(|value| {
+            let raw_bytes = serde_json::to_vec(&value).unwrap_or_default();
+            let is_ebpf = value.get("Event").is_some();
+            let is_auditd = value.get("stamp").is_some() && value.get("fields").is_some();
+            let mut event = Event::new(value.clone(), value, raw_bytes);
+            if is_ebpf || provider == "Linux-Sysmon" {
+                event.inject_logsource_fields_for("linux", None);
+            } else if is_auditd || matches!(provider, "auditd" | "sigmacatch-ebpf") {
+                event.inject_logsource_fields_for("linux", Some("auditd"));
+            } else {
+                event.inject_logsource_fields();
+            }
+            event
         })
         .collect()
 }
@@ -881,7 +904,7 @@ fn validate_json_auxiliary(
             json_path.display()
         ));
     }
-    // Accepts both a single JSON object and JSONL (multiple objects).
+    // Accepts both a single JSON object and NDJSON (multiple objects).
     // `into_iter` yields one `Result` per value in the stream.
     let mut iter = serde_json::Deserializer::from_slice(&bytes).into_iter::<serde_json::Value>();
     match iter.next() {
@@ -1298,13 +1321,51 @@ mod tests {
     fn detect_hits(rules: &SigmahqRules, regression: &SigmahqRegression) -> usize {
         let idx = 0;
         let raw = regression.get_raw_data(idx).expect("raw data present");
-        let events = parse_json_lines(&raw);
+        let provider = regression
+            .get_info(idx)
+            .and_then(|info| info.regression_tests_info.first())
+            .map(|test| test.provider.as_str())
+            .unwrap_or("");
+        let events = parse_json_events(&raw, provider);
         let mut engine = DetectionEngine::new(rules).expect("engine builds");
         engine.put_events(events);
         engine.process_events();
         let alerts = engine.get_alerts();
         let entry = regression.get_entry(idx).expect("entry present");
         alerts.iter().filter(|a| a.rule_id == entry.rule_id).count()
+    }
+
+    #[test]
+    fn parses_pretty_json_and_ndjson_with_linux_logsource() {
+        let record = serde_json::json!({
+            "Event": {
+                "System": {
+                    "Provider": { "#attributes": { "Name": "Linux-Sysmon" } },
+                    "EventID": 1,
+                    "Channel": "Linux-Sysmon/Operational"
+                },
+                "EventData": { "Image": "/bin/true" }
+            }
+        });
+        let pretty = serde_json::to_string_pretty(&record).unwrap() + "\n";
+        let events = parse_json_events(pretty.as_bytes(), "Linux-Sysmon");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_json["product"], "linux");
+        assert_eq!(events[0].event_json["service"], "sysmon");
+        assert_eq!(events[0].event_json["category"], "process_creation");
+
+        let ndjson = format!("{}\n{}\n", record, record);
+        assert_eq!(
+            parse_json_events(ndjson.as_bytes(), "Linux-Sysmon").len(),
+            2
+        );
+
+        let auditd =
+            br#"{"stamp":{"timestamp":1,"sequence":2},"type":"SYSCALL","fields":{"syscall":"59"}}"#;
+        let events = parse_json_events(auditd, "sigmacatch-ebpf");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_json["product"], "linux");
+        assert_eq!(events[0].event_json["service"], "auditd");
     }
 
     #[test]

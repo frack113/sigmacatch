@@ -40,6 +40,20 @@ pub enum DataFormat {
 }
 
 impl DataFormat {
+    /// Refine the collector's preferred format for one alert. A Linux
+    /// collector with eBPF active writes JSON for eBPF events, but the same
+    /// batch may carry an auditd alert whose original bytes are log lines.
+    pub(crate) fn for_alert(self, alert: &Alert) -> Self {
+        if self != Self::Json {
+            return self;
+        }
+        if alert.event_json.get("Event").is_some() {
+            Self::Json
+        } else {
+            Self::Log
+        }
+    }
+
     /// File extension of the regression data file for this format.
     pub fn ext(self) -> &'static str {
         match self {

@@ -26,11 +26,12 @@ use crate::ebpf_common::{
     CHOWN_FCHOWN, CHOWN_FCHOWNAT, CHOWN_LCHOWN, CRED_SETEGID, CRED_SETEUID, CRED_SETFSGID,
     CRED_SETFSUID, CRED_SETGID, CRED_SETGROUPS, CRED_SETREGID, CRED_SETRESGID, CRED_SETRESUID,
     CRED_SETREUID, CRED_SETUID, CapabilityChangeEvent, CredentialChangeEvent, DnsEvent,
-    DnsResponseEvent, DriverLoadEvent, ExecEvent, FileChangeEvent, FileChmodEvent, FileChownEvent,
-    FileCreateEvent, FileDeleteEvent, FileRenameEvent, FileTruncateEvent, ForkEvent, ListenEvent,
-    ModuleUnloadEvent, NetEvent, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent,
-    RENAME_RENAME, RENAME_RENAMEAT, RENAME_RENAMEAT2, RawAccessEvent, TRUNCATE_FTRUNCATE,
-    TRUNCATE_TRUNCATE, WRITE_PWRITE64, WRITE_PWRITEV, WRITE_PWRITEV2, WRITE_WRITE, WRITE_WRITEV,
+    DnsResponseEvent, DriverLoadEvent, ExecEvent, ExitEvent, FileChangeEvent, FileChmodEvent,
+    FileChownEvent, FileCreateEvent, FileDeleteEvent, FileRenameEvent, FileTruncateEvent,
+    ForkEvent, ListenEvent, ModuleUnloadEvent, NetEvent, PipeCreateEvent, ProcessAccessEvent,
+    ProcessTamperingEvent, RENAME_RENAME, RENAME_RENAMEAT, RENAME_RENAMEAT2, RawAccessEvent,
+    TRUNCATE_FTRUNCATE, TRUNCATE_TRUNCATE, WRITE_PWRITE64, WRITE_PWRITEV, WRITE_PWRITEV2,
+    WRITE_WRITE, WRITE_WRITEV,
 };
 use crate::types::Event;
 use chrono::Utc;
@@ -40,6 +41,11 @@ use sha2::{Digest, Sha256};
 /// Bounded memoization of image hashes keyed by resolved path, invalidated
 /// by mtime change.
 const HASH_CACHE_CAP: usize = 4096;
+
+/// Upper bound for the fork-lineage cache. Each entry is a few bytes; the cap
+/// matters because threads and non-exec children may never produce a cleanup
+/// event on kernels where a tracepoint is unavailable.
+const FORK_CACHE_CAP: usize = 16_384;
 
 /// Embedded internal taxonomy mapping (eBPF/kernel → Sigma fields).
 pub const EBPF_TAXONOMY_JSON: &str = include_str!("../../ebpf_taxonomy.json");
@@ -160,7 +166,22 @@ impl EventBuilder {
     pub fn exec_event(&mut self, ev: &ExecEvent) -> Event {
         let now = Utc::now();
         let guid = new_guid();
-        let image = ev.image_str().to_string();
+        let image = if ev.image_str().is_empty() {
+            // execveat(..., "", ..., AT_EMPTY_PATH) has no pathname. Prefer the
+            // current executable, then argv[0] for short-lived processes whose
+            // /proc entry is already gone.
+            fs::read_link(format!("/proc/{}/exe", ev.pid))
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
+                .filter(|image| !image.is_empty())
+                .or_else(|| {
+                    let arg0 = ev.arg0_str();
+                    (!arg0.is_empty()).then(|| arg0.to_string())
+                })
+                .unwrap_or_else(|| "-".to_string())
+        } else {
+            ev.image_str().to_string()
+        };
         let cmdline = full_cmdline(ev);
         let user = self.user_name(ev.uid);
         let ppid = read_ppid(ev.pid).or_else(|| self.fork_parents.get(&ev.pid).copied());
@@ -257,24 +278,37 @@ impl EventBuilder {
         to_sysmon_event(1, &self.hostname, &now, data)
     }
 
-    /// Build a process_termination (EID 5) event; `None` when the process is
-    /// unknown to us (no Image available).
-    pub fn exit_event(&mut self, pid: u32) -> Option<Event> {
-        let info = self.parents.remove(&pid)?;
-        self.fork_parents.remove(&pid);
+    /// Clean up internal lineage for every task exit and build a
+    /// process_termination (EID 5) event for group leaders only. `None` when
+    /// the task is unknown to us (no Image available) or is a thread.
+    pub fn exit_event(&mut self, ev: &ExitEvent) -> Option<Event> {
+        // Threads are recorded by sched_process_fork but never appear in
+        // `parents`; remove their lineage entry before the group-leader check.
+        self.fork_parents.remove(&ev.tid);
+        if ev.tid != ev.pid {
+            return None;
+        }
+        let info = self.parents.remove(&ev.pid)?;
         let now = Utc::now();
         let mut data = Map::new();
         insert_str(&mut data, "UtcTime", &utc_time(&now));
         insert_str(&mut data, "ProcessGuid", &info.guid);
-        insert_str(&mut data, "ProcessId", &pid.to_string());
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
         insert_str(&mut data, "Image", &info.image);
         insert_str(&mut data, "User", &info.user);
         Some(to_sysmon_event(5, &self.hostname, &now, data))
     }
 
-    /// Record fork/clone lineage (parent -> child) for parent resolution fallback.
+    /// Record fork/clone lineage (parent tgid -> child task) for parent
+    /// resolution fallback.
     pub fn fork_event(&mut self, ev: &ForkEvent) {
-        self.fork_parents.insert(ev.child_pid, ev.parent_pid);
+        if self.fork_parents.len() >= FORK_CACHE_CAP
+            && !self.fork_parents.contains_key(&ev.child_pid)
+            && let Some(victim) = self.fork_parents.keys().next().copied()
+        {
+            self.fork_parents.remove(&victim);
+        }
+        self.fork_parents.insert(ev.child_pid, ev.parent_tgid);
     }
 
     /// Build a network_connection (EID 3) event.
@@ -285,36 +319,69 @@ impl EventBuilder {
             None => (NULL_GUID.to_string(), "-".to_string()),
         };
         let user = self.user_name(ev.uid);
-        let is_v6 = ev.family == 10;
-        let remote_ip = format_addr(&ev.addr, is_v6);
-        let remote_port = u16::from_be(ev.port_be);
-        let remote_port_s = remote_port.to_string();
+        let captured_family = matches!(ev.family, 2 | 10);
+        let captured_remote = captured_family && ev.port_be != 0;
+        let captured_v6 = ev.family == 10;
+        let resolved = resolve_socket_endpoints(ev.pid, ev.fd);
+        let is_v6 = if captured_family {
+            captured_v6
+        } else {
+            resolved.as_ref().is_some_and(|endpoints| endpoints.is_v6)
+        };
+        let zero_ip = if is_v6 { "::" } else { "0.0.0.0" };
         let initiated = ev.initiated != 0;
 
         let (source_ip, source_port_s, dest_ip, dest_port_s) = if initiated {
-            let dest_ip = remote_ip;
-            let dest_port_s = remote_port_s;
-            let (source_ip, source_port_s) =
-                resolve_source_endpoint(ev.pid, is_v6, &ev.addr, remote_port).unwrap_or_else(
-                    || {
-                        (
-                            if is_v6 { "::" } else { "0.0.0.0" }.to_string(),
-                            "0".to_string(),
-                        )
-                    },
-                );
-            (source_ip, source_port_s, dest_ip, dest_port_s)
-        } else {
-            // Inbound/accepted connection (best-effort): remote peer is source,
-            // local endpoint not resolved from kernel context.
-            let source_ip = remote_ip;
-            let source_port_s = remote_port_s;
-            let (dest_ip, dest_port_s) = if is_v6 {
-                ("::".to_string(), "0".to_string())
+            let (dest_ip, dest_port) = if captured_remote {
+                (format_addr(&ev.addr, captured_v6), u16::from_be(ev.port_be))
             } else {
-                ("0.0.0.0".to_string(), "0".to_string())
+                resolved
+                    .as_ref()
+                    .map(|endpoints| (endpoints.remote_ip.clone(), endpoints.remote_port))
+                    .unwrap_or_else(|| (zero_ip.to_string(), 0))
             };
-            (source_ip, source_port_s, dest_ip, dest_port_s)
+            let source = resolved
+                .as_ref()
+                .map(|endpoints| (endpoints.local_ip.clone(), endpoints.local_port))
+                .or_else(|| {
+                    if captured_remote {
+                        resolve_source_endpoint(
+                            ev.pid,
+                            captured_v6,
+                            &ev.addr,
+                            u16::from_be(ev.port_be),
+                        )
+                        .map(|(ip, port)| (ip, port.parse::<u16>().unwrap_or(0)))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| (zero_ip.to_string(), 0));
+            (
+                source.0,
+                source.1.to_string(),
+                dest_ip,
+                dest_port.to_string(),
+            )
+        } else {
+            let (source_ip, source_port) = if captured_remote {
+                (format_addr(&ev.addr, captured_v6), u16::from_be(ev.port_be))
+            } else {
+                resolved
+                    .as_ref()
+                    .map(|endpoints| (endpoints.remote_ip.clone(), endpoints.remote_port))
+                    .unwrap_or_else(|| (zero_ip.to_string(), 0))
+            };
+            let (dest_ip, dest_port) = resolved
+                .as_ref()
+                .map(|endpoints| (endpoints.local_ip.clone(), endpoints.local_port))
+                .unwrap_or_else(|| (zero_ip.to_string(), 0));
+            (
+                source_ip,
+                source_port.to_string(),
+                dest_ip,
+                dest_port.to_string(),
+            )
         };
 
         let mut data = Map::new();
@@ -530,22 +597,25 @@ impl EventBuilder {
         to_sysmon_event(506, &self.hostname, &now, data)
     }
 
-    /// Build a file_change (EID 2) event (best-effort write activity).
-    pub fn file_change_event(&mut self, ev: &FileChangeEvent) -> Event {
+    /// Build a file_change (EID 2) event for a successful write to a regular
+    /// file. Writes to sockets, pipes and terminals are not file changes and
+    /// are discarded.
+    pub fn file_change_event(&mut self, ev: &FileChangeEvent) -> Option<Event> {
+        if ev.fd < 0 {
+            return None;
+        }
+        let fd_path = format!("/proc/{}/fd/{}", ev.pid, ev.fd);
+        let path = fs::read_link(&fd_path).ok()?;
+        if !fs::metadata(&fd_path).ok()?.is_file() {
+            return None;
+        }
+        let target = path.to_string_lossy().into_owned();
         let now = Utc::now();
         let (guid, image) = match self.parents.get(&ev.pid) {
             Some(info) => (info.guid.clone(), info.image.clone()),
             None => (NULL_GUID.to_string(), "-".to_string()),
         };
         let user = self.user_name(ev.uid);
-        let target = if ev.fd >= 0 {
-            fs::read_link(format!("/proc/{}/fd/{}", ev.pid, ev.fd))
-                .ok()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "-".to_string())
-        } else {
-            "-".to_string()
-        };
         let mut data = Map::new();
         insert_str(&mut data, "UtcTime", &utc_time(&now));
         insert_str(&mut data, "ProcessGuid", &guid);
@@ -555,7 +625,7 @@ impl EventBuilder {
         insert_str(&mut data, "User", &user);
         insert_str(&mut data, "Syscall", write_syscall_name(ev.syscall));
         insert_str(&mut data, "BytesWritten", &ev.bytes_written.to_string());
-        to_sysmon_event(2, &self.hostname, &now, data)
+        Some(to_sysmon_event(2, &self.hostname, &now, data))
     }
 
     /// Build a module_unload (EID 507, extension) event.
@@ -762,7 +832,10 @@ impl EventBuilder {
         if end > ev.payload.len() {
             return None;
         }
-        let query_name = parse_query_name(&ev.payload[..end])?;
+        if ev.source_valid == 0 && socket_remote_port(ev.pid, ev.fd) != Some(53) {
+            return None;
+        }
+        let (query_name, rcode) = dns_query_name_and_rcode(&ev.payload[..end])?;
 
         let now = Utc::now();
         let (guid, image) = match self.parents.get(&ev.pid) {
@@ -777,7 +850,9 @@ impl EventBuilder {
         insert_str(&mut data, "Image", &image);
         insert_str(&mut data, "User", &user);
         insert_str(&mut data, "QueryName", &query_name);
-        insert_str(&mut data, "QueryStatus", "0");
+        // dns_response extension: QueryStatus carries the DNS RCODE (0 = success,
+        // 3 = NXDOMAIN, 2 = SERVFAIL, ...), unlike the Windows Win32 status.
+        insert_str(&mut data, "QueryStatus", &rcode.to_string());
         insert_str(&mut data, "QueryResults", "-");
         Some(to_sysmon_event(508, &self.hostname, &now, data))
     }
@@ -884,28 +959,57 @@ fn to_sysmon_event(
 
 /// Extract the question name from a raw DNS wire payload (query or response).
 pub fn parse_query_name(payload: &[u8]) -> Option<String> {
-    if payload.len() < 13 {
+    dns_query_name_and_rcode(payload).map(|(name, _)| name)
+}
+
+/// Extract the first question name and the response RCODE from a DNS payload.
+fn dns_query_name_and_rcode(payload: &[u8]) -> Option<(String, u8)> {
+    if payload.len() < 12 {
         return None;
     }
     let qdcount = u16::from_be_bytes([payload[4], payload[5]]);
     if qdcount == 0 {
         return None;
     }
-    let mut pos = 12usize;
+    let name = parse_dns_name(payload, 12)?;
+    Some((name, payload[3] & 0x0f))
+}
+
+/// Parse a possibly-compressed DNS name. Compression pointers are followed
+/// with a bounded visited set so malformed packets cannot loop.
+fn parse_dns_name(payload: &[u8], start: usize) -> Option<String> {
+    let mut pos = start;
     let mut parts = Vec::new();
+    let mut visited = [usize::MAX; 32];
+    let mut jumps = 0usize;
+    let mut wire_len = 0usize;
     loop {
-        if pos >= payload.len() || parts.len() > 16 {
+        if pos >= payload.len() || parts.len() > 127 || wire_len > 255 {
             return None;
         }
         let label = payload[pos];
-        if label == 0 {
-            break;
+        if label & 0xC0 == 0xC0 {
+            if pos + 1 >= payload.len() || jumps >= visited.len() {
+                return None;
+            }
+            let target = (((label & 0x3f) as usize) << 8) | payload[pos + 1] as usize;
+            if target >= payload.len() || visited[..jumps].contains(&target) {
+                return None;
+            }
+            visited[jumps] = target;
+            jumps += 1;
+            pos = target;
+            continue;
         }
         if label & 0xC0 != 0 || pos + 1 + label as usize > payload.len() {
             return None;
         }
+        if label == 0 {
+            break;
+        }
         pos += 1;
         let chunk = String::from_utf8_lossy(&payload[pos..pos + label as usize]).to_string();
+        wire_len += 1 + label as usize;
         parts.push(chunk);
         pos += label as usize;
     }
@@ -913,6 +1017,64 @@ pub fn parse_query_name(payload: &[u8]) -> Option<String> {
         return None;
     }
     Some(parts.join("."))
+}
+
+struct SocketEndpoints {
+    local_ip: String,
+    local_port: u16,
+    remote_ip: String,
+    remote_port: u16,
+    is_v6: bool,
+}
+
+/// Resolve both endpoints of a socket through `/proc/<pid>/fd/<fd>` and the
+/// matching inode row in `/proc/<pid>/net/{tcp,tcp6}`. This covers connected
+/// UDP sockets and `accept(..., NULL, NULL)`, where no user `sockaddr` was
+/// captured in the kernel.
+fn resolve_socket_endpoints(pid: u32, fd: i32) -> Option<SocketEndpoints> {
+    if fd < 0 {
+        return None;
+    }
+    let inode = socket_inode(pid, fd)?;
+    for (is_v6, table) in [
+        (false, "tcp"),
+        (true, "tcp6"),
+        (false, "udp"),
+        (true, "udp6"),
+    ] {
+        let path = format!("/proc/{pid}/net/{table}");
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        for line in content.lines().skip(1) {
+            let Some(entry) = parse_proc_net_line(line, is_v6) else {
+                continue;
+            };
+            if entry.inode == inode {
+                return Some(SocketEndpoints {
+                    local_ip: format_proc_addr(&entry.local_addr, is_v6),
+                    local_port: entry.local_port,
+                    remote_ip: format_proc_addr(&entry.remote_addr, is_v6),
+                    remote_port: entry.remote_port,
+                    is_v6,
+                });
+            }
+        }
+    }
+    None
+}
+
+fn socket_remote_port(pid: u32, fd: i32) -> Option<u16> {
+    resolve_socket_endpoints(pid, fd).map(|endpoints| endpoints.remote_port)
+}
+
+fn socket_inode(pid: u32, fd: i32) -> Option<u64> {
+    let link = fs::read_link(format!("/proc/{pid}/fd/{fd}")).ok()?;
+    let link = link.to_string_lossy();
+    link.strip_prefix("socket:[")?
+        .strip_suffix(']')?
+        .parse()
+        .ok()
 }
 
 fn resolve_target_path(pid: u32, dirfd: i32, raw: &str) -> String {
@@ -1009,6 +1171,7 @@ struct ProcNetLine {
     remote_addr: [u8; 16],
     remote_port: u16,
     state: u8,
+    inode: u64,
 }
 
 fn parse_proc_net_line(line: &str, is_v6: bool) -> Option<ProcNetLine> {
@@ -1020,12 +1183,15 @@ fn parse_proc_net_line(line: &str, is_v6: bool) -> Option<ProcNetLine> {
     let (local_addr, local_port) = parse_proc_endpoint(local, is_v6)?;
     let (remote_addr, remote_port) = parse_proc_endpoint(remote, is_v6)?;
     let state = u8::from_str_radix(st, 16).ok()?;
+    // tx_queue:rx_queue, tr:tm->when, retrnsmt, uid, timeout, inode.
+    let inode = fields.nth(5)?.parse().ok()?;
     Some(ProcNetLine {
         local_addr,
         local_port,
         remote_addr,
         remote_port,
         state,
+        inode,
     })
 }
 
@@ -1264,8 +1430,13 @@ fn resolve_target_or_fd(pid: u32, dirfd: i32, raw: &str, fd: i32) -> String {
 mod tests {
     use super::*;
     use crate::ebpf_common::{
-        ARG0_LEN, ARG1_LEN, ARG2_LEN, EVENT_EXEC, EVENT_NET, ExecEvent, IMAGE_LEN, NetEvent,
+        ARG0_LEN, ARG1_LEN, ARG2_LEN, DnsResponseEvent, EVENT_DNS_RESPONSE, EVENT_EXEC,
+        EVENT_FILE_CHANGE, EVENT_FORK, EVENT_NET, ExecEvent, ExitEvent, FileChangeEvent, IMAGE_LEN,
+        NetEvent,
     };
+    use std::net::{TcpListener, TcpStream, UdpSocket};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
 
     const FAKE_PID: u32 = u32::MAX;
 
@@ -1294,11 +1465,13 @@ mod tests {
             pid: FAKE_PID,
             uid: 0,
             gid: 0,
+            fd: -1,
             family,
             _pad0: 0,
             port_be,
             initiated: 1,
             _pad1: 0,
+            _pad2: 0,
             addr,
             comm: *b"curl\0\0\0\0\0\0\0\0\0\0\0\0",
         }
@@ -1354,6 +1527,217 @@ mod tests {
         );
         assert_eq!(event.event_json["Event"]["EventData"]["Protocol"], "tcp");
         assert_eq!(event.event_json["Event"]["EventData"]["Initiated"], "true");
+    }
+
+    #[test]
+    fn exec_event_falls_back_to_argv0_when_image_is_empty() {
+        let mut ev = sample_exec(FAKE_PID);
+        ev.image = [0; IMAGE_LEN];
+        let mut b = EventBuilder::new();
+        let event = b.exec_event(&ev);
+        assert_eq!(
+            event.event_json["Event"]["EventData"]["Image"],
+            "/usr/bin/id"
+        );
+    }
+
+    #[test]
+    fn fork_lineage_resolves_parent_and_is_cleaned_on_exit() {
+        let mut b = EventBuilder::new();
+        let parent_pid = FAKE_PID - 2;
+        let child_pid = FAKE_PID - 1;
+        let parent = b.exec_event(&sample_exec(parent_pid));
+        assert_eq!(
+            parent.event_json["Event"]["EventData"]["Image"],
+            "/usr/bin/id"
+        );
+
+        b.fork_event(&ForkEvent {
+            kind: EVENT_FORK,
+            parent_tgid: parent_pid,
+            child_pid,
+            _pad0: 0,
+        });
+        assert_eq!(b.fork_parents.get(&child_pid), Some(&parent_pid));
+
+        let child = b.exec_event(&sample_exec(child_pid));
+        assert_eq!(
+            child.event_json["Event"]["EventData"]["ParentProcessId"],
+            parent_pid.to_string()
+        );
+        assert_eq!(
+            child.event_json["Event"]["EventData"]["ParentImage"],
+            "/usr/bin/id"
+        );
+        assert!(!b.fork_parents.contains_key(&child_pid));
+
+        b.fork_event(&ForkEvent {
+            kind: EVENT_FORK,
+            parent_tgid: parent_pid,
+            child_pid,
+            _pad0: 0,
+        });
+        assert!(
+            b.exit_event(&ExitEvent {
+                kind: 2,
+                pid: parent_pid,
+                tid: child_pid,
+                _pad0: 0,
+            })
+            .is_none()
+        );
+        assert!(!b.fork_parents.contains_key(&child_pid));
+    }
+
+    #[test]
+    fn fork_lineage_cache_is_bounded() {
+        let mut b = EventBuilder::new();
+        for pid in 0..(FORK_CACHE_CAP as u32 + 16) {
+            b.fork_event(&ForkEvent {
+                kind: EVENT_FORK,
+                parent_tgid: 1,
+                child_pid: pid,
+                _pad0: 0,
+            });
+        }
+        assert_eq!(b.fork_parents.len(), FORK_CACHE_CAP);
+    }
+
+    #[test]
+    fn file_change_event_keeps_regular_files_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("target");
+        let file = fs::File::create(&path).unwrap();
+        let mut b = EventBuilder::new();
+        let event = b
+            .file_change_event(&FileChangeEvent {
+                kind: EVENT_FILE_CHANGE,
+                pid: std::process::id(),
+                uid: 0,
+                gid: 0,
+                syscall: WRITE_WRITE,
+                fd: file.as_raw_fd(),
+                bytes_written: 1,
+                comm: [0; 16],
+            })
+            .expect("regular file write must be emitted");
+        assert_eq!(
+            event.event_json["Event"]["EventData"]["TargetFilename"],
+            path.to_string_lossy().as_ref()
+        );
+
+        let (socket, _peer) = UnixStream::pair().unwrap();
+        assert!(
+            b.file_change_event(&FileChangeEvent {
+                kind: EVENT_FILE_CHANGE,
+                pid: std::process::id(),
+                uid: 0,
+                gid: 0,
+                syscall: WRITE_WRITE,
+                fd: socket.as_raw_fd(),
+                bytes_written: 1,
+                comm: [0; 16],
+            })
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn accepted_socket_without_sockaddr_resolves_both_endpoints() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let listen_port = listener.local_addr().unwrap().port();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let client_port = client.local_addr().unwrap().port();
+        let (accepted, _) = listener.accept().unwrap();
+
+        let mut b = EventBuilder::new();
+        let event = b.net_event(&NetEvent {
+            kind: EVENT_NET,
+            pid: std::process::id(),
+            uid: 0,
+            gid: 0,
+            fd: accepted.as_raw_fd(),
+            family: 0,
+            _pad0: 0,
+            port_be: 0,
+            initiated: 0,
+            _pad1: 0,
+            _pad2: 0,
+            addr: [0; 16],
+            comm: [0; 16],
+        });
+        assert_eq!(event.event_json["Event"]["EventData"]["Initiated"], "false");
+        assert_eq!(
+            event.event_json["Event"]["EventData"]["SourcePort"],
+            client_port.to_string()
+        );
+        assert_eq!(
+            event.event_json["Event"]["EventData"]["DestinationPort"],
+            listen_port.to_string()
+        );
+    }
+
+    #[test]
+    fn dns_response_reports_rcode_in_query_status() {
+        let mut payload = [0u8; 256];
+        payload[2] = 0x81;
+        payload[3] = 0x83; // response, NXDOMAIN (RCODE 3)
+        payload[5] = 1; // QDCOUNT
+        payload[12..17].copy_from_slice(b"\x03www\x00");
+        payload[17..21].copy_from_slice(&[0, 1, 0, 1]);
+
+        let mut b = EventBuilder::new();
+        let event = b
+            .dns_response_event(&DnsResponseEvent {
+                kind: EVENT_DNS_RESPONSE,
+                pid: FAKE_PID,
+                uid: 0,
+                gid: 0,
+                payload_len: 21,
+                fd: -1,
+                source_port_be: 53u16.to_be(),
+                source_valid: 1,
+                _pad0: 0,
+                _pad1: 0,
+                comm: [0; 16],
+                payload,
+            })
+            .expect("valid DNS response");
+        assert_eq!(event.event_json["Event"]["EventData"]["QueryName"], "www");
+        assert_eq!(event.event_json["Event"]["EventData"]["QueryStatus"], "3");
+    }
+
+    #[test]
+    fn dns_response_without_source_address_rejects_non_dns_socket() {
+        let receiver = UdpSocket::bind(("127.0.0.1", 0)).unwrap();
+        let sender = UdpSocket::bind(("127.0.0.1", 0)).unwrap();
+        sender.connect(receiver.local_addr().unwrap()).unwrap();
+
+        let mut payload = [0u8; 256];
+        payload[2] = 0x81;
+        payload[3] = 0x80;
+        payload[5] = 1;
+        payload[12..17].copy_from_slice(b"\x03www\x00");
+        payload[17..21].copy_from_slice(&[0, 1, 0, 1]);
+
+        let mut b = EventBuilder::new();
+        assert!(
+            b.dns_response_event(&DnsResponseEvent {
+                kind: EVENT_DNS_RESPONSE,
+                pid: std::process::id(),
+                uid: 0,
+                gid: 0,
+                payload_len: 21,
+                fd: sender.as_raw_fd(),
+                source_port_be: 0,
+                source_valid: 0,
+                _pad0: 0,
+                _pad1: 0,
+                comm: [0; 16],
+                payload,
+            })
+            .is_none()
+        );
     }
 
     #[test]

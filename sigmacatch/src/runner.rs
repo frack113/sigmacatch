@@ -201,10 +201,10 @@ pub async fn run_with_cli<C: CollectorKind>(
     };
 
     // Ensure the rule filter targets the product this collector can actually
-    // match (e.g. linux collectors need linux rules). An empty/default config
-    // otherwise inherits the struct default (windows) and would exclude the
-    // relevant rules.
-    config.filter.product = kind.rule_product().to_string();
+    // match (e.g. linux collectors need linux rules). An explicit
+    // `filter.product` in config.yaml wins: the collector product is only the
+    // default when the user did not choose one.
+    config.apply_collector_product_default(kind.rule_product());
 
     if cli.dry_run {
         // Before logger init: dry-run must leave zero on-disk state, not even logs/.

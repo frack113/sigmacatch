@@ -13,10 +13,10 @@ use crate::ebpf_common::{
     EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_CHANGE, EVENT_FILE_CHMOD,
     EVENT_FILE_CHOWN, EVENT_FILE_DELETE, EVENT_FILE_RENAME, EVENT_FILE_TRUNCATE, EVENT_FORK,
     EVENT_LISTEN, EVENT_MODULE_UNLOAD, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS,
-    EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, FileChangeEvent, FileChmodEvent, FileChownEvent,
-    FileCreateEvent, FileDeleteEvent, FileRenameEvent, FileTruncateEvent, ForkEvent, ListenEvent,
-    ModuleUnloadEvent, NetEvent, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent,
-    RawAccessEvent,
+    EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, EVENTS_ABI_MAP, FileChangeEvent, FileChmodEvent,
+    FileChownEvent, FileCreateEvent, FileDeleteEvent, FileRenameEvent, FileTruncateEvent,
+    ForkEvent, ListenEvent, ModuleUnloadEvent, NetEvent, PipeCreateEvent, ProcessAccessEvent,
+    ProcessTamperingEvent, RawAccessEvent,
 };
 use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::{Context, bail};
@@ -357,6 +357,12 @@ impl EventCollector {
         if ebpf.map("EVENTS").is_none() {
             bail!("probe object has no EVENTS ring buffer (probes not implemented yet)");
         }
+        if ebpf.map(EVENTS_ABI_MAP).is_none() {
+            bail!(
+                "probe object ABI mismatch: missing {EVENTS_ABI_MAP}; rebuild it from the current \
+                 source or unset SIGMACATCH_EBPF_OBJECT"
+            );
+        }
 
         // Attachments stay live for the process lifetime; aya 0.13 tracks
         // them inside each program (ids only needed to detach explicitly).
@@ -436,7 +442,7 @@ impl EventProducer for EventCollector {
                     },
                     EVENT_EXIT => match ExitEvent::from_bytes(bytes) {
                         Some(ev) => {
-                            if let Some(event) = self.builder.exit_event(ev.pid)
+                            if let Some(event) = self.builder.exit_event(&ev)
                                 && tx.send(event).await.is_err()
                             {
                                 return Ok(());
@@ -649,8 +655,9 @@ impl EventProducer for EventCollector {
                     },
                     EVENT_FILE_CHANGE => match FileChangeEvent::from_bytes(bytes) {
                         Some(ev) => {
-                            let event = self.builder.file_change_event(&ev);
-                            if tx.send(event).await.is_err() {
+                            if let Some(event) = self.builder.file_change_event(&ev)
+                                && tx.send(event).await.is_err()
+                            {
                                 return Ok(());
                             }
                         }
@@ -700,6 +707,19 @@ mod tests {
 
     fn status(uid: u32, caps: u64) -> String {
         format!("Uid:\t{uid}\t{uid}\t{uid}\t{uid}\nCapEff:\t{caps:016x}\n")
+    }
+
+    #[test]
+    fn embedded_probe_object_has_the_current_abi_marker() {
+        if PROBE_OBJECT.is_empty() {
+            return; // local build without nightly: the loader rejects this object
+        }
+        assert!(
+            PROBE_OBJECT
+                .windows(EVENTS_ABI_MAP.len())
+                .any(|window| window == EVENTS_ABI_MAP.as_bytes()),
+            "embedded probe object is missing the {EVENTS_ABI_MAP} ABI marker"
+        );
     }
 
     #[test]

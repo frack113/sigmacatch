@@ -20,10 +20,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - eBPF input: inbound DNS responses on UDP port 53 (`recvfrom`) are captured as sigmacatch extension EID 508 (`dns_response`, queried name only).
 - eBPF input: kernel module unload (`delete_module`) is captured as sigmacatch extension EID 507 (`module_unload`).
 - eBPF taxonomy: each event now carries its Sysmon event ID (`sysmon_eid`).
+- eBPF input: accepted sockets keep their descriptor so userspace can resolve both endpoints through `/proc` when `accept`/`accept4` was called with `NULL` sockaddr.
+- eBPF input: DNS responses received with `src_addr=NULL` are emitted and validated against the connected socket's peer port in userspace.
+- eBPF input: the probe object carries an ABI map (`EVENTS_ABI_V2`); a prebuilt `SIGMACATCH_EBPF_OBJECT` without it is rejected instead of decoding records with the wrong layout.
 
 ### Removed
 
 - eBPF input: the `pipe_connect` (EID 18) capability is removed — it was declared but never emitted by the probe. The ring buffer tag is reserved; generic Sysmon EID 17/18 handling for non-eBPF sources is kept.
+
+### Fixed
+
+- Runner: an explicit `filter.product` in `config.yaml` is preserved; the collector product is only applied when the key is absent.
+- eBPF input: fork lineage is cleaned on every task exit, bounded at 16 384 entries, and the fallback parent is keyed by the parent tgid rather than a thread id.
+- eBPF input: write events are emitted only when the descriptor resolves to a regular file; socket, pipe and terminal writes no longer produce EID 2.
+- eBPF input: every new event field (`Syscall`, `Result`, `Mode`, `Owner`, `Group`, `Length`, `ModuleName`, `BytesWritten`, `TargetUid*`, `GroupCount`, `Option`, `Arg2-4`, session/cgroup/namespace fields) is mapped by the Linux field pipeline.
+- eBPF input: `execveat(..., "", ..., AT_EMPTY_PATH)` falls back to `/proc/<pid>/exe` and then `argv[0]` instead of emitting an empty `Image`.
+- eBPF input: `dns_response` reports the DNS RCODE in `QueryStatus` instead of always claiming success.
+- Regression data: eBPF JSON output is a `type: json` document for one event and `type: ndjson` for several; auditd alerts stay `.log` even when the Linux collector also has eBPF active, and `regression.add_json_output` does not duplicate the eBPF data file. `regressiondata-check` stream-parses both JSON layouts and re-injects the correct Linux logsource instead of the Windows default.
 
 ### Changed
 

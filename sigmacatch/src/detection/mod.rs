@@ -837,6 +837,89 @@ detection:
 "#;
 
     #[test]
+    fn test_linux_field_pipeline_maps_new_ebpf_fields() {
+        for field in [
+            "SessionId",
+            "TtyNr",
+            "Cgroup",
+            "NamespacePid",
+            "NamespaceMnt",
+            "NamespaceNet",
+            "NamespaceUser",
+            "NamespaceUts",
+            "NamespaceIpc",
+            "NamespaceCgroup",
+            "Syscall",
+            "Result",
+            "Mode",
+            "Owner",
+            "Group",
+            "Length",
+            "ModuleName",
+            "BytesWritten",
+            "TargetUid0",
+            "TargetUid1",
+            "TargetUid2",
+            "GroupCount",
+            "Option",
+            "Arg2",
+            "Arg3",
+            "Arg4",
+        ] {
+            assert!(
+                LNX_FIELD_PIPELINE.contains(&format!("      {field}: Event.EventData.{field}")),
+                "missing Linux field mapping for {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_linux_extension_rule_matches_mapped_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let sigma_dir = dir.path().join("sigma");
+        let rules_dir = sigma_dir.join("rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        fs::write(
+            rules_dir.join("file_chmod.yml"),
+            r#"title: File mode changed
+id: 33333333-3333-3333-3333-333333333333
+status: test
+author: Test Author
+logsource:
+  product: linux
+  category: file_chmod
+detection:
+  selection:
+    Mode: "0o755"
+  condition: selection
+"#,
+        )
+        .unwrap();
+
+        let rules = SigmahqRules::new_from_path(&sigma_dir).unwrap();
+        let mut engine = DetectionEngine::new(&rules).unwrap();
+        let json = serde_json::json!({
+            "Event": {
+                "System": {
+                    "Provider": { "#attributes": { "Name": "Linux-Sysmon" } },
+                    "EventID": 504,
+                    "Channel": "Linux-Sysmon/Operational"
+                },
+                "EventData": {
+                    "Image": "/usr/bin/chmod",
+                    "TargetFilename": "/tmp/file",
+                    "Mode": "0o755"
+                }
+            }
+        });
+        let mut event = Event::new(json.clone(), json, Vec::new());
+        event.inject_logsource_fields_for("linux", None);
+        engine.put_events(vec![event]);
+        engine.process_events();
+        assert_eq!(engine.get_alerts().len(), 1);
+    }
+
+    #[test]
     fn test_engine_with_rule_index() {
         let dir = tempfile::tempdir().unwrap();
         let sigma_dir = dir.path().join("sigma");

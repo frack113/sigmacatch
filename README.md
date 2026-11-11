@@ -11,9 +11,9 @@ Sigmacatch captures real OS events, matches them against [SigmaHQ](https://githu
 |---|---|---|---|
 | Windows | Windows Event Log API (`winevt`) | yes | working |
 | any | one-shot EVTX files (`evtx`, pure Rust) | no | working |
-| Linux | auditd + builtin syslog (`auditd`, `builtin`, no root needed) | no | need user return |
+| Linux | auditd + builtin syslog (`auditd`, `builtin`, no root needed) | no | working (VM-validated) |
 | Linux | legacy Sysmon-for-Linux XML tail (`sysmon`) | no | need user return |
-| Linux | native eBPF probes — process/network/file/DNS (`ebpf`) | no | need user return |
+| Linux | native eBPF probes — process/network/file/DNS (`ebpf`) | no | working (VM-validated) |
 
 One binary named `sigmacatch` (plus the standalone `regressiondata-check` validator);
 the features you compile in determine which inputs run. At runtime `--evtx <PATH>`
@@ -23,8 +23,8 @@ Linux runs every compiled, available input in parallel.
 ## Requirements
 
 - **Windows** with [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) installed — required for rich events (ParentImage, CommandLine, hashes, etc.)
-- **Linux** with `auditd` running or a syslog source (`/var/log/messages` or `/var/log/syslog`, optionally authpriv/cron files) — `auditd`/`builtin` features; [Sysmon for Linux](https://github.com/SysmonForLinux/SysmonForLinux) optional via `sysmon`; native eBPF probes via `ebpf` (root or CAP_BPF+CAP_PERFMON at runtime, kernel 5.14+/BTF, nightly build toolchain)
-- Rust 2024 edition (1.95+ — MSRV imposed by rsigma 0.22)
+- **Linux** with `auditd` running or a syslog source (`/var/log/messages` or `/var/log/syslog`, optionally authpriv/cron files) — `auditd`/`builtin` features; [Sysmon for Linux](https://github.com/SysmonForLinux/SysmonForLinux) optional via `sysmon`; native eBPF probes via `ebpf` (root or CAP_BPF+CAP_PERFMON at runtime, kernel 5.14+/BTF, nightly build toolchain). eBPF regression data is JSON for one event and NDJSON for several.
+- Rust 2024 edition (1.96+ — MSRV imposed by rsigma 0.26)
 - Admin rights for the `Security` and `System` Event Log channels (Windows)
 
 ## Quick start
@@ -42,7 +42,9 @@ cargo build --release -p sigmacatch --no-default-features --features evtx
 
 On first run a `config.yaml` is created with placeholder defaults, and the run stops (`exit 1`)
 until you edit it — `author: sigmacatch` (placeholder, rejected by validation) and an empty
-`email` both bail. The full reference (every field, defaults, and validation) is in the
+`email` both bail. On Linux, also set `filter.product: linux` or omit the key: the collector
+uses `linux` as its default, but an explicit `product: windows` in the generated file is kept.
+The full reference (every field, defaults, and validation) is in the
 [Configuration reference](docs/en/config.md).
 
 **Contrib is opt-in** (`git.contrib: true` or `--contrib`): pushes regression commits to your fork over SSH. By default (`false`) commits stay local. Authentication is SSH-only — the SSH agent, or `git.ssh_key_path`; there is no GitHub token. Clone/fetch use `git.sigma_repo_url` (default `git@github.com:SigmaHQ/sigma.git`), push and pending-branch fetch use `git.fork_repo_url` (default `git@github.com:<author>/sigma.git`). **`offline: true` neutralizes `contrib`** (forced to `false`): no push in offline mode.
@@ -55,7 +57,8 @@ until you edit it — `author: sigmacatch` (placeholder, rejected by validation)
 ## CLI
 
 Flags, the `check-filter`/`list-rules` diagnostics subcommands, and the standalone
-`regressiondata-check` validator are documented in [docs/en/cli.md](docs/en/cli.md).
+`regressiondata-check` validator (EVTX, log, JSON and NDJSON replay) are documented in
+[docs/en/cli.md](docs/en/cli.md).
 
 ## Documentation
 
@@ -71,6 +74,7 @@ A single cargo workspace package (`sigmacatch`), plus a nested nightly-only eBPF
 - [grit-lib](https://github.com/gitbutlerapp/grit) — pure Rust git, no CLI needed
 - [tokio](https://crates.io/crates/tokio) — async runtime
 - [windows](https://crates.io/crates/windows) — Windows Event Log API, cfg-gated
+- [aya](https://crates.io/crates/aya) — eBPF object loading and ring-buffer dispatch
 - [linux-audit-parser](https://crates.io/crates/linux-audit-parser) — auditd log parsing
 - [regex](https://crates.io/crates/regex) — RFC3164 syslog line parsing (builtin collector)
 - [serde](https://crates.io/crates/serde) / [serde_json](https://crates.io/crates/serde_json) / [serde_yaml](https://crates.io/crates/serde_yaml) — serialization
