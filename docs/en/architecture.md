@@ -36,7 +36,7 @@ sigmacatch/
 │       │   ├── tail.rs           #   Shared tail driver (LineHandler trait + rotation detection)
 │       │   ├── sysmon_parse.rs   #   Sysmon XML parsing (feature `builtin`)
 │       │   ├── ebpf.rs           #   eBPF loader + dispatch (feature `ebpf`, privileges required)
-│       │   └── ebpf_event.rs     #   eBPF → Sysmon XML synthesis + tests
+│       │   └── ebpf_event.rs     #   eBPF → nested Sysmon-shaped JSON + tests
 │       ├── bin/
 │       │   └── regressiondata-check.rs  # Standalone cross-platform binary: regression check (--json, --ignore, --fix, --path)
 │       └── tests/                  # 16 integration tests (runner, cli, collectors, e2e)
@@ -93,26 +93,33 @@ Each guarded by its source; no source available → bail:
 The `sysmon` and `ebpf` features add a dedicated collector:
 
 - **Sysmon eBPF (feature `ebpf`)** — embedded Aya probes
-  (`sigmacatch/ebpf`, nightly+bpf-linker, excluded from workspace) covering EID 1
-  process_create, EID 3 network_connect, EID 5 process_terminate, EID 11 file_create and
-  DNS extension (EID 22): events rendered as Sysmon XML identical to the syslog path then
-  injected via the same pipeline (`inject_logsource_fields_for`). Runtime requirements:
-  root or CAP_BPF+CAP_PERFMON (refuses to start otherwise — `linux.rs` bails) + kernel with
-  BTF. SHA256 hashing of images is calculated userspace with cache (path,mtime). A failed
-  probe load at runtime warns and continues **without** any sysmon source; only a build with
-  both `ebpf` and `sysmon` features falls back to the Sysmon-for-Linux syslog tail.
+  (`sigmacatch/ebpf`, nightly+bpf-linker, excluded from workspace). Coverage includes
+  process creation/termination (EID 1/5), writes (EID 2, regular files only), network
+  connect/accept/listen (EID 3/500), image load (EID 6), process access (EID 10), file
+  create/delete (EID 11/23), pipe creation (EID 17), DNS query/response (EID 22/508),
+  process tampering (EID 25), and extensions 501-507 for credential/capability changes,
+  rename/chmod/chown/truncate and module unload. Events are rendered as nested
+  Sysmon-shaped JSON, mapped through the Linux field pipeline and injected via the same
+  engine. Fork lineage, `accept(NULL)`, `recvfrom(NULL)` and `execveat(AT_EMPTY_PATH)` are
+  handled explicitly. Runtime requirements: root or CAP_BPF+CAP_PERFMON (refuses to start
+  otherwise — `linux.rs` bails) + kernel with BTF. SHA256 hashing of images is calculated
+  userspace with cache (path,mtime). The probe embeds an `EVENTS_ABI_V2` marker; a prebuilt
+  `SIGMACATCH_EBPF_OBJECT` without it is rejected. A failed probe load at runtime warns and
+  continues **without** any sysmon source; only a build with both `ebpf` and `sysmon`
+  features falls back to the Sysmon-for-Linux syslog tail.
 - **Sysmon-for-Linux tail (feature `sysmon`)** — central syslog
   lines tagged `sysmon` whose body is winevt XML (`parse_winevt_xml`/`_raw`) → logsource
   `product:linux, service:sysmon` via channel `Linux-Sysmon/Operational`. Read-only, no
   Aya dependency.
 
-Regression format: `DataFormat::Log`.
-
 Each input defines its own `CollectorKind`
 (`name()`/`mode()`/`channels()`/`build()`/`regression_format()`/`live_capture()`); the Linux
-inputs share a single `LinuxCollector` defined in `linux.rs`. The regression format
-comes from `regression_format()`: `DataFormat::Evtx` for the winevt/evtx inputs,
-`DataFormat::Log` for the Linux inputs. `name()` is `sigmacatch` for every input.
+inputs share a single `LinuxCollector` defined in `linux.rs`. The regression format comes
+from `regression_format()`: `DataFormat::Evtx` for the winevt/evtx inputs,
+`DataFormat::Log` for Linux auditd/syslog/Sysmon-tail data, and `DataFormat::Json` for the
+eBPF collector. The runner refines the format per alert, so auditd events keep `.log` even
+when eBPF is active in the same binary. JSON data is a single pretty document (`type: json`)
+or NDJSON for several records (`type: ndjson`). `name()` is `sigmacatch` for every input.
 
 `live_capture()` is an intrinsic property of the collector, not a CLI flag: it defaults to
 `true` and is overridden only by the `evtx` input (`false`). Continuous collectors run an
@@ -248,7 +255,8 @@ of what was not yet committed is skipped.
   one batch (`engine.reload_rules`). Rules whose committed data is invalid (broken EVTX / empty text)
   are excluded from the skip set → regenerated.
 - **Output always in the sigma repo**: `<sigma_repo_path>/regression_data/<rule_rel_path>/`
-  (`info.yml` + data file `.evtx`/`.log`, optional `.json`), committed to the fork if
+  (`info.yml` + data file `.evtx`/`.log`/`.json`; `.json` is optional only for EVTX/log data),
+  committed to the fork if
   `contrib` (local commits otherwise). The rule's repo path is mirrored relative to the
   configured `sigma_repo_path` (absolute or relative) — the per-rule commit also carries the
   rule yaml updated with `regression_tests_path: regression_data/<rule_rel_path>/info.yml`.

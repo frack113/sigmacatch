@@ -42,6 +42,13 @@ pub trait CollectorKind {
         DataFormat::Evtx
     }
 
+    /// SigmaHQ `product` of the rules this collector can match. The runner
+    /// uses it as the rule filter product so platform-specific collectors load
+    /// the correct rule set by default.
+    fn rule_product(&self) -> &'static str {
+        "windows"
+    }
+
     /// Whether this collector emits live (streaming) events.
     ///
     /// When `true` (the default), the drive loop uses a 30-second generation
@@ -192,6 +199,12 @@ pub async fn run_with_cli<C: CollectorKind>(
     } else {
         Config::load_with_cli(&config_path, &cli)?
     };
+
+    // Ensure the rule filter targets the product this collector can actually
+    // match (e.g. linux collectors need linux rules). An explicit
+    // `filter.product` in config.yaml wins: the collector product is only the
+    // default when the user did not choose one.
+    config.apply_collector_product_default(kind.rule_product());
 
     if cli.dry_run {
         // Before logger init: dry-run must leave zero on-disk state, not even logs/.

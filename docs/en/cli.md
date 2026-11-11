@@ -21,9 +21,10 @@ regressiondata-check [--json] [--ignore] [--fix] [--path <DIR>]
 - `--help`, `-h` — print usage and exit.
 
 **Purpose:** deep validation of all regression data in the sigma root's
-`regression_data/` (`./sigma/regression_data` by default). Entries are
-parsed according to their `LogType`: `.evtx` via `evtx_reader::parse_evtx_bytes`,
-`.log` via the auditd parser, straight JSON lines. The `Raw` logtype is skipped.
+`regression_data/` (`./sigma/regression_data` by default). Entries are parsed according to
+their `LogType`: `.evtx` via `evtx_reader::parse_evtx_bytes`, `.log` via the auditd parser,
+JSON/NDJSON via a stream deserializer. JSON events re-inject the Linux logsource
+(`auditd` or `sysmon`) instead of the Windows default. The `Raw` logtype is skipped.
 
 ### Pipeline
 
@@ -40,9 +41,9 @@ parsed according to their `LogType`: `.evtx` via `evtx_reader::parse_evtx_bytes`
    - Validates the `info.yml`: non-empty `rule_metadata` (always a failure), SigmaHQ
      4-space indentation, non-empty `regression_tests_info` (empty → failure, or ignored
      with `--ignore`)
-   - Validates the auxiliary `.json` if present: valid **JSON or JSONL** (one object per
+   - Validates the auxiliary `.json` if present: valid **JSON or NDJSON** (one object per
      line), exactly one trailing newline
-   - Loads the raw data according to the `logtype` (`.evtx`, `.log`, JSON lines), parses events
+   - Loads the raw data according to the `logtype` (`.evtx`, `.log`, JSON/NDJSON), parses events
    - Evaluates events against the rule
    - Validates: the rule MUST match (positive detection test)
    - When a `.json` auxiliary is present, validates the declared `match_count` against the
@@ -195,7 +196,8 @@ feature has been removed):
 | `sigmacatch` (any platform) | `check-filter`, `list-rules` |
 
 An unknown or absent subcommand → `sigmacatch` starts its normal collection loop (or, with
-`--evtx`, the one-shot EVTX pass). The `filter.product` value is taken from the config.
+`--evtx`, the one-shot EVTX pass). An explicit `filter.product` from the config wins; when
+the key is absent, the collector chooses `windows` or `linux`.
 
 > **Common prerequisite:** every subcommand loads `config.yaml` through `Config::load`,
 > which runs **full** validation (including git.author/email/SSH key) — not just the

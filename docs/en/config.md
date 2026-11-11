@@ -27,14 +27,14 @@ git:
 log:
   level_file: debug             # debug | info | warn | error
 filter:
-  product: windows              # windows | linux | macos (empty = no filter)
+  product: windows              # explicit choice; omit for the collector default (empty = no filter)
   # min_status: stable          # keep only rules with status >= this (values below)
   # min_level: critical         # keep only rules with level >= this (values below)
   author: ""                    # keep only rules authored by this author (empty = no filter)
   max_rule_size: 1048576        # bytes; range 1024..10MB
 regression:
   max_failed_cycles: 3          # block a rule after N consecutive failure cycles
-  add_json_output: false        # also write the auxiliary <rule_id>.json alongside the data file
+  add_json_output: false        # also write an auxiliary <rule_id>.json for EVTX/log data
 engine:
   cross_rule_ac: false          # rsigma-eval cross-rule Aho-Corasick prefilter (off: slower on the SigmaHQ ruleset)
   bloom_prefilter: false        # rsigma-eval bloom prefilter for substring matchers (off: slower on the SigmaHQ ruleset)
@@ -73,12 +73,16 @@ All filters are optional; unset means no filtering.
 
 | Key | Default | Description |
 |---|---|---|
-| `product` | `windows` | SigmaHQ product to keep: `windows`, `linux`, or `macos` (reserved, no collector today). Empty = no product filter. |
+| `product` | collector product | SigmaHQ product to keep: `windows`, `linux`, or `macos` (reserved, no collector today). An explicit value always wins; when the key is absent, the collector chooses `windows` or `linux`. Empty = no product filter. |
 | `min_status` | *(unset)* | Keep only rules whose status ranks at or above this: `unsupported` < `deprecated` < `experimental` < `test` < `stable`. |
 | `min_level` | *(unset)* | Keep only rules whose level ranks at or above this: `informational` < `low` < `medium` < `high` < `critical`. |
 | `author` | *(unset)* | Keep only rules authored by this author (normalized). |
 | `max_rule_size` | `1048576` | Reject rules whose YAML exceeds this many bytes. Range 1024..10485760 (10MB). |
 
+> On Linux, set `product: linux` or omit the key so the collector default applies. A
+> generated `config.yaml` containing `product: windows` is an explicit value and is not
+> overridden automatically.
+>
 > Setting `min_status` to `stable` or `min_level` to `high`/`critical` is very
 > restrictive and logs a warning at startup.
 
@@ -87,7 +91,7 @@ All filters are optional; unset means no filtering.
 | Key | Default | Description |
 |---|---|---|
 | `max_failed_cycles` | `3` | After N consecutive failed capture cycles a rule is blocked (logged, removed from the skip set, no more re-capture). Min 1. |
-| `add_json_output` | `false` | Also write the auxiliary `<rule_id>.json` (raw event) next to the data file. See [Output Format](output-format.md). |
+| `add_json_output` | `false` | For EVTX/log data, also write the auxiliary `<rule_id>.json` (raw event). eBPF already writes JSON/NDJSON as its primary data file. See [Output Format](output-format.md). |
 
 ## engine
 

@@ -33,8 +33,10 @@ cargo build --release -p sigmacatch --no-default-features --features auditd,buil
 cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,sysmon
 
 # + probes eBPF natifs (root/CAP_BPF+CAP_PERFMON requis au runtime, kernel 5.14+/BTF,
-#   toolchain nightly + bpf-linker pour compiler les probes — sinon placeholder replié sur
-#   le tail en local ; sur CI, le placeholder vide est une erreur de build, jamais un repli)
+#   toolchain nightly + bpf-linker pour compiler les probes). Sans cette toolchain, un build
+#   local embarque un placeholder vide que le loader rejette ; un build sans `sysmon`
+#   continue avec auditd/syslog mais sans source sysmon. Sur CI, un placeholder vide est une
+#   erreur de build, jamais un repli.
 cargo build --release -p sigmacatch --no-default-features --features auditd,builtin,ebpf
 
 # Lint (variantes séparées — sysmon et ebpf ne sont jamais fusionnés en un seul build)
@@ -45,6 +47,10 @@ cargo clippy -p sigmacatch --no-default-features --features auditd,builtin,ebpf 
 Tournent en parallèle : le collecteur **auditd** (si `/var/log/audit/audit.log` existe) et les
 collecteurs **syslog builtin** (central, authpriv, cron — chaque fichier existant).
 Spécification complète des collecteurs et des chemins : [architecture.md](architecture.md).
+
+`SIGMACATCH_EBPF_OBJECT` peut pointer vers un objet probe précompilé. Il doit être construit
+avec le format wire courant et exposer la carte `EVENTS_ABI_V2` ; un objet plus ancien est
+rejeté au chargement au lieu de décoder des enregistrements avec une disposition obsolète.
 
 La feature `winevt` (défaut) est compilée sur Linux comme stubs no-op : commuter vers un
 build Linux se fait toujours avec `--no-default-features`.

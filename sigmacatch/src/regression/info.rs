@@ -49,7 +49,7 @@ pub struct RuleMetadata {
 pub struct RegressionTestInfo {
     /// Test display name.
     pub name: String,
-    /// Data format (`evtx`, `log`, `json`).
+    /// Data format (`evtx`, `log`, `json`, `ndjson`).
     #[serde(rename = "type")]
     pub test_type: String,
     /// Event provider (e.g. `Microsoft-Windows-Sysmon`).
@@ -72,7 +72,7 @@ pub struct RegressionTestInfo {
 /// Configuration of the positive-detection test entry written to `info.yml`.
 #[derive(Debug, Clone)]
 pub struct TestConfig {
-    /// Data format (`evtx`, `log`, `json`).
+    /// Data format (`evtx`, `log`, `json`, `ndjson`).
     pub test_type: String,
     /// Event provider name.
     pub provider: String,

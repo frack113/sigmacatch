@@ -28,6 +28,16 @@ transformations:
       LogonGuid: Event.EventData.LogonGuid
       LogonId: Event.EventData.LogonId
       TerminalSessionId: Event.EventData.TerminalSessionId
+      SessionId: Event.EventData.SessionId
+      TtyNr: Event.EventData.TtyNr
+      Cgroup: Event.EventData.Cgroup
+      NamespacePid: Event.EventData.NamespacePid
+      NamespaceMnt: Event.EventData.NamespaceMnt
+      NamespaceNet: Event.EventData.NamespaceNet
+      NamespaceUser: Event.EventData.NamespaceUser
+      NamespaceUts: Event.EventData.NamespaceUts
+      NamespaceIpc: Event.EventData.NamespaceIpc
+      NamespaceCgroup: Event.EventData.NamespaceCgroup
       IntegrityLevel: Event.EventData.IntegrityLevel
       DestinationHostname: Event.EventData.DestinationHostname
       DestinationIp: Event.EventData.DestinationIp
@@ -45,6 +55,22 @@ transformations:
       Hashes: Event.EventData.Hashes
       TargetFilename: Event.EventData.TargetFilename
       SourceFilename: Event.EventData.SourceFilename
+      Syscall: Event.EventData.Syscall
+      Result: Event.EventData.Result
+      Mode: Event.EventData.Mode
+      Owner: Event.EventData.Owner
+      Group: Event.EventData.Group
+      Length: Event.EventData.Length
+      ModuleName: Event.EventData.ModuleName
+      BytesWritten: Event.EventData.BytesWritten
+      TargetUid0: Event.EventData.TargetUid0
+      TargetUid1: Event.EventData.TargetUid1
+      TargetUid2: Event.EventData.TargetUid2
+      GroupCount: Event.EventData.GroupCount
+      Option: Event.EventData.Option
+      Arg2: Event.EventData.Arg2
+      Arg3: Event.EventData.Arg3
+      Arg4: Event.EventData.Arg4
       ImageLoaded: Event.EventData.ImageLoaded
       Signed: Event.EventData.Signed
       CreationUtcTime: Event.EventData.CreationUtcTime
@@ -175,7 +201,9 @@ transformations:
       Product: Event.EventData.Product
       Provider: Event.EventData.Provider
       SourceImage: Event.EventData.SourceImage
+      SourceProcessGUID: Event.EventData.SourceProcessGUID
       SourceProcessId: Event.EventData.SourceProcessId
+      SourceThreadId: Event.EventData.SourceThreadId
       SourceUser: Event.EventData.SourceUser
       SubjectDomainName: Event.EventData.SubjectDomainName
       SubjectLogonId: Event.EventData.SubjectLogonId
@@ -186,6 +214,7 @@ transformations:
       TargetImage: Event.EventData.TargetImage
       TargetLogonId: Event.EventData.TargetLogonId
       TargetObject: Event.EventData.TargetObject
+      TargetProcessGUID: Event.EventData.TargetProcessGUID
       TargetProcessId: Event.EventData.TargetProcessId
       TargetUserName: Event.EventData.TargetUserName
       TargetUser: Event.EventData.TargetUser

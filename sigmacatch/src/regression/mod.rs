@@ -80,6 +80,12 @@ impl RegressionEntry {
             .to_string();
         let logtype = match info.regression_tests_info.first() {
             None => LogType::Json,
+            // `ndjson`/`jsonl` are spec spellings for JSON data. The data
+            // file on disk decides how to parse it, so an old `type: ndjson`
+            // over an `.evtx` path still resolves to EVTX.
+            Some(t) if matches!(t.test_type.as_str(), "ndjson" | "jsonl") => {
+                Self::logtype_of_data_file(info_path, rule_id).unwrap_or(LogType::Json)
+            }
             Some(t) => match LogType::from_declared(t.test_type.as_str()) {
                 Some(known) => {
                     if let Some(actual) = Self::logtype_of_data_file(info_path, rule_id)
@@ -378,6 +384,7 @@ impl SigmahqRegression {
                 .map(|rel| rel.with_extension(""))
         });
 
+        let format = self.format.for_alert(alert);
         let mut reg = RegressionData::for_rule(
             &RegressionHeader::new(*rule_id, alert.rule_title.clone()),
             output_path,
@@ -388,7 +395,7 @@ impl SigmahqRegression {
                 Some(self.author.as_str())
             },
             alert.description.as_deref(),
-            self.format,
+            format,
             self.add_json_output,
         );
 
@@ -429,9 +436,9 @@ impl SigmahqRegression {
         self.retired.insert(*rule_id);
         info!("Rule {rule_id} retired from detection engine");
 
-        let ext = self.format.ext();
+        let ext = reg.format.ext();
         let mut files = Vec::new();
-        if self.add_json_output {
+        if self.add_json_output && reg.format != DataFormat::Json {
             files.push(format!("{}/{}.json", rel_dir, rule_id));
         }
         files.push(format!("{}/{}.{}", rel_dir, rule_id, ext));
@@ -479,6 +486,20 @@ impl RegressionData {
 
     fn add_alert(&mut self, alert: Alert) {
         self.alerts.push(alert);
+    }
+
+    /// Number of JSON records the primary data file will hold: one per alert,
+    /// or every grouped record when the alert carries several.
+    fn record_count(&self) -> usize {
+        self.alerts
+            .iter()
+            .map(|alert| {
+                alert
+                    .event_json_raw_all
+                    .as_ref()
+                    .map_or(1, |records| records.len())
+            })
+            .sum()
     }
 
     fn rule_dir(&self) -> Result<PathBuf> {
@@ -547,6 +568,11 @@ impl RegressionData {
             .unwrap_or("Sigma Regression Generator");
         let description = self.description.as_deref().unwrap_or("N/A");
 
+        let test_type = if self.format == DataFormat::Json && self.record_count() > 1 {
+            "ndjson"
+        } else {
+            ext
+        };
         let info = InfoYml::new(
             rule_id,
             &self.header.rule_title,
@@ -555,7 +581,7 @@ impl RegressionData {
             author,
             description,
             &TestConfig {
-                test_type: ext.to_string(),
+                test_type: test_type.to_string(),
                 provider,
             },
         );
@@ -579,7 +605,9 @@ impl RegressionData {
     ) -> Result<()> {
         std::fs::create_dir_all(rule_dir)?;
 
-        if self.add_json_output {
+        // The primary eBPF data file is already JSON/NDJSON: do not write a
+        // second auxiliary file at the same path.
+        if self.add_json_output && self.format != DataFormat::Json {
             self.write_json_output(rule_dir, rule_id, written)?;
         }
 
@@ -1300,6 +1328,68 @@ mod tests {
                 "each ndjson line must be a standalone JSON document: {line}"
             );
         }
+    }
+
+    #[test]
+    fn json_primary_data_is_json_or_ndjson_and_auditd_stays_log() {
+        // One event: a JSON document, declared `type: json`.
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("regression_data");
+        let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
+        reg.set_format(DataFormat::Json);
+        reg.set_add_json_output(true);
+        let rule_id = Uuid::new_v4();
+        let files = reg
+            .add(&synthetic_noid_alert(rule_id))
+            .expect("single json event generated");
+        assert_eq!(
+            files.len(),
+            2,
+            "json data + info.yml, no duplicate auxiliary"
+        );
+        let dir = base.join("rules").join(rule_id.to_string());
+        let info = InfoYml::load(&dir.join("info.yml")).unwrap();
+        assert_eq!(info.regression_tests_info[0].test_type, "json");
+        let text = std::fs::read_to_string(dir.join(format!("{rule_id}.json"))).unwrap();
+        assert!(text.lines().count() > 1);
+        assert!(serde_json::from_str::<serde_json::Value>(&text).is_ok());
+
+        // Several events: compact NDJSON, declared `type: ndjson`.
+        let mut batch = RegressionData::for_rule(
+            &RegressionHeader::new(rule_id, "Grouped JSON".to_string()),
+            &base,
+            None,
+            Some("tester"),
+            Some("N/A"),
+            DataFormat::Json,
+            false,
+        );
+        batch.add_alert(synthetic_noid_alert(rule_id));
+        batch.add_alert(synthetic_noid_alert(rule_id));
+        batch.generate().expect("ndjson generated");
+        let dir = base.join("rules").join(rule_id.to_string());
+        let info = InfoYml::load(&dir.join("info.yml")).unwrap();
+        assert_eq!(info.regression_tests_info[0].test_type, "ndjson");
+        let text = std::fs::read_to_string(dir.join(format!("{rule_id}.json"))).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2);
+        for line in lines {
+            assert!(serde_json::from_str::<serde_json::Value>(line).is_ok());
+        }
+
+        // An auditd alert is log data even when the Linux collector prefers
+        // JSON because eBPF is active.
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("regression_data");
+        let mut reg = SigmahqRegression::new_from_path(&base).unwrap();
+        reg.set_format(DataFormat::Json);
+        let rule_id = Uuid::new_v4();
+        reg.add(&synthetic_log_alert(rule_id))
+            .expect("auditd log generated");
+        let dir = base.join("rules").join(rule_id.to_string());
+        let info = InfoYml::load(&dir.join("info.yml")).unwrap();
+        assert_eq!(info.regression_tests_info[0].test_type, "log");
+        assert!(dir.join(format!("{rule_id}.log")).exists());
     }
 
     /// The auxiliary export is readable in both layouts the writer produces.

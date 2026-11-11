@@ -288,6 +288,10 @@ pub struct Config {
     /// on the next run, skipping rule recompilation. `None` compiles every run.
     #[serde(default)]
     pub hir_cache: Option<String>,
+    /// Whether `filter.product` appeared in the YAML document. The collector
+    /// product is only a default and must not override an explicit choice.
+    #[serde(skip)]
+    filter_product_explicit: bool,
 }
 
 impl Default for Config {
@@ -300,8 +304,30 @@ impl Default for Config {
             engine: EngineConfig::default(),
             stop_file: default_stop_file(),
             hir_cache: None,
+            filter_product_explicit: false,
         }
     }
+}
+
+fn format_config_error(error: serde_yaml::Error) -> ConfigError {
+    let mut msg = error.to_string();
+    if msg.contains("unknown field")
+        && [
+            "github_token",
+            "transport",
+            "http_timeout_secs",
+            "partial_clone",
+        ]
+        .iter()
+        .any(|key| msg.contains(key))
+    {
+        msg.push_str(
+            "\n  The HTTP + token transport was removed: sigmacatch uses SSH only.\n  \
+             Delete 'github_token', 'transport', 'http_timeout_secs' and 'partial_clone' \
+             from the 'git:' block.",
+        );
+    }
+    ConfigError::Format(msg)
 }
 
 impl Config {
@@ -337,26 +363,23 @@ impl Config {
     /// Parse `config.yaml`, adding an actionable hint when a removed key is
     /// still present (the HTTP + token transport no longer exists).
     fn parse_yaml(yaml: &str) -> Result<Self> {
-        serde_yaml::from_str(yaml).map_err(|e| {
-            let mut msg = e.to_string();
-            if msg.contains("unknown field")
-                && [
-                    "github_token",
-                    "transport",
-                    "http_timeout_secs",
-                    "partial_clone",
-                ]
-                .iter()
-                .any(|key| msg.contains(key))
-            {
-                msg.push_str(
-                    "\n  The HTTP + token transport was removed: sigmacatch uses SSH only.\n  \
-                     Delete 'github_token', 'transport', 'http_timeout_secs' and 'partial_clone' \
-                     from the 'git:' block.",
-                );
-            }
-            ConfigError::Format(msg)
-        })
+        let document: serde_yaml::Value =
+            serde_yaml::from_str(yaml).map_err(format_config_error)?;
+        let filter_product_explicit = document
+            .get("filter")
+            .and_then(|filter| filter.get("product"))
+            .is_some();
+        let mut config: Self = serde_yaml::from_value(document).map_err(format_config_error)?;
+        config.filter_product_explicit = filter_product_explicit;
+        Ok(config)
+    }
+
+    /// Use the collector's product as the rule filter only when the user did
+    /// not explicitly set `filter.product`.
+    pub(crate) fn apply_collector_product_default(&mut self, product: &str) {
+        if !self.filter_product_explicit {
+            self.filter.product = product.to_string();
+        }
     }
 
     /// Load, normalize and validate a config file.
@@ -1271,6 +1294,17 @@ mod tests {
 
         let err = Config::parse_yaml("engine:\n  nope: true\n").unwrap_err();
         assert!(err.to_string().contains("unknown field"), "{err}");
+    }
+
+    #[test]
+    fn test_collector_product_is_only_a_default() {
+        let mut implicit = Config::parse_yaml("git:\n  author: test\n").unwrap();
+        implicit.apply_collector_product_default("linux");
+        assert_eq!(implicit.filter.product, "linux");
+
+        let mut explicit = Config::parse_yaml("filter:\n  product: macos\n").unwrap();
+        explicit.apply_collector_product_default("linux");
+        assert_eq!(explicit.filter.product, "macos");
     }
 
     /// A cache declared in the file, with no CLI flag, is still honoured.

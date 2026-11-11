@@ -8,10 +8,14 @@
 use std::fs;
 
 use crate::ebpf_common::{
-    DnsEvent, DriverLoadEvent, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE,
-    EVENT_FILE_DELETE, EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CONNECT, EVENT_PIPE_CREATE,
-    EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, FileCreateEvent,
-    FileDeleteEvent, ListenEvent, NetEvent, PipeConnectEvent, PipeCreateEvent, ProcessAccessEvent,
+    CapabilityChangeEvent, CredentialChangeEvent, DnsEvent, DnsResponseEvent, DriverLoadEvent,
+    EVENT_CAPABILITY_CHANGE, EVENT_CREDENTIAL_CHANGE, EVENT_DNS, EVENT_DNS_RESPONSE,
+    EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_CHANGE, EVENT_FILE_CHMOD,
+    EVENT_FILE_CHOWN, EVENT_FILE_DELETE, EVENT_FILE_RENAME, EVENT_FILE_TRUNCATE, EVENT_FORK,
+    EVENT_LISTEN, EVENT_MODULE_UNLOAD, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS,
+    EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, EVENTS_ABI_MAP, FileChangeEvent, FileChmodEvent,
+    FileChownEvent, FileCreateEvent, FileDeleteEvent, FileRenameEvent, FileTruncateEvent,
+    ForkEvent, ListenEvent, ModuleUnloadEvent, NetEvent, PipeCreateEvent, ProcessAccessEvent,
     ProcessTamperingEvent, RawAccessEvent,
 };
 use crate::types::{Event, EventProducer, ProducerError};
@@ -81,9 +85,27 @@ fn cap_eff(status: &str) -> Option<u64> {
 /// variants) still get the rest of the coverage.
 const ATTACHMENTS: &[(&str, &str, &str, bool)] = &[
     ("sys_enter_execve", "syscalls", "sys_enter_execve", true),
+    (
+        "sys_enter_execveat",
+        "syscalls",
+        "sys_enter_execveat",
+        false,
+    ),
     ("sched_process_exec", "sched", "sched_process_exec", true),
+    ("sched_process_fork", "sched", "sched_process_fork", false),
     ("sched_process_exit", "sched", "sched_process_exit", true),
     ("sys_enter_connect", "syscalls", "sys_enter_connect", true),
+    ("sys_enter_accept", "syscalls", "sys_enter_accept", false),
+    ("sys_exit_accept", "syscalls", "sys_exit_accept", false),
+    ("sys_enter_accept4", "syscalls", "sys_enter_accept4", false),
+    ("sys_exit_accept4", "syscalls", "sys_exit_accept4", false),
+    (
+        "sys_enter_recvfrom",
+        "syscalls",
+        "sys_enter_recvfrom",
+        false,
+    ),
+    ("sys_exit_recvfrom", "syscalls", "sys_exit_recvfrom", false),
     ("sys_enter_openat", "syscalls", "sys_enter_openat", true),
     ("sys_exit_openat", "syscalls", "sys_exit_openat", true),
     ("sys_enter_open", "syscalls", "sys_enter_open", false),
@@ -112,6 +134,20 @@ const ATTACHMENTS: &[(&str, &str, &str, bool)] = &[
         "sys_exit_finit_module",
         false,
     ),
+    // init_module tracepoints disabled: attaching them caused a startup segfault on the
+    // AlmaLinux test VM (investigation pending). Probe handlers remain in the BPF object.
+    (
+        "sys_enter_delete_module",
+        "syscalls",
+        "sys_enter_delete_module",
+        false,
+    ),
+    (
+        "sys_exit_delete_module",
+        "syscalls",
+        "sys_exit_delete_module",
+        false,
+    ),
     ("sys_enter_mknodat", "syscalls", "sys_enter_mknodat", false),
     ("sys_exit_mknodat", "syscalls", "sys_exit_mknodat", false),
     ("sys_enter_mknod", "syscalls", "sys_enter_mknod", false),
@@ -129,6 +165,174 @@ const ATTACHMENTS: &[(&str, &str, &str, bool)] = &[
     ("sys_exit_listen", "syscalls", "sys_exit_listen", false),
     ("sys_enter_sendto", "syscalls", "sys_enter_sendto", true),
     ("sys_enter_sendmsg", "syscalls", "sys_enter_sendmsg", true),
+    ("sys_enter_setuid", "syscalls", "sys_enter_setuid", false),
+    ("sys_exit_setuid", "syscalls", "sys_exit_setuid", false),
+    (
+        "sys_enter_setfsuid",
+        "syscalls",
+        "sys_enter_setfsuid",
+        false,
+    ),
+    ("sys_exit_setfsuid", "syscalls", "sys_exit_setfsuid", false),
+    (
+        "sys_enter_setreuid",
+        "syscalls",
+        "sys_enter_setreuid",
+        false,
+    ),
+    ("sys_exit_setreuid", "syscalls", "sys_exit_setreuid", false),
+    (
+        "sys_enter_setresuid",
+        "syscalls",
+        "sys_enter_setresuid",
+        false,
+    ),
+    (
+        "sys_exit_setresuid",
+        "syscalls",
+        "sys_exit_setresuid",
+        false,
+    ),
+    ("sys_enter_setgid", "syscalls", "sys_enter_setgid", false),
+    ("sys_exit_setgid", "syscalls", "sys_exit_setgid", false),
+    (
+        "sys_enter_setfsgid",
+        "syscalls",
+        "sys_enter_setfsgid",
+        false,
+    ),
+    ("sys_exit_setfsgid", "syscalls", "sys_exit_setfsgid", false),
+    (
+        "sys_enter_setregid",
+        "syscalls",
+        "sys_enter_setregid",
+        false,
+    ),
+    ("sys_exit_setregid", "syscalls", "sys_exit_setregid", false),
+    (
+        "sys_enter_setresgid",
+        "syscalls",
+        "sys_enter_setresgid",
+        false,
+    ),
+    (
+        "sys_exit_setresgid",
+        "syscalls",
+        "sys_exit_setresgid",
+        false,
+    ),
+    (
+        "sys_enter_setgroups",
+        "syscalls",
+        "sys_enter_setgroups",
+        false,
+    ),
+    (
+        "sys_exit_setgroups",
+        "syscalls",
+        "sys_exit_setgroups",
+        false,
+    ),
+    ("sys_enter_capset", "syscalls", "sys_enter_capset", false),
+    ("sys_exit_capset", "syscalls", "sys_exit_capset", false),
+    ("sys_enter_prctl", "syscalls", "sys_enter_prctl", false),
+    ("sys_exit_prctl", "syscalls", "sys_exit_prctl", false),
+    ("sys_enter_rename", "syscalls", "sys_enter_rename", false),
+    ("sys_exit_rename", "syscalls", "sys_exit_rename", false),
+    (
+        "sys_enter_renameat",
+        "syscalls",
+        "sys_enter_renameat",
+        false,
+    ),
+    ("sys_exit_renameat", "syscalls", "sys_exit_renameat", false),
+    (
+        "sys_enter_renameat2",
+        "syscalls",
+        "sys_enter_renameat2",
+        false,
+    ),
+    (
+        "sys_exit_renameat2",
+        "syscalls",
+        "sys_exit_renameat2",
+        false,
+    ),
+    ("sys_enter_chmod", "syscalls", "sys_enter_chmod", false),
+    ("sys_exit_chmod", "syscalls", "sys_exit_chmod", false),
+    ("sys_enter_fchmod", "syscalls", "sys_enter_fchmod", false),
+    ("sys_exit_fchmod", "syscalls", "sys_exit_fchmod", false),
+    (
+        "sys_enter_fchmodat",
+        "syscalls",
+        "sys_enter_fchmodat",
+        false,
+    ),
+    ("sys_exit_fchmodat", "syscalls", "sys_exit_fchmodat", false),
+    (
+        "sys_enter_fchmodat2",
+        "syscalls",
+        "sys_enter_fchmodat2",
+        false,
+    ),
+    (
+        "sys_exit_fchmodat2",
+        "syscalls",
+        "sys_exit_fchmodat2",
+        false,
+    ),
+    ("sys_enter_chown", "syscalls", "sys_enter_chown", false),
+    ("sys_exit_chown", "syscalls", "sys_exit_chown", false),
+    ("sys_enter_lchown", "syscalls", "sys_enter_lchown", false),
+    ("sys_exit_lchown", "syscalls", "sys_exit_lchown", false),
+    ("sys_enter_fchown", "syscalls", "sys_enter_fchown", false),
+    ("sys_exit_fchown", "syscalls", "sys_exit_fchown", false),
+    (
+        "sys_enter_fchownat",
+        "syscalls",
+        "sys_enter_fchownat",
+        false,
+    ),
+    ("sys_exit_fchownat", "syscalls", "sys_exit_fchownat", false),
+    (
+        "sys_enter_truncate",
+        "syscalls",
+        "sys_enter_truncate",
+        false,
+    ),
+    ("sys_exit_truncate", "syscalls", "sys_exit_truncate", false),
+    (
+        "sys_enter_ftruncate",
+        "syscalls",
+        "sys_enter_ftruncate",
+        false,
+    ),
+    (
+        "sys_exit_ftruncate",
+        "syscalls",
+        "sys_exit_ftruncate",
+        false,
+    ),
+    ("sys_enter_write", "syscalls", "sys_enter_write", false),
+    ("sys_exit_write", "syscalls", "sys_exit_write", false),
+    (
+        "sys_enter_pwrite64",
+        "syscalls",
+        "sys_enter_pwrite64",
+        false,
+    ),
+    ("sys_exit_pwrite64", "syscalls", "sys_exit_pwrite64", false),
+    ("sys_enter_writev", "syscalls", "sys_enter_writev", false),
+    ("sys_exit_writev", "syscalls", "sys_exit_writev", false),
+    ("sys_enter_pwritev", "syscalls", "sys_enter_pwritev", false),
+    ("sys_exit_pwritev", "syscalls", "sys_exit_pwritev", false),
+    (
+        "sys_enter_pwritev2",
+        "syscalls",
+        "sys_enter_pwritev2",
+        false,
+    ),
+    ("sys_exit_pwritev2", "syscalls", "sys_exit_pwritev2", false),
 ];
 
 /// eBPF-backed sysmon collector (feature `ebpf`): loads the embedded probe
@@ -152,6 +356,12 @@ impl EventCollector {
             .context("loading embedded eBPF object failed (built without nightly toolchain?)")?;
         if ebpf.map("EVENTS").is_none() {
             bail!("probe object has no EVENTS ring buffer (probes not implemented yet)");
+        }
+        if ebpf.map(EVENTS_ABI_MAP).is_none() {
+            bail!(
+                "probe object ABI mismatch: missing {EVENTS_ABI_MAP}; rebuild it from the current \
+                 source or unset SIGMACATCH_EBPF_OBJECT"
+            );
         }
 
         // Attachments stay live for the process lifetime; aya 0.13 tracks
@@ -232,7 +442,7 @@ impl EventProducer for EventCollector {
                     },
                     EVENT_EXIT => match ExitEvent::from_bytes(bytes) {
                         Some(ev) => {
-                            if let Some(event) = self.builder.exit_event(ev.pid)
+                            if let Some(event) = self.builder.exit_event(&ev)
                                 && tx.send(event).await.is_err()
                             {
                                 return Ok(());
@@ -241,6 +451,13 @@ impl EventProducer for EventCollector {
                         None => tracing::warn!(
                             size = bytes.len(),
                             "exit record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FORK => match ForkEvent::from_bytes(bytes) {
+                        Some(ev) => self.builder.fork_event(&ev),
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "fork record with unexpected size — skipped"
                         ),
                     },
                     EVENT_FILE => match FileCreateEvent::from_bytes(bytes) {
@@ -340,18 +557,6 @@ impl EventProducer for EventCollector {
                             "pipe-create record with unexpected size — skipped"
                         ),
                     },
-                    EVENT_PIPE_CONNECT => match PipeConnectEvent::from_bytes(bytes) {
-                        Some(ev) => {
-                            let event = self.builder.pipe_connect_event(&ev);
-                            if tx.send(event).await.is_err() {
-                                return Ok(());
-                            }
-                        }
-                        None => tracing::warn!(
-                            size = bytes.len(),
-                            "pipe-connect record with unexpected size — skipped"
-                        ),
-                    },
                     EVENT_PROCESS_TAMPERING => match ProcessTamperingEvent::from_bytes(bytes) {
                         Some(ev) => {
                             let event = self.builder.process_tampering_event(&ev);
@@ -376,6 +581,116 @@ impl EventProducer for EventCollector {
                             "listen record with unexpected size — skipped"
                         ),
                     },
+                    EVENT_CREDENTIAL_CHANGE => match CredentialChangeEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.credential_change_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "credential-change record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_CAPABILITY_CHANGE => match CapabilityChangeEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.capability_change_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "capability-change record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_RENAME => match FileRenameEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.file_rename_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-rename record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_CHMOD => match FileChmodEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.file_chmod_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-chmod record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_CHOWN => match FileChownEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.file_chown_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-chown record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_TRUNCATE => match FileTruncateEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.file_truncate_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-truncate record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_CHANGE => match FileChangeEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            if let Some(event) = self.builder.file_change_event(&ev)
+                                && tx.send(event).await.is_err()
+                            {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-change record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_MODULE_UNLOAD => match ModuleUnloadEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.module_unload_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "module-unload record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_DNS_RESPONSE => match DnsResponseEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            if let Some(event) = self.builder.dns_response_event(&ev)
+                                && tx.send(event).await.is_err()
+                            {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "dns-response record with unexpected size — skipped"
+                        ),
+                    },
                     other => tracing::warn!(tag = other, "unknown ring buffer record tag"),
                 }
             }
@@ -392,6 +707,19 @@ mod tests {
 
     fn status(uid: u32, caps: u64) -> String {
         format!("Uid:\t{uid}\t{uid}\t{uid}\t{uid}\nCapEff:\t{caps:016x}\n")
+    }
+
+    #[test]
+    fn embedded_probe_object_has_the_current_abi_marker() {
+        if PROBE_OBJECT.is_empty() {
+            return; // local build without nightly: the loader rejects this object
+        }
+        assert!(
+            PROBE_OBJECT
+                .windows(EVENTS_ABI_MAP.len())
+                .any(|window| window == EVENTS_ABI_MAP.as_bytes()),
+            "embedded probe object is missing the {EVENTS_ABI_MAP} ABI marker"
+        );
     }
 
     #[test]

@@ -2,11 +2,318 @@
   "version": 1,
   "description": "Internal sigmacatch taxonomy: eBPF/kernel event fields to Sigma fields for Linux (no Sysmon/XML dependency).",
   "events": {
+    "capability_change": {
+      "sigma_category": "capability_change",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 502,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "Syscall": "syscall",
+        "Option": "option",
+        "Arg2": "arg2",
+        "Arg3": "arg3",
+        "Arg4": "arg4",
+        "Result": "result"
+      }
+    },
+    "credential_change": {
+      "sigma_category": "credential_change",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 501,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "Syscall": "syscall",
+        "TargetUid0": "target_uid0",
+        "TargetUid1": "target_uid1",
+        "TargetUid2": "target_uid2",
+        "GroupCount": "group_count",
+        "Result": "result"
+      }
+    },
+    "dns_query": {
+      "sigma_category": "dns_query",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 22,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "QueryName": "query_name",
+        "QueryStatus": "query_status",
+        "QueryResults": "query_results"
+      }
+    },
+    "dns_response": {
+      "sigma_category": "dns_response",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 508,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "QueryName": "query_name",
+        "QueryStatus": "query_status",
+        "QueryResults": "query_results"
+      }
+    },
+    "driver_load": {
+      "sigma_category": "driver_load",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 6,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "ImageLoaded": "image_loaded",
+        "Hashes": "hashes",
+        "Signed": "signed",
+        "Signature": "signature",
+        "SignatureStatus": "signature_status",
+        "User": "user"
+      }
+    },
+    "file_change": {
+      "sigma_category": "file_change",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 2,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "TargetFilename": "target_filename",
+        "User": "user",
+        "Syscall": "syscall",
+        "BytesWritten": "bytes_written"
+      }
+    },
+    "file_chmod": {
+      "sigma_category": "file_chmod",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 504,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "TargetFilename": "target_filename",
+        "Syscall": "syscall",
+        "Mode": "mode",
+        "Flags": "flags",
+        "Result": "result"
+      }
+    },
+    "file_chown": {
+      "sigma_category": "file_chown",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 505,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "TargetFilename": "target_filename",
+        "Syscall": "syscall",
+        "Owner": "owner",
+        "Group": "group",
+        "Flags": "flags",
+        "Result": "result"
+      }
+    },
+    "file_create": {
+      "sigma_category": "file_event",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 11,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "TargetFilename": "target_filename",
+        "CreationUtcTime": "creation_utc_time",
+        "User": "user"
+      }
+    },
+    "file_delete": {
+      "sigma_category": "file_delete",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 23,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "User": "user",
+        "Image": "image",
+        "TargetFilename": "target_filename",
+        "Hashes": "hashes",
+        "IsExecutable": "is_executable",
+        "Archived": "archived"
+      }
+    },
+    "file_rename": {
+      "sigma_category": "file_rename",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 503,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "TargetFilename": "target_filename",
+        "SourceFilename": "source_filename",
+        "Syscall": "syscall",
+        "Flags": "flags",
+        "Result": "result"
+      }
+    },
+    "file_truncate": {
+      "sigma_category": "file_truncate",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 506,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "TargetFilename": "target_filename",
+        "Syscall": "syscall",
+        "Length": "length",
+        "Result": "result"
+      }
+    },
+    "module_unload": {
+      "sigma_category": "module_unload",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 507,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "ModuleName": "module_name",
+        "Flags": "flags",
+        "Result": "result"
+      }
+    },
+    "network_connection": {
+      "sigma_category": "network_connection",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 3,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "Protocol": "protocol",
+        "Initiated": "initiated",
+        "SourceIsIpv6": "source_is_ipv6",
+        "SourceIp": "source_ip",
+        "SourceHostname": "source_hostname",
+        "SourcePort": "source_port",
+        "SourcePortName": "source_port_name",
+        "DestinationIsIpv6": "destination_is_ipv6",
+        "DestinationIp": "destination_ip",
+        "DestinationHostname": "destination_hostname",
+        "DestinationPort": "destination_port",
+        "DestinationPortName": "destination_port_name"
+      }
+    },
+    "network_listen": {
+      "sigma_category": "network_listen",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 500,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "Protocol": "protocol",
+        "Initiated": "initiated",
+        "SourceIsIpv6": "source_is_ipv6",
+        "SourceIp": "source_ip",
+        "SourceHostname": "source_hostname",
+        "SourcePort": "source_port",
+        "SourcePortName": "source_port_name",
+        "DestinationIsIpv6": "destination_is_ipv6",
+        "DestinationIp": "destination_ip",
+        "DestinationHostname": "destination_hostname",
+        "DestinationPort": "destination_port",
+        "DestinationPortName": "destination_port_name"
+      }
+    },
+    "pipe_create": {
+      "sigma_category": "pipe_created",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 17,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "PipeName": "pipe_name",
+        "Image": "image",
+        "User": "user"
+      }
+    },
+    "process_access": {
+      "sigma_category": "process_access",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 10,
+      "fields": {
+        "UtcTime": "utc_time",
+        "SourceProcessGUID": "source_process_guid",
+        "SourceProcessId": "source_process_id",
+        "SourceThreadId": "source_thread_id",
+        "SourceImage": "source_image",
+        "TargetProcessGUID": "target_process_guid",
+        "TargetProcessId": "target_process_id",
+        "TargetImage": "target_image",
+        "GrantedAccess": "granted_access",
+        "CallTrace": "call_trace",
+        "SourceUser": "source_user"
+      }
+    },
     "process_creation": {
-      "event_id": 1,
       "sigma_category": "process_creation",
       "sigma_product": "linux",
       "sigma_service": null,
+      "sysmon_eid": 1,
       "fields": {
         "UtcTime": "utc_time",
         "ProcessGuid": "process_guid",
@@ -23,6 +330,16 @@
         "LogonGuid": "logon_guid",
         "LogonId": "logon_id",
         "TerminalSessionId": "terminal_session_id",
+        "SessionId": "session_id",
+        "TtyNr": "tty_nr",
+        "Cgroup": "cgroup",
+        "NamespacePid": "namespace_pid",
+        "NamespaceMnt": "namespace_mnt",
+        "NamespaceNet": "namespace_net",
+        "NamespaceUser": "namespace_user",
+        "NamespaceUts": "namespace_uts",
+        "NamespaceIpc": "namespace_ipc",
+        "NamespaceCgroup": "namespace_cgroup",
         "IntegrityLevel": "integrity_level",
         "Hashes": "hashes",
         "ParentProcessGuid": "parent_process_guid",
@@ -32,175 +349,11 @@
         "ParentUser": "parent_user"
       }
     },
-    "process_termination": {
-      "event_id": 5,
-      "sigma_category": "process_termination",
-      "sigma_product": "linux",
-      "sigma_service": null,
-      "fields": {
-        "UtcTime": "utc_time",
-        "ProcessGuid": "process_guid",
-        "ProcessId": "pid",
-        "Image": "image",
-        "User": "user"
-      }
-    },
-    "network_connection": {
-      "event_id": 3,
-      "sigma_category": "network_connection",
-      "sigma_product": "linux",
-      "sigma_service": null,
-      "fields": {
-        "UtcTime": "utc_time",
-        "ProcessGuid": "process_guid",
-        "ProcessId": "pid",
-        "Image": "image",
-        "User": "user",
-        "Protocol": "protocol",
-        "Initiated": "initiated",
-        "SourceIsIpv6": "source_is_ipv6",
-        "SourceIp": "source_ip",
-        "SourceHostname": "source_hostname",
-        "SourcePort": "source_port",
-        "SourcePortName": "source_port_name",
-        "DestinationIsIpv6": "destination_is_ipv6",
-        "DestinationIp": "destination_ip",
-        "DestinationHostname": "destination_hostname",
-        "DestinationPort": "destination_port",
-        "DestinationPortName": "destination_port_name"
-      }
-    },
-    "file_create": {
-      "event_id": 11,
-      "sigma_category": "file_event",
-      "sigma_product": "linux",
-      "sigma_service": null,
-      "fields": {
-        "UtcTime": "utc_time",
-        "ProcessGuid": "process_guid",
-        "ProcessId": "pid",
-        "Image": "image",
-        "TargetFilename": "target_filename",
-        "CreationUtcTime": "creation_utc_time",
-        "User": "user"
-      }
-    },
-    "file_delete": {
-      "event_id": 23,
-      "sigma_category": "file_delete",
-      "sigma_product": "linux",
-      "sigma_service": null,
-      "fields": {
-        "UtcTime": "utc_time",
-        "ProcessGuid": "process_guid",
-        "ProcessId": "pid",
-        "User": "user",
-        "Image": "image",
-        "TargetFilename": "target_filename",
-        "Hashes": "hashes",
-        "IsExecutable": "is_executable",
-        "Archived": "archived"
-      }
-    },
-    "dns_query": {
-      "event_id": 22,
-      "sigma_category": "dns_query",
-      "sigma_product": "linux",
-      "sigma_service": null,
-      "fields": {
-        "UtcTime": "utc_time",
-        "ProcessGuid": "process_guid",
-        "ProcessId": "pid",
-        "Image": "image",
-        "User": "user",
-        "QueryName": "query_name",
-        "QueryStatus": "query_status",
-        "QueryResults": "query_results"
-      }
-    },
-    "process_access": {
-      "event_id": 10,
-      "sigma_category": "process_access",
-      "sigma_product": "linux",
-      "sigma_service": null,
-      "fields": {
-        "UtcTime": "utc_time",
-        "SourceProcessGUID": "source_process_guid",
-        "SourceProcessId": "source_process_id",
-        "SourceThreadId": "source_thread_id",
-        "SourceImage": "source_image",
-        "TargetProcessGUID": "target_process_guid",
-        "TargetProcessId": "target_process_id",
-        "TargetImage": "target_image",
-        "GrantedAccess": "granted_access",
-        "CallTrace": "call_trace",
-        "SourceUser": "source_user"
-      }
-    },
-    "raw_access": {
-      "event_id": 9,
-      "sigma_category": "raw_access_thread",
-      "sigma_product": "linux",
-      "sigma_service": null,
-      "fields": {
-        "UtcTime": "utc_time",
-        "ProcessGuid": "process_guid",
-        "ProcessId": "pid",
-        "Image": "image",
-        "Device": "device"
-      }
-    },
-    "pipe_create": {
-      "event_id": 17,
-      "sigma_category": "pipe_created",
-      "sigma_product": "linux",
-      "sigma_service": null,
-      "fields": {
-        "UtcTime": "utc_time",
-        "ProcessGuid": "process_guid",
-        "ProcessId": "pid",
-        "PipeName": "pipe_name",
-        "Image": "image",
-        "User": "user"
-      }
-    },
-    "pipe_connect": {
-      "event_id": 18,
-      "sigma_category": "pipe_created",
-      "sigma_product": "linux",
-      "sigma_service": null,
-      "fields": {
-        "UtcTime": "utc_time",
-        "ProcessGuid": "process_guid",
-        "ProcessId": "pid",
-        "PipeName": "pipe_name",
-        "Image": "image",
-        "User": "user"
-      }
-    },
-    "driver_load": {
-      "event_id": 6,
-      "sigma_category": "driver_load",
-      "sigma_product": "linux",
-      "sigma_service": null,
-      "fields": {
-        "UtcTime": "utc_time",
-        "ProcessGuid": "process_guid",
-        "ProcessId": "pid",
-        "Image": "image",
-        "ImageLoaded": "image_loaded",
-        "Hashes": "hashes",
-        "Signed": "signed",
-        "Signature": "signature",
-        "SignatureStatus": "signature_status",
-        "User": "user"
-      }
-    },
     "process_tampering": {
-      "event_id": 25,
       "sigma_category": "process_tampering",
       "sigma_product": "linux",
       "sigma_service": null,
+      "sysmon_eid": 25,
       "fields": {
         "UtcTime": "utc_time",
         "ProcessGuid": "process_guid",
@@ -210,31 +363,31 @@
         "User": "user"
       }
     },
-    "network_listen": {
-      "event_id": 500,
-      "sigma_category": "network_connection",
+    "process_termination": {
+      "sigma_category": "process_termination",
       "sigma_product": "linux",
       "sigma_service": null,
+      "sysmon_eid": 5,
       "fields": {
         "UtcTime": "utc_time",
         "ProcessGuid": "process_guid",
         "ProcessId": "pid",
         "Image": "image",
-        "User": "user",
-        "Protocol": "protocol",
-        "Initiated": "initiated",
-        "SourceIsIpv6": "source_is_ipv6",
-        "SourceIp": "source_ip",
-        "SourceHostname": "source_hostname",
-        "SourcePort": "source_port",
-        "SourcePortName": "source_port_name",
-        "DestinationIsIpv6": "destination_is_ipv6",
-        "DestinationIp": "destination_ip",
-        "DestinationHostname": "destination_hostname",
-        "DestinationPort": "destination_port",
-        "DestinationPortName": "destination_port_name"
-      },
-      "note": "sigmacatch extension (not part of SigmaHQ Linux Sysmon taxonomy v2.1.0)"
+        "User": "user"
+      }
+    },
+    "raw_access": {
+      "sigma_category": "raw_access_thread",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 9,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "Device": "device"
+      }
     }
   }
 }

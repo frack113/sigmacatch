@@ -221,6 +221,10 @@ impl CollectorKind for LinuxCollector {
         }
         DataFormat::Log
     }
+
+    fn rule_product(&self) -> &'static str {
+        "linux"
+    }
 }
 
 /// Async entry of the Linux inputs: privilege and source guards, then the

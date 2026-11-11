@@ -28,14 +28,14 @@ git:
 log:
   level_file: debug             # debug | info | warn | error
 filter:
-  product: windows              # windows | linux | macos (vide = pas de filtre)
+  product: windows              # choix explicite ; omettre pour le défaut du collecteur (vide = pas de filtre)
   # min_status: stable          # ne garder que les règles avec un status >= cette valeur (valeurs ci-dessous)
   # min_level: critical         # ne garder que les règles avec un level >= cette valeur (valeurs ci-dessous)
   author: ""                    # ne garder que les règles de cet author (vide = pas de filtre)
   max_rule_size: 1048576        # octets ; plage 1024..10MB
 regression:
   max_failed_cycles: 3          # bloquer une règle après N cycles d'échec consécutifs
-  add_json_output: false        # écrire aussi le <rule_id>.json auxiliaire à côté du fichier de données
+  add_json_output: false        # écrire aussi un <rule_id>.json auxiliaire pour les données EVTX/log
 engine:
   cross_rule_ac: false          # préfiltre Aho-Corasick inter-règles de rsigma-eval (désactivé : plus lent sur les règles SigmaHQ)
   bloom_prefilter: false        # préfiltre bloom de rsigma-eval pour les matchers de sous-chaîne (désactivé : plus lent sur les règles SigmaHQ)
@@ -74,12 +74,16 @@ Tous les filtres sont optionnels ; non défini = pas de filtrage.
 
 | Clé | Défaut | Description |
 |---|---|---|
-| `product` | `windows` | Produit SigmaHQ à garder : `windows`, `linux` ou `macos` (réservé, aucun collecteur pour l'instant). Vide = pas de filtre produit. |
+| `product` | produit du collecteur | Produit SigmaHQ à garder : `windows`, `linux` ou `macos` (réservé, aucun collecteur pour l'instant). Une valeur explicite gagne toujours ; si la clé est absente, le collecteur choisit `windows` ou `linux`. Vide = pas de filtre produit. |
 | `min_status` | *(défaut)* | Ne garder que les règles dont le status est à ce niveau ou au-dessus : `unsupported` < `deprecated` < `experimental` < `test` < `stable`. |
 | `min_level` | *(défaut)* | Ne garder que les règles dont le level est à ce niveau ou au-dessus : `informational` < `low` < `medium` < `high` < `critical`. |
 | `author` | *(défaut)* | Ne garder que les règles de cet author (normalisé). |
 | `max_rule_size` | `1048576` | Rejette les règles dont le YAML dépasse ce nombre d'octets. Plage 1024..10485760 (10MB). |
 
+> Sous Linux, mettre `product: linux` ou omettre la clé pour utiliser le défaut du
+> collecteur. Un `config.yaml` généré contenant `product: windows` est une valeur
+> explicite et n'est pas remplacé automatiquement.
+>
 > Définir `min_status` à `stable` ou `min_level` à `high`/`critical` est très
 > restrictif et déclenche un avertissement au démarrage.
 
@@ -88,7 +92,7 @@ Tous les filtres sont optionnels ; non défini = pas de filtrage.
 | Clé | Défaut | Description |
 |---|---|---|
 | `max_failed_cycles` | `3` | Après N cycles de capture d'échec consécutifs, une règle est bloquée (loggée, retirée du skip set, plus de re-capture). Min 1. |
-| `add_json_output` | `false` | Écrit aussi le `<rule_id>.json` auxiliaire (événement brut) à côté du fichier de données. Voir [Format de Sortie](output-format.md). |
+| `add_json_output` | `false` | Pour les données EVTX/log, écrit aussi le `<rule_id>.json` auxiliaire (événement brut). eBPF écrit déjà du JSON/NDJSON comme fichier de données principal. Voir [Format de Sortie](output-format.md). |
 
 ## engine
 

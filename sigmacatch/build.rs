@@ -28,6 +28,10 @@ const PROBE_ARTIFACT: &str = "target/bpfel-unknown-none/release/sigmacatch-ebpf"
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=ebpf/src/main.rs");
+    println!("cargo:rerun-if-changed=ebpf/Cargo.toml");
+    println!("cargo:rerun-if-changed=ebpf/.cargo/config.toml");
+    println!("cargo:rerun-if-changed=src/ebpf_common.rs");
     println!("cargo:rerun-if-env-changed=SIGMACATCH_EBPF_OBJECT");
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
@@ -48,7 +52,14 @@ fn main() {
 
     let subbuild_err: Option<String> = if let Some(prebuilt) = env::var_os("SIGMACATCH_EBPF_OBJECT")
     {
-        copy_object(Path::new(&prebuilt), &dest);
+        let prebuilt = Path::new(&prebuilt);
+        if !prebuilt.is_file() {
+            panic!(
+                "SIGMACATCH_EBPF_OBJECT points to '{}', but it is not a readable file",
+                prebuilt.display()
+            );
+        }
+        copy_object(prebuilt, &dest);
         None
     } else {
         build_probes(&manifest_dir.join(PROBE_CRATE_DIR), &out_dir)
@@ -79,6 +90,11 @@ fn main() {
         // falls back to the legacy syslog tail ("built without nightly
         // toolchain?" in the runtime error).
         fs::write(&dest, []).expect("write placeholder object");
+    } else if fs::metadata(&dest).ok().is_none_or(|m| m.len() == 0) {
+        panic!(
+            "ebpf object at {} is missing or empty — refusing to embed an invalid probe object",
+            dest.display()
+        );
     }
 }
 
@@ -112,9 +128,30 @@ fn build_probes(crate_dir: &Path, _out_dir: &Path) -> Result<PathBuf, String> {
     // RUSTC_BOOTSTRAP enables -Z build-std regardless of channel detection.
     cmd.arg("build")
         .arg("--release")
+        .arg("--target")
+        .arg("bpfel-unknown-none")
         .arg("-Z")
-        .arg("build-std=core")
-        .current_dir(crate_dir)
+        .arg("build-std=core");
+    // Select the BPF target arch from the host cargo target when possible so
+    // the probe crate (which has a static config) builds with the correct
+    // aya-ebpf arch cfg instead of assuming x86_64.
+    let bpf_arch = env::var("TARGET")
+        .ok()
+        .and_then(|t| {
+            if t.starts_with("aarch64-") {
+                Some("aarch64")
+            } else if t.starts_with("x86_64-") {
+                Some("x86_64")
+            } else {
+                None
+            }
+        })
+        .unwrap_or("x86_64");
+    cmd.env(
+        "RUSTFLAGS",
+        format!("--cfg=bpf_target_arch=\"{bpf_arch}\" -Cdebuginfo=2 -Clink-arg=--btf"),
+    );
+    cmd.current_dir(crate_dir)
         .env("RUSTUP_TOOLCHAIN", "nightly")
         .env("RUSTC_BOOTSTRAP", "1");
     // Nested cargo must not inherit this cargo's toolchain plumbing: the
