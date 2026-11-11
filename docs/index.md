@@ -38,15 +38,13 @@ validation binary, and the build/test commands are in [build.md](build.md).
 A built version of this documentation is published to GitHub Pages:
 **https://frack113.github.io/sigmacatch/**
 
-| | Français | English |
-|---|---|---|
-| Architecture | [FR](/fr/architecture/) | [EN](architecture.md) |
-| Build | [FR](/fr/build/) | [EN](build.md) |
-| Configuration | [FR](/fr/config/) | [EN](config.md) |
-| CLI | [FR](/fr/cli/) | [EN](cli.md) |
-| Git | [FR](/fr/git/) | [EN](git.md) |
-| Output format | [FR](/fr/output-format/) | [EN](output-format.md) |
-| Regression data format | [FR](/fr/regression-data-format/) | [EN](regression-data-format.md) |
+- [Architecture](architecture.md)
+- [Build](build.md)
+- [Configuration](config.md)
+- [CLI](cli.md)
+- [Git](git.md)
+- [Output format](output-format.md)
+- [Regression data format](regression-data-format.md)
 
 ## License
 

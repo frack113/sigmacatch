@@ -45,7 +45,7 @@ until you edit it — `author: sigmacatch` (placeholder, rejected by validation)
 `email` both bail. On Linux, also set `filter.product: linux` or omit the key: the collector
 uses `linux` as its default, but an explicit `product: windows` in the generated file is kept.
 The full reference (every field, defaults, and validation) is in the
-[Configuration reference](docs/en/config.md).
+[Configuration reference](docs/config.md).
 
 **Contrib is opt-in** (`git.contrib: true` or `--contrib`): pushes regression commits to your fork over SSH. By default (`false`) commits stay local. Authentication is SSH-only — the SSH agent, or `git.ssh_key_path`; there is no GitHub token. Clone/fetch use `git.sigma_repo_url` (default `git@github.com:SigmaHQ/sigma.git`), push and pending-branch fetch use `git.fork_repo_url` (default `git@github.com:<author>/sigma.git`). **`offline: true` neutralizes `contrib`** (forced to `false`): no push in offline mode.
 
@@ -58,15 +58,15 @@ The full reference (every field, defaults, and validation) is in the
 
 Flags, the `check-filter`/`list-rules` diagnostics subcommands, and the standalone
 `regressiondata-check` validator (EVTX, log, JSON and NDJSON replay) are documented in
-[docs/en/cli.md](docs/en/cli.md).
+[docs/cli.md](docs/cli.md).
 
 ## Documentation
 
-A built version of this documentation is published to GitHub Pages: **https://frack113.github.io/sigmacatch/** (source: [`docs/fr/`](docs/fr/), English mirror in [`docs/en/`](docs/en/)).
+A built version of this documentation is published to GitHub Pages: **https://frack113.github.io/sigmacatch/** (source: [`docs/`](docs/)).
 
 ## Workspace
 
-A single cargo workspace package (`sigmacatch`), plus a nested nightly-only eBPF probe crate (`sigmacatch/ebpf`) excluded from the workspace. The full layout — directory tree, cargo features, and the two binaries — is in [docs/en/architecture.md](docs/en/architecture.md).
+A single cargo workspace package (`sigmacatch`), plus a nested nightly-only eBPF probe crate (`sigmacatch/ebpf`) excluded from the workspace. The full layout — directory tree, cargo features, and the two binaries — is in [docs/architecture.md](docs/architecture.md).
 
 ## Built with
 

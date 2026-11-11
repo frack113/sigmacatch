@@ -1,6 +1,3 @@
-[files]
-extend-exclude = ["docs/fr/**"]
-
 [default]
-extend-words = { "Encyption" = "Encyption", "complet" = "complet", "ba" = "ba", "mis" = "mis", "chage" = "chage" }
-extend-identifiers = { "ratatui" = "ratatui", "fo" = "fo", "flate2" = "flate2" }
+extend-words = { "Encyption" = "Encyption", "ba" = "ba", "chage" = "chage" }
+extend-identifiers = { "flate2" = "flate2" }

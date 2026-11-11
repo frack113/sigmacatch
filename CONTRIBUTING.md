@@ -39,7 +39,7 @@ npx --yes markdownlint-cli2 "docs/**/*.md" "*.md"
 (`markdownlint` runs in CI as the `DavidAnson/markdownlint-cli2-action`; `npx` is the local
 equivalent.)
 
-- `typos` — spelling, configured in `.typos.toml`. `docs/fr/**` is excluded (French is legitimate).
+- `typos` — spelling, configured in `.typos.toml`.
 - `zizmor` — GitHub Actions security audit. All `uses:` are SHA-pinned; never introduce an
   unpinned action or a checkout without `persist-credentials: false`.
 - `markdownlint` — configured in `.markdownlint-cli2.yaml`. Keep tables and headings clean.
@@ -75,7 +75,7 @@ type with emoji and commit hashes), `## Tests` (results of fmt/clippy/test/build
 ## Architecture
 
 Architectural invariants are non-negotiable; read them in
-[`docs/fr/architecture.md`](docs/fr/architecture.md) before touching the
+[`docs/architecture.md`](docs/architecture.md) before touching the
 pipeline. Highlights:
 
 - One continuous run until Ctrl+C: collect + evaluate + generate (30s) + commit + push.
