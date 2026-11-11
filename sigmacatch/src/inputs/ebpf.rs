@@ -9,10 +9,9 @@ use std::fs;
 
 use crate::ebpf_common::{
     DnsEvent, DriverLoadEvent, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE,
-    EVENT_FILE_DELETE, EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CONNECT, EVENT_PIPE_CREATE,
-    EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, FileCreateEvent,
-    FileDeleteEvent, ListenEvent, NetEvent, PipeConnectEvent, PipeCreateEvent, ProcessAccessEvent,
-    ProcessTamperingEvent, RawAccessEvent,
+    EVENT_FILE_DELETE, EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS,
+    EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, FileCreateEvent, FileDeleteEvent, ListenEvent,
+    NetEvent, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
 };
 use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::{Context, bail};
@@ -338,18 +337,6 @@ impl EventProducer for EventCollector {
                         None => tracing::warn!(
                             size = bytes.len(),
                             "pipe-create record with unexpected size — skipped"
-                        ),
-                    },
-                    EVENT_PIPE_CONNECT => match PipeConnectEvent::from_bytes(bytes) {
-                        Some(ev) => {
-                            let event = self.builder.pipe_connect_event(&ev);
-                            if tx.send(event).await.is_err() {
-                                return Ok(());
-                            }
-                        }
-                        None => tracing::warn!(
-                            size = bytes.len(),
-                            "pipe-connect record with unexpected size — skipped"
                         ),
                     },
                     EVENT_PROCESS_TAMPERING => match ProcessTamperingEvent::from_bytes(bytes) {

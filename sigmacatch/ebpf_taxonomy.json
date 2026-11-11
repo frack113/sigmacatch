@@ -155,19 +155,6 @@
         "User": "user"
       }
     },
-    "pipe_connect": {
-      "sigma_category": "pipe_created",
-      "sigma_product": "linux",
-      "sigma_service": null,
-      "fields": {
-        "UtcTime": "utc_time",
-        "ProcessGuid": "process_guid",
-        "ProcessId": "pid",
-        "PipeName": "pipe_name",
-        "Image": "image",
-        "User": "user"
-      }
-    },
     "driver_load": {
       "sigma_category": "driver_load",
       "sigma_product": "linux",

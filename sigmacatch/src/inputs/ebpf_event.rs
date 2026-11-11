@@ -23,7 +23,7 @@ use std::time::SystemTime;
 
 use crate::ebpf_common::{
     DnsEvent, DriverLoadEvent, ExecEvent, FileCreateEvent, FileDeleteEvent, ListenEvent, NetEvent,
-    PipeConnectEvent, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
+    PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
 };
 use crate::types::Event;
 use chrono::Utc;
@@ -427,27 +427,6 @@ impl EventBuilder {
         insert_str(&mut data, "Image", &image);
         insert_str(&mut data, "User", &user);
         to_sysmon_event(17, &self.hostname, &now, data)
-    }
-
-    /// Build a pipe_connected (EID 18) event.
-    pub fn pipe_connect_event(&mut self, ev: &PipeConnectEvent) -> Event {
-        let now = Utc::now();
-        let (guid, image) = self.resolve_process_info(ev.pid);
-        let user = self.user_name(ev.uid);
-        let raw = ev.pipe_name_str();
-        let pipe_name = if raw.is_empty() {
-            "-".to_string()
-        } else {
-            resolve_target_path(ev.pid, ev.dirfd, raw)
-        };
-        let mut data = Map::new();
-        insert_str(&mut data, "UtcTime", &utc_time(&now));
-        insert_str(&mut data, "ProcessGuid", &guid);
-        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
-        insert_str(&mut data, "PipeName", &pipe_name);
-        insert_str(&mut data, "Image", &image);
-        insert_str(&mut data, "User", &user);
-        to_sysmon_event(18, &self.hostname, &now, data)
     }
 
     /// Build a driver_load (EID 6) event.

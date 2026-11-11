@@ -62,8 +62,9 @@ mod inner {
     pub const EVENT_RAW_ACCESS: u32 = 10;
     /// Ring buffer record tag: named pipe / FIFO created (EID 17).
     pub const EVENT_PIPE_CREATE: u32 = 11;
-    /// Ring buffer record tag: pipe connected (EID 18).
-    pub const EVENT_PIPE_CONNECT: u32 = 12;
+    // Tag 12 was formerly EVENT_PIPE_CONNECT (EID 18, pipe connected). It was
+    // retired because the eBPF probe never emitted it; keep the slot unassigned
+    // so stray/legacy records are handled as unknown tags.
     /// Ring buffer record tag: process tampering heuristic (EID 25).
     pub const EVENT_PROCESS_TAMPERING: u32 = 13;
 
@@ -651,53 +652,6 @@ mod inner {
     const _: () = assert!(
         core::mem::size_of::<PipeCreateEvent>().is_multiple_of(8),
         "PipeCreateEvent must stay 8-byte aligned for ring buffer records"
-    );
-
-    /// Pipe connection event (EID 18). Best-effort: emitted for opens of
-    /// paths tracked as named pipes.
-    #[repr(C)]
-    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
-    pub struct PipeConnectEvent {
-        /// Always [`EVENT_PIPE_CONNECT`].
-        pub kind: u32,
-        /// Connecting process id.
-        pub pid: u32,
-        /// Real UID of the connecting task.
-        pub uid: u32,
-        /// Real GID of the connecting task.
-        pub gid: u32,
-        /// Directory-fd argument (may be [`AT_FDCWD`]).
-        pub dirfd: i32,
-        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
-        pub _pad0: i32,
-        /// Pipe name/path (NUL-padded; may be relative).
-        pub pipe_name: [u8; PATH_LEN],
-        /// Task comm at connect time (NUL-padded).
-        pub comm: [u8; COMM_LEN],
-    }
-
-    impl PipeConnectEvent {
-        /// Parse a ring buffer record into a typed pipe-connect event.
-        #[must_use]
-        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
-            Some(*bytemuck::from_bytes(r))
-        }
-
-        fn cstr(field: &[u8]) -> &str {
-            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
-            core::str::from_utf8(&field[..end]).unwrap_or("")
-        }
-
-        /// Pipe name as lossy UTF-8 up to the first NUL.
-        pub fn pipe_name_str(&self) -> &str {
-            Self::cstr(&self.pipe_name)
-        }
-    }
-
-    const _: () = assert!(
-        core::mem::size_of::<PipeConnectEvent>().is_multiple_of(8),
-        "PipeConnectEvent must stay 8-byte aligned for ring buffer records"
     );
 
     /// Process tampering heuristic event (EID 25), emitted for cross-process
