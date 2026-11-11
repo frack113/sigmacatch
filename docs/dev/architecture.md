@@ -53,7 +53,7 @@ sigmacatch/
 │       │   └── ebpf_event.rs     #   eBPF → nested Sysmon-shaped JSON + tests
 │       ├── bin/
 │       │   └── regressiondata-check.rs  # Standalone cross-platform binary: regression check (--json, --ignore, --fix, --path)
-│       └── tests/                  # 16 integration tests (runner, cli, collectors, e2e)
+│       └── tests/                  # 20 integration tests (runner, cli, collectors, e2e)
 │           └── fixtures/           # sample.xml, sample.evtx, valid-single.evtx + sigma{,_malformed,_malformed_reference,_negative}/ fixtures
 │   └── ebpf/                       # Nested nightly eBPF probe crate (excluded via [workspace], bpfel-unknown-none)
 │       ├── .cargo/config.toml    #   bpfel target, bpf-linker, build-std=core

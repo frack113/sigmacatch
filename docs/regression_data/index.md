@@ -70,5 +70,6 @@ The source Sigma rule YAML is also annotated with:
 regression_tests_path: regression_data/rules/<rule_rel_path>/info.yml
 ```
 
-The path mirrors the rule's own path under `rules*` — the annotation is how a
-reader (and `regressiondata-check`) links a rule to its regression set.
+The path mirrors the rule's own location in the SigmaHQ rule trees — the
+annotation is how a reader (and `regressiondata-check`) links a rule to its
+regression set.
