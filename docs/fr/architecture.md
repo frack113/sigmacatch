@@ -103,8 +103,8 @@ Les features `sysmon` et `ebpf` ajoutent un collecteur dédié :
   de module. Les événements sont rendus en JSON imbriqué au schéma Sysmon, mappés par le
   pipeline de champs Linux puis injectés dans le même moteur. La filiation fork,
   `accept(NULL)`, `recvfrom(NULL)` et `execveat(AT_EMPTY_PATH)` sont traités explicitement.
-  Prérequis runtime : root ou CAP_BPF+CAP_PERFMON (refus de démarrer sinon — `linux.rs` bail)
-  + kernel avec BTF. Le hachage SHA256 des images est calculé userspace avec cache
+  Prérequis runtime : root ou CAP_BPF+CAP_PERFMON (refus de démarrer sinon — `linux.rs` bail),
+  ainsi qu'un kernel avec BTF. Le hachage SHA256 des images est calculé userspace avec cache
   (chemin,mtime). La probe embarque un marqueur `EVENTS_ABI_V2` ; un
   `SIGMACATCH_EBPF_OBJECT` précompilé sans ce marqueur est rejeté. Un échec de chargement des
   probes au runtime avertit (`warn!`) et continue **sans** source sysmon ; seul un build avec

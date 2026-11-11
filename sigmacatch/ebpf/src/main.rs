@@ -1766,17 +1766,17 @@ fn try_stage_rename(ctx: &TracePointContext, syscall: u32) -> Result<(), i64> {
             RENAME_RENAMEAT => {
                 let od: i32 = unsafe { ctx.read_at(16)? };
                 let old: *const u8 = unsafe { ctx.read_at(24)? };
-                let nd: i32 = unsafe { ctx.read_at(32)? };
+                let new_dirfd: i32 = unsafe { ctx.read_at(32)? };
                 let new: *const u8 = unsafe { ctx.read_at(40)? };
-                (od, old, nd, new, 0)
+                (od, old, new_dirfd, new, 0)
             }
             _ => {
                 let od: i32 = unsafe { ctx.read_at(16)? };
                 let old: *const u8 = unsafe { ctx.read_at(24)? };
-                let nd: i32 = unsafe { ctx.read_at(32)? };
+                let new_dirfd: i32 = unsafe { ctx.read_at(32)? };
                 let new: *const u8 = unsafe { ctx.read_at(40)? };
                 let flags: u64 = unsafe { ctx.read_at(48)? };
-                (od, old, nd, new, flags as u32)
+                (od, old, new_dirfd, new, flags as u32)
             }
         };
 
