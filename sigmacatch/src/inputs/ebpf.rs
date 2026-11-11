@@ -80,6 +80,12 @@ fn cap_eff(status: &str) -> Option<u64> {
 /// variants) still get the rest of the coverage.
 const ATTACHMENTS: &[(&str, &str, &str, bool)] = &[
     ("sys_enter_execve", "syscalls", "sys_enter_execve", true),
+    (
+        "sys_enter_execveat",
+        "syscalls",
+        "sys_enter_execveat",
+        false,
+    ),
     ("sched_process_exec", "sched", "sched_process_exec", true),
     ("sched_process_exit", "sched", "sched_process_exit", true),
     ("sys_enter_connect", "syscalls", "sys_enter_connect", true),

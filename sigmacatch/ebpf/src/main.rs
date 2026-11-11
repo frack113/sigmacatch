@@ -3,8 +3,8 @@
 
 //! sigmacatch eBPF probes.
 //!
-//! - `syscalls/sys_enter_execve`: stage `image` + first argv element per pid
-//!   (race-free capture, spec constraint);
+//! - `syscalls/sys_enter_execve` / `sys_enter_execveat`: stage `image` + first
+//!   argv elements per task (race-free capture, spec constraint);
 //! - `sched/sched_process_exec`: emit [`ExecEvent`] on the `EVENTS` ring
 //!   buffer;
 //! - `sched/sched_process_exit`: emit [`ExitEvent`] for group leaders;
@@ -153,6 +153,26 @@ fn try_stage_execve(ctx: &TracePointContext) -> Result<(), i64> {
     // size and copies a pointer-sized argument; out-of-range yields Err.
     let filename: *const u8 = unsafe { ctx.read_at(16)? };
     let argv_base: *const *const u8 = unsafe { ctx.read_at(24)? };
+    stage_exec_args(filename, argv_base)
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_execveat")]
+fn sys_enter_execveat(ctx: TracePointContext) -> i32 {
+    match try_stage_execveat(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+fn try_stage_execveat(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: offsets match the sys_enter_execveat tracepoint format
+    // (fd@16, filename@24, argv@32, envp@40, flags@48).
+    let filename: *const u8 = unsafe { ctx.read_at(24)? };
+    let argv_base: *const *const u8 = unsafe { ctx.read_at(32)? };
+    stage_exec_args(filename, argv_base)
+}
+
+fn stage_exec_args(filename: *const u8, argv_base: *const *const u8) -> Result<(), i64> {
     // Key by task id (tid) for syscall-instance correlation with sched_process_exec.
     let tid = bpf_get_current_pid_tgid() as u32;
 
