@@ -85,6 +85,8 @@ mod inner {
     pub const EVENT_FILE_CHANGE: u32 = 21;
     /// Ring buffer record tag: kernel module unload, EID 507 (extension).
     pub const EVENT_MODULE_UNLOAD: u32 = 22;
+    /// Ring buffer record tag: inbound DNS response, EID 508 (extension).
+    pub const EVENT_DNS_RESPONSE: u32 = 23;
 
     /// Directory-fd sentinel meaning "path is relative to cwd".
     pub const AT_FDCWD: i32 = -100;
@@ -1200,6 +1202,54 @@ mod inner {
     const _: () = assert!(
         core::mem::size_of::<ModuleUnloadEvent>().is_multiple_of(8),
         "ModuleUnloadEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// Inbound DNS response captured from `recvfrom`/`recvmsg` on UDP port 53.
+    ///
+    /// Carries the raw wire payload for userspace parsing (best-effort, extension).
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct DnsResponseEvent {
+        /// Always [`EVENT_DNS_RESPONSE`].
+        pub kind: u32,
+        /// Receiving process id.
+        pub pid: u32,
+        /// Real UID of the receiving task.
+        pub uid: u32,
+        /// Real GID of the receiving task.
+        pub gid: u32,
+        /// Bytes of valid payload written into [`DnsResponseEvent::payload`].
+        pub payload_len: u32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: u32,
+        /// Task comm at receive time (NUL-padded).
+        pub comm: [u8; 16],
+        /// Raw DNS wire bytes (header + sections as received).
+        pub payload: [u8; DNS_PAYLOAD_LEN],
+    }
+
+    impl DnsResponseEvent {
+        /// Parse a ring buffer record into a typed DNS response event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Task comm as lossy UTF-8 up to the first NUL.
+        pub fn comm_str(&self) -> &str {
+            Self::cstr(&self.comm)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<DnsResponseEvent>().is_multiple_of(8),
+        "DnsResponseEvent must stay 8-byte aligned for ring buffer records"
     );
 }
 

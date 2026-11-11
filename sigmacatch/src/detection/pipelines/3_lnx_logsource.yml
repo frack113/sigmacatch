@@ -113,6 +113,16 @@ transformations:
         category: module_unload
         product: linux
 
+  # EventID 508: dns_response (sigmacatch extension)
+  - id: win_dns_response
+    type: add_condition
+    conditions:
+      Event.System.EventID: 508
+    rule_conditions:
+      - type: logsource
+        category: dns_response
+        product: linux
+
   # EventID 5: process_termination
   - id: win_process_termination
     type: add_condition
@@ -449,6 +459,13 @@ transformations:
     rule_conditions:
       - type: logsource
         category: module_unload
+        product: linux
+  - id: win_route_dns_response
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: dns_response
         product: linux
   - id: win_route_process_termination
     type: change_logsource

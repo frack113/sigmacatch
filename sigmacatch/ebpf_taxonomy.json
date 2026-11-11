@@ -381,6 +381,23 @@
         "Result": "result"
       },
       "note": "sigmacatch extension (EID 507)"
+    },
+    "dns_response": {
+      "sigma_category": "dns_response",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 508,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "QueryName": "query_name",
+        "QueryStatus": "query_status",
+        "QueryResults": "query_results"
+      },
+      "note": "sigmacatch extension (EID 508): inbound DNS response (best-effort)"
     }
   }
 }

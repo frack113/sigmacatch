@@ -42,11 +42,11 @@ use ebpf_common::{
     CRED_SETFSUID, CRED_SETFSGID, CRED_SETGID, CRED_SETGROUPS, CRED_SETREGID, CRED_SETRESGID,
     CRED_SETRESUID, CRED_SETREUID, CRED_SETUID, CapabilityChangeEvent, CredentialChangeEvent,
     DNS_PAYLOAD_LEN, DnsEvent, DriverLoadEvent, EVENT_CAPABILITY_CHANGE, EVENT_CREDENTIAL_CHANGE,
-    EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_CHMOD,
-    EVENT_FILE_CHOWN, EVENT_FILE_DELETE, EVENT_FILE_RENAME, EVENT_FILE_TRUNCATE, EVENT_FORK,
-    EVENT_FILE_CHANGE, EVENT_LISTEN, EVENT_MODULE_UNLOAD, EVENT_NET, EVENT_PIPE_CREATE,
-    EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, ExecEvent, ExitEvent,
-    FileChangeEvent, FileChmodEvent, FileChownEvent, FileCreateEvent, FileDeleteEvent,
+    EVENT_DNS, EVENT_DNS_RESPONSE, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE,
+    EVENT_FILE_CHMOD, EVENT_FILE_CHOWN, EVENT_FILE_DELETE, EVENT_FILE_RENAME, EVENT_FILE_TRUNCATE,
+    EVENT_FORK, EVENT_FILE_CHANGE, EVENT_LISTEN, EVENT_MODULE_UNLOAD, EVENT_NET, EVENT_PIPE_CREATE,
+    EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, DnsResponseEvent, ExecEvent,
+    ExitEvent, FileChangeEvent, FileChmodEvent, FileChownEvent, FileCreateEvent, FileDeleteEvent,
     FileRenameEvent, FileTruncateEvent, ForkEvent, IMAGE_LEN, ListenEvent, ModuleUnloadEvent,
     NetEvent, PATH_LEN, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent,
     RENAME_RENAME, RENAME_RENAMEAT, RENAME_RENAMEAT2, RawAccessEvent, TRUNCATE_FTRUNCATE,
@@ -71,6 +71,7 @@ const TRUNCATE_STAGE_MAX: u32 = 4096;
 const WRITE_STAGE_MAX: u32 = 4096;
 const MODUNLOAD_STAGE_MAX: u32 = 4096;
 const ACCEPT_STAGE_MAX: u32 = 4096;
+const DNS_RECV_STAGE_MAX: u32 = 4096;
 /// `O_CREAT` bit — openat is staged only when the caller may create.
 const O_CREAT: u64 = 0o100;
 
@@ -110,6 +111,13 @@ struct DnsQuery {
     payload_len: u32,
     comm: [u8; 16],
     payload: [u8; DNS_PAYLOAD_LEN],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PendingDnsRecv {
+    buf: u64,
+    addr: u64,
 }
 
 #[repr(C)]
@@ -1300,6 +1308,14 @@ fn try_emit_file_delete(ctx: &TracePointContext) -> Result<(), i64> {
 #[map(name = "DNS_SCRATCH")]
 static DNS_SCRATCH: PerCpuArray<DnsQuery> = PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
 
+#[map(name = "DNS_RECV_STAGE")]
+static DNS_RECV_STAGE: LruHashMap<u64, PendingDnsRecv> =
+    LruHashMap::with_max_entries(DNS_RECV_STAGE_MAX, 0);
+
+#[map(name = "DNS_RESP_SCRATCH")]
+static DNS_RESP_SCRATCH: PerCpuArray<DnsResponseEvent> =
+    PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
+
 /// Copy up to `dst.len()` payload bytes, returning the stored length.
 fn read_user_bytes(dst: &mut [u8], src: *const u8, size: usize) -> usize {
     if src.is_null() || dst.is_empty() {
@@ -2455,6 +2471,114 @@ fn sys_enter_accept4(ctx: TracePointContext) -> i32 {
 #[tracepoint(category = "syscalls", name = "sys_exit_accept4")]
 fn sys_exit_accept4(ctx: TracePointContext) -> i32 {
     match try_emit_accept(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+
+// ─── DNS response capture (EID 508, extension) ──────────────────────────────
+
+fn dns_response_plausible(buf: *const u8, size: usize) -> bool {
+    if size < 12 || buf.is_null() {
+        return false;
+    }
+    // SAFETY: fixed 12-byte read of the DNS header; fault-tolerant helper.
+    let hdr: [u8; 12] = match unsafe { bpf_probe_read_user(buf.cast()) } {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let flags = u16::from_be_bytes([hdr[2], hdr[3]]);
+    // QR bit set => response.
+    flags & 0x8000 != 0
+}
+
+fn try_stage_dns_recv(ctx: &TracePointContext) -> Result<(), i64> {
+    let tid_key = bpf_get_current_pid_tgid();
+    // SAFETY: bounds-checked context reads (recvfrom/recvmsg-like staging).
+    let buf: u64 = unsafe { ctx.read_at(24)? };
+    let addr: u64 = unsafe { ctx.read_at(48)? };
+    let pending = PendingDnsRecv { buf, addr };
+    let _ = DNS_RECV_STAGE.insert(&tid_key, &pending, 0);
+    Ok(())
+}
+
+fn try_emit_dns_recv(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: bounds-checked context read of syscall return value (bytes read).
+    let ret: i64 = unsafe { ctx.read_at(16)? };
+    let tid_key = bpf_get_current_pid_tgid();
+    // SAFETY: read-only map borrow of a fixed-size value.
+    let Some(staged) = (unsafe { DNS_RECV_STAGE.get(&tid_key) }).copied() else {
+        return Ok(());
+    };
+    DNS_RECV_STAGE.remove(&tid_key)?;
+    if ret <= 0 || staged.buf == 0 || staged.addr == 0 {
+        return Ok(());
+    }
+    let size = ret as usize;
+    // Best-effort: keep only responses coming from UDP port 53.
+    let addr_ptr = staged.addr as *const u8;
+    // SAFETY: two-byte user reads; fault-tolerant helpers.
+    let family = unsafe { bpf_probe_read_user::<u16>(addr_ptr.cast()) }.unwrap_or(0);
+    if family != 2 && family != 10 {
+        return Ok(());
+    }
+    let port_be = match unsafe { bpf_probe_read_user::<u16>(addr_ptr.add(2).cast()) } {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+    if u16::from_be(port_be) != 53 {
+        return Ok(());
+    }
+    let buf = staged.buf as *const u8;
+    if !dns_response_plausible(buf, size) {
+        return Ok(());
+    }
+
+    let ids = bpf_get_current_pid_tgid();
+    let uidgid = bpf_get_current_uid_gid();
+    let comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    let scratch = match DNS_RESP_SCRATCH.get_ptr_mut(0) {
+        // SAFETY: index validated by get_ptr_mut; per-cpu exclusivity.
+        Some(p) => unsafe { &mut *p },
+        None => return Err(-28),
+    };
+    scratch.kind = EVENT_DNS_RESPONSE;
+    scratch.pid = (ids >> 32) as u32;
+    scratch.uid = uidgid as u32;
+    scratch.gid = (uidgid >> 32) as u32;
+    scratch._pad0 = 0;
+    scratch.comm = comm;
+    scratch.payload = [0; DNS_PAYLOAD_LEN];
+    scratch.payload_len =
+        read_user_bytes(&mut scratch.payload, buf, size.min(DNS_PAYLOAD_LEN)) as u32;
+
+    if let Some(mut entry) = EVENTS.reserve::<DnsResponseEvent>(0) {
+        let p = entry.as_mut_ptr();
+        // SAFETY: exclusive reserved slot; writes in bounds.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                scratch as *const DnsResponseEvent as *const u8,
+                p as *mut u8,
+                core::mem::size_of::<DnsResponseEvent>(),
+            );
+        }
+        entry.submit(0);
+    }
+    Ok(())
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_recvfrom")]
+fn sys_enter_recvfrom(ctx: TracePointContext) -> i32 {
+    match try_stage_dns_recv(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_recvfrom")]
+fn sys_exit_recvfrom(ctx: TracePointContext) -> i32 {
+    match try_emit_dns_recv(&ctx) {
         Ok(()) => 0,
         Err(e) => e as i32,
     }

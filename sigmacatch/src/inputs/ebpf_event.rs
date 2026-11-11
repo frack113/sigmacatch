@@ -26,11 +26,11 @@ use crate::ebpf_common::{
     CHOWN_FCHOWN, CHOWN_FCHOWNAT, CHOWN_LCHOWN, CRED_SETEGID, CRED_SETEUID, CRED_SETFSGID,
     CRED_SETFSUID, CRED_SETGID, CRED_SETGROUPS, CRED_SETREGID, CRED_SETRESGID, CRED_SETRESUID,
     CRED_SETREUID, CRED_SETUID, CapabilityChangeEvent, CredentialChangeEvent, DnsEvent,
-    DriverLoadEvent, ExecEvent, FileChangeEvent, FileChmodEvent, FileChownEvent, FileCreateEvent,
-    FileDeleteEvent, FileRenameEvent, FileTruncateEvent, ForkEvent, ListenEvent, ModuleUnloadEvent,
-    NetEvent, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RENAME_RENAME,
-    RENAME_RENAMEAT, RENAME_RENAMEAT2, RawAccessEvent, TRUNCATE_FTRUNCATE, TRUNCATE_TRUNCATE,
-    WRITE_PWRITE64, WRITE_PWRITEV, WRITE_PWRITEV2, WRITE_WRITE, WRITE_WRITEV,
+    DnsResponseEvent, DriverLoadEvent, ExecEvent, FileChangeEvent, FileChmodEvent, FileChownEvent,
+    FileCreateEvent, FileDeleteEvent, FileRenameEvent, FileTruncateEvent, ForkEvent, ListenEvent,
+    ModuleUnloadEvent, NetEvent, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent,
+    RENAME_RENAME, RENAME_RENAMEAT, RENAME_RENAMEAT2, RawAccessEvent, TRUNCATE_FTRUNCATE,
+    TRUNCATE_TRUNCATE, WRITE_PWRITE64, WRITE_PWRITEV, WRITE_PWRITEV2, WRITE_WRITE, WRITE_WRITEV,
 };
 use crate::types::Event;
 use chrono::Utc;
@@ -756,6 +756,32 @@ impl EventBuilder {
         Some(to_sysmon_event(22, &self.hostname, &now, data))
     }
 
+    /// Build a dns_response (EID 508, extension) event.
+    pub fn dns_response_event(&mut self, ev: &DnsResponseEvent) -> Option<Event> {
+        let end = ev.payload_len as usize;
+        if end > ev.payload.len() {
+            return None;
+        }
+        let query_name = parse_query_name(&ev.payload[..end])?;
+
+        let now = Utc::now();
+        let (guid, image) = match self.parents.get(&ev.pid) {
+            Some(info) => (info.guid.clone(), info.image.clone()),
+            None => (new_guid(), "-".to_string()),
+        };
+        let user = self.user_name(ev.uid);
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "User", &user);
+        insert_str(&mut data, "QueryName", &query_name);
+        insert_str(&mut data, "QueryStatus", "0");
+        insert_str(&mut data, "QueryResults", "-");
+        Some(to_sysmon_event(508, &self.hostname, &now, data))
+    }
+
     fn user_name(&mut self, uid: u32) -> String {
         if let Some(name) = self.users.get(&uid) {
             return name.clone();
@@ -856,13 +882,9 @@ fn to_sysmon_event(
     Event::new_injected(json.clone(), json, raw_bytes, "linux", None)
 }
 
-/// Extract the question name from a raw DNS wire payload.
+/// Extract the question name from a raw DNS wire payload (query or response).
 pub fn parse_query_name(payload: &[u8]) -> Option<String> {
     if payload.len() < 13 {
-        return None;
-    }
-    let flags = u16::from_be_bytes([payload[2], payload[3]]);
-    if flags & 0x8000 != 0 {
         return None;
     }
     let qdcount = u16::from_be_bytes([payload[4], payload[5]]);

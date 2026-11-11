@@ -8,11 +8,11 @@
 use std::fs;
 
 use crate::ebpf_common::{
-    CapabilityChangeEvent, CredentialChangeEvent, DnsEvent, DriverLoadEvent,
-    EVENT_CAPABILITY_CHANGE, EVENT_CREDENTIAL_CHANGE, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC,
-    EVENT_EXIT, EVENT_FILE, EVENT_FILE_CHANGE, EVENT_FILE_CHMOD, EVENT_FILE_CHOWN,
-    EVENT_FILE_DELETE, EVENT_FILE_RENAME, EVENT_FILE_TRUNCATE, EVENT_FORK, EVENT_LISTEN,
-    EVENT_MODULE_UNLOAD, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS,
+    CapabilityChangeEvent, CredentialChangeEvent, DnsEvent, DnsResponseEvent, DriverLoadEvent,
+    EVENT_CAPABILITY_CHANGE, EVENT_CREDENTIAL_CHANGE, EVENT_DNS, EVENT_DNS_RESPONSE,
+    EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_CHANGE, EVENT_FILE_CHMOD,
+    EVENT_FILE_CHOWN, EVENT_FILE_DELETE, EVENT_FILE_RENAME, EVENT_FILE_TRUNCATE, EVENT_FORK,
+    EVENT_LISTEN, EVENT_MODULE_UNLOAD, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS,
     EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, FileChangeEvent, FileChmodEvent, FileChownEvent,
     FileCreateEvent, FileDeleteEvent, FileRenameEvent, FileTruncateEvent, ForkEvent, ListenEvent,
     ModuleUnloadEvent, NetEvent, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent,
@@ -99,6 +99,13 @@ const ATTACHMENTS: &[(&str, &str, &str, bool)] = &[
     ("sys_exit_accept", "syscalls", "sys_exit_accept", false),
     ("sys_enter_accept4", "syscalls", "sys_enter_accept4", false),
     ("sys_exit_accept4", "syscalls", "sys_exit_accept4", false),
+    (
+        "sys_enter_recvfrom",
+        "syscalls",
+        "sys_enter_recvfrom",
+        false,
+    ),
+    ("sys_exit_recvfrom", "syscalls", "sys_exit_recvfrom", false),
     ("sys_enter_openat", "syscalls", "sys_enter_openat", true),
     ("sys_exit_openat", "syscalls", "sys_exit_openat", true),
     ("sys_enter_open", "syscalls", "sys_enter_open", false),
@@ -662,6 +669,19 @@ impl EventProducer for EventCollector {
                         None => tracing::warn!(
                             size = bytes.len(),
                             "module-unload record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_DNS_RESPONSE => match DnsResponseEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            if let Some(event) = self.builder.dns_response_event(&ev)
+                                && tx.send(event).await.is_err()
+                            {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "dns-response record with unexpected size — skipped"
                         ),
                     },
                     other => tracing::warn!(tag = other, "unknown ring buffer record tag"),
