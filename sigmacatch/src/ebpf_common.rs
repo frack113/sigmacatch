@@ -75,6 +75,12 @@ mod inner {
     pub const EVENT_CAPABILITY_CHANGE: u32 = 16;
     /// Ring buffer record tag: file rename, EID 503 (extension).
     pub const EVENT_FILE_RENAME: u32 = 17;
+    /// Ring buffer record tag: file chmod, EID 504 (extension).
+    pub const EVENT_FILE_CHMOD: u32 = 18;
+    /// Ring buffer record tag: file chown, EID 505 (extension).
+    pub const EVENT_FILE_CHOWN: u32 = 19;
+    /// Ring buffer record tag: file truncate, EID 506 (extension).
+    pub const EVENT_FILE_TRUNCATE: u32 = 20;
 
     /// Directory-fd sentinel meaning "path is relative to cwd".
     pub const AT_FDCWD: i32 = -100;
@@ -907,6 +913,193 @@ mod inner {
     const _: () = assert!(
         core::mem::size_of::<FileRenameEvent>().is_multiple_of(8),
         "FileRenameEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// File-chmod syscall selector: `chmod`.
+    pub const CHMOD_CHMOD: u32 = 1;
+    /// File-chmod syscall selector: `fchmod`.
+    pub const CHMOD_FCHMOD: u32 = 2;
+    /// File-chmod syscall selector: `fchmodat`.
+    pub const CHMOD_FCHMODAT: u32 = 3;
+    /// File-chmod syscall selector: `fchmodat2`.
+    pub const CHMOD_FCHMODAT2: u32 = 4;
+
+    /// File chmod event, emitted as EID 504.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct FileChmodEvent {
+        /// Always [`EVENT_FILE_CHMOD`].
+        pub kind: u32,
+        /// Process id (tgid).
+        pub pid: u32,
+        /// Real UID of the task.
+        pub uid: u32,
+        /// Real GID of the task.
+        pub gid: u32,
+        /// Syscall selector (`CHMOD_*`).
+        pub syscall: u32,
+        /// Mode argument.
+        pub mode: u32,
+        /// Flags (fchmodat/fchmodat2), 0 otherwise.
+        pub flags: u32,
+        /// Directory fd for *at variants, or `AT_FDCWD`/-1.
+        pub dirfd: i32,
+        /// File descriptor for fd-based variants, or -1.
+        pub fd: i32,
+        /// Syscall result / return code.
+        pub result: i32,
+        /// Target path (NUL-padded; may be empty for fd-based variants).
+        pub path: [u8; PATH_LEN],
+        /// Task comm at event time (NUL-padded).
+        pub comm: [u8; COMM_LEN],
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: [u32; 2],
+    }
+
+    impl FileChmodEvent {
+        /// Parse a ring buffer record into a typed file-chmod event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Path as lossy UTF-8 up to the first NUL.
+        pub fn path_str(&self) -> &str {
+            Self::cstr(&self.path)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<FileChmodEvent>().is_multiple_of(8),
+        "FileChmodEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// File-chown syscall selector: `chown`.
+    pub const CHOWN_CHOWN: u32 = 1;
+    /// File-chown syscall selector: `lchown`.
+    pub const CHOWN_LCHOWN: u32 = 2;
+    /// File-chown syscall selector: `fchown`.
+    pub const CHOWN_FCHOWN: u32 = 3;
+    /// File-chown syscall selector: `fchownat`.
+    pub const CHOWN_FCHOWNAT: u32 = 4;
+
+    /// File chown event, emitted as EID 505.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct FileChownEvent {
+        /// Always [`EVENT_FILE_CHOWN`].
+        pub kind: u32,
+        /// Process id (tgid).
+        pub pid: u32,
+        /// Real UID of the task.
+        pub uid: u32,
+        /// Real GID of the task.
+        pub gid: u32,
+        /// Syscall selector (`CHOWN_*`).
+        pub syscall: u32,
+        /// New owner uid argument.
+        pub owner: u32,
+        /// New group gid argument.
+        pub group: u32,
+        /// Flags (fchownat), 0 otherwise.
+        pub flags: u32,
+        /// Directory fd for *at variants, or `AT_FDCWD`/-1.
+        pub dirfd: i32,
+        /// File descriptor for fd-based variants, or -1.
+        pub fd: i32,
+        /// Syscall result / return code.
+        pub result: i32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: u32,
+        /// Target path (NUL-padded; may be empty for fd-based variants).
+        pub path: [u8; PATH_LEN],
+        /// Task comm at event time (NUL-padded).
+        pub comm: [u8; COMM_LEN],
+    }
+
+    impl FileChownEvent {
+        /// Parse a ring buffer record into a typed file-chown event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Path as lossy UTF-8 up to the first NUL.
+        pub fn path_str(&self) -> &str {
+            Self::cstr(&self.path)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<FileChownEvent>().is_multiple_of(8),
+        "FileChownEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// File-truncate syscall selector: `truncate`.
+    pub const TRUNCATE_TRUNCATE: u32 = 1;
+    /// File-truncate syscall selector: `ftruncate`.
+    pub const TRUNCATE_FTRUNCATE: u32 = 2;
+
+    /// File truncate event, emitted as EID 506.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct FileTruncateEvent {
+        /// Always [`EVENT_FILE_TRUNCATE`].
+        pub kind: u32,
+        /// Process id (tgid).
+        pub pid: u32,
+        /// Real UID of the task.
+        pub uid: u32,
+        /// Real GID of the task.
+        pub gid: u32,
+        /// Syscall selector (`TRUNCATE_*`).
+        pub syscall: u32,
+        /// File descriptor for fd-based variants, or -1.
+        pub fd: i32,
+        /// Requested length.
+        pub length: i64,
+        /// Syscall result / return code.
+        pub result: i64,
+        /// Target path (NUL-padded; may be empty for fd-based variants).
+        pub path: [u8; PATH_LEN],
+        /// Task comm at event time (NUL-padded).
+        pub comm: [u8; COMM_LEN],
+    }
+
+    impl FileTruncateEvent {
+        /// Parse a ring buffer record into a typed file-truncate event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Path as lossy UTF-8 up to the first NUL.
+        pub fn path_str(&self) -> &str {
+            Self::cstr(&self.path)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<FileTruncateEvent>().is_multiple_of(8),
+        "FileTruncateEvent must stay 8-byte aligned for ring buffer records"
     );
 }
 

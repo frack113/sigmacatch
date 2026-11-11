@@ -37,16 +37,19 @@ use aya_ebpf::{
 mod ebpf_common;
 
 use ebpf_common::{
-    ARG0_LEN, ARG1_LEN, ARG2_LEN, CAP_CAPSET, CAP_PRCTL, CRED_SETFSUID, CRED_SETFSGID,
-    CRED_SETGID, CRED_SETGROUPS, CRED_SETREGID, CRED_SETRESGID, CRED_SETRESUID, CRED_SETREUID,
-    CRED_SETUID, CapabilityChangeEvent, CredentialChangeEvent, DNS_PAYLOAD_LEN, DnsEvent,
-    DriverLoadEvent, EVENT_CAPABILITY_CHANGE, EVENT_CREDENTIAL_CHANGE, EVENT_DNS,
-    EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_DELETE, EVENT_FILE_RENAME,
-    EVENT_FORK, EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS,
-    EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, ExecEvent, ExitEvent, FileCreateEvent,
-    FileDeleteEvent, FileRenameEvent, ForkEvent, IMAGE_LEN, ListenEvent, NetEvent, PATH_LEN,
-    PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RENAME_RENAME, RENAME_RENAMEAT,
-    RENAME_RENAMEAT2, RawAccessEvent, AT_FDCWD,
+    ARG0_LEN, ARG1_LEN, ARG2_LEN, AT_FDCWD, CAP_CAPSET, CAP_PRCTL, CHMOD_CHMOD, CHMOD_FCHMOD,
+    CHMOD_FCHMODAT, CHMOD_FCHMODAT2, CHOWN_CHOWN, CHOWN_FCHOWN, CHOWN_FCHOWNAT, CHOWN_LCHOWN,
+    CRED_SETFSUID, CRED_SETFSGID, CRED_SETGID, CRED_SETGROUPS, CRED_SETREGID, CRED_SETRESGID,
+    CRED_SETRESUID, CRED_SETREUID, CRED_SETUID, CapabilityChangeEvent, CredentialChangeEvent,
+    DNS_PAYLOAD_LEN, DnsEvent, DriverLoadEvent, EVENT_CAPABILITY_CHANGE, EVENT_CREDENTIAL_CHANGE,
+    EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_CHMOD,
+    EVENT_FILE_CHOWN, EVENT_FILE_DELETE, EVENT_FILE_RENAME, EVENT_FILE_TRUNCATE, EVENT_FORK,
+    EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING,
+    EVENT_RAW_ACCESS, ExecEvent, ExitEvent, FileChmodEvent, FileChownEvent, FileCreateEvent,
+    FileDeleteEvent, FileRenameEvent, FileTruncateEvent, ForkEvent, IMAGE_LEN, ListenEvent,
+    NetEvent, PATH_LEN, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent,
+    RENAME_RENAME, RENAME_RENAMEAT, RENAME_RENAMEAT2, RawAccessEvent, TRUNCATE_FTRUNCATE,
+    TRUNCATE_TRUNCATE,
 };
 
 const MAX_ENTRIES: u32 = 1;
@@ -61,6 +64,9 @@ const LISTEN_FD_MAX: u32 = 4096;
 const CRED_STAGE_MAX: u32 = 4096;
 const CAP_STAGE_MAX: u32 = 4096;
 const RENAME_STAGE_MAX: u32 = 4096;
+const CHMOD_STAGE_MAX: u32 = 4096;
+const CHOWN_STAGE_MAX: u32 = 4096;
+const TRUNCATE_STAGE_MAX: u32 = 4096;
 /// `O_CREAT` bit — openat is staged only when the caller may create.
 const O_CREAT: u64 = 0o100;
 
@@ -134,6 +140,39 @@ struct PendingRename {
     new_path: [u8; PATH_LEN],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PendingChmod {
+    syscall: u32,
+    mode: u32,
+    flags: u32,
+    dirfd: i32,
+    fd: i32,
+    _pad0: i32,
+    path: [u8; PATH_LEN],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PendingChown {
+    syscall: u32,
+    owner: u32,
+    group: u32,
+    flags: u32,
+    dirfd: i32,
+    fd: i32,
+    path: [u8; PATH_LEN],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PendingTruncate {
+    syscall: u32,
+    fd: i32,
+    length: i64,
+    path: [u8; PATH_LEN],
+}
+
 #[map(name = "EVENTS")]
 static EVENTS: RingBuf = RingBuf::with_byte_size(1 << 20, 0);
 
@@ -182,6 +221,26 @@ static RENAME_STAGE: LruHashMap<u32, PendingRename> =
 
 #[map(name = "RENAME_SCRATCH")]
 static RENAME_SCRATCH: PerCpuArray<PendingRename> = PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
+
+#[map(name = "CHMOD_STAGE")]
+static CHMOD_STAGE: LruHashMap<u32, PendingChmod> = LruHashMap::with_max_entries(CHMOD_STAGE_MAX, 0);
+
+#[map(name = "CHMOD_SCRATCH")]
+static CHMOD_SCRATCH: PerCpuArray<PendingChmod> = PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
+
+#[map(name = "CHOWN_STAGE")]
+static CHOWN_STAGE: LruHashMap<u32, PendingChown> = LruHashMap::with_max_entries(CHOWN_STAGE_MAX, 0);
+
+#[map(name = "CHOWN_SCRATCH")]
+static CHOWN_SCRATCH: PerCpuArray<PendingChown> = PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
+
+#[map(name = "TRUNCATE_STAGE")]
+static TRUNCATE_STAGE: LruHashMap<u32, PendingTruncate> =
+    LruHashMap::with_max_entries(TRUNCATE_STAGE_MAX, 0);
+
+#[map(name = "TRUNCATE_SCRATCH")]
+static TRUNCATE_SCRATCH: PerCpuArray<PendingTruncate> =
+    PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
 
 /// Read a NUL-terminated user string into `dst`, returning the stored length
 /// (excluding the NUL), provably bounded by `dst.len() - 1`.
@@ -1711,6 +1770,412 @@ fn sys_enter_renameat2(ctx: TracePointContext) -> i32 {
 #[tracepoint(category = "syscalls", name = "sys_exit_renameat2")]
 fn sys_exit_renameat2(ctx: TracePointContext) -> i32 {
     match try_emit_rename(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+// ─── File chmod/chown/truncate capture (EID 504/505/506, extensions) ────────
+
+fn try_stage_chmod(ctx: &TracePointContext, syscall: u32) -> Result<(), i64> {
+    let tid = bpf_get_current_pid_tgid() as u32;
+    let pending = match CHMOD_SCRATCH.get_ptr_mut(0) {
+        // SAFETY: index validated by get_ptr_mut; per-cpu exclusivity.
+        Some(p) => unsafe { &mut *p },
+        None => return Err(-28),
+    };
+    pending.syscall = syscall;
+    pending.flags = 0;
+    pending.dirfd = AT_FDCWD;
+    pending.fd = -1;
+    pending.mode = 0;
+    pending._pad0 = 0;
+    unsafe {
+        ptr::write_bytes(pending.path.as_mut_ptr(), 0, PATH_LEN);
+    }
+    match syscall {
+        CHMOD_CHMOD => {
+            // SAFETY: sys_enter_chmod format: filename@16, mode@24.
+            let filename: *const u8 = unsafe { ctx.read_at(16)? };
+            let mode: u64 = unsafe { ctx.read_at(24)? };
+            pending.mode = mode as u32;
+            read_cstr(&mut pending.path, filename);
+        }
+        CHMOD_FCHMOD => {
+            // SAFETY: sys_enter_fchmod format: fd@16, mode@24.
+            let fd: u64 = unsafe { ctx.read_at(16)? };
+            let mode: u64 = unsafe { ctx.read_at(24)? };
+            pending.fd = fd as i32;
+            pending.mode = mode as u32;
+        }
+        CHMOD_FCHMODAT => {
+            // SAFETY: sys_enter_fchmodat format: dfd@16, filename@24, mode@32.
+            let dfd: i64 = unsafe { ctx.read_at(16)? };
+            let filename: *const u8 = unsafe { ctx.read_at(24)? };
+            let mode: u64 = unsafe { ctx.read_at(32)? };
+            pending.dirfd = dfd as i32;
+            pending.mode = mode as u32;
+            read_cstr(&mut pending.path, filename);
+        }
+        _ => {
+            // SAFETY: sys_enter_fchmodat2 format: dfd@16, filename@24, mode@32, flags@40.
+            let dfd: i64 = unsafe { ctx.read_at(16)? };
+            let filename: *const u8 = unsafe { ctx.read_at(24)? };
+            let mode: u64 = unsafe { ctx.read_at(32)? };
+            let flags: u64 = unsafe { ctx.read_at(40)? };
+            pending.dirfd = dfd as i32;
+            pending.mode = mode as u32;
+            pending.flags = flags as u32;
+            read_cstr(&mut pending.path, filename);
+        }
+    }
+    let _ = CHMOD_STAGE.insert(&tid, pending, 0);
+    Ok(())
+}
+
+fn try_emit_chmod(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: sys_exit_* tracepoints have ret at offset 16.
+    let ret: i64 = unsafe { ctx.read_at(16)? };
+    let tid = bpf_get_current_pid_tgid() as u32;
+    let Some(staged) = (unsafe { CHMOD_STAGE.get(&tid) }) else {
+        return Ok(());
+    };
+    if ret < 0 {
+        let _ = CHMOD_STAGE.remove(&tid);
+        return Ok(());
+    }
+    let ids = bpf_get_current_pid_tgid();
+    let uidgid = bpf_get_current_uid_gid();
+    let comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    if let Some(mut entry) = EVENTS.reserve::<FileChmodEvent>(0) {
+        let p = entry.as_mut_ptr();
+        unsafe {
+            ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<FileChmodEvent>());
+            (*p).kind = EVENT_FILE_CHMOD;
+            (*p).pid = (ids >> 32) as u32;
+            (*p).uid = uidgid as u32;
+            (*p).gid = (uidgid >> 32) as u32;
+            (*p).syscall = staged.syscall;
+            (*p).mode = staged.mode;
+            (*p).flags = staged.flags;
+            (*p).dirfd = staged.dirfd;
+            (*p).fd = staged.fd;
+            (*p).result = ret as i32;
+            (*p).path = staged.path;
+            (*p).comm = comm;
+            (*p)._pad0 = [0; 2];
+        }
+        entry.submit(0);
+    }
+    let _ = CHMOD_STAGE.remove(&tid);
+    Ok(())
+}
+
+fn try_stage_chown(ctx: &TracePointContext, syscall: u32) -> Result<(), i64> {
+    let tid = bpf_get_current_pid_tgid() as u32;
+    let pending = match CHOWN_SCRATCH.get_ptr_mut(0) {
+        // SAFETY: index validated by get_ptr_mut; per-cpu exclusivity.
+        Some(p) => unsafe { &mut *p },
+        None => return Err(-28),
+    };
+    pending.syscall = syscall;
+    pending.owner = 0;
+    pending.group = 0;
+    pending.flags = 0;
+    pending.dirfd = AT_FDCWD;
+    pending.fd = -1;
+    unsafe {
+        ptr::write_bytes(pending.path.as_mut_ptr(), 0, PATH_LEN);
+    }
+    match syscall {
+        CHOWN_CHOWN | CHOWN_LCHOWN => {
+            // SAFETY: sys_enter_chown/lchown: filename@16, user@24, group@32.
+            let filename: *const u8 = unsafe { ctx.read_at(16)? };
+            let owner: u64 = unsafe { ctx.read_at(24)? };
+            let group: u64 = unsafe { ctx.read_at(32)? };
+            pending.owner = owner as u32;
+            pending.group = group as u32;
+            read_cstr(&mut pending.path, filename);
+        }
+        CHOWN_FCHOWN => {
+            // SAFETY: sys_enter_fchown: fd@16, user@24, group@32.
+            let fd: u64 = unsafe { ctx.read_at(16)? };
+            let owner: u64 = unsafe { ctx.read_at(24)? };
+            let group: u64 = unsafe { ctx.read_at(32)? };
+            pending.fd = fd as i32;
+            pending.owner = owner as u32;
+            pending.group = group as u32;
+        }
+        _ => {
+            // SAFETY: sys_enter_fchownat: dfd@16, filename@24, user@32, group@40, flag@48.
+            let dfd: i64 = unsafe { ctx.read_at(16)? };
+            let filename: *const u8 = unsafe { ctx.read_at(24)? };
+            let owner: u64 = unsafe { ctx.read_at(32)? };
+            let group: u64 = unsafe { ctx.read_at(40)? };
+            let flags: u64 = unsafe { ctx.read_at(48)? };
+            pending.dirfd = dfd as i32;
+            pending.owner = owner as u32;
+            pending.group = group as u32;
+            pending.flags = flags as u32;
+            read_cstr(&mut pending.path, filename);
+        }
+    }
+    let _ = CHOWN_STAGE.insert(&tid, pending, 0);
+    Ok(())
+}
+
+fn try_emit_chown(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: sys_exit_* tracepoints have ret at offset 16.
+    let ret: i64 = unsafe { ctx.read_at(16)? };
+    let tid = bpf_get_current_pid_tgid() as u32;
+    let Some(staged) = (unsafe { CHOWN_STAGE.get(&tid) }) else {
+        return Ok(());
+    };
+    if ret < 0 {
+        let _ = CHOWN_STAGE.remove(&tid);
+        return Ok(());
+    }
+    let ids = bpf_get_current_pid_tgid();
+    let uidgid = bpf_get_current_uid_gid();
+    let comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    if let Some(mut entry) = EVENTS.reserve::<FileChownEvent>(0) {
+        let p = entry.as_mut_ptr();
+        unsafe {
+            ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<FileChownEvent>());
+            (*p).kind = EVENT_FILE_CHOWN;
+            (*p).pid = (ids >> 32) as u32;
+            (*p).uid = uidgid as u32;
+            (*p).gid = (uidgid >> 32) as u32;
+            (*p).syscall = staged.syscall;
+            (*p).owner = staged.owner;
+            (*p).group = staged.group;
+            (*p).flags = staged.flags;
+            (*p).dirfd = staged.dirfd;
+            (*p).fd = staged.fd;
+            (*p).result = ret as i32;
+            (*p)._pad0 = 0;
+            (*p).path = staged.path;
+            (*p).comm = comm;
+        }
+        entry.submit(0);
+    }
+    let _ = CHOWN_STAGE.remove(&tid);
+    Ok(())
+}
+
+fn try_stage_truncate(ctx: &TracePointContext, syscall: u32) -> Result<(), i64> {
+    let tid = bpf_get_current_pid_tgid() as u32;
+    let pending = match TRUNCATE_SCRATCH.get_ptr_mut(0) {
+        // SAFETY: index validated by get_ptr_mut; per-cpu exclusivity.
+        Some(p) => unsafe { &mut *p },
+        None => return Err(-28),
+    };
+    pending.syscall = syscall;
+    pending.fd = -1;
+    pending.length = 0;
+    unsafe {
+        ptr::write_bytes(pending.path.as_mut_ptr(), 0, PATH_LEN);
+    }
+    match syscall {
+        TRUNCATE_TRUNCATE => {
+            // SAFETY: sys_enter_truncate: path@16, length@24.
+            let path: *const u8 = unsafe { ctx.read_at(16)? };
+            let length: i64 = unsafe { ctx.read_at(24)? };
+            pending.length = length;
+            read_cstr(&mut pending.path, path);
+        }
+        _ => {
+            // SAFETY: sys_enter_ftruncate: fd@16, length@24.
+            let fd: u64 = unsafe { ctx.read_at(16)? };
+            let length: i64 = unsafe { ctx.read_at(24)? };
+            pending.fd = fd as i32;
+            pending.length = length;
+        }
+    }
+    let _ = TRUNCATE_STAGE.insert(&tid, pending, 0);
+    Ok(())
+}
+
+fn try_emit_truncate(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: sys_exit_* tracepoints have ret at offset 16.
+    let ret: i64 = unsafe { ctx.read_at(16)? };
+    let tid = bpf_get_current_pid_tgid() as u32;
+    let Some(staged) = (unsafe { TRUNCATE_STAGE.get(&tid) }) else {
+        return Ok(());
+    };
+    if ret < 0 {
+        let _ = TRUNCATE_STAGE.remove(&tid);
+        return Ok(());
+    }
+    let ids = bpf_get_current_pid_tgid();
+    let uidgid = bpf_get_current_uid_gid();
+    let comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    if let Some(mut entry) = EVENTS.reserve::<FileTruncateEvent>(0) {
+        let p = entry.as_mut_ptr();
+        unsafe {
+            ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<FileTruncateEvent>());
+            (*p).kind = EVENT_FILE_TRUNCATE;
+            (*p).pid = (ids >> 32) as u32;
+            (*p).uid = uidgid as u32;
+            (*p).gid = (uidgid >> 32) as u32;
+            (*p).syscall = staged.syscall;
+            (*p).fd = staged.fd;
+            (*p).length = staged.length;
+            (*p).result = ret;
+            (*p).path = staged.path;
+            (*p).comm = comm;
+        }
+        entry.submit(0);
+    }
+    let _ = TRUNCATE_STAGE.remove(&tid);
+    Ok(())
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_chmod")]
+fn sys_enter_chmod(ctx: TracePointContext) -> i32 {
+    match try_stage_chmod(&ctx, CHMOD_CHMOD) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_chmod")]
+fn sys_exit_chmod(ctx: TracePointContext) -> i32 {
+    match try_emit_chmod(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_fchmod")]
+fn sys_enter_fchmod(ctx: TracePointContext) -> i32 {
+    match try_stage_chmod(&ctx, CHMOD_FCHMOD) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_fchmod")]
+fn sys_exit_fchmod(ctx: TracePointContext) -> i32 {
+    match try_emit_chmod(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_fchmodat")]
+fn sys_enter_fchmodat(ctx: TracePointContext) -> i32 {
+    match try_stage_chmod(&ctx, CHMOD_FCHMODAT) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_fchmodat")]
+fn sys_exit_fchmodat(ctx: TracePointContext) -> i32 {
+    match try_emit_chmod(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_fchmodat2")]
+fn sys_enter_fchmodat2(ctx: TracePointContext) -> i32 {
+    match try_stage_chmod(&ctx, CHMOD_FCHMODAT2) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_fchmodat2")]
+fn sys_exit_fchmodat2(ctx: TracePointContext) -> i32 {
+    match try_emit_chmod(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_chown")]
+fn sys_enter_chown(ctx: TracePointContext) -> i32 {
+    match try_stage_chown(&ctx, CHOWN_CHOWN) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_chown")]
+fn sys_exit_chown(ctx: TracePointContext) -> i32 {
+    match try_emit_chown(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_lchown")]
+fn sys_enter_lchown(ctx: TracePointContext) -> i32 {
+    match try_stage_chown(&ctx, CHOWN_LCHOWN) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_lchown")]
+fn sys_exit_lchown(ctx: TracePointContext) -> i32 {
+    match try_emit_chown(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_fchown")]
+fn sys_enter_fchown(ctx: TracePointContext) -> i32 {
+    match try_stage_chown(&ctx, CHOWN_FCHOWN) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_fchown")]
+fn sys_exit_fchown(ctx: TracePointContext) -> i32 {
+    match try_emit_chown(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_fchownat")]
+fn sys_enter_fchownat(ctx: TracePointContext) -> i32 {
+    match try_stage_chown(&ctx, CHOWN_FCHOWNAT) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_fchownat")]
+fn sys_exit_fchownat(ctx: TracePointContext) -> i32 {
+    match try_emit_chown(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_truncate")]
+fn sys_enter_truncate(ctx: TracePointContext) -> i32 {
+    match try_stage_truncate(&ctx, TRUNCATE_TRUNCATE) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_truncate")]
+fn sys_exit_truncate(ctx: TracePointContext) -> i32 {
+    match try_emit_truncate(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_ftruncate")]
+fn sys_enter_ftruncate(ctx: TracePointContext) -> i32 {
+    match try_stage_truncate(&ctx, TRUNCATE_FTRUNCATE) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_ftruncate")]
+fn sys_exit_ftruncate(ctx: TracePointContext) -> i32 {
+    match try_emit_truncate(&ctx) {
         Ok(()) => 0,
         Err(e) => e as i32,
     }

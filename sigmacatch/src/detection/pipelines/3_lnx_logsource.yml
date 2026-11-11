@@ -73,6 +73,36 @@ transformations:
         category: file_rename
         product: linux
 
+  # EventID 504: file_chmod (sigmacatch extension)
+  - id: win_file_chmod
+    type: add_condition
+    conditions:
+      Event.System.EventID: 504
+    rule_conditions:
+      - type: logsource
+        category: file_chmod
+        product: linux
+
+  # EventID 505: file_chown (sigmacatch extension)
+  - id: win_file_chown
+    type: add_condition
+    conditions:
+      Event.System.EventID: 505
+    rule_conditions:
+      - type: logsource
+        category: file_chown
+        product: linux
+
+  # EventID 506: file_truncate (sigmacatch extension)
+  - id: win_file_truncate
+    type: add_condition
+    conditions:
+      Event.System.EventID: 506
+    rule_conditions:
+      - type: logsource
+        category: file_truncate
+        product: linux
+
   # EventID 5: process_termination
   - id: win_process_termination
     type: add_condition
@@ -381,6 +411,27 @@ transformations:
     rule_conditions:
       - type: logsource
         category: file_rename
+        product: linux
+  - id: win_route_file_chmod
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: file_chmod
+        product: linux
+  - id: win_route_file_chown
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: file_chown
+        product: linux
+  - id: win_route_file_truncate
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: file_truncate
         product: linux
   - id: win_route_process_termination
     type: change_logsource

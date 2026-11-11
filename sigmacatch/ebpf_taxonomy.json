@@ -305,6 +305,63 @@
         "Result": "result"
       },
       "note": "sigmacatch extension (EID 503)"
+    },
+    "file_chmod": {
+      "sigma_category": "file_chmod",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 504,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "TargetFilename": "target_filename",
+        "Syscall": "syscall",
+        "Mode": "mode",
+        "Flags": "flags",
+        "Result": "result"
+      },
+      "note": "sigmacatch extension (EID 504)"
+    },
+    "file_chown": {
+      "sigma_category": "file_chown",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 505,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "TargetFilename": "target_filename",
+        "Syscall": "syscall",
+        "Owner": "owner",
+        "Group": "group",
+        "Flags": "flags",
+        "Result": "result"
+      },
+      "note": "sigmacatch extension (EID 505)"
+    },
+    "file_truncate": {
+      "sigma_category": "file_truncate",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 506,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "TargetFilename": "target_filename",
+        "Syscall": "syscall",
+        "Length": "length",
+        "Result": "result"
+      },
+      "note": "sigmacatch extension (EID 506)"
     }
   }
 }

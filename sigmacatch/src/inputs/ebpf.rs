@@ -10,10 +10,12 @@ use std::fs;
 use crate::ebpf_common::{
     CapabilityChangeEvent, CredentialChangeEvent, DnsEvent, DriverLoadEvent,
     EVENT_CAPABILITY_CHANGE, EVENT_CREDENTIAL_CHANGE, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC,
-    EVENT_EXIT, EVENT_FILE, EVENT_FILE_DELETE, EVENT_FILE_RENAME, EVENT_FORK, EVENT_LISTEN,
-    EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS,
-    FileCreateEvent, FileDeleteEvent, FileRenameEvent, ForkEvent, ListenEvent, NetEvent,
-    PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
+    EVENT_EXIT, EVENT_FILE, EVENT_FILE_CHMOD, EVENT_FILE_CHOWN, EVENT_FILE_DELETE,
+    EVENT_FILE_RENAME, EVENT_FILE_TRUNCATE, EVENT_FORK, EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE,
+    EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, FileChmodEvent,
+    FileChownEvent, FileCreateEvent, FileDeleteEvent, FileRenameEvent, FileTruncateEvent,
+    ForkEvent, ListenEvent, NetEvent, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent,
+    RawAccessEvent,
 };
 use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::{Context, bail};
@@ -228,6 +230,61 @@ const ATTACHMENTS: &[(&str, &str, &str, bool)] = &[
         "sys_exit_renameat2",
         "syscalls",
         "sys_exit_renameat2",
+        false,
+    ),
+    ("sys_enter_chmod", "syscalls", "sys_enter_chmod", false),
+    ("sys_exit_chmod", "syscalls", "sys_exit_chmod", false),
+    ("sys_enter_fchmod", "syscalls", "sys_enter_fchmod", false),
+    ("sys_exit_fchmod", "syscalls", "sys_exit_fchmod", false),
+    (
+        "sys_enter_fchmodat",
+        "syscalls",
+        "sys_enter_fchmodat",
+        false,
+    ),
+    ("sys_exit_fchmodat", "syscalls", "sys_exit_fchmodat", false),
+    (
+        "sys_enter_fchmodat2",
+        "syscalls",
+        "sys_enter_fchmodat2",
+        false,
+    ),
+    (
+        "sys_exit_fchmodat2",
+        "syscalls",
+        "sys_exit_fchmodat2",
+        false,
+    ),
+    ("sys_enter_chown", "syscalls", "sys_enter_chown", false),
+    ("sys_exit_chown", "syscalls", "sys_exit_chown", false),
+    ("sys_enter_lchown", "syscalls", "sys_enter_lchown", false),
+    ("sys_exit_lchown", "syscalls", "sys_exit_lchown", false),
+    ("sys_enter_fchown", "syscalls", "sys_enter_fchown", false),
+    ("sys_exit_fchown", "syscalls", "sys_exit_fchown", false),
+    (
+        "sys_enter_fchownat",
+        "syscalls",
+        "sys_enter_fchownat",
+        false,
+    ),
+    ("sys_exit_fchownat", "syscalls", "sys_exit_fchownat", false),
+    (
+        "sys_enter_truncate",
+        "syscalls",
+        "sys_enter_truncate",
+        false,
+    ),
+    ("sys_exit_truncate", "syscalls", "sys_exit_truncate", false),
+    (
+        "sys_enter_ftruncate",
+        "syscalls",
+        "sys_enter_ftruncate",
+        false,
+    ),
+    (
+        "sys_exit_ftruncate",
+        "syscalls",
+        "sys_exit_ftruncate",
         false,
     ),
 ];
@@ -506,6 +563,42 @@ impl EventProducer for EventCollector {
                         None => tracing::warn!(
                             size = bytes.len(),
                             "file-rename record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_CHMOD => match FileChmodEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.file_chmod_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-chmod record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_CHOWN => match FileChownEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.file_chown_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-chown record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_TRUNCATE => match FileTruncateEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.file_truncate_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-truncate record with unexpected size — skipped"
                         ),
                     },
                     other => tracing::warn!(tag = other, "unknown ring buffer record tag"),

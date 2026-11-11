@@ -22,12 +22,14 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use crate::ebpf_common::{
-    CAP_CAPSET, CAP_PRCTL, CRED_SETEGID, CRED_SETEUID, CRED_SETFSGID, CRED_SETFSUID, CRED_SETGID,
-    CRED_SETGROUPS, CRED_SETREGID, CRED_SETRESGID, CRED_SETRESUID, CRED_SETREUID, CRED_SETUID,
-    CapabilityChangeEvent, CredentialChangeEvent, DnsEvent, DriverLoadEvent, ExecEvent,
-    FileCreateEvent, FileDeleteEvent, FileRenameEvent, ForkEvent, ListenEvent, NetEvent,
-    PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RENAME_RENAME, RENAME_RENAMEAT,
-    RENAME_RENAMEAT2, RawAccessEvent,
+    CAP_CAPSET, CAP_PRCTL, CHMOD_CHMOD, CHMOD_FCHMOD, CHMOD_FCHMODAT, CHMOD_FCHMODAT2, CHOWN_CHOWN,
+    CHOWN_FCHOWN, CHOWN_FCHOWNAT, CHOWN_LCHOWN, CRED_SETEGID, CRED_SETEUID, CRED_SETFSGID,
+    CRED_SETFSUID, CRED_SETGID, CRED_SETGROUPS, CRED_SETREGID, CRED_SETRESGID, CRED_SETRESUID,
+    CRED_SETREUID, CRED_SETUID, CapabilityChangeEvent, CredentialChangeEvent, DnsEvent,
+    DriverLoadEvent, ExecEvent, FileChmodEvent, FileChownEvent, FileCreateEvent, FileDeleteEvent,
+    FileRenameEvent, FileTruncateEvent, ForkEvent, ListenEvent, NetEvent, PipeCreateEvent,
+    ProcessAccessEvent, ProcessTamperingEvent, RENAME_RENAME, RENAME_RENAMEAT, RENAME_RENAMEAT2,
+    RawAccessEvent, TRUNCATE_FTRUNCATE, TRUNCATE_TRUNCATE,
 };
 use crate::types::Event;
 use chrono::Utc;
@@ -432,6 +434,75 @@ impl EventBuilder {
         insert_str(&mut data, "Flags", &ev.flags.to_string());
         insert_str(&mut data, "Result", &ev.result.to_string());
         to_sysmon_event(503, &self.hostname, &now, data)
+    }
+
+    /// Build a file_chmod (EID 504, extension) event.
+    pub fn file_chmod_event(&mut self, ev: &FileChmodEvent) -> Event {
+        let now = Utc::now();
+        let (guid, image) = match self.parents.get(&ev.pid) {
+            Some(info) => (info.guid.clone(), info.image.clone()),
+            None => (NULL_GUID.to_string(), "-".to_string()),
+        };
+        let user = self.user_name(ev.uid);
+        let target = resolve_target_or_fd(ev.pid, ev.dirfd, ev.path_str(), ev.fd);
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "User", &user);
+        insert_str(&mut data, "TargetFilename", &target);
+        insert_str(&mut data, "Syscall", chmod_syscall_name(ev.syscall));
+        insert_str(&mut data, "Mode", &format!("0o{:o}", ev.mode));
+        insert_str(&mut data, "Flags", &ev.flags.to_string());
+        insert_str(&mut data, "Result", &ev.result.to_string());
+        to_sysmon_event(504, &self.hostname, &now, data)
+    }
+
+    /// Build a file_chown (EID 505, extension) event.
+    pub fn file_chown_event(&mut self, ev: &FileChownEvent) -> Event {
+        let now = Utc::now();
+        let (guid, image) = match self.parents.get(&ev.pid) {
+            Some(info) => (info.guid.clone(), info.image.clone()),
+            None => (NULL_GUID.to_string(), "-".to_string()),
+        };
+        let user = self.user_name(ev.uid);
+        let target = resolve_target_or_fd(ev.pid, ev.dirfd, ev.path_str(), ev.fd);
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "User", &user);
+        insert_str(&mut data, "TargetFilename", &target);
+        insert_str(&mut data, "Syscall", chown_syscall_name(ev.syscall));
+        insert_str(&mut data, "Owner", &ev.owner.to_string());
+        insert_str(&mut data, "Group", &ev.group.to_string());
+        insert_str(&mut data, "Flags", &ev.flags.to_string());
+        insert_str(&mut data, "Result", &ev.result.to_string());
+        to_sysmon_event(505, &self.hostname, &now, data)
+    }
+
+    /// Build a file_truncate (EID 506, extension) event.
+    pub fn file_truncate_event(&mut self, ev: &FileTruncateEvent) -> Event {
+        let now = Utc::now();
+        let (guid, image) = match self.parents.get(&ev.pid) {
+            Some(info) => (info.guid.clone(), info.image.clone()),
+            None => (NULL_GUID.to_string(), "-".to_string()),
+        };
+        let user = self.user_name(ev.uid);
+        let target = resolve_target_or_fd(ev.pid, -100, ev.path_str(), ev.fd);
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "User", &user);
+        insert_str(&mut data, "TargetFilename", &target);
+        insert_str(&mut data, "Syscall", truncate_syscall_name(ev.syscall));
+        insert_str(&mut data, "Length", &ev.length.to_string());
+        insert_str(&mut data, "Result", &ev.result.to_string());
+        to_sysmon_event(506, &self.hostname, &now, data)
     }
 
     /// Build a process_access (EID 10) event.
@@ -1037,6 +1108,50 @@ fn rename_syscall_name(id: u32) -> &'static str {
         RENAME_RENAMEAT2 => "renameat2",
         _ => "unknown",
     }
+}
+
+fn chmod_syscall_name(id: u32) -> &'static str {
+    match id {
+        CHMOD_CHMOD => "chmod",
+        CHMOD_FCHMOD => "fchmod",
+        CHMOD_FCHMODAT => "fchmodat",
+        CHMOD_FCHMODAT2 => "fchmodat2",
+        _ => "unknown",
+    }
+}
+
+fn chown_syscall_name(id: u32) -> &'static str {
+    match id {
+        CHOWN_CHOWN => "chown",
+        CHOWN_LCHOWN => "lchown",
+        CHOWN_FCHOWN => "fchown",
+        CHOWN_FCHOWNAT => "fchownat",
+        _ => "unknown",
+    }
+}
+
+fn truncate_syscall_name(id: u32) -> &'static str {
+    match id {
+        TRUNCATE_TRUNCATE => "truncate",
+        TRUNCATE_FTRUNCATE => "ftruncate",
+        _ => "unknown",
+    }
+}
+
+fn resolve_target_or_fd(pid: u32, dirfd: i32, raw: &str, fd: i32) -> String {
+    if !raw.is_empty() {
+        if raw.starts_with('/') {
+            return raw.to_string();
+        }
+        return resolve_target_path(pid, dirfd, raw);
+    }
+    if fd >= 0 {
+        return fs::read_link(format!("/proc/{pid}/fd/{fd}"))
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "-".to_string());
+    }
+    "-".to_string()
 }
 
 #[cfg(test)]
