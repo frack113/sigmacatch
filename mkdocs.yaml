@@ -34,12 +34,14 @@ theme:
 
 nav:
   - Home: index.md
-  - Overview: architecture.md
-  - Build: build.md
-  - Configuration: config.md
-  - CLI: cli.md
-  - SigmaHQ Workflow: git.md
-  - Regression Data: regression-data.md
+  - User:
+    - CLI: user/cli.md
+    - Configuration: user/config.md
+    - SigmaHQ Workflow: user/git.md
+    - Regression Data: user/regression-data.md
+  - Dev:
+    - Architecture: dev/architecture.md
+    - Build: dev/build.md
 
 plugins:
   - search

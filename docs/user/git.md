@@ -90,7 +90,7 @@ failed push do not pollute the skip set at startup.
 
 ## Skip set: pending PRs
 
-The skip set (see [architecture.md](architecture.md#design-notes)) is built
+The skip set (see [architecture.md](../dev/architecture.md#design-notes)) is built
 from the worktree **plus** the trees of all remote `sigmacatch/*` branches —
 read via `list_refs` + an in-RAM walk of `regression_data/`, never a
 checkout. Ids are extracted from `<uuid>.<ext>` filenames. Consequences:
