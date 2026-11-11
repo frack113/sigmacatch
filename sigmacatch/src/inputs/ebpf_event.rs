@@ -22,8 +22,8 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use crate::ebpf_common::{
-    DnsEvent, DriverLoadEvent, ExecEvent, FileCreateEvent, FileDeleteEvent, ListenEvent, NetEvent,
-    PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
+    DnsEvent, DriverLoadEvent, ExecEvent, FileCreateEvent, FileDeleteEvent, ForkEvent, ListenEvent,
+    NetEvent, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
 };
 use crate::types::Event;
 use chrono::Utc;
@@ -50,6 +50,7 @@ struct ParentInfo {
 pub struct EventBuilder {
     hostname: String,
     parents: HashMap<u32, ParentInfo>,
+    fork_parents: HashMap<u32, u32>,
     users: HashMap<u32, String>,
     hashes: HashMap<String, (SystemTime, String)>,
     hash_order: VecDeque<String>,
@@ -72,6 +73,7 @@ impl EventBuilder {
         let mut builder = Self {
             hostname,
             parents: HashMap::new(),
+            fork_parents: HashMap::new(),
             users: HashMap::new(),
             hashes: HashMap::new(),
             hash_order: VecDeque::new(),
@@ -154,7 +156,8 @@ impl EventBuilder {
         let image = ev.image_str().to_string();
         let cmdline = full_cmdline(ev);
         let user = self.user_name(ev.uid);
-        let ppid = read_ppid(ev.pid);
+        let ppid = read_ppid(ev.pid).or_else(|| self.fork_parents.get(&ev.pid).copied());
+        self.fork_parents.remove(&ev.pid);
         let parent_info = ppid.as_ref().and_then(|p| self.parents.get(p));
 
         let (parent_guid, parent_pid, parent_image, parent_cmdline, parent_user) =
@@ -223,6 +226,7 @@ impl EventBuilder {
     /// unknown to us (no Image available).
     pub fn exit_event(&mut self, pid: u32) -> Option<Event> {
         let info = self.parents.remove(&pid)?;
+        self.fork_parents.remove(&pid);
         let now = Utc::now();
         let mut data = Map::new();
         insert_str(&mut data, "UtcTime", &utc_time(&now));
@@ -231,6 +235,11 @@ impl EventBuilder {
         insert_str(&mut data, "Image", &info.image);
         insert_str(&mut data, "User", &info.user);
         Some(to_sysmon_event(5, &self.hostname, &now, data))
+    }
+
+    /// Record fork/clone lineage (parent -> child) for parent resolution fallback.
+    pub fn fork_event(&mut self, ev: &ForkEvent) {
+        self.fork_parents.insert(ev.child_pid, ev.parent_pid);
     }
 
     /// Build a network_connection (EID 3) event.

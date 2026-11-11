@@ -67,6 +67,8 @@ mod inner {
     // so stray/legacy records are handled as unknown tags.
     /// Ring buffer record tag: process tampering heuristic (EID 25).
     pub const EVENT_PROCESS_TAMPERING: u32 = 13;
+    /// Ring buffer record tag: process fork/clone (internal lineage tracking).
+    pub const EVENT_FORK: u32 = 14;
 
     /// Directory-fd sentinel meaning "path is relative to cwd".
     pub const AT_FDCWD: i32 = -100;
@@ -193,6 +195,36 @@ mod inner {
             Some(*bytemuck::from_bytes(r))
         }
     }
+
+    /// Process fork/clone event emitted at `sched_process_fork`.
+    ///
+    /// Internal record used to track process lineage (no direct Sysmon event).
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct ForkEvent {
+        /// Always [`EVENT_FORK`].
+        pub kind: u32,
+        /// Parent process id (tgid).
+        pub parent_pid: u32,
+        /// Child process id (tgid).
+        pub child_pid: u32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: u32,
+    }
+
+    impl ForkEvent {
+        /// Parse a ring buffer record into a typed fork event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<ForkEvent>().is_multiple_of(8),
+        "ForkEvent must stay 8-byte aligned for ring buffer records"
+    );
 
     /// Outbound connection attempt emitted at `sys_enter_connect`.
     ///

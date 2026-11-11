@@ -38,10 +38,11 @@ mod ebpf_common;
 
 use ebpf_common::{
     ARG0_LEN, ARG1_LEN, ARG2_LEN, DNS_PAYLOAD_LEN, DnsEvent, DriverLoadEvent, EVENT_DNS,
-    EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_DELETE, EVENT_LISTEN,
-    EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS,
-    ExecEvent, ExitEvent, FileCreateEvent, FileDeleteEvent, IMAGE_LEN, ListenEvent, NetEvent,
-    PATH_LEN, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
+    EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_DELETE, EVENT_FORK,
+    EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING,
+    EVENT_RAW_ACCESS, ExecEvent, ExitEvent, FileCreateEvent, FileDeleteEvent, ForkEvent, IMAGE_LEN,
+    ListenEvent, NetEvent, PATH_LEN, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent,
+    RawAccessEvent,
 };
 
 const MAX_ENTRIES: u32 = 1;
@@ -292,6 +293,31 @@ fn sched_process_exit(_ctx: TracePointContext) -> i32 {
         entry.submit(0);
     }
     0
+}
+
+#[tracepoint(category = "sched", name = "sched_process_fork")]
+fn sched_process_fork(ctx: TracePointContext) -> i32 {
+    match try_emit_fork(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+fn try_emit_fork(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: offsets match the sched_process_fork tracepoint format
+    // (parent_pid@24, child_pid@44).
+    let parent_pid: u32 = unsafe { ctx.read_at::<i32>(24)? } as u32;
+    let child_pid: u32 = unsafe { ctx.read_at::<i32>(44)? } as u32;
+    if let Some(mut entry) = EVENTS.reserve::<ForkEvent>(0) {
+        entry.write(ForkEvent {
+            kind: EVENT_FORK,
+            parent_pid,
+            child_pid,
+            _pad0: 0,
+        });
+        entry.submit(0);
+    }
+    Ok(())
 }
 
 /// Kernel `sockaddr_in` / `sockaddr_in6` mirrors (repr(C), natural offsets

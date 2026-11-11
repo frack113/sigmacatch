@@ -9,9 +9,10 @@ use std::fs;
 
 use crate::ebpf_common::{
     DnsEvent, DriverLoadEvent, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE,
-    EVENT_FILE_DELETE, EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS,
-    EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, FileCreateEvent, FileDeleteEvent, ListenEvent,
-    NetEvent, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
+    EVENT_FILE_DELETE, EVENT_FORK, EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE,
+    EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, FileCreateEvent,
+    FileDeleteEvent, ForkEvent, ListenEvent, NetEvent, PipeCreateEvent, ProcessAccessEvent,
+    ProcessTamperingEvent, RawAccessEvent,
 };
 use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::{Context, bail};
@@ -87,6 +88,7 @@ const ATTACHMENTS: &[(&str, &str, &str, bool)] = &[
         false,
     ),
     ("sched_process_exec", "sched", "sched_process_exec", true),
+    ("sched_process_fork", "sched", "sched_process_fork", false),
     ("sched_process_exit", "sched", "sched_process_exit", true),
     ("sys_enter_connect", "syscalls", "sys_enter_connect", true),
     ("sys_enter_openat", "syscalls", "sys_enter_openat", true),
@@ -246,6 +248,13 @@ impl EventProducer for EventCollector {
                         None => tracing::warn!(
                             size = bytes.len(),
                             "exit record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FORK => match ForkEvent::from_bytes(bytes) {
+                        Some(ev) => self.builder.fork_event(&ev),
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "fork record with unexpected size — skipped"
                         ),
                     },
                     EVENT_FILE => match FileCreateEvent::from_bytes(bytes) {
