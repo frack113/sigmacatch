@@ -26,7 +26,7 @@ At runtime `--evtx <PATH>` selects the one-shot EVTX input; on Windows the
 live Winevt collector is the default; on Linux every compiled **and
 available** input runs in parallel. Bail at startup if no source is found.
 The collectors' full specification (tailed files, guards, parsing) lives in
-[architecture.md](architecture.md); the runtime selection is documented in
+[collectors.md](collectors.md); the runtime selection is documented in
 [cli.md](../user/cli.md).
 
 ## Linux

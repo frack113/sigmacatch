@@ -1,5 +1,19 @@
 # Architecture
 
+One binary `sigmacatch` captures real OS events, matches them against
+[SigmaHQ](https://github.com/SigmaHQ/sigma) rules and writes regression data.
+Cargo features select which inputs are compiled in, and `main.rs` picks the
+runtime input. A second binary, `regressiondata-check`, validates regression
+data without a collector.
+
+| Page | Content |
+|---|---|
+| [Collectors](collectors.md) | Per-input behaviour: Windows logsource, Linux tails, eBPF, one-shot EVTX, shared tail driver |
+| [Pipeline](pipeline.md) | The shared `run()` runner, generation cycles, one-shot variant |
+| [Design notes](design-notes.md) | Stop file, skip set, output location, observability, memory |
+| [Build](build.md) | Features, platform builds, cross-compilation |
+| [SigmaHQ workflow](git.md) | Transport, clone, working branch, commits, skip set, offline |
+
 ## Cargo workspace
 
 The project is a single cargo workspace package (`sigmacatch`), plus a nested nightly-only eBPF probe crate (`sigmacatch/ebpf`) excluded from the workspace:
@@ -63,85 +77,9 @@ cross-platform `regressiondata-check` (second binary of the `sigmacatch` package
 | sysmon (tail) | `sigmacatch/src/inputs/sysmon.rs` | `sysmon` (implies `builtin`) | Legacy Sysmon-for-Linux XML tail |
 | sysmon (ebpf) | `sigmacatch/src/inputs/ebpf.rs` | `ebpf` | Native eBPF probes (root or CAP_BPF+CAP_PERFMON required) |
 
-### Windows logsource and PowerShell categories
-
-Windows rules are constrained by the `1_win_logsource.yml` pipeline (`add_condition` on
-EventIDs + `change_logsource` to the service): the PowerShell categories are bounded to
-their EventIDs — `ps_module` (4103), `ps_script` (4104) → `service: powershell`;
-`ps_classic_start` (400), `ps_classic_provider_start` (600) and `ps_classic_script` (800) →
-`service: powershell-classic`. Without a `category` field injected on the event, rsigma's
-`LogSourceExtractor` evaluates every event fail-open against all rules.
-
-Classic PowerShell events (400/600/800 …) emit `<Data>` elements **without** a `Name`
-attribute: the parser exposes them under positional keys (`Data0`, `Data1`, …), and
-`inject_logsource_fields_for` surfaces the `EventData` content under the generic Sigma
-`Data` field so `Data|contains` matching works (rsigma has no dedicated `powershell_classic`
-field mapping).
-
-### The Linux collectors
-
-Each guarded by its source; no source available → bail:
-
-- **auditd** — when `/var/log/audit/audit.log` exists: tail, linux-audit-parser parsing,
-  grouping by event id `timestamp:sequence`, logsource `product:linux, service:auditd`.
-- **builtin syslog** — tails every existing file among central (`/var/log/messages`,
-  `/var/log/syslog`), authpriv (`/var/log/secure`, `/var/log/auth.log`) and cron
-  (`/var/log/cron`, `/var/log/cron.log`): RFC3164 lines, service derived from the program
-  tag (fallback per file group: authpriv → `auth`, cron → `cron`). Lines tagged `sysmon`
-  are excluded (handled by the dedicated collector).
-
-The `sysmon` and `ebpf` features add a dedicated collector:
-
-- **Sysmon eBPF (feature `ebpf`)** — embedded Aya probes
-  (`sigmacatch/ebpf`, nightly+bpf-linker, excluded from workspace). Coverage includes
-  process creation/termination (EID 1/5), writes (EID 2, regular files only), network
-  connect/accept/listen (EID 3/500), image load (EID 6), process access (EID 10), file
-  create/delete (EID 11/23), pipe creation (EID 17), DNS query/response (EID 22/508),
-  process tampering (EID 25), and extensions 501-507 for credential/capability changes,
-  rename/chmod/chown/truncate and module unload. Events are rendered as nested
-  Sysmon-shaped JSON, mapped through the Linux field pipeline and injected via the same
-  engine. Fork lineage, `accept(NULL)`, `recvfrom(NULL)` and `execveat(AT_EMPTY_PATH)` are
-  handled explicitly. Runtime requirements: root or CAP_BPF+CAP_PERFMON (refuses to start
-  otherwise — `linux.rs` bails) + kernel with BTF. SHA256 hashing of images is calculated
-  userspace with cache (path,mtime). The probe embeds an `EVENTS_ABI_V2` marker; a prebuilt
-  `SIGMACATCH_EBPF_OBJECT` without it is rejected. A failed probe load at runtime warns and
-  continues **without** any sysmon source; only a build with both `ebpf` and `sysmon`
-  features falls back to the Sysmon-for-Linux syslog tail.
-- **Sysmon-for-Linux tail (feature `sysmon`)** — central syslog
-  lines tagged `sysmon` whose body is winevt XML (`parse_winevt_xml`/`_raw`) → logsource
-  `product:linux, service:sysmon` via channel `Linux-Sysmon/Operational`. Read-only, no
-  Aya dependency.
-
-Each input defines its own `CollectorKind`
-(`name()`/`mode()`/`channels()`/`build()`/`regression_format()`/`live_capture()`); the Linux
-inputs share a single `LinuxCollector` defined in `linux.rs`. The regression format comes
-from `regression_format()`: `DataFormat::Evtx` for the winevt/evtx inputs,
-`DataFormat::Log` for Linux auditd/syslog/Sysmon-tail data, and `DataFormat::Json` for the
-eBPF collector. The runner refines the format per alert, so auditd events keep `.log` even
-when eBPF is active in the same binary. JSON data is a single pretty document (`type: json`)
-or NDJSON for several records (`type: ndjson`). `name()` is `sigmacatch` for every input.
-
-`live_capture()` is an intrinsic property of the collector, not a CLI flag: it defaults to
-`true` and is overridden only by the `evtx` input (`false`). Continuous collectors run an
-endless loop gated by the stop-file; a one-shot collector lets its `EventProducer::run()`
-return, the mpsc sender drops, and `run()` exits when `rx.recv()` returns `None`.
-
-`tail.rs` is the shared tail driver for the Linux file collectors (auditd, builtin syslog,
-sysmon): it owns the file handle, the 100 ms poll loop, rotation detection (dev/ino change →
-re-open from offset 0) and the channel, and drives a pure `LineHandler` per collector. Each
-`LineHandler` turns whole lines into events (`auditd` groups records by event id and flushes
-on sequence change or idle poll; `syslog` emits one event per RFC3164 line, excluding `sysmon`
-lines; `sysmon` parses XML bodies, skipping truncated ones). Gated on the tailling features.
-
-The `evtx` input (feature `evtx`) is a `CollectorKind` with `live_capture() = false`: it runs
-through the same shared `run()` pipeline as the continuous collectors, in one-shot mode —
-enumerate `.evtx` files, parse each event (`evtx_reader`), feed the `DetectionEngine`,
-then reuse the shared `SigmahqRegression` + `SigmaRepo` machinery to write `DataFormat::Evtx`
-regression data (always via the pure-Rust EVTX writer, never `EvtExportLog`) and commit/push
-it to the fork. Because `EventProducer::run()` returns when all files are exhausted, the
-process self-terminates. It has no `channels()`, no interval, and no stop-file poller. Its
-`EventRecordID` field is stripped per event (Event 4688 requires absence to trigger the
-imaging rule). Because it is pure Rust it also builds and runs on Linux.
+The per-input behaviour — Windows logsource handling, the Linux collectors,
+the shared `CollectorKind` machinery and the tail driver — is in
+[Collectors](collectors.md).
 
 ## Module dependency graph
 
@@ -171,116 +109,3 @@ The module `evtx_reader` depends on `types` + the `evtx` crate.
 (`detection`, `rule`, `regression`, `types`, `evtx_reader`) with `linux-audit-parser`
 (auditd) according to each entry's `LogType`. The diagnostic subcommands (`cli.rs`) parse
 arguments manually and use `serde` for their JSON output (always compiled).
-
-## Pipeline (shared runner)
-
-```text
-1. parse_args() + Config::load_with_cli("config.yaml", cli)
-   └── -n/--dry-run: lightweight load (no git validation), zero on-disk state (no
-       config.yaml, no logs/), exits after validating the rules + the engine
-2. setup_console() (Windows) ; runner's logging::init(&config, verbose) → tracing (stderr `error` by default, `info` with `-v`, file debug)
-3. ensure_dirs() → sigma repo dir + logs/
-4. SigmaRepo init: set_info_user/set_info_http|ssh (+ ensure_ssh_host_config when ssh+network),
-   set_signing_key (if ssh_key_path), set_git_operations(offline, contrib),
-   set_remote_url(fork) → set_working_branch(<branch>) → check_remote_working_branch()
-   — fully no-op offline (no `.git` required, local files used as-is)
-5. SigmahqRegression::new() → set_author/max_failed_cycles/format(kind)/add_json_output
-   └── existing_rules = regression.get_sigma_id() ∪ sigma_repo.pending_regression_rule_ids()
-       (remote sigmacatch/* branches pending merge; scan skipped offline) → HashSet<Uuid> (empty with --all-rules)
-6. SigmahqRules::new() → load + dedupe; remove_id(existing_rules)
-   └── filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size }); 0 rules → bail
-7. custom_map = load_custom_channel_mapping("custom_channels.yaml")
-8. DetectionEngine::new(&rules)  (pipelines + bloom + LogSourceExtractor)
-   └── cycle_channels = kind.channels(&engine, &custom_map)
-       ├── Some(empty) (winevt with no resolved channel) → warn + return
-       └── None (linux, evtx) → no channel resolution
-9. Shutdown handlers (watch channel): Ctrl+C, plus stop-file poller (500 ms) when live_capture()
-   ; output_base = <sigma_repo_path>/regression_data ; clean_partial_artifacts()
-10. collector = kind.build(&cycle_channels) → tokio::spawn(collector.run(tx, stop))
-    ├── sigmacatch --evtx (one-shot) → EvtxCollector.run(tx, stop): enumerate files, send every parsed event,
-    │                                  returns when exhausted → sender dropped
-    ├── sigmacatch (winevt, Windows)  → EventCollector::new(cycle_channels).run(tx, stop)
-    └── sigmacatch (Linux)            → MultiCollector (every compiled, available tail in parallel, rotation detected)
-11. Loop: tokio::select!
-    ├── shutdown_rx (Ctrl+C, or stop file / --max-runs reached when live_capture()) → break
-    ├── event from rx → engine.put_events(vec![event])
-    ├── generate_interval (30s, live_capture only) → spawn_blocking(process_and_generate) → upload_regression() if files
-    └── [one-shot only] rx.recv() → None (sender dropped, collector finished) → break
-12. Final flush: collector stop (10s timeout, abort otherwise) → drain remaining events (5s timeout)
-    → process_and_generate() → upload_regression() (per-rule commit) → single push if contrib
-    — one-shot propagates the final upload's error (non-zero exit); live mode logs and continues
-```
-
-`process_and_generate()`:
-
-```text
-engine.process_events() → get_alerts()
-    ├── alerts empty → return (no "evaluation complete" log)
-    ├── regression.begin_cycle() ; log stats (events_processed, matches_found, alerts_count)
-    └── per alert: regression.add(&alert) → Option<Vec<String>>
-         ├── None if rule already retired / no valid id / info.yml exists
-         └── Some(files) → write files + regression_tests_path + retire rule
-    └── retired_ids += regression.take_blocked() (rules blocked after N failing cycles)
-    └── retired rules → rules.remove_id() → engine.reload_rules() (single batch reload)
-    ↓
-returns (restored Pipeline, batches: Vec<(Uuid, Vec<String>)>)
-    ↓
-upload_regression() → upload_rule_batches()   # in sigmacatch::repo
-     ├── one commit per rule: "🧪 test: add regression data for rule {rule_id}"
-     ├── commit/push failure → rollback local branch to pre-batch tip
-     └── SINGLE push if git.contrib: true (otherwise local commits only)
-```
-
-All generation runs in `spawn_blocking` (the `Pipeline` state is moved out and returned) —
-`EvtExportLog` retries never freeze collection (events keep buffering in the mpsc channel).
-
-### One-shot variant: `--evtx`
-
-The `evtx` input (`live_capture() = false`) reuses the shared `run()`
-pipeline in one-shot mode: the enumeration of `.evtx` files exhausts
-itself (mpsc sender dropped → `rx.recv()` yields `None`), with no
-`channels()`, no `generate_interval`, no stop-file poller, and
-`--max-runs` ignored. Ctrl+C still aborts the pass: any in-flight cycle is
-dropped and the push of what was not yet committed is skipped. The
-complete user-facing documentation (usage, flags, semantics) lives in
-[cli.md](../user/cli.md#-evtx-one-shot-evtx-input-single-run).
-
-## Design notes
-
-- **Stop file**: `config.stop_file` (default `.sigmacatch.stop`) is polled every 500 ms;
-  when the file exists, collection stops gracefully (drain + flush + commit of the
-  in-flight cycle) — the signal used to end a continuous (`-r 0`) run without a hard
-  kill that would lose the cycle's regression data.
-- **Skip set** = `HashSet<Uuid>` from `SigmahqRegression::get_sigma_id()` (existing info.yml + valid data)
-  ∪ `SigmaRepo::pending_regression_rule_ids()` (trees of remote `sigmacatch/*` branches:
-  unmerged pending PRs — a fresh VM does not re-capture their data), built once at startup.
-  `--all-rules` disables it. After generation a rule is retired and the engine is reloaded in
-  one batch (`engine.reload_rules`). Rules whose committed data is invalid (broken EVTX / empty text)
-  are excluded from the skip set → regenerated.
-- **Output always in the sigma repo**: `<sigma_repo_path>/regression_data/<rule_rel_path>/`
-  (`info.yml` + data file `.evtx`/`.log`/`.json`; `.json` is optional only for EVTX/log data),
-  committed to the fork if
-  `contrib` (local commits otherwise). The rule's repo path is mirrored relative to the
-  configured `sigma_repo_path` (absolute or relative) — the per-rule commit also carries the
-  rule yaml updated with `regression_tests_path: regression_data/<rule_rel_path>/info.yml`.
-- **Collector observability**: the collector excludes non-existent channels once on
-  `ERROR_EVT_CHANNEL_NOT_FOUND` (single `error!`); each live channel logs "initial query OK"
-  then a "still alive" heartbeat (60s); `warn!` when events are fetched but dropped at
-  render/parse. The Linux collectors detect tail-file rotation (inode change) and re-open
-  the file; the builtin syslog collector excludes lines tagged `sysmon` to avoid double
-  capture (handled by the dedicated Sysmon-for-Linux collector).
-- **Memory: `Arc`-shared payloads + single-pass parse**: the payload fields of
-  `Event` and `Alert` (`event_json_raw`, `event_json`, `event_raw`,
-  `event_json_raw_all`) are `Arc`-shared — cloning an event (per rule match in
-  the detection engine, per channel hand-off) is a reference-count bump, not a
-  deep copy of the JSON tree. `parse_winevt_xml_both` parses the Winevt XML once
-  (raw view for regression + transformed view for detection), and
-  `Event::from_xml_injected`/`new_injected` inject the logsource fields
-  (`product`/`service`/`category`) into the detection view **before** the
-  payload is `Arc`-shared: the per-event path pays for one parse and no deep
-  clone of the transformed tree. Measured on a constant-volume live stream:
-  −47 % working set on Windows (247→130 MB) and −19 % RSS on Linux
-   (~204→164 MB). Diagram:
-   [event-pipeline.webm](../media/event-pipeline.webm) (animation)
-   and [event-pipeline-dark.svg](../media/event-pipeline-dark.svg)
-   (static, dark theme).

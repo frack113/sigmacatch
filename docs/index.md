@@ -32,20 +32,32 @@ cargo build --release -p sigmacatch --no-default-features --features evtx
 
 The full feature matrix (`sysmon`, `ebpf`), the `regressiondata-check`
 validation binary, and the build/test commands are in [build.md](dev/build.md).
+The first run generates a `config.yaml` that must be edited before the next
+run — the end-to-end setup is in [Getting started](getting-started.md).
 
 ## Documentation
 
 A built version of this documentation is published to GitHub Pages:
 **https://frack113.github.io/sigmacatch/**
 
+- **Getting started**
+  - [First run](getting-started.md)
 - **User**
   - [CLI](user/cli.md)
   - [Configuration](user/config.md)
-  - [SigmaHQ workflow](user/git.md)
-  - [Regression data](user/regression-data.md)
+  - [Troubleshooting](user/troubleshooting.md)
+- **Regression data**
+  - [Overview](regression_data/index.md)
+  - [info.yml](regression_data/info-yml.md)
+  - [Data files](regression_data/data-files.md)
+  - [Validation](regression_data/validation.md)
 - **Dev**
   - [Architecture](dev/architecture.md)
+  - [Collectors](dev/collectors.md)
+  - [Pipeline](dev/pipeline.md)
+  - [Design notes](dev/design-notes.md)
   - [Build](dev/build.md)
+  - [SigmaHQ workflow](dev/git.md)
 
 ## License
 
