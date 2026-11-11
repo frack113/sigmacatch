@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- eBPF input: `execveat` is now captured for process creation (EID 1) alongside `execve`.
+- eBPF input: fork/clone lineage is tracked so parent process resolution has a lineage fallback.
+- eBPF input: credential and capability changes are captured as sigmacatch extensions EID 501 (`credential_change`: setuid/setgid/setgroups family) and EID 502 (`capability_change`: `capset`, `prctl`).
+- eBPF input: `process_creation` events are enriched with session/tty, cgroup and namespace identifiers (best-effort).
+- eBPF input: file rename is captured as sigmacatch extension EID 503 (`file_rename`: `rename`, `renameat`, `renameat2`).
+- eBPF input: chmod/chown/truncate are captured as sigmacatch extensions EID 504 (`file_chmod`), EID 505 (`file_chown`) and EID 506 (`file_truncate`).
+- eBPF input: file writes are captured as EID 2 `file_change` (`write`/`pwrite64`/`writev`/`pwritev`/`pwritev2`, on success; best-effort, potentially noisy).
+- eBPF input: inbound connections accepted via `accept`/`accept4` are captured as EID 3 `network_connection` with `Initiated=false` (best-effort remote endpoint).
+- eBPF input: inbound DNS responses on UDP port 53 (`recvfrom`) are captured as sigmacatch extension EID 508 (`dns_response`, queried name only).
+- eBPF input: kernel module unload (`delete_module`) is captured as sigmacatch extension EID 507 (`module_unload`).
+- eBPF taxonomy: each event now carries its Sysmon event ID (`sysmon_eid`).
+
+### Removed
+
+- eBPF input: the `pipe_connect` (EID 18) capability is removed — it was declared but never emitted by the probe. The ring buffer tag is reserved; generic Sysmon EID 17/18 handling for non-eBPF sources is kept.
+
 ### Changed
 
 - Git: the per-rule commit patches only the trees along the changed paths instead of rewriting the whole HEAD tree.
