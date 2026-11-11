@@ -10,10 +10,10 @@ use std::fs;
 use crate::ebpf_common::{
     CapabilityChangeEvent, CredentialChangeEvent, DnsEvent, DriverLoadEvent,
     EVENT_CAPABILITY_CHANGE, EVENT_CREDENTIAL_CHANGE, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC,
-    EVENT_EXIT, EVENT_FILE, EVENT_FILE_DELETE, EVENT_FORK, EVENT_LISTEN, EVENT_NET,
-    EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS,
-    FileCreateEvent, FileDeleteEvent, ForkEvent, ListenEvent, NetEvent, PipeCreateEvent,
-    ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
+    EVENT_EXIT, EVENT_FILE, EVENT_FILE_DELETE, EVENT_FILE_RENAME, EVENT_FORK, EVENT_LISTEN,
+    EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS,
+    FileCreateEvent, FileDeleteEvent, FileRenameEvent, ForkEvent, ListenEvent, NetEvent,
+    PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
 };
 use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::{Context, bail};
@@ -209,6 +209,27 @@ const ATTACHMENTS: &[(&str, &str, &str, bool)] = &[
     ("sys_exit_capset", "syscalls", "sys_exit_capset", false),
     ("sys_enter_prctl", "syscalls", "sys_enter_prctl", false),
     ("sys_exit_prctl", "syscalls", "sys_exit_prctl", false),
+    ("sys_enter_rename", "syscalls", "sys_enter_rename", false),
+    ("sys_exit_rename", "syscalls", "sys_exit_rename", false),
+    (
+        "sys_enter_renameat",
+        "syscalls",
+        "sys_enter_renameat",
+        false,
+    ),
+    ("sys_exit_renameat", "syscalls", "sys_exit_renameat", false),
+    (
+        "sys_enter_renameat2",
+        "syscalls",
+        "sys_enter_renameat2",
+        false,
+    ),
+    (
+        "sys_exit_renameat2",
+        "syscalls",
+        "sys_exit_renameat2",
+        false,
+    ),
 ];
 
 /// eBPF-backed sysmon collector (feature `ebpf`): loads the embedded probe
@@ -473,6 +494,18 @@ impl EventProducer for EventCollector {
                         None => tracing::warn!(
                             size = bytes.len(),
                             "capability-change record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_RENAME => match FileRenameEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.file_rename_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-rename record with unexpected size — skipped"
                         ),
                     },
                     other => tracing::warn!(tag = other, "unknown ring buffer record tag"),

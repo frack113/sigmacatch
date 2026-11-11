@@ -41,11 +41,12 @@ use ebpf_common::{
     CRED_SETGID, CRED_SETGROUPS, CRED_SETREGID, CRED_SETRESGID, CRED_SETRESUID, CRED_SETREUID,
     CRED_SETUID, CapabilityChangeEvent, CredentialChangeEvent, DNS_PAYLOAD_LEN, DnsEvent,
     DriverLoadEvent, EVENT_CAPABILITY_CHANGE, EVENT_CREDENTIAL_CHANGE, EVENT_DNS,
-    EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_DELETE, EVENT_FORK,
-    EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING,
-    EVENT_RAW_ACCESS, ExecEvent, ExitEvent, FileCreateEvent, FileDeleteEvent, ForkEvent,
-    IMAGE_LEN, ListenEvent, NetEvent, PATH_LEN, PipeCreateEvent, ProcessAccessEvent,
-    ProcessTamperingEvent, RawAccessEvent,
+    EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_DELETE, EVENT_FILE_RENAME,
+    EVENT_FORK, EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS,
+    EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, ExecEvent, ExitEvent, FileCreateEvent,
+    FileDeleteEvent, FileRenameEvent, ForkEvent, IMAGE_LEN, ListenEvent, NetEvent, PATH_LEN,
+    PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RENAME_RENAME, RENAME_RENAMEAT,
+    RENAME_RENAMEAT2, RawAccessEvent, AT_FDCWD,
 };
 
 const MAX_ENTRIES: u32 = 1;
@@ -59,6 +60,7 @@ const BIND_STAGE_MAX: u32 = 4096;
 const LISTEN_FD_MAX: u32 = 4096;
 const CRED_STAGE_MAX: u32 = 4096;
 const CAP_STAGE_MAX: u32 = 4096;
+const RENAME_STAGE_MAX: u32 = 4096;
 /// `O_CREAT` bit — openat is staged only when the caller may create.
 const O_CREAT: u64 = 0o100;
 
@@ -121,6 +123,17 @@ struct PendingCap {
     arg4: u64,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PendingRename {
+    syscall: u32,
+    flags: u32,
+    old_dirfd: i32,
+    new_dirfd: i32,
+    old_path: [u8; PATH_LEN],
+    new_path: [u8; PATH_LEN],
+}
+
 #[map(name = "EVENTS")]
 static EVENTS: RingBuf = RingBuf::with_byte_size(1 << 20, 0);
 
@@ -162,6 +175,13 @@ static CRED_STAGE: LruHashMap<u64, PendingCred> = LruHashMap::with_max_entries(C
 
 #[map(name = "CAP_STAGE")]
 static CAP_STAGE: LruHashMap<u64, PendingCap> = LruHashMap::with_max_entries(CAP_STAGE_MAX, 0);
+
+#[map(name = "RENAME_STAGE")]
+static RENAME_STAGE: LruHashMap<u32, PendingRename> =
+    LruHashMap::with_max_entries(RENAME_STAGE_MAX, 0);
+
+#[map(name = "RENAME_SCRATCH")]
+static RENAME_SCRATCH: PerCpuArray<PendingRename> = PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
 
 /// Read a NUL-terminated user string into `dst`, returning the stored length
 /// (excluding the NUL), provably bounded by `dst.len() - 1`.
@@ -1555,4 +1575,143 @@ fn sys_enter_prctl(ctx: TracePointContext) -> i32 {
 fn sys_exit_prctl(ctx: TracePointContext) -> i32 {
     let _ = emit_cap_exit(&ctx);
     0
+}
+
+// ─── File rename capture (EID 503, extension) ─────────────────────────────────
+
+fn try_stage_rename(ctx: &TracePointContext, syscall: u32) -> Result<(), i64> {
+    let tid = bpf_get_current_pid_tgid() as u32;
+    // SAFETY: offsets from sys_enter_rename/renameat/renameat2 formats (x86_64).
+    let (old_dirfd, oldname, new_dirfd, newname, flags): (i32, *const u8, i32, *const u8, u32) =
+        match syscall {
+            RENAME_RENAME => {
+                let old: *const u8 = unsafe { ctx.read_at(16)? };
+                let new: *const u8 = unsafe { ctx.read_at(24)? };
+                (AT_FDCWD, old, AT_FDCWD, new, 0)
+            }
+            RENAME_RENAMEAT => {
+                let od: i32 = unsafe { ctx.read_at(16)? };
+                let old: *const u8 = unsafe { ctx.read_at(24)? };
+                let nd: i32 = unsafe { ctx.read_at(32)? };
+                let new: *const u8 = unsafe { ctx.read_at(40)? };
+                (od, old, nd, new, 0)
+            }
+            _ => {
+                let od: i32 = unsafe { ctx.read_at(16)? };
+                let old: *const u8 = unsafe { ctx.read_at(24)? };
+                let nd: i32 = unsafe { ctx.read_at(32)? };
+                let new: *const u8 = unsafe { ctx.read_at(40)? };
+                let flags: u64 = unsafe { ctx.read_at(48)? };
+                (od, old, nd, new, flags as u32)
+            }
+        };
+
+    let pending = match RENAME_SCRATCH.get_ptr_mut(0) {
+        // SAFETY: index validated by get_ptr_mut; per-cpu exclusivity.
+        Some(p) => unsafe { &mut *p },
+        None => return Err(-28),
+    };
+    pending.syscall = syscall;
+    pending.flags = flags;
+    pending.old_dirfd = old_dirfd;
+    pending.new_dirfd = new_dirfd;
+    // SAFETY: write into per-cpu scratch to avoid large stack temporaries.
+    unsafe {
+        ptr::write_bytes(pending.old_path.as_mut_ptr(), 0, PATH_LEN);
+        ptr::write_bytes(pending.new_path.as_mut_ptr(), 0, PATH_LEN);
+    }
+    read_cstr(&mut pending.old_path, oldname);
+    read_cstr(&mut pending.new_path, newname);
+    let _ = RENAME_STAGE.insert(&tid, pending, 0);
+    Ok(())
+}
+
+fn try_emit_rename(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: sys_exit_* tracepoints have ret at offset 16.
+    let ret: i64 = unsafe { ctx.read_at(16)? };
+    let tid = bpf_get_current_pid_tgid() as u32;
+    // SAFETY: read-only map borrow of a fixed-size value.
+    let Some(staged) = (unsafe { RENAME_STAGE.get(&tid) }) else {
+        return Ok(());
+    };
+    if ret < 0 {
+        let _ = RENAME_STAGE.remove(&tid);
+        return Ok(());
+    }
+    let ids = bpf_get_current_pid_tgid();
+    let uidgid = bpf_get_current_uid_gid();
+    let comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    if let Some(mut entry) = EVENTS.reserve::<FileRenameEvent>(0) {
+        // SAFETY: ring buffer entry is exclusively owned until submit;
+        // field writes are within bounds and the struct is repr(C). The staged
+        // map value is read by reference (no large stack copy).
+        let p = entry.as_mut_ptr();
+        unsafe {
+            ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<FileRenameEvent>());
+            (*p).kind = EVENT_FILE_RENAME;
+            (*p).pid = (ids >> 32) as u32;
+            (*p).uid = uidgid as u32;
+            (*p).gid = (uidgid >> 32) as u32;
+            (*p).syscall = staged.syscall;
+            (*p).flags = staged.flags;
+            (*p).old_dirfd = staged.old_dirfd;
+            (*p).new_dirfd = staged.new_dirfd;
+            (*p).result = ret as i32;
+            (*p)._pad0 = 0;
+            (*p).old_path = staged.old_path;
+            (*p).new_path = staged.new_path;
+            (*p).comm = comm;
+        }
+        entry.submit(0);
+    }
+    let _ = RENAME_STAGE.remove(&tid);
+    Ok(())
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_rename")]
+fn sys_enter_rename(ctx: TracePointContext) -> i32 {
+    match try_stage_rename(&ctx, RENAME_RENAME) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_rename")]
+fn sys_exit_rename(ctx: TracePointContext) -> i32 {
+    match try_emit_rename(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_renameat")]
+fn sys_enter_renameat(ctx: TracePointContext) -> i32 {
+    match try_stage_rename(&ctx, RENAME_RENAMEAT) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_renameat")]
+fn sys_exit_renameat(ctx: TracePointContext) -> i32 {
+    match try_emit_rename(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_renameat2")]
+fn sys_enter_renameat2(ctx: TracePointContext) -> i32 {
+    match try_stage_rename(&ctx, RENAME_RENAMEAT2) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_renameat2")]
+fn sys_exit_renameat2(ctx: TracePointContext) -> i32 {
+    match try_emit_rename(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
 }

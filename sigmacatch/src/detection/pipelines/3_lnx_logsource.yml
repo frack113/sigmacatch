@@ -63,6 +63,16 @@ transformations:
         category: capability_change
         product: linux
 
+  # EventID 503: file_rename (sigmacatch extension)
+  - id: win_file_rename
+    type: add_condition
+    conditions:
+      Event.System.EventID: 503
+    rule_conditions:
+      - type: logsource
+        category: file_rename
+        product: linux
+
   # EventID 5: process_termination
   - id: win_process_termination
     type: add_condition
@@ -364,6 +374,13 @@ transformations:
     rule_conditions:
       - type: logsource
         category: capability_change
+        product: linux
+  - id: win_route_file_rename
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: file_rename
         product: linux
   - id: win_route_process_termination
     type: change_logsource

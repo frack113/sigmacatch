@@ -6,6 +6,7 @@
       "sigma_category": "process_creation",
       "sigma_product": "linux",
       "sigma_service": null,
+      "sysmon_eid": 1,
       "fields": {
         "UtcTime": "utc_time",
         "ProcessGuid": "process_guid",
@@ -45,6 +46,7 @@
       "sigma_category": "process_termination",
       "sigma_product": "linux",
       "sigma_service": null,
+      "sysmon_eid": 5,
       "fields": {
         "UtcTime": "utc_time",
         "ProcessGuid": "process_guid",
@@ -57,6 +59,7 @@
       "sigma_category": "network_connection",
       "sigma_product": "linux",
       "sigma_service": null,
+      "sysmon_eid": 3,
       "fields": {
         "UtcTime": "utc_time",
         "ProcessGuid": "process_guid",
@@ -81,6 +84,7 @@
       "sigma_category": "file_event",
       "sigma_product": "linux",
       "sigma_service": null,
+      "sysmon_eid": 11,
       "fields": {
         "UtcTime": "utc_time",
         "ProcessGuid": "process_guid",
@@ -91,10 +95,26 @@
         "User": "user"
       }
     },
+    "file_change": {
+      "sigma_category": "file_change",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 2,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "TargetFilename": "target_filename",
+        "User": "user"
+      },
+      "note": "Sysmon EID 2 semantics vary; eBPF emission aligned to G2c (content modification/write activity, best-effort)"
+    },
     "file_delete": {
       "sigma_category": "file_delete",
       "sigma_product": "linux",
       "sigma_service": null,
+      "sysmon_eid": 23,
       "fields": {
         "UtcTime": "utc_time",
         "ProcessGuid": "process_guid",
@@ -111,6 +131,7 @@
       "sigma_category": "dns_query",
       "sigma_product": "linux",
       "sigma_service": null,
+      "sysmon_eid": 22,
       "fields": {
         "UtcTime": "utc_time",
         "ProcessGuid": "process_guid",
@@ -126,6 +147,7 @@
       "sigma_category": "process_access",
       "sigma_product": "linux",
       "sigma_service": null,
+      "sysmon_eid": 10,
       "fields": {
         "UtcTime": "utc_time",
         "SourceProcessGUID": "source_process_guid",
@@ -144,6 +166,7 @@
       "sigma_category": "raw_access_thread",
       "sigma_product": "linux",
       "sigma_service": null,
+      "sysmon_eid": 9,
       "fields": {
         "UtcTime": "utc_time",
         "ProcessGuid": "process_guid",
@@ -156,6 +179,7 @@
       "sigma_category": "pipe_created",
       "sigma_product": "linux",
       "sigma_service": null,
+      "sysmon_eid": 17,
       "fields": {
         "UtcTime": "utc_time",
         "ProcessGuid": "process_guid",
@@ -169,6 +193,7 @@
       "sigma_category": "driver_load",
       "sigma_product": "linux",
       "sigma_service": null,
+      "sysmon_eid": 6,
       "fields": {
         "UtcTime": "utc_time",
         "ProcessGuid": "process_guid",
@@ -186,6 +211,7 @@
       "sigma_category": "process_tampering",
       "sigma_product": "linux",
       "sigma_service": null,
+      "sysmon_eid": 25,
       "fields": {
         "UtcTime": "utc_time",
         "ProcessGuid": "process_guid",
@@ -199,6 +225,7 @@
       "sigma_category": "network_listen",
       "sigma_product": "linux",
       "sigma_service": null,
+      "sysmon_eid": 500,
       "fields": {
         "UtcTime": "utc_time",
         "ProcessGuid": "process_guid",
@@ -224,6 +251,7 @@
       "sigma_category": "credential_change",
       "sigma_product": "linux",
       "sigma_service": null,
+      "sysmon_eid": 501,
       "fields": {
         "UtcTime": "utc_time",
         "ProcessGuid": "process_guid",
@@ -243,6 +271,7 @@
       "sigma_category": "capability_change",
       "sigma_product": "linux",
       "sigma_service": null,
+      "sysmon_eid": 502,
       "fields": {
         "UtcTime": "utc_time",
         "ProcessGuid": "process_guid",
@@ -257,6 +286,25 @@
         "Result": "result"
       },
       "note": "sigmacatch extension (EID 502)"
+    },
+    "file_rename": {
+      "sigma_category": "file_rename",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 503,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "TargetFilename": "target_filename",
+        "SourceFilename": "source_filename",
+        "Syscall": "syscall",
+        "Flags": "flags",
+        "Result": "result"
+      },
+      "note": "sigmacatch extension (EID 503)"
     }
   }
 }

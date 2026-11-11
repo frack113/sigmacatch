@@ -25,8 +25,9 @@ use crate::ebpf_common::{
     CAP_CAPSET, CAP_PRCTL, CRED_SETEGID, CRED_SETEUID, CRED_SETFSGID, CRED_SETFSUID, CRED_SETGID,
     CRED_SETGROUPS, CRED_SETREGID, CRED_SETRESGID, CRED_SETRESUID, CRED_SETREUID, CRED_SETUID,
     CapabilityChangeEvent, CredentialChangeEvent, DnsEvent, DriverLoadEvent, ExecEvent,
-    FileCreateEvent, FileDeleteEvent, ForkEvent, ListenEvent, NetEvent, PipeCreateEvent,
-    ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
+    FileCreateEvent, FileDeleteEvent, FileRenameEvent, ForkEvent, ListenEvent, NetEvent,
+    PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RENAME_RENAME, RENAME_RENAMEAT,
+    RENAME_RENAMEAT2, RawAccessEvent,
 };
 use crate::types::Event;
 use chrono::Utc;
@@ -399,6 +400,38 @@ impl EventBuilder {
         insert_str(&mut data, "IsExecutable", "false");
         insert_str(&mut data, "Archived", "false");
         to_sysmon_event(23, &self.hostname, &now, data)
+    }
+
+    /// Build a file_rename (EID 503, extension) event.
+    pub fn file_rename_event(&mut self, ev: &FileRenameEvent) -> Event {
+        let now = Utc::now();
+        let (guid, image) = match self.parents.get(&ev.pid) {
+            Some(info) => (info.guid.clone(), info.image.clone()),
+            None => (NULL_GUID.to_string(), "-".to_string()),
+        };
+        let user = self.user_name(ev.uid);
+        let source = if ev.old_path_str().starts_with('/') {
+            ev.old_path_str().to_string()
+        } else {
+            resolve_target_path(ev.pid, ev.old_dirfd, ev.old_path_str())
+        };
+        let target = if ev.new_path_str().starts_with('/') {
+            ev.new_path_str().to_string()
+        } else {
+            resolve_target_path(ev.pid, ev.new_dirfd, ev.new_path_str())
+        };
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "User", &user);
+        insert_str(&mut data, "TargetFilename", &target);
+        insert_str(&mut data, "SourceFilename", &source);
+        insert_str(&mut data, "Syscall", rename_syscall_name(ev.syscall));
+        insert_str(&mut data, "Flags", &ev.flags.to_string());
+        insert_str(&mut data, "Result", &ev.result.to_string());
+        to_sysmon_event(503, &self.hostname, &now, data)
     }
 
     /// Build a process_access (EID 10) event.
@@ -993,6 +1026,15 @@ fn cap_syscall_name(id: u32) -> &'static str {
     match id {
         CAP_CAPSET => "capset",
         CAP_PRCTL => "prctl",
+        _ => "unknown",
+    }
+}
+
+fn rename_syscall_name(id: u32) -> &'static str {
+    match id {
+        RENAME_RENAME => "rename",
+        RENAME_RENAMEAT => "renameat",
+        RENAME_RENAMEAT2 => "renameat2",
         _ => "unknown",
     }
 }

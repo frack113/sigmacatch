@@ -664,6 +664,7 @@ static CHANNEL_EVENT_TO_CATEGORY: phf::Map<&'static str, &'static str> = phf::ph
     "Microsoft-Windows-Sysmon/Operational:500" => "network_listen",
     "Microsoft-Windows-Sysmon/Operational:501" => "credential_change",
     "Microsoft-Windows-Sysmon/Operational:502" => "capability_change",
+    "Microsoft-Windows-Sysmon/Operational:503" => "file_rename",
     "Microsoft-Windows-Sysmon/Operational:255" => "sysmon_error",
     "Security:4688" => "process_creation",
     "Windows PowerShell:400" => "ps_classic_start",

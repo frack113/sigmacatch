@@ -73,6 +73,8 @@ mod inner {
     pub const EVENT_CREDENTIAL_CHANGE: u32 = 15;
     /// Ring buffer record tag: capability change (capset/prctl caps), EID 502.
     pub const EVENT_CAPABILITY_CHANGE: u32 = 16;
+    /// Ring buffer record tag: file rename, EID 503 (extension).
+    pub const EVENT_FILE_RENAME: u32 = 17;
 
     /// Directory-fd sentinel meaning "path is relative to cwd".
     pub const AT_FDCWD: i32 = -100;
@@ -837,6 +839,74 @@ mod inner {
     const _: () = assert!(
         core::mem::size_of::<CapabilityChangeEvent>().is_multiple_of(8),
         "CapabilityChangeEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// File-rename syscall selector: `rename`.
+    pub const RENAME_RENAME: u32 = 1;
+    /// File-rename syscall selector: `renameat`.
+    pub const RENAME_RENAMEAT: u32 = 2;
+    /// File-rename syscall selector: `renameat2`.
+    pub const RENAME_RENAMEAT2: u32 = 3;
+
+    /// File rename event (rename/renameat/renameat2), emitted as EID 503.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct FileRenameEvent {
+        /// Always [`EVENT_FILE_RENAME`].
+        pub kind: u32,
+        /// Renaming process id (tgid).
+        pub pid: u32,
+        /// Real UID of the renaming task.
+        pub uid: u32,
+        /// Real GID of the renaming task.
+        pub gid: u32,
+        /// Syscall selector (`RENAME_*`).
+        pub syscall: u32,
+        /// `renameat2` flags (0 for rename/renameat).
+        pub flags: u32,
+        /// Old directory fd (`AT_FDCWD` for rename/cwd-relative).
+        pub old_dirfd: i32,
+        /// New directory fd (`AT_FDCWD` for rename/cwd-relative).
+        pub new_dirfd: i32,
+        /// Syscall result / return code.
+        pub result: i32,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: u32,
+        /// Source/old path as passed to the syscall (NUL-padded).
+        pub old_path: [u8; PATH_LEN],
+        /// Target/new path as passed to the syscall (NUL-padded).
+        pub new_path: [u8; PATH_LEN],
+        /// Task comm at event time (NUL-padded).
+        pub comm: [u8; COMM_LEN],
+    }
+
+    impl FileRenameEvent {
+        /// Parse a ring buffer record into a typed file-rename event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Source path as lossy UTF-8 up to the first NUL.
+        pub fn old_path_str(&self) -> &str {
+            Self::cstr(&self.old_path)
+        }
+
+        /// Target path as lossy UTF-8 up to the first NUL.
+        pub fn new_path_str(&self) -> &str {
+            Self::cstr(&self.new_path)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<FileRenameEvent>().is_multiple_of(8),
+        "FileRenameEvent must stay 8-byte aligned for ring buffer records"
     );
 }
 
