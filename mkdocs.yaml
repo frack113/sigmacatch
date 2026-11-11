@@ -34,37 +34,16 @@ theme:
 
 nav:
   - Home: index.md
-  - English:
-    - Overview: architecture.md
-    - Build: build.md
-    - Configuration: config.md
-    - CLI: cli.md
-    - Git: git.md
-    - Output Format: output-format.md
-    - Regression Data Format: regression-data-format.md
+  - Overview: architecture.md
+  - Build: build.md
+  - Configuration: config.md
+  - CLI: cli.md
+  - Git: git.md
+  - Output Format: output-format.md
+  - Regression Data Format: regression-data-format.md
 
 plugins:
   - search
-  - i18n:
-      docs_structure: folder
-      languages:
-        - locale: en
-          name: English
-          default: true
-          build: true
-        - locale: fr
-          name: Français
-          default: false
-          build: true
-          nav_translations:
-            Home: Accueil
-            Overview: Aperçu
-            Build: Build
-            Configuration: Configuration
-            CLI: CLI
-            Git: Git
-            Output Format: Format de Sortie
-            Regression Data Format: Format des Données de Régression
 
 markdown_extensions:
   - admonition
