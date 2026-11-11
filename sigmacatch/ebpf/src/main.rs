@@ -70,6 +70,7 @@ const CHOWN_STAGE_MAX: u32 = 4096;
 const TRUNCATE_STAGE_MAX: u32 = 4096;
 const WRITE_STAGE_MAX: u32 = 4096;
 const MODUNLOAD_STAGE_MAX: u32 = 4096;
+const ACCEPT_STAGE_MAX: u32 = 4096;
 /// `O_CREAT` bit — openat is staged only when the caller may create.
 const O_CREAT: u64 = 0o100;
 
@@ -226,6 +227,9 @@ static BIND_STAGE: LruHashMap<u64, PendingBind> = LruHashMap::with_max_entries(B
 
 #[map(name = "LISTEN_FD")]
 static LISTEN_FD: LruHashMap<u64, i32> = LruHashMap::with_max_entries(LISTEN_FD_MAX, 0);
+
+#[map(name = "ACCEPT_STAGE")]
+static ACCEPT_STAGE: LruHashMap<u64, u64> = LruHashMap::with_max_entries(ACCEPT_STAGE_MAX, 0);
 
 #[map(name = "CRED_STAGE")]
 static CRED_STAGE: LruHashMap<u64, PendingCred> = LruHashMap::with_max_entries(CRED_STAGE_MAX, 0);
@@ -531,6 +535,7 @@ fn try_emit_connect(ctx: &TracePointContext) -> Result<(), i64> {
             (*p).family = family;
             (*p)._pad0 = 0;
             (*p).port_be = port_be;
+            (*p).initiated = 1;
             (*p)._pad1 = 0;
             (*p).addr = addr;
             (*p).comm = comm;
@@ -2350,6 +2355,106 @@ fn sys_enter_pwritev2(ctx: TracePointContext) -> i32 {
 #[tracepoint(category = "syscalls", name = "sys_exit_pwritev2")]
 fn sys_exit_pwritev2(ctx: TracePointContext) -> i32 {
     match try_emit_write(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+
+// ─── Inbound connection capture (accept/accept4, EID 3) ─────────────────────
+
+fn try_stage_accept(ctx: &TracePointContext) -> Result<(), i64> {
+    let tid_key = bpf_get_current_pid_tgid();
+    // SAFETY: bounds-checked context read (accept/accept4 arg upeer_sockaddr@24).
+    let addr_ptr: u64 = unsafe { ctx.read_at(24)? };
+    let _ = ACCEPT_STAGE.insert(&tid_key, &addr_ptr, 0);
+    Ok(())
+}
+
+fn try_emit_accept(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: bounds-checked context read of the syscall return value (new fd).
+    let ret: i64 = unsafe { ctx.read_at(16)? };
+    let tid_key = bpf_get_current_pid_tgid();
+    // SAFETY: read-only map borrow of a fixed-size value.
+    let Some(addr_ptr) = (unsafe { ACCEPT_STAGE.get(&tid_key) }).copied() else {
+        return Ok(());
+    };
+    ACCEPT_STAGE.remove(&tid_key)?;
+    if ret < 0 || addr_ptr == 0 {
+        return Ok(());
+    }
+    let uservaddr = addr_ptr as *const u8;
+    // SAFETY: two-byte user read; fault handled by helper → 0.
+    let family = unsafe { bpf_probe_read_user::<u16>(uservaddr.cast()) }.unwrap_or(0);
+    let (port_be, addr) = match family {
+        // AF_INET
+        2 => {
+            // SAFETY: fixed-size sockaddr_in user read; fault-tolerant helper.
+            let s: SockAddr4 = unsafe { bpf_probe_read_user(uservaddr.cast()) }?;
+            let mut a = [0u8; 16];
+            a[..4].copy_from_slice(&s.addr);
+            (s.port, a)
+        }
+        // AF_INET6
+        10 => {
+            // SAFETY: fixed-size sockaddr_in6 user read; fault-tolerant helper.
+            let s: SockAddr6 = unsafe { bpf_probe_read_user(uservaddr.cast()) }?;
+            (s.port, s.addr)
+        }
+        _ => return Ok(()),
+    };
+
+    let ids = bpf_get_current_pid_tgid();
+    let uidgid = bpf_get_current_uid_gid();
+    let comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    if let Some(mut entry) = EVENTS.reserve::<NetEvent>(0) {
+        let p = entry.as_mut_ptr();
+        // SAFETY: exclusive reserved NetEvent slot; writes in bounds.
+        unsafe {
+            (*p).kind = EVENT_NET;
+            (*p).pid = (ids >> 32) as u32;
+            (*p).uid = uidgid as u32;
+            (*p).gid = (uidgid >> 32) as u32;
+            (*p).family = family;
+            (*p)._pad0 = 0;
+            (*p).port_be = port_be;
+            (*p).initiated = 0;
+            (*p)._pad1 = 0;
+            (*p).addr = addr;
+            (*p).comm = comm;
+        }
+        entry.submit(0);
+    }
+    Ok(())
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_accept")]
+fn sys_enter_accept(ctx: TracePointContext) -> i32 {
+    match try_stage_accept(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_accept")]
+fn sys_exit_accept(ctx: TracePointContext) -> i32 {
+    match try_emit_accept(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_accept4")]
+fn sys_enter_accept4(ctx: TracePointContext) -> i32 {
+    match try_stage_accept(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_accept4")]
+fn sys_exit_accept4(ctx: TracePointContext) -> i32 {
+    match try_emit_accept(&ctx) {
         Ok(()) => 0,
         Err(e) => e as i32,
     }

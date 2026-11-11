@@ -286,16 +286,36 @@ impl EventBuilder {
         };
         let user = self.user_name(ev.uid);
         let is_v6 = ev.family == 10;
-        let dest_ip = format_addr(&ev.addr, is_v6);
-        let dest_port = u16::from_be(ev.port_be);
-        let dest_port_s = dest_port.to_string();
-        let (source_ip, source_port_s) =
-            resolve_source_endpoint(ev.pid, is_v6, &ev.addr, dest_port).unwrap_or_else(|| {
-                (
-                    if is_v6 { "::" } else { "0.0.0.0" }.to_string(),
-                    "0".to_string(),
-                )
-            });
+        let remote_ip = format_addr(&ev.addr, is_v6);
+        let remote_port = u16::from_be(ev.port_be);
+        let remote_port_s = remote_port.to_string();
+        let initiated = ev.initiated != 0;
+
+        let (source_ip, source_port_s, dest_ip, dest_port_s) = if initiated {
+            let dest_ip = remote_ip;
+            let dest_port_s = remote_port_s;
+            let (source_ip, source_port_s) =
+                resolve_source_endpoint(ev.pid, is_v6, &ev.addr, remote_port).unwrap_or_else(
+                    || {
+                        (
+                            if is_v6 { "::" } else { "0.0.0.0" }.to_string(),
+                            "0".to_string(),
+                        )
+                    },
+                );
+            (source_ip, source_port_s, dest_ip, dest_port_s)
+        } else {
+            // Inbound/accepted connection (best-effort): remote peer is source,
+            // local endpoint not resolved from kernel context.
+            let source_ip = remote_ip;
+            let source_port_s = remote_port_s;
+            let (dest_ip, dest_port_s) = if is_v6 {
+                ("::".to_string(), "0".to_string())
+            } else {
+                ("0.0.0.0".to_string(), "0".to_string())
+            };
+            (source_ip, source_port_s, dest_ip, dest_port_s)
+        };
 
         let mut data = Map::new();
         insert_str(&mut data, "UtcTime", &utc_time(&now));
@@ -304,7 +324,11 @@ impl EventBuilder {
         insert_str(&mut data, "Image", &image);
         insert_str(&mut data, "User", &user);
         insert_str(&mut data, "Protocol", "tcp");
-        insert_str(&mut data, "Initiated", "true");
+        insert_str(
+            &mut data,
+            "Initiated",
+            if initiated { "true" } else { "false" },
+        );
         insert_str(&mut data, "SourceIsIpv6", &is_v6.to_string());
         insert_str(&mut data, "SourceIp", &source_ip);
         insert_str(&mut data, "SourceHostname", "-");
@@ -1251,6 +1275,7 @@ mod tests {
             family,
             _pad0: 0,
             port_be,
+            initiated: 1,
             _pad1: 0,
             addr,
             comm: *b"curl\0\0\0\0\0\0\0\0\0\0\0\0",

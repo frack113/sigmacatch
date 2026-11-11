@@ -242,33 +242,36 @@ mod inner {
         "ForkEvent must stay 8-byte aligned for ring buffer records"
     );
 
-    /// Outbound connection attempt emitted at `sys_enter_connect`.
+    /// Network connection event emitted at `sys_enter_connect` (outbound,
+    /// `initiated = 1`) or `sys_exit_accept`/`sys_exit_accept4` (inbound,
+    /// `initiated = 0`).
     ///
-    /// Only the destination is captured (source address/port are not yet bound
-    /// at this point); `port_be` keeps the network byte order as read from the
-    /// sockaddr.
+    /// Only the remote endpoint is captured in the ring buffer payload;
+    /// `port_be` keeps the network byte order as read from the sockaddr.
     #[repr(C)]
     #[derive(Debug, Clone, Copy, Pod, Zeroable)]
     pub struct NetEvent {
         /// Always [`EVENT_NET`].
         pub kind: u32,
-        /// Connecting process id.
+        /// Process id.
         pub pid: u32,
-        /// Real UID of the connecting task.
+        /// Real UID of the task.
         pub uid: u32,
-        /// Real GID of the connecting task.
+        /// Real GID of the task.
         pub gid: u32,
         /// Address family (`AF_INET` = 2, `AF_INET6` = 10); others dropped.
         pub family: u16,
         /// Explicit padding keeping field offsets kernel-aligned (zeroed).
         pub _pad0: u16,
-        /// Destination port in network byte order.
+        /// Remote port in network byte order.
         pub port_be: u16,
-        /// Explicit padding keeping field offsets kernel-aligned (zeroed).
-        pub _pad1: u16,
+        /// `1` for outbound/connect, `0` for inbound/accept.
+        pub initiated: u8,
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad1: u8,
         /// IPv4 bytes occupy `[..4]`; IPv6 fills the whole array.
         pub addr: [u8; 16],
-        /// Task comm at connect time (NUL-padded).
+        /// Task comm at event time (NUL-padded).
         pub comm: [u8; COMM_LEN],
     }
 
