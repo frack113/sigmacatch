@@ -209,6 +209,44 @@
         "DestinationPortName": "destination_port_name"
       },
       "note": "sigmacatch extension (not part of SigmaHQ Linux Sysmon taxonomy v2.1.0)"
+    },
+    "credential_change": {
+      "sigma_category": "credential_change",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "Syscall": "syscall",
+        "TargetUid0": "target_uid0",
+        "TargetUid1": "target_uid1",
+        "TargetUid2": "target_uid2",
+        "GroupCount": "group_count",
+        "Result": "result"
+      },
+      "note": "sigmacatch extension (EID 501)"
+    },
+    "capability_change": {
+      "sigma_category": "capability_change",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "Syscall": "syscall",
+        "Option": "option",
+        "Arg2": "arg2",
+        "Arg3": "arg3",
+        "Arg4": "arg4",
+        "Result": "result"
+      },
+      "note": "sigmacatch extension (EID 502)"
     }
   }
 }

@@ -43,6 +43,26 @@ transformations:
         category: network_listen
         product: linux
 
+  # EventID 501: credential_change (sigmacatch extension)
+  - id: win_credential_change
+    type: add_condition
+    conditions:
+      Event.System.EventID: 501
+    rule_conditions:
+      - type: logsource
+        category: credential_change
+        product: linux
+
+  # EventID 502: capability_change (sigmacatch extension)
+  - id: win_capability_change
+    type: add_condition
+    conditions:
+      Event.System.EventID: 502
+    rule_conditions:
+      - type: logsource
+        category: capability_change
+        product: linux
+
   # EventID 5: process_termination
   - id: win_process_termination
     type: add_condition
@@ -330,6 +350,20 @@ transformations:
     rule_conditions:
       - type: logsource
         category: network_listen
+        product: linux
+  - id: win_route_credential_change
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: credential_change
+        product: linux
+  - id: win_route_capability_change
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: capability_change
         product: linux
   - id: win_route_process_termination
     type: change_logsource

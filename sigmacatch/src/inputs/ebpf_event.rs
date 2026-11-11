@@ -22,8 +22,11 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use crate::ebpf_common::{
-    DnsEvent, DriverLoadEvent, ExecEvent, FileCreateEvent, FileDeleteEvent, ForkEvent, ListenEvent,
-    NetEvent, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
+    CAP_CAPSET, CAP_PRCTL, CRED_SETEGID, CRED_SETEUID, CRED_SETFSGID, CRED_SETFSUID, CRED_SETGID,
+    CRED_SETGROUPS, CRED_SETREGID, CRED_SETRESGID, CRED_SETRESUID, CRED_SETREUID, CRED_SETUID,
+    CapabilityChangeEvent, CredentialChangeEvent, DnsEvent, DriverLoadEvent, ExecEvent,
+    FileCreateEvent, FileDeleteEvent, ForkEvent, ListenEvent, NetEvent, PipeCreateEvent,
+    ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
 };
 use crate::types::Event;
 use chrono::Utc;
@@ -480,6 +483,48 @@ impl EventBuilder {
         to_sysmon_event(25, &self.hostname, &now, data)
     }
 
+    /// Build a credential_change (EID 501, extension) event.
+    pub fn credential_change_event(&mut self, ev: &CredentialChangeEvent) -> Event {
+        let now = Utc::now();
+        let (guid, image) = self.resolve_process_info(ev.pid);
+        let user = self.user_name(ev.uid);
+        let syscall = cred_syscall_name(ev.syscall);
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "User", &user);
+        insert_str(&mut data, "Syscall", syscall);
+        insert_str(&mut data, "TargetUid0", &ev.arg0.to_string());
+        insert_str(&mut data, "TargetUid1", &ev.arg1.to_string());
+        insert_str(&mut data, "TargetUid2", &ev.arg2.to_string());
+        insert_str(&mut data, "GroupCount", &ev.groups_count.to_string());
+        insert_str(&mut data, "Result", &ev.result.to_string());
+        to_sysmon_event(501, &self.hostname, &now, data)
+    }
+
+    /// Build a capability_change (EID 502, extension) event.
+    pub fn capability_change_event(&mut self, ev: &CapabilityChangeEvent) -> Event {
+        let now = Utc::now();
+        let (guid, image) = self.resolve_process_info(ev.pid);
+        let user = self.user_name(ev.uid);
+        let syscall = cap_syscall_name(ev.syscall);
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "User", &user);
+        insert_str(&mut data, "Syscall", syscall);
+        insert_str(&mut data, "Option", &ev.option.to_string());
+        insert_str(&mut data, "Arg2", &ev.arg2.to_string());
+        insert_str(&mut data, "Arg3", &ev.arg3.to_string());
+        insert_str(&mut data, "Arg4", &ev.arg4.to_string());
+        insert_str(&mut data, "Result", &ev.result.to_string());
+        to_sysmon_event(502, &self.hostname, &now, data)
+    }
+
     /// Build a dns_query (EID 22) event.
     pub fn dns_event(&mut self, ev: &DnsEvent) -> Option<Event> {
         let end = ev.payload_len as usize;
@@ -857,6 +902,31 @@ fn read_session_id(pid: u32) -> Option<u32> {
         .trim()
         .parse()
         .ok()
+}
+
+fn cred_syscall_name(id: u32) -> &'static str {
+    match id {
+        CRED_SETUID => "setuid",
+        CRED_SETEUID => "seteuid",
+        CRED_SETREUID => "setreuid",
+        CRED_SETRESUID => "setresuid",
+        CRED_SETFSUID => "setfsuid",
+        CRED_SETGID => "setgid",
+        CRED_SETEGID => "setegid",
+        CRED_SETREGID => "setregid",
+        CRED_SETRESGID => "setresgid",
+        CRED_SETFSGID => "setfsgid",
+        CRED_SETGROUPS => "setgroups",
+        _ => "unknown",
+    }
+}
+
+fn cap_syscall_name(id: u32) -> &'static str {
+    match id {
+        CAP_CAPSET => "capset",
+        CAP_PRCTL => "prctl",
+        _ => "unknown",
+    }
 }
 
 #[cfg(test)]

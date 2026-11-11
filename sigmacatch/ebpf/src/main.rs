@@ -37,12 +37,15 @@ use aya_ebpf::{
 mod ebpf_common;
 
 use ebpf_common::{
-    ARG0_LEN, ARG1_LEN, ARG2_LEN, DNS_PAYLOAD_LEN, DnsEvent, DriverLoadEvent, EVENT_DNS,
+    ARG0_LEN, ARG1_LEN, ARG2_LEN, CAP_CAPSET, CAP_PRCTL, CRED_SETFSUID, CRED_SETFSGID,
+    CRED_SETGID, CRED_SETGROUPS, CRED_SETREGID, CRED_SETRESGID, CRED_SETRESUID, CRED_SETREUID,
+    CRED_SETUID, CapabilityChangeEvent, CredentialChangeEvent, DNS_PAYLOAD_LEN, DnsEvent,
+    DriverLoadEvent, EVENT_CAPABILITY_CHANGE, EVENT_CREDENTIAL_CHANGE, EVENT_DNS,
     EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_DELETE, EVENT_FORK,
     EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING,
-    EVENT_RAW_ACCESS, ExecEvent, ExitEvent, FileCreateEvent, FileDeleteEvent, ForkEvent, IMAGE_LEN,
-    ListenEvent, NetEvent, PATH_LEN, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent,
-    RawAccessEvent,
+    EVENT_RAW_ACCESS, ExecEvent, ExitEvent, FileCreateEvent, FileDeleteEvent, ForkEvent,
+    IMAGE_LEN, ListenEvent, NetEvent, PATH_LEN, PipeCreateEvent, ProcessAccessEvent,
+    ProcessTamperingEvent, RawAccessEvent,
 };
 
 const MAX_ENTRIES: u32 = 1;
@@ -54,8 +57,15 @@ const RAW_STAGE_MAX: u32 = 4096;
 const PIPE_STAGE_MAX: u32 = 4096;
 const BIND_STAGE_MAX: u32 = 4096;
 const LISTEN_FD_MAX: u32 = 4096;
+const CRED_STAGE_MAX: u32 = 4096;
+const CAP_STAGE_MAX: u32 = 4096;
 /// `O_CREAT` bit — openat is staged only when the caller may create.
 const O_CREAT: u64 = 0o100;
+
+// prctl capability-related options (v1)
+const PR_SET_KEEPCAPS: u64 = 8;
+const PR_CAPBSET_DROP: u64 = 24;
+const PR_CAP_AMBIENT: u64 = 47;
 #[repr(C)]
 struct PendingExec {
     image: [u8; IMAGE_LEN],
@@ -88,6 +98,27 @@ struct DnsQuery {
     payload_len: u32,
     comm: [u8; 16],
     payload: [u8; DNS_PAYLOAD_LEN],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PendingCred {
+    syscall: u32,
+    groups_count: u32,
+    arg0: u32,
+    arg1: u32,
+    arg2: u32,
+    _pad0: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PendingCap {
+    syscall: u32,
+    option: u32,
+    arg2: u64,
+    arg3: u64,
+    arg4: u64,
 }
 
 #[map(name = "EVENTS")]
@@ -125,6 +156,12 @@ static BIND_STAGE: LruHashMap<u64, PendingBind> = LruHashMap::with_max_entries(B
 
 #[map(name = "LISTEN_FD")]
 static LISTEN_FD: LruHashMap<u64, i32> = LruHashMap::with_max_entries(LISTEN_FD_MAX, 0);
+
+#[map(name = "CRED_STAGE")]
+static CRED_STAGE: LruHashMap<u64, PendingCred> = LruHashMap::with_max_entries(CRED_STAGE_MAX, 0);
+
+#[map(name = "CAP_STAGE")]
+static CAP_STAGE: LruHashMap<u64, PendingCap> = LruHashMap::with_max_entries(CAP_STAGE_MAX, 0);
 
 /// Read a NUL-terminated user string into `dst`, returning the stored length
 /// (excluding the NUL), provably bounded by `dst.len() - 1`.
@@ -1277,4 +1314,245 @@ fn try_dns_sendmsg(ctx: &TracePointContext) -> Result<(), i64> {
     fill_dns(scratch, iov_base, iov_len, ids, uidgid, comm);
     emit_dns(scratch);
     Ok(())
+}
+
+// ─── Credential/capability change capture (EID 501/502) ─────────────────────
+
+fn stage_cred(syscall: u32, arg0: u32, arg1: u32, arg2: u32, groups_count: u32) {
+    let key = bpf_get_current_pid_tgid();
+    let pending = PendingCred {
+        syscall,
+        groups_count,
+        arg0,
+        arg1,
+        arg2,
+        _pad0: 0,
+    };
+    let _ = CRED_STAGE.insert(&key, &pending, 0);
+}
+
+fn emit_cred_exit(ctx: &TracePointContext) -> Result<(), i64> {
+    let key = bpf_get_current_pid_tgid();
+    let Some(pending) = (unsafe { CRED_STAGE.get(&key) }) else {
+        return Ok(());
+    };
+    let pending = *pending;
+    let _ = CRED_STAGE.remove(&key);
+    // SAFETY: sys_exit_* tracepoints have ret at offset 16.
+    let ret: i64 = unsafe { ctx.read_at(16)? };
+    let ids = bpf_get_current_pid_tgid();
+    let uidgid = bpf_get_current_uid_gid();
+    let comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    if let Some(mut entry) = EVENTS.reserve::<CredentialChangeEvent>(0) {
+        entry.write(CredentialChangeEvent {
+            kind: EVENT_CREDENTIAL_CHANGE,
+            pid: (ids >> 32) as u32,
+            uid: uidgid as u32,
+            gid: (uidgid >> 32) as u32,
+            syscall: pending.syscall,
+            groups_count: pending.groups_count,
+            arg0: pending.arg0,
+            arg1: pending.arg1,
+            arg2: pending.arg2,
+            result: ret as i32,
+            comm,
+            _pad0: [0; 2],
+        });
+        entry.submit(0);
+    }
+    Ok(())
+}
+
+fn stage_cap(syscall: u32, option: u32, arg2: u64, arg3: u64, arg4: u64) {
+    let key = bpf_get_current_pid_tgid();
+    let pending = PendingCap {
+        syscall,
+        option,
+        arg2,
+        arg3,
+        arg4,
+    };
+    let _ = CAP_STAGE.insert(&key, &pending, 0);
+}
+
+fn emit_cap_exit(ctx: &TracePointContext) -> Result<(), i64> {
+    let key = bpf_get_current_pid_tgid();
+    let Some(pending) = (unsafe { CAP_STAGE.get(&key) }) else {
+        return Ok(());
+    };
+    let pending = *pending;
+    let _ = CAP_STAGE.remove(&key);
+    // SAFETY: sys_exit_* tracepoints have ret at offset 16.
+    let ret: i64 = unsafe { ctx.read_at(16)? };
+    let ids = bpf_get_current_pid_tgid();
+    let uidgid = bpf_get_current_uid_gid();
+    let comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    if let Some(mut entry) = EVENTS.reserve::<CapabilityChangeEvent>(0) {
+        entry.write(CapabilityChangeEvent {
+            kind: EVENT_CAPABILITY_CHANGE,
+            pid: (ids >> 32) as u32,
+            uid: uidgid as u32,
+            gid: (uidgid >> 32) as u32,
+            syscall: pending.syscall,
+            option: pending.option,
+            arg2: pending.arg2,
+            arg3: pending.arg3,
+            arg4: pending.arg4,
+            result: ret,
+            comm,
+        });
+        entry.submit(0);
+    }
+    Ok(())
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_setuid")]
+fn sys_enter_setuid(ctx: TracePointContext) -> i32 {
+    match unsafe { ctx.read_at::<u64>(16) } {
+        Ok(v) => stage_cred(CRED_SETUID, v as u32, 0, 0, 0),
+        Err(_) => {}
+    }
+    0
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_setuid")]
+fn sys_exit_setuid(ctx: TracePointContext) -> i32 {
+    let _ = emit_cred_exit(&ctx);
+    0
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_setfsuid")]
+fn sys_enter_setfsuid(ctx: TracePointContext) -> i32 {
+    match unsafe { ctx.read_at::<u64>(16) } {
+        Ok(v) => stage_cred(CRED_SETFSUID, v as u32, 0, 0, 0),
+        Err(_) => {}
+    }
+    0
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_setfsuid")]
+fn sys_exit_setfsuid(ctx: TracePointContext) -> i32 {
+    let _ = emit_cred_exit(&ctx);
+    0
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_setreuid")]
+fn sys_enter_setreuid(ctx: TracePointContext) -> i32 {
+    let ruid = unsafe { ctx.read_at::<u64>(16) }.unwrap_or(0) as u32;
+    let euid = unsafe { ctx.read_at::<u64>(24) }.unwrap_or(0) as u32;
+    stage_cred(CRED_SETREUID, ruid, euid, 0, 0);
+    0
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_setreuid")]
+fn sys_exit_setreuid(ctx: TracePointContext) -> i32 {
+    let _ = emit_cred_exit(&ctx);
+    0
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_setresuid")]
+fn sys_enter_setresuid(ctx: TracePointContext) -> i32 {
+    let ruid = unsafe { ctx.read_at::<u64>(16) }.unwrap_or(0) as u32;
+    let euid = unsafe { ctx.read_at::<u64>(24) }.unwrap_or(0) as u32;
+    let suid = unsafe { ctx.read_at::<u64>(32) }.unwrap_or(0) as u32;
+    stage_cred(CRED_SETRESUID, ruid, euid, suid, 0);
+    0
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_setresuid")]
+fn sys_exit_setresuid(ctx: TracePointContext) -> i32 {
+    let _ = emit_cred_exit(&ctx);
+    0
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_setgid")]
+fn sys_enter_setgid(ctx: TracePointContext) -> i32 {
+    match unsafe { ctx.read_at::<u64>(16) } {
+        Ok(v) => stage_cred(CRED_SETGID, v as u32, 0, 0, 0),
+        Err(_) => {}
+    }
+    0
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_setgid")]
+fn sys_exit_setgid(ctx: TracePointContext) -> i32 {
+    let _ = emit_cred_exit(&ctx);
+    0
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_setfsgid")]
+fn sys_enter_setfsgid(ctx: TracePointContext) -> i32 {
+    match unsafe { ctx.read_at::<u64>(16) } {
+        Ok(v) => stage_cred(CRED_SETFSGID, v as u32, 0, 0, 0),
+        Err(_) => {}
+    }
+    0
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_setfsgid")]
+fn sys_exit_setfsgid(ctx: TracePointContext) -> i32 {
+    let _ = emit_cred_exit(&ctx);
+    0
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_setregid")]
+fn sys_enter_setregid(ctx: TracePointContext) -> i32 {
+    let rgid = unsafe { ctx.read_at::<u64>(16) }.unwrap_or(0) as u32;
+    let egid = unsafe { ctx.read_at::<u64>(24) }.unwrap_or(0) as u32;
+    stage_cred(CRED_SETREGID, rgid, egid, 0, 0);
+    0
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_setregid")]
+fn sys_exit_setregid(ctx: TracePointContext) -> i32 {
+    let _ = emit_cred_exit(&ctx);
+    0
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_setresgid")]
+fn sys_enter_setresgid(ctx: TracePointContext) -> i32 {
+    let rgid = unsafe { ctx.read_at::<u64>(16) }.unwrap_or(0) as u32;
+    let egid = unsafe { ctx.read_at::<u64>(24) }.unwrap_or(0) as u32;
+    let sgid = unsafe { ctx.read_at::<u64>(32) }.unwrap_or(0) as u32;
+    stage_cred(CRED_SETRESGID, rgid, egid, sgid, 0);
+    0
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_setresgid")]
+fn sys_exit_setresgid(ctx: TracePointContext) -> i32 {
+    let _ = emit_cred_exit(&ctx);
+    0
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_setgroups")]
+fn sys_enter_setgroups(ctx: TracePointContext) -> i32 {
+    let size = unsafe { ctx.read_at::<u64>(16) }.unwrap_or(0) as u32;
+    stage_cred(CRED_SETGROUPS, 0, 0, 0, size);
+    0
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_setgroups")]
+fn sys_exit_setgroups(ctx: TracePointContext) -> i32 {
+    let _ = emit_cred_exit(&ctx);
+    0
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_capset")]
+fn sys_enter_capset(_ctx: TracePointContext) -> i32 {
+    stage_cap(CAP_CAPSET, 0, 0, 0, 0);
+    0
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_capset")]
+fn sys_exit_capset(ctx: TracePointContext) -> i32 {
+    let _ = emit_cap_exit(&ctx);
+    0
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_prctl")]
+fn sys_enter_prctl(ctx: TracePointContext) -> i32 {
+    let option = unsafe { ctx.read_at::<u64>(16) }.unwrap_or(u64::MAX);
+    if option != PR_SET_KEEPCAPS && option != PR_CAPBSET_DROP && option != PR_CAP_AMBIENT {
+        return 0;
+    }
+    let arg2 = unsafe { ctx.read_at::<u64>(24) }.unwrap_or(0);
+    let arg3 = unsafe { ctx.read_at::<u64>(32) }.unwrap_or(0);
+    let arg4 = unsafe { ctx.read_at::<u64>(40) }.unwrap_or(0);
+    stage_cap(CAP_PRCTL, option as u32, arg2, arg3, arg4);
+    0
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_prctl")]
+fn sys_exit_prctl(ctx: TracePointContext) -> i32 {
+    let _ = emit_cap_exit(&ctx);
+    0
 }

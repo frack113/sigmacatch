@@ -69,6 +69,10 @@ mod inner {
     pub const EVENT_PROCESS_TAMPERING: u32 = 13;
     /// Ring buffer record tag: process fork/clone (internal lineage tracking).
     pub const EVENT_FORK: u32 = 14;
+    /// Ring buffer record tag: credential change (uid/gid/groups), EID 501.
+    pub const EVENT_CREDENTIAL_CHANGE: u32 = 15;
+    /// Ring buffer record tag: capability change (capset/prctl caps), EID 502.
+    pub const EVENT_CAPABILITY_CHANGE: u32 = 16;
 
     /// Directory-fd sentinel meaning "path is relative to cwd".
     pub const AT_FDCWD: i32 = -100;
@@ -719,6 +723,120 @@ mod inner {
     const _: () = assert!(
         core::mem::size_of::<ProcessTamperingEvent>().is_multiple_of(8),
         "ProcessTamperingEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// Credential-change syscall selector: `setuid`.
+    pub const CRED_SETUID: u32 = 1;
+    /// Credential-change syscall selector: `seteuid`.
+    pub const CRED_SETEUID: u32 = 2;
+    /// Credential-change syscall selector: `setreuid`.
+    pub const CRED_SETREUID: u32 = 3;
+    /// Credential-change syscall selector: `setresuid`.
+    pub const CRED_SETRESUID: u32 = 4;
+    /// Credential-change syscall selector: `setfsuid`.
+    pub const CRED_SETFSUID: u32 = 5;
+    /// Credential-change syscall selector: `setgid`.
+    pub const CRED_SETGID: u32 = 6;
+    /// Credential-change syscall selector: `setegid`.
+    pub const CRED_SETEGID: u32 = 7;
+    /// Credential-change syscall selector: `setregid`.
+    pub const CRED_SETREGID: u32 = 8;
+    /// Credential-change syscall selector: `setresgid`.
+    pub const CRED_SETRESGID: u32 = 9;
+    /// Credential-change syscall selector: `setfsgid`.
+    pub const CRED_SETFSGID: u32 = 10;
+    /// Credential-change syscall selector: `setgroups`.
+    pub const CRED_SETGROUPS: u32 = 11;
+
+    /// Credential change event (uid/gid/groups), emitted as Sysmon extension EID 501.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct CredentialChangeEvent {
+        /// Always [`EVENT_CREDENTIAL_CHANGE`].
+        pub kind: u32,
+        /// Process id (tgid).
+        pub pid: u32,
+        /// Real UID at event time.
+        pub uid: u32,
+        /// Real GID at event time.
+        pub gid: u32,
+        /// Syscall selector (`CRED_*`).
+        pub syscall: u32,
+        /// Group count for `setgroups`, 0 otherwise.
+        pub groups_count: u32,
+        /// First target value (uid/ruid/gid/rgid), syscall-dependent.
+        pub arg0: u32,
+        /// Second target value (euid/egid), syscall-dependent.
+        pub arg1: u32,
+        /// Third target value (suid/sgid), syscall-dependent.
+        pub arg2: u32,
+        /// Syscall result / return code.
+        pub result: i32,
+        /// Task comm at event time (NUL-padded).
+        pub comm: [u8; COMM_LEN],
+        /// Explicit padding keeping the record size a multiple of 8 (zeroed).
+        pub _pad0: [u32; 2],
+    }
+
+    impl CredentialChangeEvent {
+        /// Parse a ring buffer record into a typed credential-change event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<CredentialChangeEvent>().is_multiple_of(8),
+        "CredentialChangeEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// Capability-change syscall selector: `capset`.
+    pub const CAP_CAPSET: u32 = 1;
+    /// Capability-change syscall selector: `prctl` (capability-related options).
+    pub const CAP_PRCTL: u32 = 2;
+
+    /// Capability change event (capset/prctl capabilities), emitted as Sysmon extension EID 502.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct CapabilityChangeEvent {
+        /// Always [`EVENT_CAPABILITY_CHANGE`].
+        pub kind: u32,
+        /// Process id (tgid).
+        pub pid: u32,
+        /// Real UID at event time.
+        pub uid: u32,
+        /// Real GID at event time.
+        pub gid: u32,
+        /// Syscall selector (`CAP_*`).
+        pub syscall: u32,
+        /// `prctl` option or 0 for `capset`.
+        pub option: u32,
+        /// First argument (e.g. prctl arg2).
+        pub arg2: u64,
+        /// Second argument (e.g. prctl arg3).
+        pub arg3: u64,
+        /// Third argument (e.g. prctl arg4).
+        pub arg4: u64,
+        /// Syscall result / return code.
+        pub result: i64,
+        /// Task comm at event time (NUL-padded).
+        pub comm: [u8; COMM_LEN],
+    }
+
+    impl CapabilityChangeEvent {
+        /// Parse a ring buffer record into a typed capability-change event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<CapabilityChangeEvent>().is_multiple_of(8),
+        "CapabilityChangeEvent must stay 8-byte aligned for ring buffer records"
     );
 }
 

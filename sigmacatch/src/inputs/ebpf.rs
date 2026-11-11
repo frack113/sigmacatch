@@ -8,11 +8,12 @@
 use std::fs;
 
 use crate::ebpf_common::{
-    DnsEvent, DriverLoadEvent, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE,
-    EVENT_FILE_DELETE, EVENT_FORK, EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE,
-    EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, FileCreateEvent,
-    FileDeleteEvent, ForkEvent, ListenEvent, NetEvent, PipeCreateEvent, ProcessAccessEvent,
-    ProcessTamperingEvent, RawAccessEvent,
+    CapabilityChangeEvent, CredentialChangeEvent, DnsEvent, DriverLoadEvent,
+    EVENT_CAPABILITY_CHANGE, EVENT_CREDENTIAL_CHANGE, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC,
+    EVENT_EXIT, EVENT_FILE, EVENT_FILE_DELETE, EVENT_FORK, EVENT_LISTEN, EVENT_NET,
+    EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS,
+    FileCreateEvent, FileDeleteEvent, ForkEvent, ListenEvent, NetEvent, PipeCreateEvent,
+    ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
 };
 use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::{Context, bail};
@@ -136,6 +137,78 @@ const ATTACHMENTS: &[(&str, &str, &str, bool)] = &[
     ("sys_exit_listen", "syscalls", "sys_exit_listen", false),
     ("sys_enter_sendto", "syscalls", "sys_enter_sendto", true),
     ("sys_enter_sendmsg", "syscalls", "sys_enter_sendmsg", true),
+    ("sys_enter_setuid", "syscalls", "sys_enter_setuid", false),
+    ("sys_exit_setuid", "syscalls", "sys_exit_setuid", false),
+    (
+        "sys_enter_setfsuid",
+        "syscalls",
+        "sys_enter_setfsuid",
+        false,
+    ),
+    ("sys_exit_setfsuid", "syscalls", "sys_exit_setfsuid", false),
+    (
+        "sys_enter_setreuid",
+        "syscalls",
+        "sys_enter_setreuid",
+        false,
+    ),
+    ("sys_exit_setreuid", "syscalls", "sys_exit_setreuid", false),
+    (
+        "sys_enter_setresuid",
+        "syscalls",
+        "sys_enter_setresuid",
+        false,
+    ),
+    (
+        "sys_exit_setresuid",
+        "syscalls",
+        "sys_exit_setresuid",
+        false,
+    ),
+    ("sys_enter_setgid", "syscalls", "sys_enter_setgid", false),
+    ("sys_exit_setgid", "syscalls", "sys_exit_setgid", false),
+    (
+        "sys_enter_setfsgid",
+        "syscalls",
+        "sys_enter_setfsgid",
+        false,
+    ),
+    ("sys_exit_setfsgid", "syscalls", "sys_exit_setfsgid", false),
+    (
+        "sys_enter_setregid",
+        "syscalls",
+        "sys_enter_setregid",
+        false,
+    ),
+    ("sys_exit_setregid", "syscalls", "sys_exit_setregid", false),
+    (
+        "sys_enter_setresgid",
+        "syscalls",
+        "sys_enter_setresgid",
+        false,
+    ),
+    (
+        "sys_exit_setresgid",
+        "syscalls",
+        "sys_exit_setresgid",
+        false,
+    ),
+    (
+        "sys_enter_setgroups",
+        "syscalls",
+        "sys_enter_setgroups",
+        false,
+    ),
+    (
+        "sys_exit_setgroups",
+        "syscalls",
+        "sys_exit_setgroups",
+        false,
+    ),
+    ("sys_enter_capset", "syscalls", "sys_enter_capset", false),
+    ("sys_exit_capset", "syscalls", "sys_exit_capset", false),
+    ("sys_enter_prctl", "syscalls", "sys_enter_prctl", false),
+    ("sys_exit_prctl", "syscalls", "sys_exit_prctl", false),
 ];
 
 /// eBPF-backed sysmon collector (feature `ebpf`): loads the embedded probe
@@ -376,6 +449,30 @@ impl EventProducer for EventCollector {
                         None => tracing::warn!(
                             size = bytes.len(),
                             "listen record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_CREDENTIAL_CHANGE => match CredentialChangeEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.credential_change_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "credential-change record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_CAPABILITY_CHANGE => match CapabilityChangeEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.capability_change_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "capability-change record with unexpected size — skipped"
                         ),
                     },
                     other => tracing::warn!(tag = other, "unknown ring buffer record tag"),
