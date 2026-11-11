@@ -10,12 +10,12 @@ use std::fs;
 use crate::ebpf_common::{
     CapabilityChangeEvent, CredentialChangeEvent, DnsEvent, DriverLoadEvent,
     EVENT_CAPABILITY_CHANGE, EVENT_CREDENTIAL_CHANGE, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC,
-    EVENT_EXIT, EVENT_FILE, EVENT_FILE_CHMOD, EVENT_FILE_CHOWN, EVENT_FILE_DELETE,
-    EVENT_FILE_RENAME, EVENT_FILE_TRUNCATE, EVENT_FORK, EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE,
-    EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, FileChmodEvent,
-    FileChownEvent, FileCreateEvent, FileDeleteEvent, FileRenameEvent, FileTruncateEvent,
-    ForkEvent, ListenEvent, NetEvent, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent,
-    RawAccessEvent,
+    EVENT_EXIT, EVENT_FILE, EVENT_FILE_CHANGE, EVENT_FILE_CHMOD, EVENT_FILE_CHOWN,
+    EVENT_FILE_DELETE, EVENT_FILE_RENAME, EVENT_FILE_TRUNCATE, EVENT_FORK, EVENT_LISTEN, EVENT_NET,
+    EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS,
+    FileChangeEvent, FileChmodEvent, FileChownEvent, FileCreateEvent, FileDeleteEvent,
+    FileRenameEvent, FileTruncateEvent, ForkEvent, ListenEvent, NetEvent, PipeCreateEvent,
+    ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
 };
 use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::{Context, bail};
@@ -287,6 +287,26 @@ const ATTACHMENTS: &[(&str, &str, &str, bool)] = &[
         "sys_exit_ftruncate",
         false,
     ),
+    ("sys_enter_write", "syscalls", "sys_enter_write", false),
+    ("sys_exit_write", "syscalls", "sys_exit_write", false),
+    (
+        "sys_enter_pwrite64",
+        "syscalls",
+        "sys_enter_pwrite64",
+        false,
+    ),
+    ("sys_exit_pwrite64", "syscalls", "sys_exit_pwrite64", false),
+    ("sys_enter_writev", "syscalls", "sys_enter_writev", false),
+    ("sys_exit_writev", "syscalls", "sys_exit_writev", false),
+    ("sys_enter_pwritev", "syscalls", "sys_enter_pwritev", false),
+    ("sys_exit_pwritev", "syscalls", "sys_exit_pwritev", false),
+    (
+        "sys_enter_pwritev2",
+        "syscalls",
+        "sys_enter_pwritev2",
+        false,
+    ),
+    ("sys_exit_pwritev2", "syscalls", "sys_exit_pwritev2", false),
 ];
 
 /// eBPF-backed sysmon collector (feature `ebpf`): loads the embedded probe
@@ -599,6 +619,18 @@ impl EventProducer for EventCollector {
                         None => tracing::warn!(
                             size = bytes.len(),
                             "file-truncate record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_CHANGE => match FileChangeEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.file_change_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-change record with unexpected size — skipped"
                         ),
                     },
                     other => tracing::warn!(tag = other, "unknown ring buffer record tag"),

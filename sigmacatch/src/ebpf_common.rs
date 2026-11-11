@@ -81,6 +81,8 @@ mod inner {
     pub const EVENT_FILE_CHOWN: u32 = 19;
     /// Ring buffer record tag: file truncate, EID 506 (extension).
     pub const EVENT_FILE_TRUNCATE: u32 = 20;
+    /// Ring buffer record tag: file change/write, emitted as EID 2.
+    pub const EVENT_FILE_CHANGE: u32 = 21;
 
     /// Directory-fd sentinel meaning "path is relative to cwd".
     pub const AT_FDCWD: i32 = -100;
@@ -1100,6 +1102,53 @@ mod inner {
     const _: () = assert!(
         core::mem::size_of::<FileTruncateEvent>().is_multiple_of(8),
         "FileTruncateEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// File-change/write syscall selector: `write`.
+    pub const WRITE_WRITE: u32 = 1;
+    /// File-change/write syscall selector: `pwrite64`.
+    pub const WRITE_PWRITE64: u32 = 2;
+    /// File-change/write syscall selector: `writev`.
+    pub const WRITE_WRITEV: u32 = 3;
+    /// File-change/write syscall selector: `pwritev`.
+    pub const WRITE_PWRITEV: u32 = 4;
+    /// File-change/write syscall selector: `pwritev2`.
+    pub const WRITE_PWRITEV2: u32 = 5;
+
+    /// File change/write event, emitted as Sysmon EID 2 (best-effort).
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct FileChangeEvent {
+        /// Always [`EVENT_FILE_CHANGE`].
+        pub kind: u32,
+        /// Process id (tgid).
+        pub pid: u32,
+        /// Real UID of the task.
+        pub uid: u32,
+        /// Real GID of the task.
+        pub gid: u32,
+        /// Syscall selector (`WRITE_*`).
+        pub syscall: u32,
+        /// File descriptor written to.
+        pub fd: i32,
+        /// Bytes written (syscall result), or -1 on error.
+        pub bytes_written: i64,
+        /// Task comm at event time (NUL-padded).
+        pub comm: [u8; COMM_LEN],
+    }
+
+    impl FileChangeEvent {
+        /// Parse a ring buffer record into a typed file-change event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<FileChangeEvent>().is_multiple_of(8),
+        "FileChangeEvent must stay 8-byte aligned for ring buffer records"
     );
 }
 

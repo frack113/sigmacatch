@@ -44,12 +44,13 @@ use ebpf_common::{
     DNS_PAYLOAD_LEN, DnsEvent, DriverLoadEvent, EVENT_CAPABILITY_CHANGE, EVENT_CREDENTIAL_CHANGE,
     EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_CHMOD,
     EVENT_FILE_CHOWN, EVENT_FILE_DELETE, EVENT_FILE_RENAME, EVENT_FILE_TRUNCATE, EVENT_FORK,
-    EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING,
-    EVENT_RAW_ACCESS, ExecEvent, ExitEvent, FileChmodEvent, FileChownEvent, FileCreateEvent,
-    FileDeleteEvent, FileRenameEvent, FileTruncateEvent, ForkEvent, IMAGE_LEN, ListenEvent,
-    NetEvent, PATH_LEN, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent,
-    RENAME_RENAME, RENAME_RENAMEAT, RENAME_RENAMEAT2, RawAccessEvent, TRUNCATE_FTRUNCATE,
-    TRUNCATE_TRUNCATE,
+    EVENT_FILE_CHANGE, EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS,
+    EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, ExecEvent, ExitEvent, FileChangeEvent,
+    FileChmodEvent, FileChownEvent, FileCreateEvent, FileDeleteEvent, FileRenameEvent,
+    FileTruncateEvent, ForkEvent, IMAGE_LEN, ListenEvent, NetEvent, PATH_LEN, PipeCreateEvent,
+    ProcessAccessEvent, ProcessTamperingEvent, RENAME_RENAME, RENAME_RENAMEAT, RENAME_RENAMEAT2,
+    RawAccessEvent, TRUNCATE_FTRUNCATE, TRUNCATE_TRUNCATE, WRITE_PWRITE64, WRITE_PWRITEV,
+    WRITE_PWRITEV2, WRITE_WRITE, WRITE_WRITEV,
 };
 
 const MAX_ENTRIES: u32 = 1;
@@ -67,6 +68,7 @@ const RENAME_STAGE_MAX: u32 = 4096;
 const CHMOD_STAGE_MAX: u32 = 4096;
 const CHOWN_STAGE_MAX: u32 = 4096;
 const TRUNCATE_STAGE_MAX: u32 = 4096;
+const WRITE_STAGE_MAX: u32 = 4096;
 /// `O_CREAT` bit — openat is staged only when the caller may create.
 const O_CREAT: u64 = 0o100;
 
@@ -173,6 +175,13 @@ struct PendingTruncate {
     path: [u8; PATH_LEN],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PendingWrite {
+    syscall: u32,
+    fd: i32,
+}
+
 #[map(name = "EVENTS")]
 static EVENTS: RingBuf = RingBuf::with_byte_size(1 << 20, 0);
 
@@ -241,6 +250,9 @@ static TRUNCATE_STAGE: LruHashMap<u32, PendingTruncate> =
 #[map(name = "TRUNCATE_SCRATCH")]
 static TRUNCATE_SCRATCH: PerCpuArray<PendingTruncate> =
     PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
+
+#[map(name = "WRITE_STAGE")]
+static WRITE_STAGE: LruHashMap<u32, PendingWrite> = LruHashMap::with_max_entries(WRITE_STAGE_MAX, 0);
 
 /// Read a NUL-terminated user string into `dst`, returning the stored length
 /// (excluding the NUL), provably bounded by `dst.len() - 1`.
@@ -2176,6 +2188,128 @@ fn sys_enter_ftruncate(ctx: TracePointContext) -> i32 {
 #[tracepoint(category = "syscalls", name = "sys_exit_ftruncate")]
 fn sys_exit_ftruncate(ctx: TracePointContext) -> i32 {
     match try_emit_truncate(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+// ─── File change/write capture (EID 2, best-effort) ─────────────────────────
+
+fn try_stage_write(ctx: &TracePointContext, syscall: u32) -> Result<(), i64> {
+    let tid = bpf_get_current_pid_tgid() as u32;
+    // SAFETY: all write* sys_enter tracepoints have fd at offset 16.
+    let fd: u64 = unsafe { ctx.read_at(16)? };
+    let pending = PendingWrite {
+        syscall,
+        fd: fd as i32,
+    };
+    let _ = WRITE_STAGE.insert(&tid, &pending, 0);
+    Ok(())
+}
+
+fn try_emit_write(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: sys_exit_* tracepoints have ret at offset 16.
+    let ret: i64 = unsafe { ctx.read_at(16)? };
+    let tid = bpf_get_current_pid_tgid() as u32;
+    let Some(staged) = (unsafe { WRITE_STAGE.get(&tid) }) else {
+        return Ok(());
+    };
+    let staged = *staged;
+    let _ = WRITE_STAGE.remove(&tid);
+    if ret <= 0 {
+        return Ok(());
+    }
+    let ids = bpf_get_current_pid_tgid();
+    let uidgid = bpf_get_current_uid_gid();
+    let comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    if let Some(mut entry) = EVENTS.reserve::<FileChangeEvent>(0) {
+        let p = entry.as_mut_ptr();
+        unsafe {
+            ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<FileChangeEvent>());
+            (*p).kind = EVENT_FILE_CHANGE;
+            (*p).pid = (ids >> 32) as u32;
+            (*p).uid = uidgid as u32;
+            (*p).gid = (uidgid >> 32) as u32;
+            (*p).syscall = staged.syscall;
+            (*p).fd = staged.fd;
+            (*p).bytes_written = ret;
+            (*p).comm = comm;
+        }
+        entry.submit(0);
+    }
+    Ok(())
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_write")]
+fn sys_enter_write(ctx: TracePointContext) -> i32 {
+    match try_stage_write(&ctx, WRITE_WRITE) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_write")]
+fn sys_exit_write(ctx: TracePointContext) -> i32 {
+    match try_emit_write(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_pwrite64")]
+fn sys_enter_pwrite64(ctx: TracePointContext) -> i32 {
+    match try_stage_write(&ctx, WRITE_PWRITE64) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_pwrite64")]
+fn sys_exit_pwrite64(ctx: TracePointContext) -> i32 {
+    match try_emit_write(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_writev")]
+fn sys_enter_writev(ctx: TracePointContext) -> i32 {
+    match try_stage_write(&ctx, WRITE_WRITEV) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_writev")]
+fn sys_exit_writev(ctx: TracePointContext) -> i32 {
+    match try_emit_write(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_pwritev")]
+fn sys_enter_pwritev(ctx: TracePointContext) -> i32 {
+    match try_stage_write(&ctx, WRITE_PWRITEV) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_pwritev")]
+fn sys_exit_pwritev(ctx: TracePointContext) -> i32 {
+    match try_emit_write(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_pwritev2")]
+fn sys_enter_pwritev2(ctx: TracePointContext) -> i32 {
+    match try_stage_write(&ctx, WRITE_PWRITEV2) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+#[tracepoint(category = "syscalls", name = "sys_exit_pwritev2")]
+fn sys_exit_pwritev2(ctx: TracePointContext) -> i32 {
+    match try_emit_write(&ctx) {
         Ok(()) => 0,
         Err(e) => e as i32,
     }

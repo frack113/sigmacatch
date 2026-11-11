@@ -106,7 +106,9 @@
         "ProcessId": "pid",
         "Image": "image",
         "TargetFilename": "target_filename",
-        "User": "user"
+        "User": "user",
+        "Syscall": "syscall",
+        "BytesWritten": "bytes_written"
       },
       "note": "Sysmon EID 2 semantics vary; eBPF emission aligned to G2c (content modification/write activity, best-effort)"
     },

@@ -26,10 +26,11 @@ use crate::ebpf_common::{
     CHOWN_FCHOWN, CHOWN_FCHOWNAT, CHOWN_LCHOWN, CRED_SETEGID, CRED_SETEUID, CRED_SETFSGID,
     CRED_SETFSUID, CRED_SETGID, CRED_SETGROUPS, CRED_SETREGID, CRED_SETRESGID, CRED_SETRESUID,
     CRED_SETREUID, CRED_SETUID, CapabilityChangeEvent, CredentialChangeEvent, DnsEvent,
-    DriverLoadEvent, ExecEvent, FileChmodEvent, FileChownEvent, FileCreateEvent, FileDeleteEvent,
-    FileRenameEvent, FileTruncateEvent, ForkEvent, ListenEvent, NetEvent, PipeCreateEvent,
-    ProcessAccessEvent, ProcessTamperingEvent, RENAME_RENAME, RENAME_RENAMEAT, RENAME_RENAMEAT2,
-    RawAccessEvent, TRUNCATE_FTRUNCATE, TRUNCATE_TRUNCATE,
+    DriverLoadEvent, ExecEvent, FileChangeEvent, FileChmodEvent, FileChownEvent, FileCreateEvent,
+    FileDeleteEvent, FileRenameEvent, FileTruncateEvent, ForkEvent, ListenEvent, NetEvent,
+    PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RENAME_RENAME, RENAME_RENAMEAT,
+    RENAME_RENAMEAT2, RawAccessEvent, TRUNCATE_FTRUNCATE, TRUNCATE_TRUNCATE, WRITE_PWRITE64,
+    WRITE_PWRITEV, WRITE_PWRITEV2, WRITE_WRITE, WRITE_WRITEV,
 };
 use crate::types::Event;
 use chrono::Utc;
@@ -503,6 +504,34 @@ impl EventBuilder {
         insert_str(&mut data, "Length", &ev.length.to_string());
         insert_str(&mut data, "Result", &ev.result.to_string());
         to_sysmon_event(506, &self.hostname, &now, data)
+    }
+
+    /// Build a file_change (EID 2) event (best-effort write activity).
+    pub fn file_change_event(&mut self, ev: &FileChangeEvent) -> Event {
+        let now = Utc::now();
+        let (guid, image) = match self.parents.get(&ev.pid) {
+            Some(info) => (info.guid.clone(), info.image.clone()),
+            None => (NULL_GUID.to_string(), "-".to_string()),
+        };
+        let user = self.user_name(ev.uid);
+        let target = if ev.fd >= 0 {
+            fs::read_link(format!("/proc/{}/fd/{}", ev.pid, ev.fd))
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "-".to_string())
+        } else {
+            "-".to_string()
+        };
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "TargetFilename", &target);
+        insert_str(&mut data, "User", &user);
+        insert_str(&mut data, "Syscall", write_syscall_name(ev.syscall));
+        insert_str(&mut data, "BytesWritten", &ev.bytes_written.to_string());
+        to_sysmon_event(2, &self.hostname, &now, data)
     }
 
     /// Build a process_access (EID 10) event.
@@ -1134,6 +1163,17 @@ fn truncate_syscall_name(id: u32) -> &'static str {
     match id {
         TRUNCATE_TRUNCATE => "truncate",
         TRUNCATE_FTRUNCATE => "ftruncate",
+        _ => "unknown",
+    }
+}
+
+fn write_syscall_name(id: u32) -> &'static str {
+    match id {
+        WRITE_WRITE => "write",
+        WRITE_PWRITE64 => "pwrite64",
+        WRITE_WRITEV => "writev",
+        WRITE_PWRITEV => "pwritev",
+        WRITE_PWRITEV2 => "pwritev2",
         _ => "unknown",
     }
 }
