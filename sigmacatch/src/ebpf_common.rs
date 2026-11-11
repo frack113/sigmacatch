@@ -152,10 +152,12 @@ mod inner {
             Self::cstr(&self.arg2)
         }
 
-        /// Kernel-captured command line reconstructed from argv[0..2].
+        /// argv[0] (first argument) as a cheap `&str` view.
+        ///
+        /// Despite the historical name, this does not reconstruct the full
+        /// command line; use [`Self::cmdline_string`] for a joined
+        /// `argv[0..2]` string when available.
         pub fn cmdline_str(&self) -> &str {
-            // Callers needing an owned joined string should use `cmdline_string`;
-            // this returns argv[0] as a cheap &str for simple checks.
             self.arg0_str()
         }
 

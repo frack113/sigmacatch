@@ -153,7 +153,8 @@ fn try_stage_execve(ctx: &TracePointContext) -> Result<(), i64> {
     // size and copies a pointer-sized argument; out-of-range yields Err.
     let filename: *const u8 = unsafe { ctx.read_at(16)? };
     let argv_base: *const *const u8 = unsafe { ctx.read_at(24)? };
-    let pid = bpf_get_current_pid_tgid() as u32;
+    // Key by task id (tid) for syscall-instance correlation with sched_process_exec.
+    let tid = bpf_get_current_pid_tgid() as u32;
 
     let pending = match STAGE_SCRATCH.get_ptr_mut(0) {
         // SAFETY: index 0 < MAX_ENTRIES(1) is checked by get_ptr_mut; the
@@ -187,7 +188,7 @@ fn try_stage_execve(ctx: &TracePointContext) -> Result<(), i64> {
         read_cstr(&mut pending.arg2, arg2p);
     }
 
-    let _ = EXEC_ARGS.insert(&pid, pending, 0);
+    let _ = EXEC_ARGS.insert(&tid, pending, 0);
     Ok(())
 }
 
@@ -200,15 +201,36 @@ fn sched_process_exec(_ctx: TracePointContext) -> i32 {
 }
 
 fn try_emit_exec() -> Result<(), i64> {
-    let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
-    // Field-wise copy into the ring buffer slot: a whole-PendingExec local
-    // would eat into the 512-byte BPF stack for no benefit.
-    // SAFETY: get returns a borrowed view of map value storage, alive until
-    // the remove below; no mutation aliases it inside this program run.
-    let Some(staged) = (unsafe { EXEC_ARGS.get(&pid) }) else {
-        return Ok(());
+    let tgid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    let tid = bpf_get_current_pid_tgid() as u32;
+    // Copy staged argv/image out before removal to avoid holding a reference
+    // across map mutation. Staging uses the task id (tid) for syscall-instance
+    // correlation; prefer tid, fall back to tgid for robustness.
+    let staged = match unsafe { EXEC_ARGS.get(&tid) } {
+        Some(s) => {
+            let s = PendingExec {
+                image: s.image,
+                arg0: s.arg0,
+                arg1: s.arg1,
+                arg2: s.arg2,
+            };
+            EXEC_ARGS.remove(&tid)?;
+            s
+        }
+        None => match unsafe { EXEC_ARGS.get(&tgid) } {
+            Some(s) => {
+                let s = PendingExec {
+                    image: s.image,
+                    arg0: s.arg0,
+                    arg1: s.arg1,
+                    arg2: s.arg2,
+                };
+                EXEC_ARGS.remove(&tgid)?;
+                s
+            }
+            None => return Ok(()),
+        },
     };
-    EXEC_ARGS.remove(&pid)?;
 
     let uidgid = bpf_get_current_uid_gid();
     let comm = bpf_get_current_comm().unwrap_or([0; 16]);
@@ -219,7 +241,7 @@ fn try_emit_exec() -> Result<(), i64> {
         // of ExecEvent.
         unsafe {
             (*p).kind = EVENT_EXEC;
-            (*p).pid = pid;
+            (*p).pid = tgid;
             (*p).uid = uidgid as u32;
             (*p).gid = (uidgid >> 32) as u32;
             (*p)._pad0 = 0;
@@ -482,7 +504,8 @@ fn is_raw_device_path(path: &[u8; PATH_LEN]) -> bool {
 }
 
 fn stage_open_path(pathname: *const u8, dirfd: i32, flags: u64, check_create: bool) {
-    let pid = bpf_get_current_pid_tgid() as u32;
+    // Key by task id for syscall-instance correlation between enter/exit.
+    let tid = bpf_get_current_pid_tgid() as u32;
     let pending = match FILE_SCRATCH.get_ptr_mut(0) {
         // SAFETY: index validated by get_ptr_mut; per-cpu map storage valid
         // and unaliased for this program invocation.
@@ -496,10 +519,10 @@ fn stage_open_path(pathname: *const u8, dirfd: i32, flags: u64, check_create: bo
     let wants_create = check_create && (flags & O_CREAT != 0);
     let wants_raw = is_raw_device_path(&pending.path);
     if wants_create {
-        let _ = FILE_STAGE.insert(&pid, &*pending, 0);
+        let _ = FILE_STAGE.insert(&tid, &*pending, 0);
     }
     if wants_raw {
-        let _ = RAW_STAGE.insert(&pid, &*pending, 0);
+        let _ = RAW_STAGE.insert(&tid, &*pending, 0);
     }
 }
 
@@ -565,16 +588,18 @@ fn try_emit_file_create(ctx: &TracePointContext) -> Result<(), i64> {
     if ret < 0 {
         return Ok(()); // failed open — nothing was created
     }
-    let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    let ids = bpf_get_current_pid_tgid();
+    let pid = (ids >> 32) as u32;
+    let tid = ids as u32;
     // SAFETY: read-only map borrow, copied out immediately; lifetime ends
     // with the expression.
-    let Some(staged) = (unsafe { FILE_STAGE.get(&pid) }).map(|p| PendingFile {
+    let Some(staged) = (unsafe { FILE_STAGE.get(&tid) }).map(|p| PendingFile {
         path: p.path,
         dirfd: p.dirfd,
     }) else {
         return Ok(());
     };
-    FILE_STAGE.remove(&pid)?;
+    FILE_STAGE.remove(&tid)?;
 
     let uidgid = bpf_get_current_uid_gid();
     let comm = bpf_get_current_comm().unwrap_or([0; 16]);
@@ -602,15 +627,17 @@ fn try_emit_raw_access(ctx: &TracePointContext) -> Result<(), i64> {
     if ret < 0 {
         return Ok(());
     }
-    let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    let ids = bpf_get_current_pid_tgid();
+    let pid = (ids >> 32) as u32;
+    let tid = ids as u32;
     // SAFETY: read-only map borrow, copied out immediately.
-    let Some(staged) = (unsafe { RAW_STAGE.get(&pid) }).map(|p| PendingFile {
+    let Some(staged) = (unsafe { RAW_STAGE.get(&tid) }).map(|p| PendingFile {
         path: p.path,
         dirfd: p.dirfd,
     }) else {
         return Ok(());
     };
-    RAW_STAGE.remove(&pid)?;
+    RAW_STAGE.remove(&tid)?;
 
     let uidgid = bpf_get_current_uid_gid();
     let comm = bpf_get_current_comm().unwrap_or([0; 16]);
@@ -798,7 +825,7 @@ fn try_stage_mknodat(ctx: &TracePointContext) -> Result<(), i64> {
     if mode & S_IFMT != S_IFIFO {
         return Ok(());
     }
-    let pid = bpf_get_current_pid_tgid() as u32;
+    let tid = bpf_get_current_pid_tgid() as u32;
 
     let pending = match FILE_SCRATCH.get_ptr_mut(0) {
         // SAFETY: index validated by get_ptr_mut; per-cpu exclusivity.
@@ -808,7 +835,7 @@ fn try_stage_mknodat(ctx: &TracePointContext) -> Result<(), i64> {
     pending.path = [0; PATH_LEN];
     pending.dirfd = dirfd;
     read_cstr(&mut pending.path, pathname);
-    let _ = PIPE_STAGE.insert(&pid, pending, 0);
+    let _ = PIPE_STAGE.insert(&tid, pending, 0);
     Ok(())
 }
 
@@ -835,7 +862,7 @@ fn try_stage_mknod(ctx: &TracePointContext) -> Result<(), i64> {
     if mode & S_IFMT != S_IFIFO {
         return Ok(());
     }
-    let pid = bpf_get_current_pid_tgid() as u32;
+    let tid = bpf_get_current_pid_tgid() as u32;
 
     let pending = match FILE_SCRATCH.get_ptr_mut(0) {
         // SAFETY: index validated by get_ptr_mut; per-cpu exclusivity.
@@ -845,7 +872,7 @@ fn try_stage_mknod(ctx: &TracePointContext) -> Result<(), i64> {
     pending.path = [0; PATH_LEN];
     pending.dirfd = ebpf_common::AT_FDCWD;
     read_cstr(&mut pending.path, pathname);
-    let _ = PIPE_STAGE.insert(&pid, pending, 0);
+    let _ = PIPE_STAGE.insert(&tid, pending, 0);
     Ok(())
 }
 
@@ -863,15 +890,17 @@ fn try_emit_pipe_create(ctx: &TracePointContext) -> Result<(), i64> {
     if ret != 0 {
         return Ok(());
     }
-    let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    let ids = bpf_get_current_pid_tgid();
+    let pid = (ids >> 32) as u32;
+    let tid = ids as u32;
     // SAFETY: read-only map borrow, copied out immediately.
-    let Some(staged) = (unsafe { PIPE_STAGE.get(&pid) }).map(|p| PendingFile {
+    let Some(staged) = (unsafe { PIPE_STAGE.get(&tid) }).map(|p| PendingFile {
         path: p.path,
         dirfd: p.dirfd,
     }) else {
         return Ok(());
     };
-    PIPE_STAGE.remove(&pid)?;
+    PIPE_STAGE.remove(&tid)?;
 
     let uidgid = bpf_get_current_uid_gid();
     let comm = bpf_get_current_comm().unwrap_or([0; 16]);
@@ -949,7 +978,7 @@ fn sys_enter_unlink(ctx: TracePointContext) -> i32 {
 fn try_stage_unlink(ctx: &TracePointContext) -> Result<(), i64> {
     // SAFETY: offset from sys_enter_unlink format (pathname@16).
     let pathname: *const u8 = unsafe { ctx.read_at(16)? };
-    let pid = bpf_get_current_pid_tgid() as u32;
+    let tid = bpf_get_current_pid_tgid() as u32;
 
     let pending = match FILE_SCRATCH.get_ptr_mut(0) {
         // SAFETY: index validated by get_ptr_mut; per-cpu map storage valid
@@ -961,7 +990,7 @@ fn try_stage_unlink(ctx: &TracePointContext) -> Result<(), i64> {
     pending.dirfd = ebpf_common::AT_FDCWD;
     read_cstr(&mut pending.path, pathname);
 
-    let _ = DELETE_STAGE.insert(&pid, pending, 0);
+    let _ = DELETE_STAGE.insert(&tid, pending, 0);
     Ok(())
 }
 
@@ -985,7 +1014,7 @@ fn try_stage_unlinkat(ctx: &TracePointContext) -> Result<(), i64> {
     // SAFETY: offsets from sys_enter_unlinkat format (dfd@16, pathname@24).
     let dirfd: i32 = unsafe { ctx.read_at(16)? };
     let pathname: *const u8 = unsafe { ctx.read_at(24)? };
-    let pid = bpf_get_current_pid_tgid() as u32;
+    let tid = bpf_get_current_pid_tgid() as u32;
 
     let pending = match FILE_SCRATCH.get_ptr_mut(0) {
         // SAFETY: index validated by get_ptr_mut; per-cpu map storage valid
@@ -997,7 +1026,7 @@ fn try_stage_unlinkat(ctx: &TracePointContext) -> Result<(), i64> {
     pending.dirfd = dirfd;
     read_cstr(&mut pending.path, pathname);
 
-    let _ = DELETE_STAGE.insert(&pid, pending, 0);
+    let _ = DELETE_STAGE.insert(&tid, pending, 0);
     Ok(())
 }
 
@@ -1015,15 +1044,17 @@ fn try_emit_file_delete(ctx: &TracePointContext) -> Result<(), i64> {
     if ret != 0 {
         return Ok(());
     }
-    let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    let ids = bpf_get_current_pid_tgid();
+    let pid = (ids >> 32) as u32;
+    let tid = ids as u32;
     // SAFETY: read-only map borrow, copied out immediately.
-    let Some(staged) = (unsafe { DELETE_STAGE.get(&pid) }).map(|p| PendingFile {
+    let Some(staged) = (unsafe { DELETE_STAGE.get(&tid) }).map(|p| PendingFile {
         path: p.path,
         dirfd: p.dirfd,
     }) else {
         return Ok(());
     };
-    DELETE_STAGE.remove(&pid)?;
+    DELETE_STAGE.remove(&tid)?;
 
     let uidgid = bpf_get_current_uid_gid();
     let comm = bpf_get_current_comm().unwrap_or([0; 16]);
@@ -1172,12 +1203,17 @@ fn try_dns_sendmsg(ctx: &TracePointContext) -> Result<(), i64> {
     let msghdr: *const u8 = unsafe { ctx.read_at(24)? };
     // Connected sockets pass msg_name=NULL — captured too; the userspace
     // query parser drops non-DNS payloads.
-    // SAFETY: each read dereferences one level of a user msghdr/iovec at the
-    // documented x86_64 field offsets (msg_name@0, msg_iov@16; iov_base@0,
-    // iov_len@8); every access is fixed-size and fault-tolerant via the
-    // helper — a bad pointer fails the probe, not the kernel.
+    // SAFETY: fixed-size reads of user msghdr/iovec fields at the documented
+    // x86_64 offsets (msg_name@0, msg_iov@16, msg_iovlen@24; iov_base@0,
+    // iov_len@8). Every access is fault-tolerant via the helper.
     let _msg_name: *const u8 = unsafe { bpf_probe_read_user(msghdr.cast()) }?;
     let msg_iov: *const u8 = unsafe { bpf_probe_read_user(msghdr.wrapping_add(16).cast()) }?;
+    let msg_iovlen: usize = unsafe { bpf_probe_read_user(msghdr.wrapping_add(24).cast()) }?;
+    if msg_iov.is_null() || msg_iovlen == 0 {
+        return Ok(());
+    }
+    // Capture only the first iovec (bounded payload); scattered DNS queries
+    // across multiple iovecs are not fully reconstructed here.
     let iov_base: *const u8 = unsafe { bpf_probe_read_user(msg_iov.cast()) }?;
     let iov_len: usize = unsafe { bpf_probe_read_user(msg_iov.wrapping_add(8).cast()) }?;
     if !dns_query_plausible(iov_base, iov_len) {
