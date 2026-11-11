@@ -5,7 +5,7 @@ per-rule commits, push to your fork, and the skip set that keeps a fresh VM
 from re-capturing data that is already on a pending PR. All git operations
 run through **grit-lib** (pure Rust) in the `repo` module — never a `git`
 binary on PATH. The configuration keys for every step live in
-[config.md](config.md#git).
+[config.md](../user/config.md#git).
 
 ## Transport: SSH only
 
@@ -82,7 +82,7 @@ failed push do not pollute the skip set at startup.
 - **One commit per captured rule**: `🧪 test: add regression data for rule
   {rule_id}` — the data files plus the rule YAML annotated with its
   `regression_tests_path` (see
-  [regression-data.md](regression-data.md#source-rule-annotation)).
+  [the data layout](../regression_data/index.md#source-rule-annotation)).
 - **Push is opt-in** (`git.contrib: true` or `--contrib`): without it,
   commits stay local. `offline: true` neutralizes `contrib` (forced to
   `false`) — no push is ever attempted offline.
@@ -90,7 +90,7 @@ failed push do not pollute the skip set at startup.
 
 ## Skip set: pending PRs
 
-The skip set (see [architecture.md](../dev/architecture.md#design-notes)) is built
+The skip set (see [the design notes](design-notes.md)) is built
 from the worktree **plus** the trees of all remote `sigmacatch/*` branches —
 read via `list_refs` + an in-RAM walk of `regression_data/`, never a
 checkout. Ids are extracted from `<uuid>.<ext>` filenames. Consequences:
