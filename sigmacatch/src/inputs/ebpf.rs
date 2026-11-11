@@ -11,11 +11,12 @@ use crate::ebpf_common::{
     CapabilityChangeEvent, CredentialChangeEvent, DnsEvent, DriverLoadEvent,
     EVENT_CAPABILITY_CHANGE, EVENT_CREDENTIAL_CHANGE, EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC,
     EVENT_EXIT, EVENT_FILE, EVENT_FILE_CHANGE, EVENT_FILE_CHMOD, EVENT_FILE_CHOWN,
-    EVENT_FILE_DELETE, EVENT_FILE_RENAME, EVENT_FILE_TRUNCATE, EVENT_FORK, EVENT_LISTEN, EVENT_NET,
-    EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS,
-    FileChangeEvent, FileChmodEvent, FileChownEvent, FileCreateEvent, FileDeleteEvent,
-    FileRenameEvent, FileTruncateEvent, ForkEvent, ListenEvent, NetEvent, PipeCreateEvent,
-    ProcessAccessEvent, ProcessTamperingEvent, RawAccessEvent,
+    EVENT_FILE_DELETE, EVENT_FILE_RENAME, EVENT_FILE_TRUNCATE, EVENT_FORK, EVENT_LISTEN,
+    EVENT_MODULE_UNLOAD, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS,
+    EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, FileChangeEvent, FileChmodEvent, FileChownEvent,
+    FileCreateEvent, FileDeleteEvent, FileRenameEvent, FileTruncateEvent, ForkEvent, ListenEvent,
+    ModuleUnloadEvent, NetEvent, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent,
+    RawAccessEvent,
 };
 use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::{Context, bail};
@@ -120,6 +121,20 @@ const ATTACHMENTS: &[(&str, &str, &str, bool)] = &[
         "sys_exit_finit_module",
         "syscalls",
         "sys_exit_finit_module",
+        false,
+    ),
+    // init_module tracepoints disabled: attaching them caused a startup segfault on the
+    // AlmaLinux test VM (investigation pending). Probe handlers remain in the BPF object.
+    (
+        "sys_enter_delete_module",
+        "syscalls",
+        "sys_enter_delete_module",
+        false,
+    ),
+    (
+        "sys_exit_delete_module",
+        "syscalls",
+        "sys_exit_delete_module",
         false,
     ),
     ("sys_enter_mknodat", "syscalls", "sys_enter_mknodat", false),
@@ -631,6 +646,18 @@ impl EventProducer for EventCollector {
                         None => tracing::warn!(
                             size = bytes.len(),
                             "file-change record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_MODULE_UNLOAD => match ModuleUnloadEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.module_unload_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "module-unload record with unexpected size — skipped"
                         ),
                     },
                     other => tracing::warn!(tag = other, "unknown ring buffer record tag"),

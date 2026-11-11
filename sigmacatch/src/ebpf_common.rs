@@ -83,6 +83,8 @@ mod inner {
     pub const EVENT_FILE_TRUNCATE: u32 = 20;
     /// Ring buffer record tag: file change/write, emitted as EID 2.
     pub const EVENT_FILE_CHANGE: u32 = 21;
+    /// Ring buffer record tag: kernel module unload, EID 507 (extension).
+    pub const EVENT_MODULE_UNLOAD: u32 = 22;
 
     /// Directory-fd sentinel meaning "path is relative to cwd".
     pub const AT_FDCWD: i32 = -100;
@@ -1149,6 +1151,52 @@ mod inner {
     const _: () = assert!(
         core::mem::size_of::<FileChangeEvent>().is_multiple_of(8),
         "FileChangeEvent must stay 8-byte aligned for ring buffer records"
+    );
+
+    /// Module unload event (delete_module), emitted as EID 507.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+    pub struct ModuleUnloadEvent {
+        /// Always [`EVENT_MODULE_UNLOAD`].
+        pub kind: u32,
+        /// Process id (tgid).
+        pub pid: u32,
+        /// Real UID of the task.
+        pub uid: u32,
+        /// Real GID of the task.
+        pub gid: u32,
+        /// delete_module flags.
+        pub flags: u32,
+        /// Syscall result / return code.
+        pub result: i32,
+        /// Module name (NUL-padded).
+        pub name: [u8; IMAGE_LEN],
+        /// Task comm at event time (NUL-padded).
+        pub comm: [u8; COMM_LEN],
+    }
+
+    impl ModuleUnloadEvent {
+        /// Parse a ring buffer record into a typed module-unload event.
+        #[must_use]
+        pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+            let r: &[u8; size_of::<Self>()] = bytes.try_into().ok()?;
+            Some(*bytemuck::from_bytes(r))
+        }
+
+        fn cstr(field: &[u8]) -> &str {
+            let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+            core::str::from_utf8(&field[..end]).unwrap_or("")
+        }
+
+        /// Module name as lossy UTF-8 up to the first NUL.
+        pub fn name_str(&self) -> &str {
+            Self::cstr(&self.name)
+        }
+    }
+
+    const _: () = assert!(
+        core::mem::size_of::<ModuleUnloadEvent>().is_multiple_of(8),
+        "ModuleUnloadEvent must stay 8-byte aligned for ring buffer records"
     );
 }
 

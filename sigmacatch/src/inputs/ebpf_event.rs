@@ -27,10 +27,10 @@ use crate::ebpf_common::{
     CRED_SETFSUID, CRED_SETGID, CRED_SETGROUPS, CRED_SETREGID, CRED_SETRESGID, CRED_SETRESUID,
     CRED_SETREUID, CRED_SETUID, CapabilityChangeEvent, CredentialChangeEvent, DnsEvent,
     DriverLoadEvent, ExecEvent, FileChangeEvent, FileChmodEvent, FileChownEvent, FileCreateEvent,
-    FileDeleteEvent, FileRenameEvent, FileTruncateEvent, ForkEvent, ListenEvent, NetEvent,
-    PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RENAME_RENAME, RENAME_RENAMEAT,
-    RENAME_RENAMEAT2, RawAccessEvent, TRUNCATE_FTRUNCATE, TRUNCATE_TRUNCATE, WRITE_PWRITE64,
-    WRITE_PWRITEV, WRITE_PWRITEV2, WRITE_WRITE, WRITE_WRITEV,
+    FileDeleteEvent, FileRenameEvent, FileTruncateEvent, ForkEvent, ListenEvent, ModuleUnloadEvent,
+    NetEvent, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent, RENAME_RENAME,
+    RENAME_RENAMEAT, RENAME_RENAMEAT2, RawAccessEvent, TRUNCATE_FTRUNCATE, TRUNCATE_TRUNCATE,
+    WRITE_PWRITE64, WRITE_PWRITEV, WRITE_PWRITEV2, WRITE_WRITE, WRITE_WRITEV,
 };
 use crate::types::Event;
 use chrono::Utc;
@@ -532,6 +532,26 @@ impl EventBuilder {
         insert_str(&mut data, "Syscall", write_syscall_name(ev.syscall));
         insert_str(&mut data, "BytesWritten", &ev.bytes_written.to_string());
         to_sysmon_event(2, &self.hostname, &now, data)
+    }
+
+    /// Build a module_unload (EID 507, extension) event.
+    pub fn module_unload_event(&mut self, ev: &ModuleUnloadEvent) -> Event {
+        let now = Utc::now();
+        let (guid, image) = match self.parents.get(&ev.pid) {
+            Some(info) => (info.guid.clone(), info.image.clone()),
+            None => (NULL_GUID.to_string(), "-".to_string()),
+        };
+        let user = self.user_name(ev.uid);
+        let mut data = Map::new();
+        insert_str(&mut data, "UtcTime", &utc_time(&now));
+        insert_str(&mut data, "ProcessGuid", &guid);
+        insert_str(&mut data, "ProcessId", &ev.pid.to_string());
+        insert_str(&mut data, "Image", &image);
+        insert_str(&mut data, "User", &user);
+        insert_str(&mut data, "ModuleName", ev.name_str());
+        insert_str(&mut data, "Flags", &ev.flags.to_string());
+        insert_str(&mut data, "Result", &ev.result.to_string());
+        to_sysmon_event(507, &self.hostname, &now, data)
     }
 
     /// Build a process_access (EID 10) event.

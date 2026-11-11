@@ -668,6 +668,7 @@ static CHANNEL_EVENT_TO_CATEGORY: phf::Map<&'static str, &'static str> = phf::ph
     "Microsoft-Windows-Sysmon/Operational:504" => "file_chmod",
     "Microsoft-Windows-Sysmon/Operational:505" => "file_chown",
     "Microsoft-Windows-Sysmon/Operational:506" => "file_truncate",
+    "Microsoft-Windows-Sysmon/Operational:507" => "module_unload",
     "Microsoft-Windows-Sysmon/Operational:255" => "sysmon_error",
     "Security:4688" => "process_creation",
     "Windows PowerShell:400" => "ps_classic_start",

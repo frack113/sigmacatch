@@ -44,13 +44,13 @@ use ebpf_common::{
     DNS_PAYLOAD_LEN, DnsEvent, DriverLoadEvent, EVENT_CAPABILITY_CHANGE, EVENT_CREDENTIAL_CHANGE,
     EVENT_DNS, EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_CHMOD,
     EVENT_FILE_CHOWN, EVENT_FILE_DELETE, EVENT_FILE_RENAME, EVENT_FILE_TRUNCATE, EVENT_FORK,
-    EVENT_FILE_CHANGE, EVENT_LISTEN, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS,
-    EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, ExecEvent, ExitEvent, FileChangeEvent,
-    FileChmodEvent, FileChownEvent, FileCreateEvent, FileDeleteEvent, FileRenameEvent,
-    FileTruncateEvent, ForkEvent, IMAGE_LEN, ListenEvent, NetEvent, PATH_LEN, PipeCreateEvent,
-    ProcessAccessEvent, ProcessTamperingEvent, RENAME_RENAME, RENAME_RENAMEAT, RENAME_RENAMEAT2,
-    RawAccessEvent, TRUNCATE_FTRUNCATE, TRUNCATE_TRUNCATE, WRITE_PWRITE64, WRITE_PWRITEV,
-    WRITE_PWRITEV2, WRITE_WRITE, WRITE_WRITEV,
+    EVENT_FILE_CHANGE, EVENT_LISTEN, EVENT_MODULE_UNLOAD, EVENT_NET, EVENT_PIPE_CREATE,
+    EVENT_PROCESS_ACCESS, EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, ExecEvent, ExitEvent,
+    FileChangeEvent, FileChmodEvent, FileChownEvent, FileCreateEvent, FileDeleteEvent,
+    FileRenameEvent, FileTruncateEvent, ForkEvent, IMAGE_LEN, ListenEvent, ModuleUnloadEvent,
+    NetEvent, PATH_LEN, PipeCreateEvent, ProcessAccessEvent, ProcessTamperingEvent,
+    RENAME_RENAME, RENAME_RENAMEAT, RENAME_RENAMEAT2, RawAccessEvent, TRUNCATE_FTRUNCATE,
+    TRUNCATE_TRUNCATE, WRITE_PWRITE64, WRITE_PWRITEV, WRITE_PWRITEV2, WRITE_WRITE, WRITE_WRITEV,
 };
 
 const MAX_ENTRIES: u32 = 1;
@@ -69,6 +69,7 @@ const CHMOD_STAGE_MAX: u32 = 4096;
 const CHOWN_STAGE_MAX: u32 = 4096;
 const TRUNCATE_STAGE_MAX: u32 = 4096;
 const WRITE_STAGE_MAX: u32 = 4096;
+const MODUNLOAD_STAGE_MAX: u32 = 4096;
 /// `O_CREAT` bit — openat is staged only when the caller may create.
 const O_CREAT: u64 = 0o100;
 
@@ -182,6 +183,14 @@ struct PendingWrite {
     fd: i32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PendingModUnload {
+    flags: u32,
+    _pad0: u32,
+    name: [u8; IMAGE_LEN],
+}
+
 #[map(name = "EVENTS")]
 static EVENTS: RingBuf = RingBuf::with_byte_size(1 << 20, 0);
 
@@ -253,6 +262,14 @@ static TRUNCATE_SCRATCH: PerCpuArray<PendingTruncate> =
 
 #[map(name = "WRITE_STAGE")]
 static WRITE_STAGE: LruHashMap<u32, PendingWrite> = LruHashMap::with_max_entries(WRITE_STAGE_MAX, 0);
+
+#[map(name = "MODUNLOAD_STAGE")]
+static MODUNLOAD_STAGE: LruHashMap<u64, PendingModUnload> =
+    LruHashMap::with_max_entries(MODUNLOAD_STAGE_MAX, 0);
+
+#[map(name = "MODUNLOAD_SCRATCH")]
+static MODUNLOAD_SCRATCH: PerCpuArray<PendingModUnload> =
+    PerCpuArray::with_max_entries(MAX_ENTRIES, 0);
 
 /// Read a NUL-terminated user string into `dst`, returning the stored length
 /// (excluding the NUL), provably bounded by `dst.len() - 1`.
@@ -939,6 +956,29 @@ fn try_stage_finit_module(ctx: &TracePointContext) -> Result<(), i64> {
 
 #[tracepoint(category = "syscalls", name = "sys_exit_finit_module")]
 fn sys_exit_finit_module(ctx: TracePointContext) -> i32 {
+    match try_emit_finit_module(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_init_module")]
+fn sys_enter_init_module(ctx: TracePointContext) -> i32 {
+    match try_stage_init_module(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+fn try_stage_init_module(_ctx: &TracePointContext) -> Result<(), i64> {
+    let tid_key = bpf_get_current_pid_tgid();
+    let fd: i32 = -1;
+    let _ = FINIT_STAGE.insert(&tid_key, &fd, 0);
+    Ok(())
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_init_module")]
+fn sys_exit_init_module(ctx: TracePointContext) -> i32 {
     match try_emit_finit_module(&ctx) {
         Ok(()) => 0,
         Err(e) => e as i32,
@@ -2310,6 +2350,77 @@ fn sys_enter_pwritev2(ctx: TracePointContext) -> i32 {
 #[tracepoint(category = "syscalls", name = "sys_exit_pwritev2")]
 fn sys_exit_pwritev2(ctx: TracePointContext) -> i32 {
     match try_emit_write(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+// ─── Module unload capture (EID 507, extension) ─────────────────────────────
+
+fn try_stage_delete_module(ctx: &TracePointContext) -> Result<(), i64> {
+    let tid_key = bpf_get_current_pid_tgid();
+    // SAFETY: sys_enter_delete_module format: name_user@16, flags@24.
+    let name_user: *const u8 = unsafe { ctx.read_at(16)? };
+    let flags: u64 = unsafe { ctx.read_at(24)? };
+    let pending = match MODUNLOAD_SCRATCH.get_ptr_mut(0) {
+        // SAFETY: index validated by get_ptr_mut; per-cpu exclusivity.
+        Some(p) => unsafe { &mut *p },
+        None => return Err(-28),
+    };
+    pending.flags = flags as u32;
+    pending._pad0 = 0;
+    unsafe {
+        ptr::write_bytes(pending.name.as_mut_ptr(), 0, IMAGE_LEN);
+    }
+    read_cstr(&mut pending.name, name_user);
+    let _ = MODUNLOAD_STAGE.insert(&tid_key, pending, 0);
+    Ok(())
+}
+
+fn try_emit_delete_module(ctx: &TracePointContext) -> Result<(), i64> {
+    // SAFETY: sys_exit_* tracepoints have ret at offset 16.
+    let ret: i64 = unsafe { ctx.read_at(16)? };
+    let tid_key = bpf_get_current_pid_tgid();
+    let Some(staged) = (unsafe { MODUNLOAD_STAGE.get(&tid_key) }) else {
+        return Ok(());
+    };
+    if ret < 0 {
+        let _ = MODUNLOAD_STAGE.remove(&tid_key);
+        return Ok(());
+    }
+    let ids = bpf_get_current_pid_tgid();
+    let uidgid = bpf_get_current_uid_gid();
+    let comm = bpf_get_current_comm().unwrap_or([0; 16]);
+    if let Some(mut entry) = EVENTS.reserve::<ModuleUnloadEvent>(0) {
+        let p = entry.as_mut_ptr();
+        unsafe {
+            ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<ModuleUnloadEvent>());
+            (*p).kind = EVENT_MODULE_UNLOAD;
+            (*p).pid = (ids >> 32) as u32;
+            (*p).uid = uidgid as u32;
+            (*p).gid = (uidgid >> 32) as u32;
+            (*p).flags = staged.flags;
+            (*p).result = ret as i32;
+            (*p).name = staged.name;
+            (*p).comm = comm;
+        }
+        entry.submit(0);
+    }
+    let _ = MODUNLOAD_STAGE.remove(&tid_key);
+    Ok(())
+}
+
+#[tracepoint(category = "syscalls", name = "sys_enter_delete_module")]
+fn sys_enter_delete_module(ctx: TracePointContext) -> i32 {
+    match try_stage_delete_module(&ctx) {
+        Ok(()) => 0,
+        Err(e) => e as i32,
+    }
+}
+
+#[tracepoint(category = "syscalls", name = "sys_exit_delete_module")]
+fn sys_exit_delete_module(ctx: TracePointContext) -> i32 {
+    match try_emit_delete_module(&ctx) {
         Ok(()) => 0,
         Err(e) => e as i32,
     }

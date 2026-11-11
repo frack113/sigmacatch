@@ -364,6 +364,23 @@
         "Result": "result"
       },
       "note": "sigmacatch extension (EID 506)"
+    },
+    "module_unload": {
+      "sigma_category": "module_unload",
+      "sigma_product": "linux",
+      "sigma_service": null,
+      "sysmon_eid": 507,
+      "fields": {
+        "UtcTime": "utc_time",
+        "ProcessGuid": "process_guid",
+        "ProcessId": "pid",
+        "Image": "image",
+        "User": "user",
+        "ModuleName": "module_name",
+        "Flags": "flags",
+        "Result": "result"
+      },
+      "note": "sigmacatch extension (EID 507)"
     }
   }
 }

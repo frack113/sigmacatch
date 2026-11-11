@@ -103,6 +103,16 @@ transformations:
         category: file_truncate
         product: linux
 
+  # EventID 507: module_unload (sigmacatch extension)
+  - id: win_module_unload
+    type: add_condition
+    conditions:
+      Event.System.EventID: 507
+    rule_conditions:
+      - type: logsource
+        category: module_unload
+        product: linux
+
   # EventID 5: process_termination
   - id: win_process_termination
     type: add_condition
@@ -432,6 +442,13 @@ transformations:
     rule_conditions:
       - type: logsource
         category: file_truncate
+        product: linux
+  - id: win_route_module_unload
+    type: change_logsource
+    service: sysmon
+    rule_conditions:
+      - type: logsource
+        category: module_unload
         product: linux
   - id: win_route_process_termination
     type: change_logsource
