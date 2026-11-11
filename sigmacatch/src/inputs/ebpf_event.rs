@@ -181,6 +181,7 @@ impl EventBuilder {
                 ),
             };
 
+        let (stat_session, tty_nr) = read_stat_session_tty(ev.pid);
         let mut data = Map::new();
         insert_str(&mut data, "UtcTime", &utc_time(&now));
         insert_str(&mut data, "ProcessGuid", &guid);
@@ -204,6 +205,33 @@ impl EventBuilder {
             &mut data,
             "TerminalSessionId",
             &read_session_id(ev.pid).unwrap_or(0).to_string(),
+        );
+        insert_str(
+            &mut data,
+            "SessionId",
+            &stat_session
+                .or_else(|| read_session_id(ev.pid))
+                .unwrap_or(0)
+                .to_string(),
+        );
+        insert_str(
+            &mut data,
+            "TtyNr",
+            &tty_nr
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+        );
+        insert_str(&mut data, "Cgroup", &read_cgroup(ev.pid));
+        insert_str(&mut data, "NamespacePid", &read_namespace(ev.pid, "pid"));
+        insert_str(&mut data, "NamespaceMnt", &read_namespace(ev.pid, "mnt"));
+        insert_str(&mut data, "NamespaceNet", &read_namespace(ev.pid, "net"));
+        insert_str(&mut data, "NamespaceUser", &read_namespace(ev.pid, "user"));
+        insert_str(&mut data, "NamespaceUts", &read_namespace(ev.pid, "uts"));
+        insert_str(&mut data, "NamespaceIpc", &read_namespace(ev.pid, "ipc"));
+        insert_str(
+            &mut data,
+            "NamespaceCgroup",
+            &read_namespace(ev.pid, "cgroup"),
         );
         insert_str(&mut data, "IntegrityLevel", "no level");
         insert_str(&mut data, "Hashes", &self.image_hash(ev.pid, &image));
@@ -902,6 +930,46 @@ fn read_session_id(pid: u32) -> Option<u32> {
         .trim()
         .parse()
         .ok()
+}
+
+fn read_cgroup(pid: u32) -> String {
+    fs::read_to_string(format!("/proc/{pid}/cgroup"))
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("0::"))
+                .or_else(|| s.lines().next())
+                .map(|l| l.trim().to_string())
+        })
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn read_namespace(pid: u32, name: &str) -> String {
+    fs::read_link(format!("/proc/{pid}/ns/{name}"))
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn read_stat_session_tty(pid: u32) -> (Option<u32>, Option<u32>) {
+    let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(s) => s,
+        Err(_) => return (None, None),
+    };
+    let after_comm = match stat.rsplit(')').next() {
+        Some(s) => s,
+        None => return (None, None),
+    };
+    let mut fields = after_comm.split_whitespace();
+    // state
+    let _ = fields.next();
+    // ppid
+    let _ = fields.next();
+    // pgrp
+    let _ = fields.next();
+    let session = fields.next().and_then(|v| v.parse().ok());
+    let tty_nr = fields.next().and_then(|v| v.parse().ok());
+    (session, tty_nr)
 }
 
 fn cred_syscall_name(id: u32) -> &'static str {
