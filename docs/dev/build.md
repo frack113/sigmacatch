@@ -27,7 +27,7 @@ live Winevt collector is the default; on Linux every compiled **and
 available** input runs in parallel. Bail at startup if no source is found.
 The collectors' full specification (tailed files, guards, parsing) lives in
 [architecture.md](architecture.md); the runtime selection is documented in
-[cli.md](cli.md).
+[cli.md](../user/cli.md).
 
 ## Linux
 
@@ -69,7 +69,7 @@ The **winevt** collector uses the native Winevt API on the resolved channels
 and requires admin rights for the `Security` and `System` channels. The
 **evtx** input (`live_capture() = false`) needs no Windows API, so it also
 builds and runs on Linux (`--no-default-features --features evtx`); its
-semantics are documented in [cli.md](cli.md#-evtx-one-shot-evtx-input-single-run).
+semantics are documented in [cli.md](../user/cli.md#-evtx-one-shot-evtx-input-single-run).
 
 > The diagnostic subcommands (`check-filter`, `list-rules`) are always
 > compiled into the binary — no extra feature is required.

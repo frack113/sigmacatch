@@ -14,7 +14,7 @@ parallel.
 
 The project is a single cargo workspace package (`sigmacatch`), plus a nested
 nightly-only eBPF probe crate (`sigmacatch/ebpf`); the main tree and each
-module's role are detailed in [architecture.md](architecture.md).
+module's role are detailed in [architecture.md](dev/architecture.md).
 
 ## Quick start
 
@@ -31,19 +31,21 @@ cargo build --release -p sigmacatch --no-default-features --features evtx
 ```
 
 The full feature matrix (`sysmon`, `ebpf`), the `regressiondata-check`
-validation binary, and the build/test commands are in [build.md](build.md).
+validation binary, and the build/test commands are in [build.md](dev/build.md).
 
 ## Documentation
 
 A built version of this documentation is published to GitHub Pages:
 **https://frack113.github.io/sigmacatch/**
 
-- [Architecture](architecture.md)
-- [Build](build.md)
-- [Configuration](config.md)
-- [CLI](cli.md)
-- [SigmaHQ workflow](git.md)
-- [Regression data](regression-data.md)
+- **User**
+  - [CLI](user/cli.md)
+  - [Configuration](user/config.md)
+  - [SigmaHQ workflow](user/git.md)
+  - [Regression data](user/regression-data.md)
+- **Dev**
+  - [Architecture](dev/architecture.md)
+  - [Build](dev/build.md)
 
 ## License
 

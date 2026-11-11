@@ -299,7 +299,7 @@ The `provider` field in `regression_tests_info` may be absent on read.
 
 The auditd, syslog and Sysmon-tail collectors run in parallel, each guarded
 by its source — the full specification (tailed files, guards, parsing) lives
-in [architecture.md](architecture.md). Their regression data uses `.log`
+in [architecture.md](../dev/architecture.md). Their regression data uses `.log`
 (complete original lines: auditd records grouped by `timestamp:sequence`,
 RFC3164 syslog lines, or Sysmon-for-Linux XML).
 

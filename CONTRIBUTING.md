@@ -75,7 +75,7 @@ type with emoji and commit hashes), `## Tests` (results of fmt/clippy/test/build
 ## Architecture
 
 Architectural invariants are non-negotiable; read them in
-[`docs/architecture.md`](docs/architecture.md) before touching the
+[`docs/dev/architecture.md`](docs/dev/architecture.md) before touching the
 pipeline. Highlights:
 
 - One continuous run until Ctrl+C: collect + evaluate + generate (30s) + commit + push.

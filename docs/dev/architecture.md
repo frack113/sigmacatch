@@ -243,7 +243,7 @@ itself (mpsc sender dropped → `rx.recv()` yields `None`), with no
 `--max-runs` ignored. Ctrl+C still aborts the pass: any in-flight cycle is
 dropped and the push of what was not yet committed is skipped. The
 complete user-facing documentation (usage, flags, semantics) lives in
-[cli.md](cli.md#-evtx-one-shot-evtx-input-single-run).
+[cli.md](../user/cli.md#-evtx-one-shot-evtx-input-single-run).
 
 ## Design notes
 
@@ -281,6 +281,6 @@ complete user-facing documentation (usage, flags, semantics) lives in
   clone of the transformed tree. Measured on a constant-volume live stream:
   −47 % working set on Windows (247→130 MB) and −19 % RSS on Linux
    (~204→164 MB). Diagram:
-   [event-pipeline.webm](media/event-pipeline.webm) (animation)
-   and [event-pipeline-dark.svg](media/event-pipeline-dark.svg)
+   [event-pipeline.webm](../media/event-pipeline.webm) (animation)
+   and [event-pipeline-dark.svg](../media/event-pipeline-dark.svg)
    (static, dark theme).
