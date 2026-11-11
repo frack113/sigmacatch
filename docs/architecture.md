@@ -143,7 +143,7 @@ process self-terminates. It has no `channels()`, no interval, and no stop-file p
 `EventRecordID` field is stripped per event (Event 4688 requires absence to trigger the
 imaging rule). Because it is pure Rust it also builds and runs on Linux.
 
-## Crate dependency graph
+## Module dependency graph
 
 ```text
 sigmacatch (package)
@@ -236,11 +236,14 @@ All generation runs in `spawn_blocking` (the `Pipeline` state is moved out and r
 
 ### One-shot variant: `--evtx`
 
-The `evtx` input (`live_capture() = false`) reuses the shared `run()` pipeline: the enumeration
-of `.evtx` files exhausts itself (mpsc sender dropped → `rx.recv()` yields `None`), with no
-`channels()`, no `generate_interval`, no stop-file poller, and `--max-runs` ignored
-(`-r 0` semantics). Ctrl+C still aborts the pass: any in-flight cycle is dropped and the push
-of what was not yet committed is skipped.
+The `evtx` input (`live_capture() = false`) reuses the shared `run()`
+pipeline in one-shot mode: the enumeration of `.evtx` files exhausts
+itself (mpsc sender dropped → `rx.recv()` yields `None`), with no
+`channels()`, no `generate_interval`, no stop-file poller, and
+`--max-runs` ignored. Ctrl+C still aborts the pass: any in-flight cycle is
+dropped and the push of what was not yet committed is skipped. The
+complete user-facing documentation (usage, flags, semantics) lives in
+[cli.md](cli.md#-evtx-one-shot-evtx-input-single-run).
 
 ## Design notes
 
@@ -278,6 +281,6 @@ of what was not yet committed is skipped.
   clone of the transformed tree. Measured on a constant-volume live stream:
   −47 % working set on Windows (247→130 MB) and −19 % RSS on Linux
    (~204→164 MB). Diagram:
-   [arc-shared-event-pipeline.webm](arc-shared-event-pipeline.webm) (animation)
-   and [arc-shared-event-pipeline-dark.svg](arc-shared-event-pipeline-dark.svg)
+   [event-pipeline.webm](media/event-pipeline.webm) (animation)
+   and [event-pipeline-dark.svg](media/event-pipeline-dark.svg)
    (static, dark theme).

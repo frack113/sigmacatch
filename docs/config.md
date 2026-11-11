@@ -91,7 +91,7 @@ All filters are optional; unset means no filtering.
 | Key | Default | Description |
 |---|---|---|
 | `max_failed_cycles` | `3` | After N consecutive failed capture cycles a rule is blocked (logged, removed from the skip set, no more re-capture). Min 1. |
-| `add_json_output` | `false` | For EVTX/log data, also write the auxiliary `<rule_id>.json` (raw event). eBPF already writes JSON/NDJSON as its primary data file. See [Output Format](output-format.md). |
+| `add_json_output` | `false` | For EVTX/log data, also write the auxiliary `<rule_id>.json` (raw event). eBPF already writes JSON/NDJSON as its primary data file. See [Regression Data](regression-data.md). |
 
 ## engine
 

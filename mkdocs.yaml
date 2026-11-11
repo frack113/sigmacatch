@@ -38,9 +38,8 @@ nav:
   - Build: build.md
   - Configuration: config.md
   - CLI: cli.md
-  - Git: git.md
-  - Output Format: output-format.md
-  - Regression Data Format: regression-data-format.md
+  - SigmaHQ Workflow: git.md
+  - Regression Data: regression-data.md
 
 plugins:
   - search

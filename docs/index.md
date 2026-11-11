@@ -42,9 +42,8 @@ A built version of this documentation is published to GitHub Pages:
 - [Build](build.md)
 - [Configuration](config.md)
 - [CLI](cli.md)
-- [Git](git.md)
-- [Output format](output-format.md)
-- [Regression data format](regression-data-format.md)
+- [SigmaHQ workflow](git.md)
+- [Regression data](regression-data.md)
 
 ## License
 
