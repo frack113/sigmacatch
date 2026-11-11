@@ -22,7 +22,7 @@ sigmacatch [OPTIONS]
   -n, --dry-run      Read-only check: load the ./sigma rules and build the engine —
                      no data written, no git/network operation
       --author <NAME> Override the git author from config.yaml for this run
-      --branch <NAME> Working branch name (default: sigmacatch/<today's date>)
+      --branch <NAME> Working branch name (default: sigmacatch/<YYYYMMDD>)
        --evtx <PATH>  Directory of EVTX files to process (one-shot evtx input;
                       fails if the `evtx` feature is not compiled in)
       --hir-cache <PATH> Persistent HIR cache file (warm-start: skip rule
@@ -42,7 +42,7 @@ recursively scans a directory for `.evtx` files, parses each event in pure
 Rust, pushes them through the detection engine, writes SigmaHQ regression
 data for every matched rule (pure-Rust EVTX writer — never `EvtExportLog`,
 since static events are not in the live Event Log), then commits and pushes
-per rule to the configured working branch (default `sigmacatch/<date>`) on
+per rule to the configured working branch (default `sigmacatch/<YYYYMMDD>`) on
 the configured fork. Because `EventProducer::run()` returns once every file
 is drained, the sender drops and the shared loop exits — one pass: read →
 detect → generate → commit/push, no collection loop. A failed final upload
@@ -54,7 +54,6 @@ exits with a non-zero status.
 sigmacatch --evtx <EVTX_PATH> [OPTIONS]
 
        --evtx <EVTX_PATH>  Directory of .evtx files, scanned recursively
-                         (default: C:\Windows\System32\winevt\Logs)
    -v, --verbose        Info-level logging on stderr
    -h, --help           Print help and exit
 ```

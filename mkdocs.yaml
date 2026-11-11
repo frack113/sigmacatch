@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 site_name: Sigmacatch
-site_description: Headless tool that captures real Windows events via Winevt API and matches them against SigmaHQ rules
+site_description: Headless tool that captures real OS events (Windows Event Log, EVTX files, Linux auditd, syslog, Sysmon and eBPF) and matches them against SigmaHQ rules
 repo_url: https://github.com/frack113/sigmacatch
 edit_uri: edit/main/docs/
 
@@ -68,6 +68,6 @@ markdown_extensions:
 
 validation:
   links:
-    not_found: info
+    not_found: warn
     absolute_links: info
     unrecognized_links: info
