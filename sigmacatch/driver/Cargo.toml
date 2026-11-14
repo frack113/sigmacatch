@@ -25,7 +25,6 @@ target-kmdf-version-minor = 33
 
 [dependencies]
 wdk = "0.5"
-wdk-alloc = "0.4"
 wdk-panic = "0.5"
 wdk-sys = "0.5"
 
