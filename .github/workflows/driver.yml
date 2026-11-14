@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - 'sigmacatch/driver/**'
+      - 'sigmacatch/src/windows/**'
       - '.github/workflows/driver.yml'
   pull_request:
     paths:
       - 'sigmacatch/driver/**'
+      - 'sigmacatch/src/windows/**'
       - '.github/workflows/driver.yml'
   workflow_dispatch:
 
