@@ -245,7 +245,7 @@ unsafe extern "C" fn evt_io_device_control(
             WdfRequestCompleteWithInformation,
             request,
             STATUS_SUCCESS,
-            core::mem::size_of::<u32>(),
+            core::mem::size_of::<u32>() as u64,
         );
     }
 }
