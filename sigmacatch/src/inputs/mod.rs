@@ -15,6 +15,12 @@
 pub mod channels;
 #[cfg(feature = "winevt")]
 pub mod winevt;
+// Native ETW collector (feature `etw`): no Sysmon, no driver. The session
+// layer and the TDH decoder are only meaningful on Windows.
+#[cfg(all(target_os = "windows", feature = "etw"))]
+pub mod etw;
+#[cfg(all(target_os = "windows", feature = "etw"))]
+pub mod etw_event;
 
 // One-shot EVTX cross-platform input. Not `target_os`-gated: pure file
 // parsing, runs on Windows and Linux alike.
