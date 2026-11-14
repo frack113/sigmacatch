@@ -48,11 +48,13 @@ unsafe extern "C" {
 // The protocol lives in the user-mode crate and is included verbatim, so the
 // two sides cannot drift.
 #[path = "../../src/windows/driver_protocol.rs"]
-mod protocol;
+pub(crate) mod protocol;
 use protocol::{
     IOCTL_GET_VERSION, IOCTL_READ_EVENTS, RING_CAPACITY, SIGMACATCH_PROTOCOL_VERSION, SensorEvent,
     kind,
 };
+
+mod flt;
 
 /// `\Device\sigmacatch`, NUL-terminated.
 static DEVICE_NAME: [u16; 19] = [
@@ -229,7 +231,7 @@ unsafe fn copy_wide(source: &UNICODE_STRING, destination: &mut [u16], copied: &m
 }
 
 /// Append one record, overwriting the oldest when full.
-unsafe fn ring_push(event: &SensorEvent) {
+pub(crate) unsafe fn ring_push(event: &SensorEvent) {
     // SAFETY: the spinlock is created before the notify routine runs.
     unsafe { call_unsafe_wdf_function_binding!(WdfSpinLockAcquire, EVENT_LOCK) };
     // SAFETY: the lock is held.
@@ -416,6 +418,12 @@ extern "system" fn driver_entry(
         return status;
     }
 
+    // SAFETY: `driver` is the I/O manager's object, valid for the load.
+    let flt_status = unsafe { flt::register(driver as *mut wdk_sys::DRIVER_OBJECT) };
+    if flt_status != STATUS_SUCCESS {
+        println!("sigmacatch: FltRegisterFilter failed {flt_status:#010X}");
+    }
+
     // A legacy `sc create type= kernel` service is not Plug-and-Play enumerated, so
     // `EvtDriverDeviceAdd` would never run: allocate the control device here.
     let sddl = unicode_string(&SDDL);
@@ -452,6 +460,8 @@ unsafe extern "C" fn evt_driver_unload(_driver: WDFDRIVER) {
             let _ = PsRemoveLoadImageNotifyRoutine(Some(image_notify));
             IMAGE_NOTIFY_REGISTERED = false;
         }
+        // SAFETY: releases the fltmgr registration created in `driver_entry`.
+        unsafe { flt::unregister() };
     }
 }
 

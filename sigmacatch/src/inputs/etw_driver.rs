@@ -25,7 +25,8 @@ use windows::core::PCWSTR;
 use crate::inputs::etw_event::filetime_to_utc;
 use crate::inputs::etw_process::{ProcessFacts, enrich};
 use crate::inputs::etw_sysmon::{
-    driver_load_xml, image_load_xml, process_access_xml, process_start_xml, process_terminate_xml,
+    driver_load_xml, file_create_xml, image_load_xml, process_access_xml, process_start_xml,
+    process_terminate_xml,
 };
 use crate::types::Event;
 
@@ -168,6 +169,7 @@ impl Mapper {
             kind::PROCESS_ACCESS => self.map_access(event),
             kind::IMAGE_LOAD => self.map_image_load(event, false),
             kind::DRIVER_LOAD => self.map_image_load(event, true),
+            kind::FILE_CREATE => self.map_file_create(event),
             _ => None,
         }
     }
@@ -175,6 +177,25 @@ impl Mapper {
     /// Event time from the kernel record, falling back to "now".
     fn event_time(event: &SensorEvent) -> chrono::DateTime<chrono::Utc> {
         filetime_to_utc(event.timestamp as i64).unwrap_or_else(chrono::Utc::now)
+    }
+
+    fn map_file_create(&mut self, event: &SensorEvent) -> Option<Event> {
+        let target = wide(&event.primary, event.primary_length);
+        if target.is_empty() {
+            return None;
+        }
+        let image = self
+            .cache
+            .get(&event.pid)
+            .and_then(|facts| facts.image.as_deref());
+        let xml = file_create_xml(
+            &self.computer,
+            Self::event_time(event),
+            event.pid,
+            image,
+            &target,
+        );
+        Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
 
     fn map_image_load(&mut self, event: &SensorEvent, driver: bool) -> Option<Event> {
