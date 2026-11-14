@@ -286,8 +286,7 @@ unsafe extern "C" fn post_create(
     if status < 0 {
         return POSTOP_FINISHED;
     }
-    // SAFETY: plain field read.
-    if unsafe { callback.io_status.Information } != u64::from(FILE_CREATED) {
+    if callback.io_status.Information != u64::from(FILE_CREATED) {
         return POSTOP_FINISHED;
     }
 
