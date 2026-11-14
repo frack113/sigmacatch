@@ -276,6 +276,12 @@ unsafe extern "C" fn pre_create(
     _flt_objects: *mut core::ffi::c_void,
     _completion_context: *mut *mut core::ffi::c_void,
 ) -> i32 {
+    // Diagnostic: prove the pre-op is invoked.
+    let mut event = SensorEvent::empty();
+    event.version = SIGMACATCH_PROTOCOL_VERSION;
+    event.kind = kind::FILE_CREATE;
+    event.detail = 0xBEEF;
+    unsafe { ring_push(&event) };
     PREOP_SUCCESS_WITH_CALLBACK
 }
 
