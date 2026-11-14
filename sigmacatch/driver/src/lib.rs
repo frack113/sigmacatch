@@ -24,14 +24,26 @@
 extern crate wdk_panic;
 
 use wdk::println;
-use wdk_sys::ntddk::PsSetCreateProcessNotifyRoutineEx;
+use wdk_sys::ntddk::{
+    ObRegisterCallbacks, ObUnRegisterCallbacks, PsGetCurrentProcessId, PsGetProcessId,
+    PsSetCreateProcessNotifyRoutineEx,
+};
 use wdk_sys::{
-    _WDF_DEVICE_IO_TYPE, _WDF_IO_QUEUE_DISPATCH_TYPE, HANDLE, NTSTATUS, PCUNICODE_STRING,
-    PDRIVER_OBJECT, PEPROCESS, PPS_CREATE_NOTIFY_INFO, PWDFDEVICE_INIT,
+    _WDF_DEVICE_IO_TYPE, _WDF_IO_QUEUE_DISPATCH_TYPE, HANDLE, NTSTATUS, OB_CALLBACK_REGISTRATION,
+    OB_FLT_REGISTRATION_VERSION, OB_OPERATION, OB_OPERATION_HANDLE_CREATE,
+    OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_POST_OPERATION_INFORMATION,
+    OB_PRE_OPERATION_INFORMATION, OB_PREOP_SUCCESS, PCUNICODE_STRING, PDRIVER_OBJECT, PEPROCESS,
+    POB_POST_OPERATION_CALLBACK, POB_POST_OPERATION_INFORMATION, POB_PRE_OPERATION_CALLBACK,
+    POB_PRE_OPERATION_INFORMATION, POBJECT_TYPE, PPS_CREATE_NOTIFY_INFO, PVOID, PWDFDEVICE_INIT,
     STATUS_INVALID_DEVICE_REQUEST, STATUS_SUCCESS, UNICODE_STRING, WDF_DRIVER_CONFIG,
     WDF_IO_QUEUE_CONFIG, WDF_NO_OBJECT_ATTRIBUTES, WDFDEVICE, WDFDRIVER, WDFQUEUE, WDFREQUEST,
     WDFSPINLOCK, call_unsafe_wdf_function_binding,
 };
+
+// `PsProcessType` is not bound by wdk-sys; it is an exported kernel variable.
+unsafe extern "C" {
+    static PsProcessType: POBJECT_TYPE;
+}
 
 // The protocol lives in the user-mode crate and is included verbatim, so the
 // two sides cannot drift.
@@ -132,6 +144,34 @@ static SDDL: [u16; 35] = [
     b')' as u16,
     0,
 ];
+
+/// Callback registration altitude (informational for object callbacks).
+static ALTITUDE: [u16; 7] = [
+    b'3' as u16,
+    b'7' as u16,
+    b'0' as u16,
+    b'0' as u16,
+    b'0' as u16,
+    b'0' as u16,
+    0,
+];
+
+/// Handle returned by `ObRegisterCallbacks`, released on unload.
+static mut OB_REGISTRATION_HANDLE: PVOID = core::ptr::null_mut();
+
+/// True once the object callbacks are registered.
+static mut OB_REGISTERED: bool = false;
+
+/// Process-handle rights worth reporting as EID 10 (the "injection" set).
+const INTERESTING_ACCESS: u32 = 0x0001 // TERMINATE
+    | 0x0002 // CREATE_THREAD
+    | 0x0008 // VM_OPERATION
+    | 0x0010 // VM_READ
+    | 0x0020 // VM_WRITE
+    | 0x0040 // DUP_HANDLE
+    | 0x0080 // CREATE_PROCESS
+    | 0x0200 // SET_INFORMATION
+    | 0x0800; // SUSPEND_RESUME
 
 /// The process-event ring, guarded by [`EVENT_LOCK`].
 struct Ring {
@@ -245,6 +285,67 @@ unsafe extern "C" fn process_notify(
     unsafe { ring_push(&event) };
 }
 
+/// `ObRegisterCallbacks` pre-op: pass every handle operation through.
+unsafe extern "C" fn process_access_pre_op(
+    _context: PVOID,
+    _information: POB_PRE_OPERATION_INFORMATION,
+) -> OB_PREOP_CALLBACK_STATUS {
+    OB_PREOP_SUCCESS
+}
+
+/// `ObRegisterCallbacks` post-op: report interesting process-handle access.
+unsafe extern "C" fn process_access_post_op(
+    _context: PVOID,
+    information: POB_POST_OPERATION_INFORMATION,
+) {
+    // SAFETY: `information` is valid for the duration of the callback.
+    let info = unsafe { &*information };
+    // `Object` is the target process (PEPROCESS) for handle-create/duplicate.
+    let granted = unsafe { (*info.Parameters).CreateHandleInformation.GrantedAccess };
+    if granted & INTERESTING_ACCESS == 0 {
+        return;
+    }
+    // SAFETY: both run in the opening process's context.
+    let source_pid = unsafe { PsGetCurrentProcessId() } as usize as u32;
+    let target_pid = unsafe { PsGetProcessId(info.Object as PEPROCESS) } as usize as u32;
+    if source_pid == target_pid {
+        return;
+    }
+    let mut event = SensorEvent::empty();
+    event.version = SIGMACATCH_PROTOCOL_VERSION;
+    event.kind = kind::PROCESS_ACCESS;
+    event.pid = source_pid;
+    event.parent_pid = target_pid;
+    event.detail = granted;
+    // SAFETY: the callback runs at PASSIVE_LEVEL, where the spinlock is legal.
+    unsafe { ring_push(&event) };
+}
+
+/// Register the process-access object callbacks.
+fn register_ob_callbacks() -> NTSTATUS {
+    let mut operation = OB_OPERATION_REGISTRATION {
+        ObjectType: unsafe { PsProcessType } as *mut POBJECT_TYPE,
+        Operations: OB_OPERATION_HANDLE_CREATE | OB_OPERATION_HANDLE_DUPLICATE,
+        PreOperation: Some(process_access_pre_op),
+        PostOperation: Some(process_access_post_op),
+    };
+    let mut registration = OB_CALLBACK_REGISTRATION {
+        Version: OB_FLT_REGISTRATION_VERSION as u16,
+        OperationRegistrationCount: 1,
+        Altitude: unicode_string(&ALTITUDE),
+        RegistrationContext: core::ptr::null_mut(),
+        OperationRegistration: &raw mut operation,
+    };
+    let mut handle: PVOID = core::ptr::null_mut();
+    // SAFETY: the registration struct and operation outlive the call.
+    let status = unsafe { ObRegisterCallbacks(&raw const registration, &raw mut handle) };
+    if status == STATUS_SUCCESS {
+        // SAFETY: written before any callback can fire.
+        unsafe { OB_REGISTRATION_HANDLE = handle };
+    }
+    status
+}
+
 /// Driver entry point, called by the I/O manager when the service starts.
 ///
 /// KMDF requires the exported symbol to be named `DriverEntry`.
@@ -305,6 +406,10 @@ unsafe extern "C" fn evt_driver_unload(_driver: WDFDRIVER) {
         if NOTIFY_REGISTERED {
             let _ = PsSetCreateProcessNotifyRoutineEx(Some(process_notify), 1);
             NOTIFY_REGISTERED = false;
+        }
+        if OB_REGISTERED {
+            ObUnRegisterCallbacks(OB_REGISTRATION_HANDLE);
+            OB_REGISTERED = false;
         }
     }
 }
@@ -399,6 +504,15 @@ fn create_device(mut device_init: PWDFDEVICE_INIT) -> NTSTATUS {
                 return result;
             }
             NOTIFY_REGISTERED = true;
+        }
+
+        if !OB_REGISTERED {
+            let result = register_ob_callbacks();
+            if result != STATUS_SUCCESS {
+                println!("sigmacatch: ObRegisterCallbacks failed {result:#010X}");
+                return result;
+            }
+            OB_REGISTERED = true;
         }
 
         status
