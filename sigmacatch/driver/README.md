@@ -24,16 +24,32 @@ The driver exists only for those. The user-mode path must keep working when
 the driver is absent, refused by HVCI, or not loaded: the two layers are
 deduplicated by `(pid, creation time)`.
 
-## Milestones
+## Coverage and milestones
 
-- **D0 (this crate today)** — the channel: control device
-  `\Device\sigmacatch` with the DOS alias `\DosDevices\sigmacatch`, and one
-  IOCTL (`IOCTL_SIGMACATCH_GET_VERSION`, `CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800,
-  METHOD_BUFFERED, FILE_READ_DATA)`) returning the protocol version as `u32`.
-- **D1** — `PsSetCreateProcessNotifyRoutineEx` into a fixed ring buffer, read
-  through an IOCTL; EID 1/5 for the user-mode side.
-- **D2** — minifilter (file paths, EID 2/15/26), `ObRegisterCallbacks`
-  (EID 10), pipes (17/18).
+Delivered and validated in the test VM:
+
+- **D0 — channel** (done): control device `\Device\sigmacatch` + DOS alias,
+  and the version IOCTL.
+- **D1 — process creation** (done): `PsSetCreateProcessNotifyRoutineEx` into a
+  fixed ring; EID 1/5 with the creation-time command line.
+- **D2a — process access** (done): `ObRegisterCallbacks` on process handles,
+  filtered to the injection-relevant rights; EID 10.
+- **D2b.1 — image/driver load** (done): `PsSetLoadImageNotifyRoutine`; the
+  `SystemModeImage` bit splits EID 6 (driver) from EID 7 (image).
+
+Blocked / remaining:
+
+- **D2b.2 — file system** (blocked): EID 2/11/23 and the sigmacatch
+  extensions 503/504/505/506 need a minifilter. `wdk-sys` does **not** bind
+  `fltmgr`, so this requires a hand-written `fltmgr` FFI
+  (`FltRegisterFilter`, `FLT_REGISTRATION`, `FLT_CALLBACK_DATA`,
+  `FltGetFileNameInformation`, ...) and an INF/altitude install.
+- **EID 9 (raw access), 17/18 (pipes)**: no public user-mode or documented
+  kernel hook; documented as gaps.
+
+The ring record is kind-tagged (`sigmacatch/src/windows/driver_protocol.rs`,
+shared with the user-mode client via `#[path]`), so adding a kind does not
+change the IOCTL layout.
 
 ## Build
 
@@ -68,6 +84,7 @@ to `.sys` for the service.
 | IOCTL | Input | Output |
 |---|---|---|
 | `IOCTL_SIGMACATCH_GET_VERSION` (`0x00222000`) | — | `u32` protocol version |
+| `IOCTL_READ_EVENTS` (`0x00222004`) | — | array of `SensorEvent` (kind-tagged) |
 
 The user-mode side refuses a version it does not know, so a driver and a
 collector from different builds cannot silently mismatch.
