@@ -335,8 +335,11 @@ Milestones:
   `IOCTL_READ_EVENTS`.
 - **D2a — process access** (done): `ObRegisterCallbacks` → EID 10, validated in
   the VM.
-- **D2b — file system**: minifilter for 2/11/23/503/504/505/506 with complete
-  `FLT_FILE_NAME_INFORMATION` paths, and 9/17 where a public hook exists.
+- **D2b.1 — image/driver load** (done): `PsSetLoadImageNotifyRoutine` → EID
+  6/7, validated in the VM.
+- **D2b.2 — file system**: minifilter for 2/11/23/503/504/505/506 with complete
+  `FLT_FILE_NAME_INFORMATION` paths (needs a hand-written `fltmgr` FFI), and
+  9/17 where a public hook exists.
 - **D3 — parity**: the Windows collector emits the same event-id set as the
   Linux collector; 501/502 documented as Linux-only.
 
@@ -395,4 +398,24 @@ static (not bound), and `KeQuerySystemTime` is not in the WDK import lib, so
 the consumer timestamps records at read time (`Utc::now()` when the record
 carries 0) — a few milliseconds late, acceptable for EID 5/10.
 
-Next: D2b, the minifilter for file events 2/11/23/503/504/505/506.
+**D2b.1 — image and driver load (EID 6/7)** is validated too.
+`PsSetLoadImageNotifyRoutine` reports every image mapped into memory; the
+`SystemModeImage` bit (0x100 of `IMAGE_INFO.Properties`) splits kernel images
+(EID 6) from user images (EID 7). Measured in the VM:
+
+- EID 7: `ImageLoaded=\Device\HarddiskVolume3\Windows\System32\kernel.appcore.dll`,
+  `ProcessId` of the loading process, `Image` from the pid cache;
+- EID 6: `ImageLoaded=\Device\HarddiskVolume3\Windows\System32\drivers\wimmount.sys`
+  after `sc start wimmount`.
+
+Paths are the NT paths the callback carries (exact), not DOS-mapped.
+
+**D2b.2 — the minifilter is blocked on bindings.** `wdk-sys` does **not** bind
+`fltmgr` (`FltRegisterFilter`, `FLT_REGISTRATION`, `FLT_CALLBACK_DATA`,
+`FltGetFileNameInformation`, ...), and no maintained Rust binding exists
+(`fsfilter-rs` is a 2023 user-mode loader pinned to `windows` 0.44). File
+events 2/11/23/503/504/505/506 therefore need a hand-written `fltmgr` FFI in
+the driver crate (`#[link(name = "fltmgr")]` plus the structure definitions),
+which is the next sub-project.
+
+Next: D2b.2, the minifilter for file events 2/11/23/503/504/505/506.
