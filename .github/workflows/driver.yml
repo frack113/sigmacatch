@@ -88,6 +88,33 @@ jobs:
           if-no-files-found: error
 
       # Diagnostic: the wdk-sys bindings are generated from the WDK headers at
+      # build time; dump the D2 types here so their exact names are visible.
+      - name: Dump D2 bindings
+        if: always()
+        shell: pwsh
+        run: |
+          $types = Get-ChildItem -Recurse -Path sigmacatch/driver/target -Filter types.rs -ErrorAction SilentlyContinue | Where-Object { $_.DirectoryName -match 'wdk-sys' } | Select-Object -First 1
+          $ntddk = Get-ChildItem -Recurse -Path sigmacatch/driver/target -Filter ntddk.rs -ErrorAction SilentlyContinue | Where-Object { $_.DirectoryName -match 'wdk-sys' } | Select-Object -First 1
+          Write-Host "types=$($types.FullName) ntddk=$($ntddk.FullName)"
+          foreach ($p in @('pub struct _OB_CALLBACK_REGISTRATION','pub struct _OB_OPERATION_REGISTRATION','pub struct _OB_PRE_OPERATION_INFORMATION','pub struct _OB_POST_OPERATION_INFORMATION','pub union _OB_PRE_OPERATION_PARAMETERS','pub struct _OB_PRE_CREATE_HANDLE_INFORMATION','pub union _OB_POST_OPERATION_PARAMETERS','pub struct _OB_POST_CREATE_HANDLE_INFORMATION','pub struct _OB_PRE_DUPLICATE_HANDLE_INFORMATION','pub struct _OB_POST_DUPLICATE_HANDLE_INFORMATION')) {
+            Write-Host "=== $p ==="
+            Select-String -Path $types.FullName -Pattern ([regex]::Escape($p)) -Context 0,22 | ForEach-Object { $_.Line; $_.Context.PostContext }
+          }
+          foreach ($p in @('pub fn ObRegisterCallbacks','pub fn ObUnRegisterCallbacks','pub fn PsGetProcessImageFileName','pub fn PsGetProcessId','pub fn PsGetCurrentProcessId','pub fn PsGetThreadProcessId')) {
+            Write-Host "=== fn $p ==="
+            Select-String -Path $ntddk.FullName -Pattern ([regex]::Escape($p)) -Context 0,6 | ForEach-Object { $_.Line; $_.Context.PostContext }
+          }
+          Write-Host "=== PsProcessType / PsThreadType ==="
+          Select-String -Path $ntddk.FullName -Pattern 'PsProcessType|PsThreadType' | Select-Object -First 4 | ForEach-Object { $_.Line }
+
+      - name: Upload the driver image
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: sigmacatch-driver
+          path: sigmacatch/driver/target/x86_64-pc-windows-msvc/release/sigmacatch_driver.dll
+          if-no-files-found: error
+
+      # Diagnostic: the wdk-sys bindings are generated from the WDK headers at
       # build time, so their exact shape is only visible here.
       - name: Dump relevant bindings
         if: always()
