@@ -240,43 +240,55 @@ Sysmon-only enrichments that cannot be sourced exactly (`ProcessGuid`,
 `LogonGuid`, `Hashes`, `FileVersion`, `Company`, ...) are omitted rather than
 approximated.
 
-## Decision: no driver
+## Decision: the driver is the target
 
-Recorded on 2026-11-14, replacing the "Phase 2" ambition below.
+Recorded on 2026-11-14, after M0/M1 showed what user mode cannot reach.
 
-A `sigmacatch` kernel driver is **not worth it**, because it would only be
-needed to *replace Sysmon* on hosts that do not have it, and the two sources
-that already exist cover the events the driver was meant to unlock:
+The project exists **to produce Sysmon-schema telemetry on hosts that do not
+have Sysmon**. "Hosts without Sysmon" is therefore the target environment, not
+an edge case: relying on Sysmon's channel for EID 10/17/18/2/15/26 would
+defeat the purpose.
 
-- **Sysmon installed** → its channel (`Microsoft-Windows-Sysmon/Operational`)
-  is read **live** by the `winevt` collector: EID 10, 17/18, 2, 15, 26 and the
-  exact fields (`GrantedAccess`, `PipeName`, `Hashes`, ...) come for free. No
-  driver of ours is involved.
-- **Without Sysmon** → the user-mode kernel providers cover the rest, including
-  the two gaps that used to justify a mini-filter:
-  - **file create/delete** carry their full `\Device\...\path` in event 12/10;
-  - **rename** is complete: event 20 reports the old name with the `FileKey`,
-    event 27 the **new full path**, and events 10/11 name the `FileKey` — the
-    same object→path cache the registry path needs. Measured on the test VM:
+Two layers, same output:
 
-    | id | payload |
-    |---|---|
-    | 20 | `FileKey`, `FileName = "rn-a.txt"` (old, basename only) |
-    | 27 | `FileKey`, `FilePath = \Device\HarddiskVolume3\Users\...\rn-b.txt` |
-    | 10/11 | `FileKey`, full path (NameCreate/NameDelete, old and new) |
-    | 12 | `FileKey`, `FileObject`, full path |
+- **User-mode path (M0–M5, done for EID 1)** — no driver, no signature, works
+  on any elevated Windows host: ETW kernel providers + live-process facts.
+  Covers EID 1, 3, 5, 7, 11/23, 12/13/14, 22, rename (20/27 + `FileKey`
+  cache), DNS, network. This stays as the portable fallback and as the
+  reference the driver output is compared against.
+- **Driver path (D0–D2)** — a `sigmacatch` kernel component that closes what
+  user mode cannot: EID 2/15/26 (creation time, alternate data streams,
+  detected deletes), EID 10 `GrantedAccess` (`ObRegisterCallbacks`), EID 17/18
+  named pipes, and race-free file paths (`FLT_FILE_NAME_INFORMATION`).
 
-- **Native channels** (Security, PowerShell, ...) are already read live by
-  `winevt`.
+Constraints accepted up front, unchanged from the original Phase 2 note:
 
-What a driver would still add is limited to hosts that run neither Sysmon nor
-anything else publishing those events: EID 10, 17/18, 2, 15, 26. That is a
-deployment choice, documented as a coverage gap, not an architecture
-requirement — and the cost is not small: the WDK is not available in the
-`cargo xwin` chain (no driver build from Linux), every build needs its own
-signature, and a kernel bug is a BSOD.
+- the WDK is **not** in the `cargo xwin` chain: the driver builds on a Windows
+  host (or a Windows CI runner) with the WDK, in its own crate outside this
+  workspace, like `sigmacatch/ebpf`;
+- every build needs its own signature; in the test VM that is test-signing
+  (`bcdedit /set testsigning on`, Secure Boot off, self-signed cert), and a
+  distributable build needs an EV certificate;
+- a kernel bug is a BSOD, so the driver never becomes a hard dependency: the
+  user-mode path must keep working when the driver is absent, refused by HVCI,
+  or not loaded.
 
-## Phase 2 (optional): test-signed driver (superseded)
+Milestones:
+
+- **D0 — process creation**: `PsSetCreateProcessNotifyRoutineEx` →
+  EID 1/5 with the creation-time command line, no polling and no PEB race.
+  This is the smallest driver that proves the channel end to end.
+- **D1 — file system**: a minifilter for creation/rename/delete with complete
+  `FLT_FILE_NAME_INFORMATION` paths, closing the "path incomplete → drop the
+  event" cases.
+- **D2 — the rest**: `ObRegisterCallbacks` for EID 10, named pipes for EID
+  17/18, and the EID 2/15/26 cases.
+
+The user-mode collector keeps its own process trigger (snapshot + ETW) so the
+same event is never lost, and the two paths are deduplicated by `(pid,
+creation time)`.
+
+## Phase 2 (optional): test-signed driver (superseded by the decision above)## Phase 2 (optional): test-signed driver (superseded)
 
 Closes the file-path / process-access / named-pipe gaps. In the QEMU VM this is
 signing-free (`bcdedit /set testsigning on` + Secure Boot off + self-signed cert
