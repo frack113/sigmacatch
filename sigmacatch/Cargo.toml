@@ -127,6 +127,11 @@ required-features = ["ebpf"]
 name = "etw_dump"
 required-features = ["etw"]
 
+# Kernel-sensor smoke test.
+[[example]]
+name = "etw_driver_probe"
+required-features = ["driver"]
+
 # Quality contract: inherit workspace lint tiers ([workspace.lints] in root Cargo.toml).
 [lints]
 workspace = true

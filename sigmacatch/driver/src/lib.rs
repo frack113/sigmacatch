@@ -93,6 +93,46 @@ static SYMBOLIC_LINK: [u16; 24] = [
     0,
 ];
 
+/// Security descriptor for the control device: SYSTEM and Administrators get
+/// full access, everyone else nothing. The same as `SDDL_DEVOBJ_SYS_ALL_ADM_ALL`.
+static SDDL: [u16; 35] = [
+    b'O' as u16,
+    b':' as u16,
+    b'S' as u16,
+    b'Y' as u16,
+    b'G' as u16,
+    b':' as u16,
+    b'S' as u16,
+    b'Y' as u16,
+    b'D' as u16,
+    b':' as u16,
+    b'(' as u16,
+    b'A' as u16,
+    b';' as u16,
+    b';' as u16,
+    b'G' as u16,
+    b'A' as u16,
+    b';' as u16,
+    b';' as u16,
+    b';' as u16,
+    b'S' as u16,
+    b'Y' as u16,
+    b')' as u16,
+    b'(' as u16,
+    b'A' as u16,
+    b';' as u16,
+    b';' as u16,
+    b'G' as u16,
+    b'A' as u16,
+    b';' as u16,
+    b';' as u16,
+    b';' as u16,
+    b'B' as u16,
+    b'A' as u16,
+    b')' as u16,
+    0,
+];
+
 /// The process-event ring, guarded by [`EVENT_LOCK`].
 struct Ring {
     events: [SensorEvent; RING_CAPACITY],
@@ -216,7 +256,6 @@ extern "system" fn driver_entry(
 ) -> NTSTATUS {
     let mut config = WDF_DRIVER_CONFIG {
         Size: core::mem::size_of::<WDF_DRIVER_CONFIG>() as u32,
-        EvtDriverDeviceAdd: Some(evt_device_add),
         EvtDriverUnload: Some(evt_driver_unload),
         ..WDF_DRIVER_CONFIG::default()
     };
@@ -224,7 +263,7 @@ extern "system" fn driver_entry(
 
     // SAFETY: standard KMDF entry sequence; `driver` and `registry_path` come
     // from the I/O manager and stay valid for the call.
-    unsafe {
+    let status = unsafe {
         call_unsafe_wdf_function_binding!(
             WdfDriverCreate,
             driver as PDRIVER_OBJECT,
@@ -233,12 +272,35 @@ extern "system" fn driver_entry(
             &raw mut config,
             &mut driver_handle,
         )
+    };
+    if status != STATUS_SUCCESS {
+        println!("sigmacatch: WdfDriverCreate failed {status:#010X}");
+        return status;
     }
+
+    // A legacy `sc create type= kernel` service is not PnP-enumerated, so
+    // `EvtDriverDeviceAdd` would never run: allocate the control device here.
+    let sddl = unicode_string(&SDDL);
+    // SAFETY: `driver_handle` came from `WdfDriverCreate`; the SDDL string is
+    // copied by the call.
+    let device_init = unsafe {
+        call_unsafe_wdf_function_binding!(
+            WdfControlDeviceInitAllocate,
+            driver_handle,
+            &raw const sddl
+        )
+    };
+    if device_init.is_null() {
+        println!("sigmacatch: WdfControlDeviceInitAllocate failed");
+        return wdk_sys::STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    create_device(device_init)
 }
 
 /// Remove the notify routine before the driver is unloaded.
 unsafe extern "C" fn evt_driver_unload(_driver: WDFDRIVER) {
-    // SAFETY: removes the routine registered in `evt_device_add`.
+    // SAFETY: removes the routine registered in `create_device`.
     unsafe {
         if NOTIFY_REGISTERED {
             let _ = PsSetCreateProcessNotifyRoutineEx(Some(process_notify), 1);
@@ -249,10 +311,7 @@ unsafe extern "C" fn evt_driver_unload(_driver: WDFDRIVER) {
 
 /// Create the control device, its queue and lock, and register the notify
 /// routine.
-unsafe extern "C" fn evt_device_add(
-    _driver: WDFDRIVER,
-    mut device_init: PWDFDEVICE_INIT,
-) -> NTSTATUS {
+fn create_device(mut device_init: PWDFDEVICE_INIT) -> NTSTATUS {
     let name = unicode_string(&DEVICE_NAME);
     let link = unicode_string(&SYMBOLIC_LINK);
 
