@@ -94,10 +94,10 @@ jobs:
           name: wdk-bindings
           overwrite: true
           path: |
-            sigmacatch/driver/target/x86_64-pc-windows-msvc/release/build/wdk-sys-*/out/types.rs
-            sigmacatch/driver/target/x86_64-pc-windows-msvc/release/build/wdk-sys-*/out/ntddk.rs
-            sigmacatch/driver/target/x86_64-pc-windows-msvc/release/build/wdk-sys-*/out/constants.rs
-          if-no-files-found: warn
+            sigmacatch/driver/target/x86_64-pc-windows-msvc/release/build/wdk-sys/*/out/types.rs
+            sigmacatch/driver/target/x86_64-pc-windows-msvc/release/build/wdk-sys/*/out/ntddk.rs
+            sigmacatch/driver/target/x86_64-pc-windows-msvc/release/build/wdk-sys/*/out/constants.rs
+          if-no-files-found: error
 
       # Diagnostic: the wdk-sys bindings are generated from the WDK headers at
       # build time; dump the D2 types here so their exact names are visible.
@@ -133,10 +133,10 @@ jobs:
           name: wdk-bindings
           overwrite: true
           path: |
-            sigmacatch/driver/target/x86_64-pc-windows-msvc/release/build/wdk-sys-*/out/types.rs
-            sigmacatch/driver/target/x86_64-pc-windows-msvc/release/build/wdk-sys-*/out/ntddk.rs
-            sigmacatch/driver/target/x86_64-pc-windows-msvc/release/build/wdk-sys-*/out/constants.rs
-          if-no-files-found: warn
+            sigmacatch/driver/target/x86_64-pc-windows-msvc/release/build/wdk-sys/*/out/types.rs
+            sigmacatch/driver/target/x86_64-pc-windows-msvc/release/build/wdk-sys/*/out/ntddk.rs
+            sigmacatch/driver/target/x86_64-pc-windows-msvc/release/build/wdk-sys/*/out/constants.rs
+          if-no-files-found: error
 
       # Diagnostic: the wdk-sys bindings are generated from the WDK headers at
       # build time, so their exact shape is only visible here.
