@@ -424,6 +424,7 @@ pub static CHANNEL_TO_SERVICE: phf::Map<&'static str, &'static str> = phf::phf_m
     "Security" => "security",
     "Microsoft-Windows-Sysmon/Operational" => "sysmon",
     "Linux-Sysmon/Operational" => "sysmon",
+    "sigmacatch/Operational" => "sysmon",
     "DNS Server" => "dns-server",
     "Microsoft-Windows-DNS-Server/Analytical" => "dns-server-analytic",
     "Microsoft-Windows-DNS-Server/Audit" => "dns-server-audit",
@@ -628,6 +629,9 @@ pub static PROVIDER_TO_CHANNEL: phf::Map<&'static str, &'static str> = phf::phf_
     // Sysmon provider — falls back from unknown channels (e.g. ForwardedEvents)
     // to the real Sysmon channel so inject_logsource_fields derives service=sysmon.
     "Microsoft-Windows-Sysmon" => "Microsoft-Windows-Sysmon/Operational",
+    // sigmacatch's own Sysmon-schema provider (the Windows collector writes
+    // Sysmon-schema events under this name, not Microsoft-Windows-Sysmon).
+    "sigmacatch" => "sigmacatch/Operational",
 };
 
 /// Channel:EventID → Sigma category.
@@ -697,10 +701,14 @@ static CHANNEL_EVENT_TO_SUBCATEGORY: phf::Map<&'static str, &'static str> = phf:
 fn get_category(channel: &str, event_id: u32) -> Option<&'static str> {
     // Sysmon for Linux emits the same schema and EventIDs under its own
     // channel; reuse the Windows Sysmon mappings instead of duplicating them.
-    let channel = if channel == "Linux-Sysmon/Operational" {
-        "Microsoft-Windows-Sysmon/Operational"
-    } else {
-        channel
+    let channel = match channel {
+        // Sysmon for Linux and sigmacatch's Windows collector both emit the
+        // same schema and EventIDs under their own channel; reuse the Windows
+        // Sysmon mappings instead of duplicating them.
+        "Linux-Sysmon/Operational" | "sigmacatch/Operational" => {
+            "Microsoft-Windows-Sysmon/Operational"
+        }
+        _ => channel,
     };
     let key = format!("{}:{}", channel, event_id);
     CHANNEL_EVENT_TO_SUBCATEGORY
@@ -2265,8 +2273,9 @@ mod tests {
 
     /// Every channel in `CHANNEL_TO_SERVICE` must be resolvable by
     /// `SERVICE_CHANNELS` (a rule subscribed to the service must reach the
-    /// channel). The single allowed FWD asymmetry is `Linux-Sysmon/Operational`
-    /// (Windows-only resolution scope, AD-2).
+    /// channel). The allowed FWD asymmetries are the sigmacatch channels
+    /// (`Linux-Sysmon/Operational`, `sigmacatch/Operational`) whose events are
+    /// produced in-process, not read back from the event log.
     #[test]
     fn test_channel_to_service_fwd_resolvable() {
         let mut service_channels: HashMap<&str, Vec<&str>> = HashMap::new();
@@ -2276,7 +2285,7 @@ mod tests {
 
         let mut failing = Vec::new();
         for (channel, service) in CHANNEL_TO_SERVICE.entries() {
-            if *channel == "Linux-Sysmon/Operational" {
+            if *channel == "Linux-Sysmon/Operational" || *channel == "sigmacatch/Operational" {
                 continue;
             }
             match service_channels.get(service) {
@@ -2293,7 +2302,7 @@ mod tests {
         }
         assert!(
             failing.is_empty(),
-            "FWD mismatch (only allowed: Linux-Sysmon/Operational):\n{}",
+            "FWD mismatch (only allowed: Linux-Sysmon/Operational, sigmacatch/Operational):\n{}",
             failing.join("\n")
         );
     }

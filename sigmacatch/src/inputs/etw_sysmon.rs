@@ -11,9 +11,13 @@
 
 use crate::inputs::etw_process::ProcessFacts;
 
-/// `Microsoft-Windows-Sysmon` provider id, as published in the event log.
-const SYSMON_PROVIDER: &str = "{5770385f-c22a-43e0-bf4c-06f5698ffbd9}";
-const SYSMON_CHANNEL: &str = "Microsoft-Windows-Sysmon/Operational";
+/// `sigmacatch` provider id. The events are Sysmon-*schema* (same EventIDs
+/// and field names) but are produced by sigmacatch, not Sysmon, so they are
+/// published under our own provider and channel. `service` resolution still
+/// maps the channel to `sysmon` (see `types.rs`), so the stock Sysmon Sigma
+/// rules match unchanged.
+const SIGMACATCH_PROVIDER: &str = "{a3e1f6c2-4b5d-4e9f-9c1a-2d7b8e0f3a6c}";
+const SIGMACATCH_CHANNEL: &str = "sigmacatch/Operational";
 
 /// Render a Sysmon **EID 1 (ProcessCreate)** event.
 ///
@@ -67,13 +71,13 @@ pub fn process_start_xml(
     format!(
         "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
          <System>\
-         <Provider Name=\"Microsoft-Windows-Sysmon\" Guid=\"{SYSMON_PROVIDER}\"/>\
+         <Provider Name=\"sigmacatch\" Guid=\"{SIGMACATCH_PROVIDER}\"/>\
          <EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode>\
          <Keywords>0x8000000000000000</Keywords>\
          <TimeCreated SystemTime=\"{}\"/>\
          <EventRecordID>0</EventRecordID><Correlation/>\
          <Execution ProcessID=\"{}\" ThreadID=\"0\"/>\
-         <Channel>{SYSMON_CHANNEL}</Channel>\
+         <Channel>{SIGMACATCH_CHANNEL}</Channel>\
          <Computer>{}</Computer>\
          </System>\
          <EventData>{data}</EventData>\

@@ -38,7 +38,8 @@ use wdk_sys::{
 #[path = "../../src/windows/driver_protocol.rs"]
 mod protocol;
 use protocol::{
-    IOCTL_GET_VERSION, IOCTL_READ_EVENTS, ProcessEvent, RING_CAPACITY, SIGMACATCH_PROTOCOL_VERSION,
+    IOCTL_GET_VERSION, IOCTL_READ_EVENTS, RING_CAPACITY, SIGMACATCH_PROTOCOL_VERSION, SensorEvent,
+    kind,
 };
 
 /// `\Device\sigmacatch`, NUL-terminated.
@@ -94,7 +95,7 @@ static SYMBOLIC_LINK: [u16; 24] = [
 
 /// The process-event ring, guarded by [`EVENT_LOCK`].
 struct Ring {
-    events: [ProcessEvent; RING_CAPACITY],
+    events: [SensorEvent; RING_CAPACITY],
     head: usize,
     count: usize,
 }
@@ -102,7 +103,7 @@ struct Ring {
 // SAFETY: every access is guarded by `EVENT_LOCK` (producer = the notify
 // callback at PASSIVE_LEVEL, consumer = the sequential queue at PASSIVE_LEVEL).
 static mut RING: Ring = Ring {
-    events: [ProcessEvent::empty(); RING_CAPACITY],
+    events: [SensorEvent::empty(); RING_CAPACITY],
     head: 0,
     count: 0,
 };
@@ -145,7 +146,7 @@ unsafe fn copy_wide(source: &UNICODE_STRING, destination: &mut [u16], copied: &m
 }
 
 /// Append one record, overwriting the oldest when full.
-unsafe fn ring_push(event: &ProcessEvent) {
+unsafe fn ring_push(event: &SensorEvent) {
     // SAFETY: the spinlock is created before the notify routine runs.
     unsafe { call_unsafe_wdf_function_binding!(WdfSpinLockAcquire, EVENT_LOCK) };
     // SAFETY: the lock is held.
@@ -169,11 +170,11 @@ unsafe extern "C" fn process_notify(
     process_id: HANDLE,
     create_info: PPS_CREATE_NOTIFY_INFO,
 ) {
-    let mut event = ProcessEvent::empty();
+    let mut event = SensorEvent::empty();
     event.version = SIGMACATCH_PROTOCOL_VERSION;
     event.pid = process_id as usize as u32;
-    event.creating = u32::from(!create_info.is_null());
     if !create_info.is_null() {
+        event.kind = kind::PROCESS_CREATE;
         // SAFETY: `create_info` is valid for the duration of the callback.
         let info = unsafe { &*create_info };
         event.parent_pid = info.ParentProcessId as usize as u32;
@@ -185,18 +186,20 @@ unsafe extern "C" fn process_notify(
             if !info.ImageFileName.is_null() {
                 copy_wide(
                     &*info.ImageFileName,
-                    &mut event.image,
-                    &mut event.image_length,
+                    &mut event.primary,
+                    &mut event.primary_length,
                 );
             }
             if !info.CommandLine.is_null() {
                 copy_wide(
                     &*info.CommandLine,
-                    &mut event.command_line,
-                    &mut event.command_length,
+                    &mut event.secondary,
+                    &mut event.secondary_length,
                 );
             }
         }
+    } else {
+        event.kind = kind::PROCESS_EXIT;
     }
     // SAFETY: the callback runs at PASSIVE_LEVEL, where the spinlock is legal.
     unsafe { ring_push(&event) };
@@ -382,7 +385,7 @@ unsafe extern "C" fn evt_io_device_control(
             let status = call_unsafe_wdf_function_binding!(
                 WdfRequestRetrieveOutputBuffer,
                 request,
-                core::mem::size_of::<ProcessEvent>(),
+                core::mem::size_of::<SensorEvent>(),
                 &mut buffer,
                 &mut length,
             );
@@ -390,8 +393,8 @@ unsafe extern "C" fn evt_io_device_control(
                 call_unsafe_wdf_function_binding!(WdfRequestComplete, request, status);
                 return;
             }
-            let output = buffer.cast::<ProcessEvent>();
-            let capacity = length / core::mem::size_of::<ProcessEvent>();
+            let output = buffer.cast::<SensorEvent>();
+            let capacity = length / core::mem::size_of::<SensorEvent>();
 
             call_unsafe_wdf_function_binding!(WdfSpinLockAcquire, EVENT_LOCK);
             // SAFETY: the lock is held.
@@ -410,7 +413,7 @@ unsafe extern "C" fn evt_io_device_control(
                 WdfRequestCompleteWithInformation,
                 request,
                 STATUS_SUCCESS,
-                (count * core::mem::size_of::<ProcessEvent>()) as u64,
+                (count * core::mem::size_of::<SensorEvent>()) as u64,
             );
             return;
         }
