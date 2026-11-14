@@ -297,9 +297,7 @@ unsafe extern "C" fn post_create(
     if status < 0 {
         return POSTOP_FINISHED;
     }
-    if callback.io_status.Information != u64::from(FILE_CREATED) {
-        return POSTOP_FINISHED;
-    }
+    let information_value = callback.io_status.Information;
 
     let mut information: *mut FltFileNameInformation = core::ptr::null_mut();
     // SAFETY: fltmgr allocates the name information; released below.
@@ -320,6 +318,8 @@ unsafe extern "C" fn post_create(
                 PsGetCurrentProcessId() as usize as u32
             };
             event.timestamp = 0;
+            // Diagnostic: raw create result (1 opened, 2 created, 3 overwritten).
+            event.detail = information_value as u32;
             copy_wide(
                 &name_info.name,
                 &mut event.primary,
