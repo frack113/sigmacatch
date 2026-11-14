@@ -349,8 +349,8 @@ fn register_ob_callbacks() -> NTSTATUS {
 /// Driver entry point, called by the I/O manager when the service starts.
 ///
 /// KMDF requires the exported symbol to be named `DriverEntry`.
-#[link_section = "INIT"]
-#[export_name = "DriverEntry"]
+#[unsafe(link_section = "INIT")]
+#[unsafe(export_name = "DriverEntry")]
 extern "system" fn driver_entry(
     driver: &mut wdk_sys::DRIVER_OBJECT,
     registry_path: PCUNICODE_STRING,

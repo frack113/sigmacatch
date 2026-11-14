@@ -11,7 +11,7 @@
 [package]
 name = "sigmacatch-driver"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "sigmacatch kernel sensor (Sysmon-schema telemetry without Sysmon)"
 license = "MIT"
 
