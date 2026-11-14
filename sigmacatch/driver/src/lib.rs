@@ -24,13 +24,13 @@
 extern crate wdk_panic;
 
 use wdk::println;
-use wdk_sys::ntddk::{KeAcquireSpinLock, KeReleaseSpinLock, PsSetCreateProcessNotifyRoutineEx};
+use wdk_sys::ntddk::PsSetCreateProcessNotifyRoutineEx;
 use wdk_sys::{
-    _WDF_DEVICE_IO_TYPE, _WDF_IO_QUEUE_DISPATCH_TYPE, HANDLE, KIRQL, KSPIN_LOCK, NTSTATUS,
-    PCUNICODE_STRING, PDRIVER_OBJECT, PEPROCESS, PPS_CREATE_NOTIFY_INFO, PWDFDEVICE_INIT,
+    _WDF_DEVICE_IO_TYPE, _WDF_IO_QUEUE_DISPATCH_TYPE, HANDLE, NTSTATUS, PCUNICODE_STRING,
+    PDRIVER_OBJECT, PEPROCESS, PPS_CREATE_NOTIFY_INFO, PWDFDEVICE_INIT,
     STATUS_INVALID_DEVICE_REQUEST, STATUS_SUCCESS, UNICODE_STRING, WDF_DRIVER_CONFIG,
     WDF_IO_QUEUE_CONFIG, WDF_NO_OBJECT_ATTRIBUTES, WDFDEVICE, WDFDRIVER, WDFQUEUE, WDFREQUEST,
-    call_unsafe_wdf_function_binding,
+    WDFSPINLOCK, call_unsafe_wdf_function_binding,
 };
 
 // The protocol lives in the user-mode crate and is included verbatim, so the
@@ -92,14 +92,14 @@ static SYMBOLIC_LINK: [u16; 24] = [
     0,
 ];
 
-/// The process-event ring, guarded by [`RING_LOCK`].
+/// The process-event ring, guarded by [`EVENT_LOCK`].
 struct Ring {
     events: [ProcessEvent; RING_CAPACITY],
     head: usize,
     count: usize,
 }
 
-// SAFETY: every access is guarded by `RING_LOCK` (producer = the notify
+// SAFETY: every access is guarded by `EVENT_LOCK` (producer = the notify
 // callback at PASSIVE_LEVEL, consumer = the sequential queue at PASSIVE_LEVEL).
 static mut RING: Ring = Ring {
     events: [ProcessEvent::empty(); RING_CAPACITY],
@@ -107,8 +107,12 @@ static mut RING: Ring = Ring {
     count: 0,
 };
 
-/// Spinlock serialising [`RING`].
-static mut RING_LOCK: KSPIN_LOCK = 0;
+/// KMDF spinlock serialising [`RING`]. Created in `evt_device_add`, before
+/// the notify routine is registered.
+static mut EVENT_LOCK: WDFSPINLOCK = core::ptr::null_mut();
+
+/// True once the notify routine is registered (device add runs once).
+static mut NOTIFY_REGISTERED: bool = false;
 
 /// Wrap a static UTF-16 buffer as a counted `UNICODE_STRING`.
 fn unicode_string(buffer: &'static [u16]) -> UNICODE_STRING {
@@ -140,21 +144,10 @@ unsafe fn copy_wide(source: &UNICODE_STRING, destination: &mut [u16], copied: &m
     *copied = count as u16;
 }
 
-unsafe fn ring_lock() -> KIRQL {
-    let mut irql: KIRQL = 0;
-    // SAFETY: `RING_LOCK` is a static spinlock, acquired exactly once here.
-    unsafe { KeAcquireSpinLock(core::ptr::addr_of_mut!(RING_LOCK), &mut irql) };
-    irql
-}
-
-unsafe fn ring_unlock(irql: KIRQL) {
-    // SAFETY: `irql` is the value `KeAcquireSpinLock` returned for this lock.
-    unsafe { KeReleaseSpinLock(core::ptr::addr_of_mut!(RING_LOCK), irql) };
-}
-
 /// Append one record, overwriting the oldest when full.
 unsafe fn ring_push(event: &ProcessEvent) {
-    let irql = ring_lock();
+    // SAFETY: the spinlock is created before the notify routine runs.
+    unsafe { call_unsafe_wdf_function_binding!(WdfSpinLockAcquire, EVENT_LOCK) };
     // SAFETY: the lock is held.
     unsafe {
         let ring = &mut *core::ptr::addr_of_mut!(RING);
@@ -166,7 +159,8 @@ unsafe fn ring_push(event: &ProcessEvent) {
             ring.head = (ring.head + 1) % RING_CAPACITY;
         }
     }
-    ring_unlock(irql);
+    // SAFETY: paired with the acquire above.
+    unsafe { call_unsafe_wdf_function_binding!(WdfSpinLockRelease, EVENT_LOCK) };
 }
 
 /// `PsSetCreateProcessNotifyRoutineEx` callback: copy the create/exit record.
@@ -183,17 +177,21 @@ unsafe extern "C" fn process_notify(
         // SAFETY: `create_info` is valid for the duration of the callback.
         let info = unsafe { &*create_info };
         event.parent_pid = info.ParentProcessId as usize as u32;
-        // SAFETY: the UNICODE_STRINGs are valid for the duration of the
-        // callback; the strings are copied out immediately.
+        // `ImageFileName` and `CommandLine` are `PCUNICODE_STRING` here; both
+        // may be null, and the strings are copied out immediately.
+        // SAFETY: the pointers and their UNICODE_STRINGs are valid for the
+        // duration of the callback.
         unsafe {
-            copy_wide(
-                &info.ImageFileName,
-                &mut event.image,
-                &mut event.image_length,
-            );
-            if !info.CommandLine.Buffer.is_null() {
+            if !info.ImageFileName.is_null() {
                 copy_wide(
-                    &info.CommandLine,
+                    &*info.ImageFileName,
+                    &mut event.image,
+                    &mut event.image_length,
+                );
+            }
+            if !info.CommandLine.is_null() {
+                copy_wide(
+                    &*info.CommandLine,
                     &mut event.command_line,
                     &mut event.command_length,
                 );
@@ -223,7 +221,7 @@ extern "system" fn driver_entry(
 
     // SAFETY: standard KMDF entry sequence; `driver` and `registry_path` come
     // from the I/O manager and stay valid for the call.
-    let status = unsafe {
+    unsafe {
         call_unsafe_wdf_function_binding!(
             WdfDriverCreate,
             driver as PDRIVER_OBJECT,
@@ -232,30 +230,22 @@ extern "system" fn driver_entry(
             &raw mut config,
             &mut driver_handle,
         )
-    };
-    if status != STATUS_SUCCESS {
-        println!("sigmacatch: WdfDriverCreate failed {status:#010X}");
-        return status;
     }
-
-    // SAFETY: the callback is a plain `extern "C"` fn; the routine is removed
-    // again in `evt_driver_unload`.
-    let status = unsafe { PsSetCreateProcessNotifyRoutineEx(Some(process_notify), 0) };
-    if status != STATUS_SUCCESS {
-        println!("sigmacatch: PsSetCreateProcessNotifyRoutineEx failed {status:#010X}");
-    }
-    status
 }
 
 /// Remove the notify routine before the driver is unloaded.
 unsafe extern "C" fn evt_driver_unload(_driver: WDFDRIVER) {
-    // SAFETY: removes the routine registered in `driver_entry`.
+    // SAFETY: removes the routine registered in `evt_device_add`.
     unsafe {
-        PsSetCreateProcessNotifyRoutineEx(Some(process_notify), 1);
+        if NOTIFY_REGISTERED {
+            PsSetCreateProcessNotifyRoutineEx(Some(process_notify), 1);
+            NOTIFY_REGISTERED = false;
+        }
     }
 }
 
-/// Create the control device and its request queue.
+/// Create the control device, its queue and lock, and register the notify
+/// routine.
 unsafe extern "C" fn evt_device_add(
     _driver: WDFDRIVER,
     mut device_init: PWDFDEVICE_INIT,
@@ -322,7 +312,32 @@ unsafe extern "C" fn evt_device_add(
         );
         if status != STATUS_SUCCESS {
             println!("sigmacatch: WdfIoQueueCreate failed {status:#010X}");
+            return status;
         }
+
+        // The spinlock and the notify routine must exist before any process
+        // event can be produced, and only here is the device fully built.
+        let mut lock: WDFSPINLOCK = core::ptr::null_mut();
+        status = call_unsafe_wdf_function_binding!(
+            WdfSpinLockCreate,
+            WDF_NO_OBJECT_ATTRIBUTES,
+            &mut lock
+        );
+        if status != STATUS_SUCCESS {
+            println!("sigmacatch: WdfSpinLockCreate failed {status:#010X}");
+            return status;
+        }
+        EVENT_LOCK = lock;
+
+        if !NOTIFY_REGISTERED {
+            let result = PsSetCreateProcessNotifyRoutineEx(Some(process_notify), 0);
+            if result != STATUS_SUCCESS {
+                println!("sigmacatch: PsSetCreateProcessNotifyRoutineEx failed {result:#010X}");
+                return result;
+            }
+            NOTIFY_REGISTERED = true;
+        }
+
         status
     }
 }
@@ -378,7 +393,7 @@ unsafe extern "C" fn evt_io_device_control(
             let output = buffer.cast::<ProcessEvent>();
             let capacity = length / core::mem::size_of::<ProcessEvent>();
 
-            let irql = ring_lock();
+            call_unsafe_wdf_function_binding!(WdfSpinLockAcquire, EVENT_LOCK);
             // SAFETY: the lock is held.
             let ring = unsafe { &mut *core::ptr::addr_of_mut!(RING) };
             let count = ring.count.min(capacity);
@@ -389,7 +404,7 @@ unsafe extern "C" fn evt_io_device_control(
             }
             ring.head = (ring.head + count) % RING_CAPACITY;
             ring.count -= count;
-            ring_unlock(irql);
+            call_unsafe_wdf_function_binding!(WdfSpinLockRelease, EVENT_LOCK);
 
             call_unsafe_wdf_function_binding!(
                 WdfRequestCompleteWithInformation,
