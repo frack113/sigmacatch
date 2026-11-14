@@ -84,7 +84,9 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $bindings = Get-ChildItem -Recurse -Filter bindings.rs -Path sigmacatch/driver/target -ErrorAction SilentlyContinue | Select-Object -First 1
+          Write-Host "CARGO_TARGET_DIR=$env:CARGO_TARGET_DIR"
+          Get-ChildItem -Recurse -Filter bindings.rs -Path . -ErrorAction SilentlyContinue | Select-Object -First 5 -ExpandProperty FullName
+          $bindings = Get-ChildItem -Recurse -Filter bindings.rs -Path . -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $bindings) { Write-Host "no bindings.rs found"; exit 0 }
           Write-Host "BINDINGS: $($bindings.FullName)"
           $patterns = @(
