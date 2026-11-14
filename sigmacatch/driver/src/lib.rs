@@ -238,7 +238,7 @@ unsafe extern "C" fn evt_driver_unload(_driver: WDFDRIVER) {
     // SAFETY: removes the routine registered in `evt_device_add`.
     unsafe {
         if NOTIFY_REGISTERED {
-            PsSetCreateProcessNotifyRoutineEx(Some(process_notify), 1);
+            let _ = PsSetCreateProcessNotifyRoutineEx(Some(process_notify), 1);
             NOTIFY_REGISTERED = false;
         }
     }
@@ -395,12 +395,12 @@ unsafe extern "C" fn evt_io_device_control(
 
             call_unsafe_wdf_function_binding!(WdfSpinLockAcquire, EVENT_LOCK);
             // SAFETY: the lock is held.
-            let ring = unsafe { &mut *core::ptr::addr_of_mut!(RING) };
+            let ring = &mut *core::ptr::addr_of_mut!(RING);
             let count = ring.count.min(capacity);
             // Drain the oldest `count` records.
             for index in 0..count {
                 let source = ring.events[(ring.head + index) % RING_CAPACITY];
-                unsafe { output.add(index).write(source) };
+                output.add(index).write(source);
             }
             ring.head = (ring.head + count) % RING_CAPACITY;
             ring.count -= count;
