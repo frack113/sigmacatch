@@ -3,14 +3,15 @@
 
 //! Diagnostic probe for the ETW collector (feature `etw`, Windows only).
 //!
-//! Starts the same sessions the collector will use, prints the decoded
-//! provider/event ids, and reports session loss counters. This is the M0/M1
-//! validation tool: it answers "which fields does this VM actually give us"
-//! without any Sigma or regression-data machinery.
+//! Starts the real sessions, prints decoded events, and reports session loss
+//! counters. This is the tool the collector's coverage claims are measured
+//! with: which fields a given VM actually publishes, which event ids arrive,
+//! and whether the consumer keeps up.
 //!
 //! ```text
 //! cargo xwin build --release --examples --features etw -p sigmacatch
 //! etw_dump.exe [--seconds N] [--filter SUBSTRING] [--full]
+//!              [--raw-opcode N] [--sessions process,main,kernel]
 //! ```
 //!
 //! Requires an elevated prompt (kernel providers).
@@ -27,7 +28,7 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(windows)]
 mod probe {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashMap, HashSet};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -37,6 +38,8 @@ mod probe {
         RunningSession, SessionConfig, TraceSession, ensure_privileges,
     };
     use sigmacatch::inputs::etw_event::{DecodedEvent, decode};
+    use sigmacatch::inputs::etw_process::{ProcessFacts, enrich, snapshot};
+    use sigmacatch::inputs::etw_sysmon::process_start_xml;
     use windows::Win32::System::Diagnostics::Etw::EVENT_RECORD;
 
     const PROCESS_SESSION_NAME: &str = "sigmacatch-probe-process";
@@ -50,7 +53,8 @@ mod probe {
     #[derive(Default)]
     struct Stats {
         events: BTreeMap<EventKey, usize>,
-        raw: BTreeMap<(String, u16, u8), usize>,
+        /// Raw header census, before any TDH call.
+        raw: BTreeMap<EventKey, usize>,
         decode_failures: BTreeMap<(String, u16), usize>,
         samples: BTreeMap<EventKey, usize>,
     }
@@ -59,9 +63,54 @@ mod probe {
         seconds: u64,
         filter: Option<String>,
         full: bool,
-        /// Dump the raw payload of the first record with this opcode from the
-        /// classic kernel logger (used to reverse the MOF layout).
+        /// Dump the raw payload of the first record with this opcode.
         raw_opcode: Option<u8>,
+        sessions: Vec<String>,
+        /// Diagnostic: capture the process session to an ETL file instead of
+        /// consuming it in realtime.
+        file: Option<String>,
+        /// Synthesize Sysmon EID 1 for every process first seen during the
+        /// capture, from the live process.
+        eid1: bool,
+    }
+
+    /// Processes seen during the capture, for the EID 1 synthesis.
+    struct ProcessTracker {
+        started: chrono::DateTime<chrono::Utc>,
+        seen: HashSet<u32>,
+        facts: HashMap<u32, ProcessFacts>,
+    }
+
+    impl ProcessTracker {
+        fn new() -> Self {
+            Self {
+                // Tolerance for a process created just before the session.
+                started: chrono::Utc::now() - chrono::Duration::seconds(2),
+                seen: HashSet::new(),
+                facts: HashMap::new(),
+            }
+        }
+
+        /// Enrich a PID the first time it appears, and emit EID 1 when the
+        /// process really started during the capture.
+        fn observe(&mut self, pid: u32) {
+            if pid <= 4 || !self.seen.insert(pid) {
+                return;
+            }
+            let Some(facts) = enrich(pid) else {
+                return;
+            };
+            let new = facts.created.is_some_and(|created| created >= self.started);
+            let parent = self.facts.get(&facts.parent_pid).cloned();
+            if new {
+                let computer = std::env::var("COMPUTERNAME").unwrap_or_default();
+                println!(
+                    "\nEID1 {}",
+                    process_start_xml(&computer, &facts, parent.as_ref())
+                );
+            }
+            self.facts.insert(pid, facts);
+        }
     }
 
     pub fn main() -> Result<()> {
@@ -73,33 +122,87 @@ mod probe {
         println!("privileges: elevated");
         println!("capturing for {}s", options.seconds);
 
-        let stats = Arc::new(Mutex::new(Stats::default()));
+        if let Some(path) = options.file.clone() {
+            let session =
+                TraceSession::start_file(PROCESS_SESSION_NAME, SessionConfig::PROCESS, &path)?;
+            for provider in PROCESS_SESSION_PROVIDERS {
+                session.enable_provider(provider)?;
+            }
+            std::thread::sleep(Duration::from_secs(options.seconds));
+            session.stop();
+            println!("wrote {path}");
+            return Ok(());
+        }
 
-        let process = start(
-            TraceSession::start(PROCESS_SESSION_NAME, SessionConfig::PROCESS)?,
-            PROCESS_SESSION_NAME,
-            PROCESS_SESSION_PROVIDERS,
-            stats.clone(),
-            options.full,
-            options.raw_opcode,
-        )?;
-        let main = start(
-            TraceSession::start(MAIN_SESSION_NAME, SessionConfig::MAIN)?,
-            MAIN_SESSION_NAME,
-            MAIN_SESSION_PROVIDERS,
-            stats.clone(),
-            options.full,
-            options.raw_opcode,
-        )?;
-        // Classic kernel logger: CommandLine and UserSID only exist here.
-        let kernel = start(
-            TraceSession::start_kernel_logger(KERNEL_LOGGER_FLAGS, SessionConfig::PROCESS)?,
-            etw::KERNEL_LOGGER_NAME,
-            &[],
-            stats.clone(),
-            options.full,
-            options.raw_opcode,
-        )?;
+        let stats = Arc::new(Mutex::new(Stats::default()));
+        let tracker = Arc::new(Mutex::new(ProcessTracker::new()));
+
+        // Process-creation trigger independent of the ETW stream: realtime
+        // sessions on this platform do not deliver `ProcessStart` for
+        // short-lived processes, but the processes themselves are there.
+        let poller = if options.eid1 {
+            let tracker = Arc::clone(&tracker);
+            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let poll_stop = Arc::clone(&stop);
+            let handle = std::thread::spawn(move || {
+                while !poll_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    for pid in snapshot() {
+                        let mut tracker = tracker
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        tracker.observe(pid);
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            });
+            Some((handle, stop))
+        } else {
+            None
+        };
+        let mut running: Vec<(&str, RunningSession)> = Vec::new();
+
+        if options.has("process") {
+            running.push((
+                "process",
+                start(
+                    TraceSession::start(PROCESS_SESSION_NAME, SessionConfig::PROCESS)?,
+                    PROCESS_SESSION_NAME,
+                    PROCESS_SESSION_PROVIDERS,
+                    stats.clone(),
+                    tracker.clone(),
+                    &options,
+                    Duration::from_millis(5),
+                )?,
+            ));
+        }
+        if options.has("main") {
+            running.push((
+                "main",
+                start(
+                    TraceSession::start(MAIN_SESSION_NAME, SessionConfig::MAIN)?,
+                    MAIN_SESSION_NAME,
+                    MAIN_SESSION_PROVIDERS,
+                    stats.clone(),
+                    tracker.clone(),
+                    &options,
+                    Duration::from_millis(20),
+                )?,
+            ));
+        }
+        if options.has("kernel") {
+            running.push((
+                "kernel",
+                start(
+                    TraceSession::start_kernel_logger(KERNEL_LOGGER_FLAGS, SessionConfig::PROCESS)?,
+                    etw::KERNEL_LOGGER_NAME,
+                    &[],
+                    stats.clone(),
+                    tracker.clone(),
+                    &options,
+                    Duration::from_millis(20),
+                )?,
+            ));
+        }
 
         // Heartbeat: shows whether delivery is continuous or a single burst.
         let heartbeat = {
@@ -117,22 +220,29 @@ mod probe {
         std::thread::sleep(Duration::from_secs(options.seconds));
         let _ = heartbeat.join();
 
-        for (label, session) in [("process", &process), ("main", &main), ("kernel", &kernel)] {
+        for (label, session) in running {
             if let Some(stats) = session.stats() {
                 println!(
                     "{label} session: events_lost={} buffers={} realtime_lost={}",
                     stats.events_lost, stats.buffers_written, stats.realtime_buffers_lost
                 );
             }
-        }
-
-        for (label, session) in [("process", process), ("main", main), ("kernel", kernel)] {
             let (status, ran) = session.stop();
             println!("{label} consumer: status={status} ran={ran:?}");
         }
 
+        if let Some((handle, stop)) = poller {
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            let _ = handle.join();
+        }
         report(&stats, options.filter.as_deref());
         Ok(())
+    }
+
+    impl Options {
+        fn has(&self, session: &str) -> bool {
+            self.sessions.iter().any(|s| s == session)
+        }
     }
 
     fn parse_args() -> Options {
@@ -141,6 +251,9 @@ mod probe {
             filter: None,
             full: false,
             raw_opcode: None,
+            sessions: vec!["process".into(), "main".into(), "kernel".into()],
+            file: None,
+            eid1: false,
         };
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -155,6 +268,13 @@ mod probe {
                 "--raw-opcode" => {
                     options.raw_opcode = args.next().and_then(|v| v.parse().ok());
                 }
+                "--file" => options.file = args.next(),
+                "--eid1" => options.eid1 = true,
+                "--sessions" => {
+                    if let Some(list) = args.next() {
+                        options.sessions = list.split(',').map(str::to_string).collect();
+                    }
+                }
                 other => eprintln!("ignoring unknown argument {other}"),
             }
         }
@@ -166,13 +286,25 @@ mod probe {
         name: &str,
         providers: &[ProviderSpec],
         stats: Arc<Mutex<Stats>>,
-        full: bool,
-        raw_opcode: Option<u8>,
+        tracker: Arc<Mutex<ProcessTracker>>,
+        options: &Options,
+        flush_interval: Duration,
     ) -> Result<RunningSession> {
+        let full = options.full;
+        let raw_opcode = options.raw_opcode;
+        let eid1 = options.eid1;
         let sink: etw::Sink = Box::new(move |record: &EVENT_RECORD| {
             collect(record, &stats, full, raw_opcode);
+            if eid1 {
+                // A panic elsewhere must not turn into a poisoned-lock panic
+                // here: recover the guard and keep processing records.
+                let mut tracker = tracker
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                tracker.observe(record.EventHeader.ProcessId);
+            }
         });
-        RunningSession::spawn(session, name, providers, sink)
+        RunningSession::spawn_with_flush(session, name, providers, sink, Some(flush_interval))
     }
 
     fn collect(
@@ -181,59 +313,59 @@ mod probe {
         full: bool,
         raw_opcode: Option<u8>,
     ) {
+        let header = &record.EventHeader;
+        let key = (
+            guid(&header.ProviderId),
+            header.EventDescriptor.Id,
+            header.EventDescriptor.Opcode,
+        );
         {
-            // Raw header census, independent of TDH decoding.
-            let key = (
-                guid(&record.EventHeader.ProviderId),
-                record.EventHeader.EventDescriptor.Id,
-                record.EventHeader.EventDescriptor.Opcode,
-            );
             let mut stats = stats.lock().expect("stats lock");
-            *stats.raw.entry(key).or_default() += 1;
-        }
-        if let Some(opcode) = raw_opcode
-            && record.EventHeader.EventDescriptor.Opcode == opcode
-        {
-            // SAFETY: `UserDataLength` bytes are valid for the callback.
-            let bytes = unsafe {
-                std::slice::from_raw_parts(
-                    record.UserData.cast::<u8>(),
-                    record.UserDataLength as usize,
-                )
-            };
-            let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-            let ascii: String = bytes
-                .iter()
-                .map(|b| {
-                    if b.is_ascii_graphic() {
-                        *b as char
-                    } else {
-                        '.'
-                    }
-                })
-                .collect();
-            println!(
-                "RAW opcode={opcode} provider={} id={} len={}\n{hex}\n{ascii}",
-                guid(&record.EventHeader.ProviderId),
-                record.EventHeader.EventDescriptor.Id,
-                bytes.len()
-            );
+            *stats.raw.entry(key.clone()).or_default() += 1;
+            if let Some(opcode) = raw_opcode
+                && header.EventDescriptor.Opcode == opcode
+                && stats.raw.get(&key).copied() == Some(1)
+            {
+                // SAFETY: `UserDataLength` bytes are valid for the callback.
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(
+                        record.UserData.cast::<u8>(),
+                        record.UserDataLength as usize,
+                    )
+                };
+                let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+                let ascii: String = bytes
+                    .iter()
+                    .map(|b| {
+                        if b.is_ascii_graphic() {
+                            *b as char
+                        } else {
+                            '.'
+                        }
+                    })
+                    .collect();
+                println!(
+                    "RAW opcode={opcode} provider={} id={} len={}\n{hex}\n{ascii}",
+                    key.0,
+                    header.EventDescriptor.Id,
+                    bytes.len()
+                );
+            }
         }
 
         let Some(decoded) = decode(record) else {
-            let key = (
-                guid(&record.EventHeader.ProviderId),
-                record.EventHeader.EventDescriptor.Id,
-            );
             let mut stats = stats.lock().expect("stats lock");
-            *stats.decode_failures.entry(key).or_default() += 1;
+            *stats
+                .decode_failures
+                .entry((key.0.clone(), key.1))
+                .or_default() += 1;
             return;
         };
 
-        let key = (decoded.provider.clone(), decoded.event_id, decoded.opcode);
+        let decoded_key = (decoded.provider.clone(), decoded.event_id, decoded.opcode);
         let mut stats = stats.lock().expect("stats lock");
-        *stats.events.entry(key.clone()).or_default() += 1;
-        let sample = stats.samples.entry(key).or_default();
+        *stats.events.entry(decoded_key.clone()).or_default() += 1;
+        let sample = stats.samples.entry(decoded_key).or_default();
         if *sample >= SAMPLES_PER_EVENT {
             return;
         }

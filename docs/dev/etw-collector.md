@@ -89,8 +89,9 @@ Concretely:
 sigmacatch/src/inputs/
 ├── etw.rs          # feature `etw` (windows-only): session + callback loop, the
 │                   #   analogue of ebpf.rs (loader + ring-buffer dispatch)
-├── etw_event.rs    # TDH property → nested Sysmon XML/JSON builder, the
-│                   #   analogue of ebpf_event.rs
+├── etw_event.rs    # TDH property → typed fields, the analogue of ebpf_event.rs
+├── etw_process.rs  # live-process facts (CommandLine, User, parent, creation)
+├── etw_sysmon.rs   # Sysmon-schema rendering (EID 1 today)
 └── windows.rs      # Windows orchestrator: MultiCollector (winevt channels + etw),
                     #   the analogue of linux.rs (does not exist yet — today winevt.rs
                     #   is a single-source CollectorKind)
@@ -211,13 +212,32 @@ skill's "no elevated admin" note is stale.
    same way: events 3006/3008 carry keyword `0`, so the Operational-channel mask
    never receives them.
 
-**Open issue (blocks M2).** In realtime mode, `ProcessStart`/`ProcessStop` are
-captured for long-lived processes only: five `cmd /c ping` runs produced zero
-`ProcessStart` records in a 20 s window, while a concurrent `logman` file-mode
-session on the same provider captured 34/34 in the same window. Buffer size
-(32 KiB and 256 KiB), pool depth and flush timer made no difference, and the
-session reports `EventsLost = 0`. Until this is resolved, EID 1 cannot be
-generated from realtime ETW.
+**Process creation (EID 1) does not come from ETW here.** In realtime mode,
+`ProcessStart`/`ProcessStop` are delivered for long-lived processes only: five
+`cmd /c ping` runs produced zero `ProcessStart` records in a 20 s window while a
+concurrent `logman` file-mode session on the same provider captured 34/34, and
+the identical run through `ferrisetw` 1.2 — an independent consumer — produced
+the same empty result. Buffer size (32 KiB/256 KiB), pool depth, flush timer,
+`EVENT_TRACE_USE_PAGED_MEMORY`, private-logger mode and per-processor buffering
+all leave the result unchanged, and the session reports `EventsLost = 0`.
+
+EID 1 is therefore built from the **live process**, which is also the only
+source of its two mandatory fields (`CommandLine` and `User` are never published
+by the manifest provider):
+
+- `QueryFullProcessImageNameW` → `Image`;
+- `NtQueryInformationProcess(ProcessCommandLineInformation)` → `CommandLine`;
+- `NtQueryInformationProcess(ProcessBasicInformation)` → `ParentProcessId`;
+- `GetProcessTimes` → `UtcTime` (the real creation time, not our observation
+  time);
+- the process token → `User`, `UserSid`, `IntegrityLevel`.
+
+The trigger is a 50 ms Toolhelp snapshot of the process table, with ETW events
+from an unknown PID as the fast path; a process is only reported when its
+creation time falls inside the capture, so nothing pre-existing is invented.
+Sysmon-only enrichments that cannot be sourced exactly (`ProcessGuid`,
+`LogonGuid`, `Hashes`, `FileVersion`, `Company`, ...) are omitted rather than
+approximated.
 
 ## Phase 2 (optional): test-signed driver
 

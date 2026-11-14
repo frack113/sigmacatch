@@ -22,16 +22,19 @@
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::ptr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result, bail};
 use windows::Win32::Foundation::{ERROR_SUCCESS, HANDLE, WIN32_ERROR};
 use windows::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation};
 use windows::Win32::System::Diagnostics::Etw::{
     CONTROLTRACE_HANDLE, EVENT_CONTROL_CODE_ENABLE_PROVIDER, EVENT_RECORD,
-    EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_FLAG, EVENT_TRACE_LOGFILEW, EVENT_TRACE_PROPERTIES,
-    EVENT_TRACE_REAL_TIME_MODE, EVENT_TRACE_SYSTEM_LOGGER_MODE, EnableTraceEx2, OpenTraceW,
-    PROCESS_TRACE_MODE_EVENT_RECORD, PROCESS_TRACE_MODE_REAL_TIME, PROCESSTRACE_HANDLE,
-    ProcessTrace, StartTraceW, WNODE_FLAG_TRACED_GUID,
+    EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_FLAG, EVENT_TRACE_LOGFILEW,
+    EVENT_TRACE_NO_PER_PROCESSOR_BUFFERING, EVENT_TRACE_PROPERTIES, EVENT_TRACE_REAL_TIME_MODE,
+    EVENT_TRACE_SYSTEM_LOGGER_MODE, EnableTraceEx2, OpenTraceW, PROCESS_TRACE_MODE_EVENT_RECORD,
+    PROCESS_TRACE_MODE_REAL_TIME, PROCESSTRACE_HANDLE, ProcessTrace, StartTraceW,
+    WNODE_FLAG_TRACED_GUID,
 };
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows::core::{GUID, PCWSTR, PWSTR};
@@ -39,6 +42,9 @@ use windows::core::{GUID, PCWSTR, PWSTR};
 /// Name of the classic kernel logger session. Windows allows exactly one, and
 /// it must carry this exact name.
 pub const KERNEL_LOGGER_NAME: &str = "NT Kernel Logger";
+
+/// Slack reserved after the logger name and file path in the properties blob.
+const NAME_PADDING: usize = 1024;
 
 /// Buffer policy for one session.
 #[derive(Debug, Clone, Copy)]
@@ -200,7 +206,6 @@ fn is_elevated() -> Result<bool> {
     }
 }
 
-/// A realtime trace session, owned by this process.
 /// Counters reported by a live session.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SessionStats {
@@ -225,7 +230,15 @@ pub struct TraceSession {
 impl TraceSession {
     /// Start a realtime user-mode (manifest provider) session.
     pub fn start(name: &str, config: SessionConfig) -> Result<Self> {
-        Self::start_with(name, config, None)
+        Self::start_with(name, config, None, None)
+    }
+
+    /// Start the same session writing to an ETL file instead of realtime.
+    ///
+    /// Diagnostic only: file mode is the reference the realtime path is
+    /// measured against (a `logman`-style capture of the same providers).
+    pub fn start_file(name: &str, config: SessionConfig, path: &str) -> Result<Self> {
+        Self::start_with(name, config, None, Some(path))
     }
 
     /// Start the classic kernel logger session.
@@ -233,13 +246,14 @@ impl TraceSession {
     /// Unlike manifest providers, the kernel logger is subscribed through the
     /// `EnableFlags` mask in the properties, not `EnableTraceEx2`.
     pub fn start_kernel_logger(flags: EVENT_TRACE_FLAG, config: SessionConfig) -> Result<Self> {
-        Self::start_with(KERNEL_LOGGER_NAME, config, Some(flags))
+        Self::start_with(KERNEL_LOGGER_NAME, config, Some(flags), None)
     }
 
     fn start_with(
         name: &str,
         config: SessionConfig,
         kernel_flags: Option<EVENT_TRACE_FLAG>,
+        file_path: Option<&str>,
     ) -> Result<Self> {
         ensure_privileges()?;
         // A previous run that crashed leaves the session behind; reclaim it
@@ -247,8 +261,20 @@ impl TraceSession {
         Self::stop_orphan(name);
 
         let name_wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+        let path_wide: Vec<u16> = file_path
+            .unwrap_or_default()
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         let properties_size = size_of::<EVENT_TRACE_PROPERTIES>();
-        let total = properties_size + name_wide.len() * size_of::<u16>();
+        // Windows is handed a buffer that must hold the header, the logger
+        // name and the optional file path. Pad it like the reference
+        // implementation does: a buffer that is exactly the string bytes
+        // makes the session start but misbehave.
+        let total = properties_size
+            + name_wide.len() * size_of::<u16>()
+            + path_wide.len() * size_of::<u16>()
+            + NAME_PADDING;
         let mut properties = vec![0u64; total.div_ceil(size_of::<u64>())];
         let props = properties.as_mut_ptr().cast::<EVENT_TRACE_PROPERTIES>();
 
@@ -264,7 +290,13 @@ impl TraceSession {
             header.BufferSize = config.buffer_kb;
             header.MinimumBuffers = config.min_buffers;
             header.MaximumBuffers = config.max_buffers;
-            header.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
+            // Single global buffer stream instead of per-processor buffers:
+            // event order is load-bearing (path pairing), and this is also
+            // what the reference consumer uses.
+            header.LogFileMode = match file_path {
+                None => EVENT_TRACE_REAL_TIME_MODE | EVENT_TRACE_NO_PER_PROCESSOR_BUFFERING,
+                Some(_) => 1, // EVENT_TRACE_FILE_MODE_SEQUENTIAL
+            };
             // The classic kernel logger only delivers live events when the
             // session is flagged as a *system* logger; without this the
             // session starts and reports its own configuration, then goes
@@ -282,6 +314,15 @@ impl TraceSession {
                 properties.as_mut_ptr().cast::<u8>().add(properties_size),
                 name_wide.len() * size_of::<u16>(),
             );
+            if file_path.is_some() {
+                let offset = properties_size + name_wide.len() * size_of::<u16>();
+                header.LogFileNameOffset = offset as u32;
+                ptr::copy_nonoverlapping(
+                    path_wide.as_ptr().cast::<u8>(),
+                    properties.as_mut_ptr().cast::<u8>().add(offset),
+                    path_wide.len() * size_of::<u16>(),
+                );
+            }
         }
 
         let mut handle = CONTROLTRACE_HANDLE::default();
@@ -332,9 +373,29 @@ impl TraceSession {
 
     /// Stop and release the session. Idempotent enough: the OS ignores a stop
     /// on a session that already ended.
-    pub fn stop(self) {
-        let mut this = self;
-        this.stop_inner();
+    pub fn stop(&self) {
+        self.stop_inner();
+    }
+
+    /// Force the kernel to hand the current buffer to the consumer.
+    ///
+    /// A realtime session otherwise waits for the buffer to fill or for the
+    /// one-second `FlushTimer`, which is past the lifetime of a short-lived
+    /// process. Cheap enough to run every few milliseconds on the process
+    /// session; returns `false` once the session is gone.
+    pub fn flush(&self) -> bool {
+        let props = self.properties.as_ptr().cast::<EVENT_TRACE_PROPERTIES>();
+        // SAFETY: the blob is the one `StartTraceW` accepted; a flush only
+        // reads it.
+        let status = unsafe {
+            windows::Win32::System::Diagnostics::Etw::ControlTraceW(
+                self.handle,
+                PCWSTR(self.name.as_ptr()),
+                props.cast_mut(),
+                windows::Win32::System::Diagnostics::Etw::EVENT_TRACE_CONTROL_FLUSH,
+            )
+        };
+        status == ERROR_SUCCESS
     }
 
     /// Current session counters, queried from the OS.
@@ -366,10 +427,12 @@ impl TraceSession {
         })
     }
 
-    fn stop_inner(&mut self) {
+    fn stop_inner(&self) {
+        // The blob is only written by the kernel; a shared reference is fine.
         let props = self
             .properties
-            .as_mut_ptr()
+            .as_ptr()
+            .cast_mut()
             .cast::<EVENT_TRACE_PROPERTIES>();
         // SAFETY: blob shape is the one `StartTraceW` accepted.
         unsafe {
@@ -506,7 +569,9 @@ unsafe extern "system" fn on_event(record: *mut EVENT_RECORD) {
     }
     // SAFETY: pointer was produced by `Box::into_raw` in `open`.
     let sink = unsafe { &*sink };
-    sink(record);
+    // A panic must never cross the FFI boundary: it would abort the process
+    // and lose the whole capture. One malformed record is dropped instead.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sink(record)));
 }
 
 /// Convenience wrapper: start and consume one session on a background thread.
@@ -514,8 +579,10 @@ unsafe extern "system" fn on_event(record: *mut EVENT_RECORD) {
 /// Stops the session when the returned guard is dropped, which unblocks
 /// `ProcessTrace`.
 pub struct RunningSession {
-    session: Option<TraceSession>,
+    session: Option<Arc<TraceSession>>,
     thread: Option<std::thread::JoinHandle<(u32, std::time::Duration)>>,
+    flusher: Option<std::thread::JoinHandle<()>>,
+    flush_stop: Arc<AtomicBool>,
 }
 
 impl RunningSession {
@@ -526,6 +593,21 @@ impl RunningSession {
         name: &str,
         providers: &[ProviderSpec],
         sink: Sink,
+    ) -> Result<Self> {
+        Self::spawn_with_flush(session, name, providers, sink, None)
+    }
+
+    /// Same as [`spawn`](Self::spawn), with a periodic forced flush.
+    ///
+    /// `EVENT_TRACE_CONTROL_FLUSH` is what makes a short-lived process's
+    /// records reach the consumer before the process exits; without it the
+    /// session falls back to the one-second flush timer.
+    pub fn spawn_with_flush(
+        session: TraceSession,
+        name: &str,
+        providers: &[ProviderSpec],
+        sink: Sink,
+        flush_interval: Option<std::time::Duration>,
     ) -> Result<Self> {
         for provider in providers {
             session.enable_provider(provider)?;
@@ -539,15 +621,41 @@ impl RunningSession {
                 (status, started.elapsed())
             })
             .context("spawn ETW consumer thread")?;
+
+        let session = Arc::new(session);
+        let flush_stop = Arc::new(AtomicBool::new(false));
+        let flusher = match flush_interval {
+            None => None,
+            Some(interval) => {
+                let session = Arc::clone(&session);
+                let stop = Arc::clone(&flush_stop);
+                Some(
+                    std::thread::Builder::new()
+                        .name(format!("etw-flush-{name}"))
+                        .spawn(move || {
+                            while !stop.load(Ordering::Relaxed) {
+                                if !session.flush() {
+                                    break;
+                                }
+                                std::thread::sleep(interval);
+                            }
+                        })
+                        .context("spawn ETW flush thread")?,
+                )
+            }
+        };
+
         Ok(Self {
             session: Some(session),
             thread: Some(thread),
+            flusher,
+            flush_stop,
         })
     }
 
     /// Live counters for the underlying session, when still running.
     pub fn stats(&self) -> Option<SessionStats> {
-        self.session.as_ref().and_then(TraceSession::stats)
+        self.session.as_ref().and_then(|s| s.stats())
     }
 
     /// Stop the session and wait for the consumer loop to return.
@@ -556,6 +664,10 @@ impl RunningSession {
     /// a duration far below the capture window means the consumer detached
     /// early, which is what makes events "disappear" without any loss counter.
     pub fn stop(mut self) -> (u32, std::time::Duration) {
+        self.flush_stop.store(true, Ordering::Relaxed);
+        if let Some(flusher) = self.flusher.take() {
+            let _ = flusher.join();
+        }
         if let Some(session) = self.session.take() {
             session.stop();
         }
@@ -570,6 +682,10 @@ impl RunningSession {
 
 impl Drop for RunningSession {
     fn drop(&mut self) {
+        self.flush_stop.store(true, Ordering::Relaxed);
+        if let Some(flusher) = self.flusher.take() {
+            let _ = flusher.join();
+        }
         if let Some(session) = self.session.take() {
             session.stop();
         }

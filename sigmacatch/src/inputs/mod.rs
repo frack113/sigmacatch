@@ -21,6 +21,10 @@ pub mod winevt;
 pub mod etw;
 #[cfg(all(target_os = "windows", feature = "etw"))]
 pub mod etw_event;
+#[cfg(all(target_os = "windows", feature = "etw"))]
+pub mod etw_process;
+#[cfg(all(target_os = "windows", feature = "etw"))]
+pub mod etw_sysmon;
 
 // One-shot EVTX cross-platform input. Not `target_os`-gated: pure file
 // parsing, runs on Windows and Linux alike.
