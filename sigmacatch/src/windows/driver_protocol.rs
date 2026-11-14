@@ -20,7 +20,7 @@
 
 /// Bumped whenever the layout or the IOCTL set changes; both sides refuse to
 /// talk across a mismatch.
-pub const SIGMACATCH_PROTOCOL_VERSION: u32 = 4;
+pub const SIGMACATCH_PROTOCOL_VERSION: u32 = 5;
 
 /// `CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_READ_DATA)`.
 pub const IOCTL_GET_VERSION: u32 = 0x0022_2000;
@@ -52,8 +52,10 @@ pub mod kind {
     /// Cross-process access (EID 10): `primary` = target image, `detail` =
     /// granted access mask (D2).
     pub const PROCESS_ACCESS: u32 = 8;
-    /// Image (driver) loaded (EID 6): `primary` = image path (D2).
+    /// Image loaded (EID 7): `primary` = image path.
     pub const IMAGE_LOAD: u32 = 9;
+    /// Driver loaded (EID 6): `primary` = image path.
+    pub const DRIVER_LOAD: u32 = 10;
 }
 
 /// One event record, as the driver observed it.

@@ -19,6 +19,70 @@ use crate::inputs::etw_process::ProcessFacts;
 const SIGMACATCH_PROVIDER: &str = "{a3e1f6c2-4b5d-4e9f-9c1a-2d7b8e0f3a6c}";
 const SIGMACATCH_CHANNEL: &str = "sigmacatch/Operational";
 
+/// Render a Sysmon **EID 7 (ImageLoad)** event.
+pub fn image_load_xml(
+    computer: &str,
+    at: chrono::DateTime<chrono::Utc>,
+    process_id: u32,
+    process_image: Option<&str>,
+    image_loaded: &str,
+) -> String {
+    let mut data = String::new();
+    field(&mut data, "RuleName", "");
+    field(&mut data, "UtcTime", &sysmon_utc(at));
+    field(&mut data, "ProcessId", &process_id.to_string());
+    if let Some(image) = process_image {
+        field(&mut data, "Image", image);
+    }
+    field(&mut data, "ImageLoaded", image_loaded);
+    format!(
+        "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
+         <System>\
+         <Provider Name=\"sigmacatch\" Guid=\"{SIGMACATCH_PROVIDER}\"/>\
+         <EventID>7</EventID><Version>5</Version><Level>4</Level><Task>7</Task><Opcode>0</Opcode>\
+         <Keywords>0x8000000000000000</Keywords>\
+         <TimeCreated SystemTime=\"{}\"/>\
+         <EventRecordID>0</EventRecordID><Correlation/>\
+         <Execution ProcessID=\"{process_id}\" ThreadID=\"0\"/>\
+         <Channel>{SIGMACATCH_CHANNEL}</Channel>\
+         <Computer>{}</Computer>\
+         </System>\
+         <EventData>{data}</EventData>\
+         </Event>",
+        escape(&at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)),
+        escape(computer)
+    )
+}
+
+/// Render a Sysmon **EID 6 (DriverLoad)** event.
+pub fn driver_load_xml(
+    computer: &str,
+    at: chrono::DateTime<chrono::Utc>,
+    image_loaded: &str,
+) -> String {
+    let mut data = String::new();
+    field(&mut data, "RuleName", "");
+    field(&mut data, "UtcTime", &sysmon_utc(at));
+    field(&mut data, "ImageLoaded", image_loaded);
+    format!(
+        "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
+         <System>\
+         <Provider Name=\"sigmacatch\" Guid=\"{SIGMACATCH_PROVIDER}\"/>\
+         <EventID>6</EventID><Version>5</Version><Level>4</Level><Task>6</Task><Opcode>0</Opcode>\
+         <Keywords>0x8000000000000000</Keywords>\
+         <TimeCreated SystemTime=\"{}\"/>\
+         <EventRecordID>0</EventRecordID><Correlation/>\
+         <Execution ProcessID=\"0\" ThreadID=\"0\"/>\
+         <Channel>{SIGMACATCH_CHANNEL}</Channel>\
+         <Computer>{}</Computer>\
+         </System>\
+         <EventData>{data}</EventData>\
+         </Event>",
+        escape(&at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)),
+        escape(computer)
+    )
+}
+
 /// Render a Sysmon **EID 10 (ProcessAccess)** event.
 pub fn process_access_xml(
     computer: &str,

@@ -27,7 +27,7 @@ use wdk::println;
 use wdk_sys::_OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS;
 use wdk_sys::ntddk::{
     ObRegisterCallbacks, ObUnRegisterCallbacks, PsGetCurrentProcessId, PsGetProcessId,
-    PsSetCreateProcessNotifyRoutineEx,
+    PsRemoveLoadImageNotifyRoutine, PsSetCreateProcessNotifyRoutineEx, PsSetLoadImageNotifyRoutine,
 };
 use wdk_sys::{
     _WDF_DEVICE_IO_TYPE, _WDF_IO_QUEUE_DISPATCH_TYPE, HANDLE, NTSTATUS, OB_CALLBACK_REGISTRATION,
@@ -160,6 +160,9 @@ static mut OB_REGISTRATION_HANDLE: PVOID = core::ptr::null_mut();
 
 /// True once the object callbacks are registered.
 static mut OB_REGISTERED: bool = false;
+
+/// True once the image-load notify routine is registered.
+static mut IMAGE_NOTIFY_REGISTERED: bool = false;
 
 /// Process-handle rights worth reporting as EID 10 (the "injection" set).
 const INTERESTING_ACCESS: u32 = 0x0001 // TERMINATE
@@ -320,6 +323,40 @@ unsafe extern "C" fn process_access_post_op(
     unsafe { ring_push(&event) };
 }
 
+/// `PsSetLoadImageNotifyRoutine` callback: image and driver loads.
+unsafe extern "C" fn image_notify(
+    full_image_name: PUNICODE_STRING,
+    process_id: HANDLE,
+    image_info: PIMAGE_INFO,
+) {
+    if full_image_name.is_null() {
+        return;
+    }
+    let mut event = SensorEvent::empty();
+    event.version = SIGMACATCH_PROTOCOL_VERSION;
+    event.pid = process_id as usize as u32;
+    // SAFETY: the callback arguments are valid for the callback's duration.
+    unsafe {
+        copy_wide(
+            &*full_image_name,
+            &mut event.primary,
+            &mut event.primary_length,
+        );
+        // `SystemModeImage` (bit 8 of Properties) marks a kernel image.
+        let properties = if image_info.is_null() {
+            0
+        } else {
+            (*image_info).__bindgen_anon_1.Properties
+        };
+        event.kind = if properties & 0x100 != 0 {
+            kind::DRIVER_LOAD
+        } else {
+            kind::IMAGE_LOAD
+        };
+        ring_push(&event);
+    }
+}
+
 /// Register the process-access object callbacks.
 fn register_ob_callbacks() -> NTSTATUS {
     let mut operation = OB_OPERATION_REGISTRATION {
@@ -409,6 +446,10 @@ unsafe extern "C" fn evt_driver_unload(_driver: WDFDRIVER) {
         if OB_REGISTERED {
             ObUnRegisterCallbacks(OB_REGISTRATION_HANDLE);
             OB_REGISTERED = false;
+        }
+        if IMAGE_NOTIFY_REGISTERED {
+            let _ = PsRemoveLoadImageNotifyRoutine(Some(image_notify));
+            IMAGE_NOTIFY_REGISTERED = false;
         }
     }
 }
@@ -512,6 +553,15 @@ fn create_device(mut device_init: PWDFDEVICE_INIT) -> NTSTATUS {
                 return result;
             }
             OB_REGISTERED = true;
+        }
+
+        if !IMAGE_NOTIFY_REGISTERED {
+            let result = PsSetLoadImageNotifyRoutine(Some(image_notify));
+            if result != STATUS_SUCCESS {
+                println!("sigmacatch: PsSetLoadImageNotifyRoutine failed {result:#010X}");
+                return result;
+            }
+            IMAGE_NOTIFY_REGISTERED = true;
         }
 
         status
