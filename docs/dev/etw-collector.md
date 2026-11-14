@@ -309,9 +309,10 @@ Milestones:
   IOCTL; compiles in CI.
 - **D1 — process creation** (done): `PsSetCreateProcessNotifyRoutineEx` into a
   ring, drained via `IOCTL_READ_EVENTS`.
-- **D2 — file system + process access**: minifilter for 2/11/23/503/504/505/506
-  with complete `FLT_FILE_NAME_INFORMATION` paths, `ObRegisterCallbacks` for
-  10/25, and 9/17 where a public hook exists.
+- **D2a — process access** (done): `ObRegisterCallbacks` → EID 10, validated in
+  the VM.
+- **D2b — file system**: minifilter for 2/11/23/503/504/505/506 with complete
+  `FLT_FILE_NAME_INFORMATION` paths, and 9/17 where a public hook exists.
 - **D3 — parity**: the Windows collector emits the same event-id set as the
   Linux collector; 501/502 documented as Linux-only.
 
@@ -354,6 +355,23 @@ produced, under provider `sigmacatch`:
 
 `User`/`IntegrityLevel`/`UtcTime` are enriched best-effort from the still-alive
 process, so fast-exiting processes may omit them (never approximated).
+
+**D2a — process access (EID 10)** is validated in the same run.
+`ObRegisterCallbacks` registers pre/post callbacks for process-handle
+create/duplicate, filters on the injection-relevant rights
+(`PROCESS_VM_READ/WRITE/OPERATION`, `CREATE_THREAD`, `DUP_HANDLE`,
+`CREATE_PROCESS`, `SUSPEND_RESUME`, `TERMINATE`, `SET_INFORMATION`), and pushes
+`PROCESS_ACCESS` records (source pid, target pid, granted mask). The user-mode
+side renders EID 10 with `SourceImage`/`TargetImage` resolved from the pid
+cache. Measured: `OpenProcess(PROCESS_VM_READ)` from PowerShell produced an EID
+10 with `GrantedAccess=0x1FFFFF` and the target image from the cache.
+
+Two wdk-sys gaps were worked around: `PsProcessType` is declared as an extern
+static (not bound), and `KeQuerySystemTime` is not in the WDK import lib, so
+the consumer timestamps records at read time (`Utc::now()` when the record
+carries 0) — a few milliseconds late, acceptable for EID 5/10.
+
+Next: D2b, the minifilter for file events 2/11/23/503/504/505/506.
 
 ## Phase 2 (optional): test-signed driver (superseded)
 
