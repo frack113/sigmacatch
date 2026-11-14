@@ -360,6 +360,7 @@ fn create_device(mut device_init: PWDFDEVICE_INIT) -> NTSTATUS {
         // Default queue: every request reaches `evt_io_device_control`.
         let mut queue_config = WDF_IO_QUEUE_CONFIG {
             Size: core::mem::size_of::<WDF_IO_QUEUE_CONFIG>() as u32,
+            DefaultQueue: u8::from(true),
             DispatchType: _WDF_IO_QUEUE_DISPATCH_TYPE::WdfIoQueueDispatchSequential,
             EvtIoDeviceControl: Some(evt_io_device_control),
             ..WDF_IO_QUEUE_CONFIG::default()
