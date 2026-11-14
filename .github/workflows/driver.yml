@@ -88,6 +88,24 @@ jobs:
           if-no-files-found: error
           overwrite: true
 
+      # Stage the authoritative fltkernel.h: wdk-sys does not bind fltmgr, so
+      # the minifilter FFI is transcribed from the WDK header we build against.
+      - name: Stage the WDK fltkernel header
+        shell: pwsh
+        run: |
+          $header = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include\*\km\fltkernel.h" | Select-Object -First 1
+          if (-not $header) { throw "fltkernel.h not found" }
+          Copy-Item $header.FullName -Destination sigmacatch/driver/fltkernel.h
+          Write-Host "staged $($header.FullName)"
+
+      - name: Upload the fltkernel header
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: fltkernel-header
+          path: sigmacatch/driver/fltkernel.h
+          if-no-files-found: error
+          overwrite: true
+
       - name: Upload the wdk-sys bindings
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         with:
@@ -124,6 +142,24 @@ jobs:
         with:
           name: sigmacatch-driver
           path: sigmacatch/driver/target/x86_64-pc-windows-msvc/release/sigmacatch_driver.dll
+          if-no-files-found: error
+          overwrite: true
+
+      # Stage the authoritative fltkernel.h: wdk-sys does not bind fltmgr, so
+      # the minifilter FFI is transcribed from the WDK header we build against.
+      - name: Stage the WDK fltkernel header
+        shell: pwsh
+        run: |
+          $header = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include\*\km\fltkernel.h" | Select-Object -First 1
+          if (-not $header) { throw "fltkernel.h not found" }
+          Copy-Item $header.FullName -Destination sigmacatch/driver/fltkernel.h
+          Write-Host "staged $($header.FullName)"
+
+      - name: Upload the fltkernel header
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: fltkernel-header
+          path: sigmacatch/driver/fltkernel.h
           if-no-files-found: error
           overwrite: true
 
