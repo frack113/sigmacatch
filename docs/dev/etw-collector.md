@@ -319,6 +319,42 @@ The user-mode collector keeps its own process trigger (snapshot + ETW) so the
 same event is never lost, and the two paths are deduplicated by `(pid,
 creation time)`.
 
+## VM validation (2026-11-14)
+
+The driver was loaded and exercised end to end on the QEMU test VM.
+
+**Setup** — test-signing in the VM:
+
+1. Secure Boot was **disabled at the firmware level**: swap the libvirt
+   `<loader>` to the non-secure `OVMF_CODE_4M.qcow2` and give the domain a
+   *fresh* non-secure `OVMF_VARS_4M.qcow2`. Keeping the secure-boot VARS with
+   the non-secure CODE dumped Windows into recovery (`minint-*`); a fresh VARS
+   boots normally through the `\EFI\Boot\bootx64.efi` fallback. The
+   original domain XML is the revert point.
+2. `bcdedit /set testsigning on` + reboot.
+3. Self-signed code-signing cert (`New-SelfSignedCertificate`) +
+   `Set-AuthenticodeSignature` on the `.sys`.
+4. `sc create sigmacatch type= kernel` + `sc start`.
+
+**Bugs the run surfaced** (each is now a fix in the driver):
+
+- `sc create type= kernel` loads a **legacy** service, so KMDF never calls
+  `EvtDriverDeviceAdd`: the control device must be allocated in `DriverEntry`
+  with `WdfControlDeviceInitAllocate`.
+- the queue is not the default unless `DefaultQueue` is set, so IOCTLs are not
+  dispatched to `EvtIoDeviceControl`.
+
+**Result** — `sigmacatch/examples/etw_driver_probe.rs` drained the ring and
+produced, under provider `sigmacatch`:
+
+- EID 1 with the creation-time `CommandLine` (exact), `Image`, `User`,
+  `IntegrityLevel`, and the full `ParentImage`/`ParentCommandLine`/`ParentUser`
+  chain from the pid cache;
+- EID 5 with `ProcessId`/`Image`/`User`.
+
+`User`/`IntegrityLevel`/`UtcTime` are enriched best-effort from the still-alive
+process, so fast-exiting processes may omit them (never approximated).
+
 ## Phase 2 (optional): test-signed driver (superseded)
 
 Closes the file-path / process-access / named-pipe gaps. In the QEMU VM this is
