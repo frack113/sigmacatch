@@ -1,23 +1,30 @@
-# Windows "sans Sysmon" collector (ETW) — plan
+# Windows "sans Sysmon" collector — ETW + kernel driver
 
-A native Windows telemetry collector that produces Sysmon-schema events without
-installing Sysmon, mirroring the Linux eBPF collector (`feature ebpf`). This is
-a plan, not an implementation.
+A native Windows telemetry collector that replaces Sysmon on hosts that do not
+have it, mirroring the Linux eBPF collector (`feature ebpf`). It emits the same
+taxonomy on both platforms — the Sysmon-schema ids plus the sigmacatch 5xx
+extensions. User-mode ETW (`feature etw`) covers what kernel providers expose;
+the `sigmacatch` kernel driver (`sigmacatch/driver/`, `feature driver`) is the
+source of everything ETW cannot reach, and is the active work item.
 
 ## Scope and decisions
 
 - **Environment**: the QEMU Windows 11 test VM (`heiter-test-vms-qemu`). No
   distribution target, no code-signing budget: the kernel driver is
   test-signed there, and a distributable build is a separate signing effort.
-  See [the driver decision](#decision-the-driver-is-the-target).
+  See [the driver decision](#decision-the-driver-replaces-sysmon).
 - **No ferrisetw**: the crate is dormant (last push 2025-10), pins `windows`
   0.61 against our 0.62, and its manifest decode is re-implementable on the
   `windows` crate we already depend on. Hand-roll on `windows` 0.62.2
   (`Win32_System_Diagnostics_Etw`: `StartTraceW`, `EnableTraceEx2`, `OpenTraceW`,
   `ProcessTrace`; TDH: `TdhGetEventInformation`, `TdhGetPropertySize`,
   `TdhGetProperty`).
-- **No kernel driver** for the first cut. Pure user-mode ETW. The coverage it
-  cannot reach is documented, not approximated.
+- **The kernel driver is the primary source.** `sigmacatch/driver/` (feature
+  `driver`) supplies what user-mode ETW cannot reach (process create/exit,
+  process access, file paths); see
+  [the driver decision](#decision-the-driver-replaces-sysmon). User-mode ETW
+  stays as the portable fallback and the reference the driver output is
+  compared against.
 
 ## Why ETW
 
@@ -58,6 +65,11 @@ field mappings in
 | 25 | ProcessTampering | — | ❌ protected-process-light only, even Sysmon fakes it |
 | 26 | FileDeleteDetected | — | ❌ needs driver |
 
+The verdicts above are the original user-mode plan. M0 corrected EID 1/5
+(`ProcessStart`/`ProcessStop` do not deliver in realtime) and the driver now
+sources EID 1/5/6/10: see [M0 results](#m0-results-win11-vm-2026-11-14) and
+[the driver decision](#decision-the-driver-replaces-sysmon).
+
 Non-Sysmon sources reachable the same way: PowerShell (4103/4104),
 WMI-Activity, TaskScheduler (106). These are optional extensions, not the core.
 
@@ -91,10 +103,16 @@ sigmacatch/src/inputs/
 │                   #   analogue of ebpf.rs (loader + ring-buffer dispatch)
 ├── etw_event.rs    # TDH property → typed fields, the analogue of ebpf_event.rs
 ├── etw_process.rs  # live-process facts (CommandLine, User, parent, creation)
-├── etw_sysmon.rs   # Sysmon-schema rendering (EID 1 today)
+├── etw_sysmon.rs   # Sysmon-schema rendering (EID 1/5/6/7/10 today)
+├── etw_driver.rs   # feature `driver` (implies `etw`): client for the kernel
+│                   #   sensor — opens `\\.\sigmacatch`, drains the ring, maps
+│                   #   kind → Sysmon-schema event
 └── windows.rs      # Windows orchestrator: MultiCollector (winevt channels + etw),
                     #   the analogue of linux.rs (does not exist yet — today winevt.rs
                     #   is a single-source CollectorKind)
+
+sigmacatch/driver/  # kernel sensor, excluded from the workspace like ebpf:
+                    #   control device + process/image/access callbacks into a ring
 ```
 
 - **Feature `etw`**, `target_os = "windows"` only; entry in the `mod.rs` gate
@@ -161,7 +179,7 @@ Each is a bug Rustinel fixed the hard way; our `etw.rs` encodes it as a test:
   and validate on the VM; apply the fidelity rule (exclude ambiguous paths).
 - **M5 — extend coverage**: image load, file (path-complete only, rename via
   events 20/27 + the `FileKey` path cache), registry, PowerShell/WMI/
-  TaskScheduler; document the gap table in `collectors.md`.
+  TaskScheduler; update the coverage matrix and taxonomy table above.
 
 ## M0 results (win11 VM, 2026-11-14)
 
@@ -240,9 +258,12 @@ Sysmon-only enrichments that cannot be sourced exactly (`ProcessGuid`,
 `LogonGuid`, `Hashes`, `FileVersion`, `Company`, ...) are omitted rather than
 approximated.
 
-## Decision: the driver is the target
+## Decision: the driver replaces Sysmon
 
-Recorded on 2026-11-14, after M0/M1 showed what user mode cannot reach.
+Recorded on 2026-11-14, after M0/M1 showed what user mode cannot reach; this
+is now the active work item, not a future option. The driver is what delivers
+the sigmacatch taxonomy — the Sysmon-schema ids plus the 5xx extensions — in
+place of Sysmon.
 
 The project exists **to produce Sysmon-schema telemetry on hosts that do not
 have Sysmon**. "Hosts without Sysmon" is therefore the target environment, not
@@ -261,7 +282,7 @@ Two layers, same output:
   detected deletes), EID 10 `GrantedAccess` (`ObRegisterCallbacks`), EID 17/18
   named pipes, and race-free file paths (`FLT_FILE_NAME_INFORMATION`).
 
-Constraints accepted up front, unchanged from the original Phase 2 note:
+Constraints accepted up front, unchanged from the original driver note:
 
 - the WDK is **not** in the `cargo xwin` chain: the driver builds on a Windows
   host (or a Windows CI runner) with the WDK, in its own crate outside this
@@ -275,7 +296,8 @@ Constraints accepted up front, unchanged from the original Phase 2 note:
 
 The crate is `sigmacatch/driver/` (excluded from the workspace, built by
 `.github/workflows/driver.yml` on a `windows-latest` runner with the WDK and
-LLVM). D0 — the control device and its version IOCTL — compiles there today.
+LLVM). D0/D1/D2a — the channel, process create/exit and process access — are
+implemented and validated in the VM; see [VM validation](#vm-validation-2026-11-14).
 
 One taxonomy, both platforms. The Linux eBPF collector emits Sysmon-schema
 events plus a set of sigmacatch extensions in the 5xx range (500-508); the
@@ -288,9 +310,10 @@ user mode, and two are Linux-only.
 | 1, 5 | process create / exit | driver — D1, `PsSetCreateProcessNotifyRoutineEx` |
 | 2, 11, 23 | file create / change / delete | driver — D2, minifilter |
 | 3, 22 | network connect / DNS query | user-mode ETW (Kernel-Network / DNS-Client) |
-| 6 | image (driver) load | user-mode ETW (Kernel-Process `ImageLoad`) or `PsSetLoadImageNotifyRoutine` |
+| 6 | image (driver) load | driver — D1, `PsSetLoadImageNotifyRoutine` |
+| 7 | image load | user-mode ETW (Kernel-Process `ImageLoad`) |
 | 9 | raw access | driver — D2 (no clean public hook) |
-| 10 | process access | driver — D2, `ObRegisterCallbacks` |
+| 10 | process access | driver — D2a, `ObRegisterCallbacks` |
 | 17 | pipe create | driver — D2 (no public callback, hardest gap) |
 | 25 | process tampering | driver — D2, `ObRegisterCallbacks` post-op heuristic |
 | 500 | network listen | user-mode ETW (Kernel-Network accept) |
@@ -307,8 +330,9 @@ Milestones:
 
 - **D0 — channel** (done): control device `\Device\sigmacatch`, version
   IOCTL; compiles in CI.
-- **D1 — process creation** (done): `PsSetCreateProcessNotifyRoutineEx` into a
-  ring, drained via `IOCTL_READ_EVENTS`.
+- **D1 — process creation** (done): `PsSetCreateProcessNotifyRoutineEx` (EID
+  1/5) and `PsSetLoadImageNotifyRoutine` (EID 6) into a ring, drained via
+  `IOCTL_READ_EVENTS`.
 - **D2a — process access** (done): `ObRegisterCallbacks` → EID 10, validated in
   the VM.
 - **D2b — file system**: minifilter for 2/11/23/503/504/505/506 with complete
@@ -372,12 +396,3 @@ the consumer timestamps records at read time (`Utc::now()` when the record
 carries 0) — a few milliseconds late, acceptable for EID 5/10.
 
 Next: D2b, the minifilter for file events 2/11/23/503/504/505/506.
-
-## Phase 2 (optional): test-signed driver (superseded)
-
-Closes the file-path / process-access / named-pipe gaps. In the QEMU VM this is
-signing-free (`bcdedit /set testsigning on` + Secure Boot off + self-signed cert
-via `signtool`) — but it is a kernel-mode mini-filter/`ObRegisterCallbacks`
-driver where a fault BSODs the host, and it can never be distributed as a
-"clone → build → run" component (each rebuild needs its own signature). Treat it
-as a separate project, not a milestone of this one.
