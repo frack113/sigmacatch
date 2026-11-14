@@ -80,6 +80,13 @@ jobs:
           --release
           --target x86_64-pc-windows-msvc
 
+      - name: Upload the driver image
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: sigmacatch-driver
+          path: sigmacatch/driver/target/x86_64-pc-windows-msvc/release/sigmacatch_driver.dll
+          if-no-files-found: error
+
       # Diagnostic: the wdk-sys bindings are generated from the WDK headers at
       # build time, so their exact shape is only visible here.
       - name: Dump relevant bindings
