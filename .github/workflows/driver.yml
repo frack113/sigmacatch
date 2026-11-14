@@ -86,11 +86,13 @@ jobs:
           name: sigmacatch-driver
           path: sigmacatch/driver/target/x86_64-pc-windows-msvc/release/sigmacatch_driver.dll
           if-no-files-found: error
+          overwrite: true
 
       - name: Upload the wdk-sys bindings
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         with:
           name: wdk-bindings
+          overwrite: true
           path: |
             sigmacatch/driver/target/x86_64-pc-windows-msvc/release/build/wdk-sys-*/out/types.rs
             sigmacatch/driver/target/x86_64-pc-windows-msvc/release/build/wdk-sys-*/out/ntddk.rs
@@ -123,11 +125,13 @@ jobs:
           name: sigmacatch-driver
           path: sigmacatch/driver/target/x86_64-pc-windows-msvc/release/sigmacatch_driver.dll
           if-no-files-found: error
+          overwrite: true
 
       - name: Upload the wdk-sys bindings
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         with:
           name: wdk-bindings
+          overwrite: true
           path: |
             sigmacatch/driver/target/x86_64-pc-windows-msvc/release/build/wdk-sys-*/out/types.rs
             sigmacatch/driver/target/x86_64-pc-windows-msvc/release/build/wdk-sys-*/out/ntddk.rs
