@@ -14,9 +14,7 @@
 //! (rename/truncate/delete/security) reuse the same registration.
 
 use wdk_sys::ntddk::PsGetCurrentProcessId;
-use wdk_sys::{
-    DRIVER_OBJECT, FILE_CREATED, HANDLE, IO_STATUS_BLOCK, NTSTATUS, STATUS_SUCCESS, UNICODE_STRING,
-};
+use wdk_sys::{DRIVER_OBJECT, HANDLE, IO_STATUS_BLOCK, NTSTATUS, STATUS_SUCCESS, UNICODE_STRING};
 
 use crate::{SIGMACATCH_PROTOCOL_VERSION, SensorEvent, kind, ring_push};
 
