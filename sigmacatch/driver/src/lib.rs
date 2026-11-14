@@ -24,6 +24,7 @@
 extern crate wdk_panic;
 
 use wdk::println;
+use wdk_sys::_OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS;
 use wdk_sys::ntddk::{
     ObRegisterCallbacks, ObUnRegisterCallbacks, PsGetCurrentProcessId, PsGetProcessId,
     PsSetCreateProcessNotifyRoutineEx,
@@ -338,7 +339,7 @@ fn register_ob_callbacks() -> NTSTATUS {
     };
     let mut handle: PVOID = core::ptr::null_mut();
     // SAFETY: the registration struct and operation outlive the call.
-    let status = unsafe { ObRegisterCallbacks(&raw const registration, &raw mut handle) };
+    let status = unsafe { ObRegisterCallbacks(&raw mut registration, &raw mut handle) };
     if status == STATUS_SUCCESS {
         // SAFETY: written before any callback can fire.
         unsafe { OB_REGISTRATION_HANDLE = handle };
