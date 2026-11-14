@@ -26,17 +26,18 @@ extern crate wdk_panic;
 use wdk::println;
 use wdk_sys::_OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS;
 use wdk_sys::ntddk::{
-    ObRegisterCallbacks, ObUnRegisterCallbacks, PsGetCurrentProcessId, PsGetProcessId,
-    PsSetCreateProcessNotifyRoutineEx,
+    KeQuerySystemTime, ObRegisterCallbacks, ObUnRegisterCallbacks, PsGetCurrentProcessId,
+    PsGetProcessId, PsSetCreateProcessNotifyRoutineEx,
 };
 use wdk_sys::{
-    _WDF_DEVICE_IO_TYPE, _WDF_IO_QUEUE_DISPATCH_TYPE, HANDLE, NTSTATUS, OB_CALLBACK_REGISTRATION,
-    OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE,
-    OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS, PCUNICODE_STRING, PDRIVER_OBJECT,
-    PEPROCESS, POB_POST_OPERATION_INFORMATION, POB_PRE_OPERATION_INFORMATION, POBJECT_TYPE,
-    PPS_CREATE_NOTIFY_INFO, PVOID, PWDFDEVICE_INIT, STATUS_INVALID_DEVICE_REQUEST, STATUS_SUCCESS,
-    UNICODE_STRING, WDF_DRIVER_CONFIG, WDF_IO_QUEUE_CONFIG, WDF_NO_OBJECT_ATTRIBUTES, WDFDEVICE,
-    WDFDRIVER, WDFQUEUE, WDFREQUEST, WDFSPINLOCK, call_unsafe_wdf_function_binding,
+    _WDF_DEVICE_IO_TYPE, _WDF_IO_QUEUE_DISPATCH_TYPE, HANDLE, LARGE_INTEGER, NTSTATUS,
+    OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE,
+    OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS,
+    PCUNICODE_STRING, PDRIVER_OBJECT, PEPROCESS, POB_POST_OPERATION_INFORMATION,
+    POB_PRE_OPERATION_INFORMATION, POBJECT_TYPE, PPS_CREATE_NOTIFY_INFO, PVOID, PWDFDEVICE_INIT,
+    STATUS_INVALID_DEVICE_REQUEST, STATUS_SUCCESS, UNICODE_STRING, WDF_DRIVER_CONFIG,
+    WDF_IO_QUEUE_CONFIG, WDF_NO_OBJECT_ATTRIBUTES, WDFDEVICE, WDFDRIVER, WDFQUEUE, WDFREQUEST,
+    WDFSPINLOCK, call_unsafe_wdf_function_binding,
 };
 
 // `PsProcessType` is not bound by wdk-sys; it is an exported kernel variable.
@@ -207,6 +208,14 @@ fn unicode_string(buffer: &'static [u16]) -> UNICODE_STRING {
     }
 }
 
+/// Current system time as FILETIME ticks (100 ns since 1601).
+fn now_filetime() -> u64 {
+    let mut time = LARGE_INTEGER::default();
+    // SAFETY: `time` is a valid out-parameter.
+    unsafe { KeQuerySystemTime(&mut time) };
+    time.QuadPart as u64
+}
+
 /// Copy a counted wide string into a fixed buffer, reporting the characters
 /// copied. Silently truncates to the buffer (the consumer also bounds reads).
 unsafe fn copy_wide(source: &UNICODE_STRING, destination: &mut [u16], copied: &mut u16) {
@@ -251,6 +260,7 @@ unsafe extern "C" fn process_notify(
 ) {
     let mut event = SensorEvent::empty();
     event.version = SIGMACATCH_PROTOCOL_VERSION;
+    event.timestamp = now_filetime();
     event.pid = process_id as usize as u32;
     if !create_info.is_null() {
         event.kind = kind::PROCESS_CREATE;
@@ -312,6 +322,7 @@ unsafe extern "C" fn process_access_post_op(
     }
     let mut event = SensorEvent::empty();
     event.version = SIGMACATCH_PROTOCOL_VERSION;
+    event.timestamp = now_filetime();
     event.kind = kind::PROCESS_ACCESS;
     event.pid = source_pid;
     event.parent_pid = target_pid;

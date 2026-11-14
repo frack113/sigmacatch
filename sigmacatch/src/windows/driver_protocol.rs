@@ -20,7 +20,7 @@
 
 /// Bumped whenever the layout or the IOCTL set changes; both sides refuse to
 /// talk across a mismatch.
-pub const SIGMACATCH_PROTOCOL_VERSION: u32 = 3;
+pub const SIGMACATCH_PROTOCOL_VERSION: u32 = 4;
 
 /// `CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_READ_DATA)`.
 pub const IOCTL_GET_VERSION: u32 = 0x0022_2000;
@@ -79,6 +79,8 @@ pub struct SensorEvent {
     pub secondary: [u16; 2048],
     /// Kind-dependent scalar (access mask, ACL-vs-owner, new size).
     pub detail: u32,
+    /// Event time as FILETIME ticks (100 ns since 1601), from the kernel.
+    pub timestamp: u64,
 }
 
 impl SensorEvent {
@@ -94,6 +96,7 @@ impl SensorEvent {
             primary: [0; 512],
             secondary: [0; 2048],
             detail: 0,
+            timestamp: 0,
         }
     }
 }

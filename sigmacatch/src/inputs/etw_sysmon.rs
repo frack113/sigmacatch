@@ -19,15 +19,57 @@ use crate::inputs::etw_process::ProcessFacts;
 const SIGMACATCH_PROVIDER: &str = "{a3e1f6c2-4b5d-4e9f-9c1a-2d7b8e0f3a6c}";
 const SIGMACATCH_CHANNEL: &str = "sigmacatch/Operational";
 
-/// Render a Sysmon **EID 5 (ProcessTerminate)** event.
-pub fn process_terminate_xml(computer: &str, facts: &ProcessFacts) -> String {
+/// Render a Sysmon **EID 10 (ProcessAccess)** event.
+pub fn process_access_xml(
+    computer: &str,
+    source_pid: u32,
+    source_image: Option<&str>,
+    target_pid: u32,
+    target_image: Option<&str>,
+    granted: u32,
+    at: chrono::DateTime<chrono::Utc>,
+) -> String {
     let mut data = String::new();
     field(&mut data, "RuleName", "");
-    field(
-        &mut data,
-        "UtcTime",
-        &facts.created.map(sysmon_utc).unwrap_or_default(),
-    );
+    field(&mut data, "UtcTime", &sysmon_utc(at));
+    field(&mut data, "SourceProcessId", &source_pid.to_string());
+    if let Some(image) = source_image {
+        field(&mut data, "SourceImage", image);
+    }
+    field(&mut data, "TargetProcessId", &target_pid.to_string());
+    if let Some(image) = target_image {
+        field(&mut data, "TargetImage", image);
+    }
+    field(&mut data, "GrantedAccess", &format!("0x{granted:X}"));
+
+    format!(
+        "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
+         <System>\
+         <Provider Name=\"sigmacatch\" Guid=\"{SIGMACATCH_PROVIDER}\"/>\
+         <EventID>10</EventID><Version>5</Version><Level>4</Level><Task>10</Task><Opcode>0</Opcode>\
+         <Keywords>0x8000000000000000</Keywords>\
+         <TimeCreated SystemTime=\"{}\"/>\
+         <EventRecordID>0</EventRecordID><Correlation/>\
+         <Execution ProcessID=\"{source_pid}\" ThreadID=\"0\"/>\
+         <Channel>{SIGMACATCH_CHANNEL}</Channel>\
+         <Computer>{}</Computer>\
+         </System>\
+         <EventData>{data}</EventData>\
+         </Event>",
+        escape(&at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)),
+        escape(computer)
+    )
+}
+
+/// Render a Sysmon **EID 5 (ProcessTerminate)** event.
+pub fn process_terminate_xml(
+    computer: &str,
+    facts: &ProcessFacts,
+    at: chrono::DateTime<chrono::Utc>,
+) -> String {
+    let mut data = String::new();
+    field(&mut data, "RuleName", "");
+    field(&mut data, "UtcTime", &sysmon_utc(at));
     field(&mut data, "ProcessId", &facts.pid.to_string());
     if let Some(image) = &facts.image {
         field(&mut data, "Image", image);
@@ -36,10 +78,7 @@ pub fn process_terminate_xml(computer: &str, facts: &ProcessFacts) -> String {
         field(&mut data, "User", user);
     }
 
-    let time = facts
-        .created
-        .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true))
-        .unwrap_or_default();
+    let time = at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
     format!(
         "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
          <System>\

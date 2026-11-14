@@ -22,8 +22,9 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::IO::DeviceIoControl;
 use windows::core::PCWSTR;
 
+use crate::inputs::etw_event::filetime_to_utc;
 use crate::inputs::etw_process::{ProcessFacts, enrich};
-use crate::inputs::etw_sysmon::{process_start_xml, process_terminate_xml};
+use crate::inputs::etw_sysmon::{process_access_xml, process_start_xml, process_terminate_xml};
 use crate::types::Event;
 
 // The protocol lives next to the driver crate and is included verbatim, so
@@ -158,8 +159,37 @@ impl Mapper {
         match event.kind {
             kind::PROCESS_CREATE => self.map_create(event),
             kind::PROCESS_EXIT => self.map_exit(event),
+            kind::PROCESS_ACCESS => self.map_access(event),
             _ => None,
         }
+    }
+
+    /// Event time from the kernel record, falling back to "now".
+    fn event_time(event: &SensorEvent) -> chrono::DateTime<chrono::Utc> {
+        filetime_to_utc(event.timestamp as i64).unwrap_or_else(chrono::Utc::now)
+    }
+
+    fn map_access(&mut self, event: &SensorEvent) -> Option<Event> {
+        let source_image = self
+            .cache
+            .get(&event.pid)
+            .and_then(|facts| facts.image.as_deref())
+            .map(str::to_string);
+        let target_image = self
+            .cache
+            .get(&event.parent_pid)
+            .and_then(|facts| facts.image.as_deref())
+            .map(str::to_string);
+        let xml = process_access_xml(
+            &self.computer,
+            event.pid,
+            source_image.as_deref(),
+            event.parent_pid,
+            target_image.as_deref(),
+            event.detail,
+            Self::event_time(event),
+        );
+        Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
 
     fn map_create(&mut self, event: &SensorEvent) -> Option<Event> {
@@ -180,6 +210,9 @@ impl Mapper {
             facts.integrity = live.integrity;
             facts.created = live.created;
         }
+        facts.created = facts
+            .created
+            .or_else(|| filetime_to_utc(event.timestamp as i64));
         let parent = self.cache.get(&facts.parent_pid).cloned();
         self.cache.insert(event.pid, facts.clone());
         let xml = process_start_xml(&self.computer, &facts, parent.as_ref());
@@ -205,7 +238,7 @@ impl Mapper {
             facts.integrity = live.integrity;
             facts.created = live.created;
         }
-        let xml = process_terminate_xml(&self.computer, &facts);
+        let xml = process_terminate_xml(&self.computer, &facts, Self::event_time(event));
         Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
 }
