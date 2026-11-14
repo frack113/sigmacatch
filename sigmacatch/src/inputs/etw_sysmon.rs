@@ -42,7 +42,7 @@ pub fn image_load_xml(
          <EventID>7</EventID><Version>5</Version><Level>4</Level><Task>7</Task><Opcode>0</Opcode>\
          <Keywords>0x8000000000000000</Keywords>\
          <TimeCreated SystemTime=\"{}\"/>\
-         <EventRecordID>0</EventRecordID><Correlation/>\
+         <Correlation/>\
          <Execution ProcessID=\"{process_id}\" ThreadID=\"0\"/>\
          <Channel>{SIGMACATCH_CHANNEL}</Channel>\
          <Computer>{}</Computer>\
@@ -71,7 +71,7 @@ pub fn driver_load_xml(
          <EventID>6</EventID><Version>5</Version><Level>4</Level><Task>6</Task><Opcode>0</Opcode>\
          <Keywords>0x8000000000000000</Keywords>\
          <TimeCreated SystemTime=\"{}\"/>\
-         <EventRecordID>0</EventRecordID><Correlation/>\
+         <Correlation/>\
          <Execution ProcessID=\"0\" ThreadID=\"0\"/>\
          <Channel>{SIGMACATCH_CHANNEL}</Channel>\
          <Computer>{}</Computer>\
@@ -113,7 +113,7 @@ pub fn process_access_xml(
          <EventID>10</EventID><Version>5</Version><Level>4</Level><Task>10</Task><Opcode>0</Opcode>\
          <Keywords>0x8000000000000000</Keywords>\
          <TimeCreated SystemTime=\"{}\"/>\
-         <EventRecordID>0</EventRecordID><Correlation/>\
+         <Correlation/>\
          <Execution ProcessID=\"{source_pid}\" ThreadID=\"0\"/>\
          <Channel>{SIGMACATCH_CHANNEL}</Channel>\
          <Computer>{}</Computer>\
@@ -150,7 +150,7 @@ pub fn process_terminate_xml(
          <EventID>5</EventID><Version>5</Version><Level>4</Level><Task>5</Task><Opcode>0</Opcode>\
          <Keywords>0x8000000000000000</Keywords>\
          <TimeCreated SystemTime=\"{}\"/>\
-         <EventRecordID>0</EventRecordID><Correlation/>\
+         <Correlation/>\
          <Execution ProcessID=\"{}\" ThreadID=\"0\"/>\
          <Channel>{SIGMACATCH_CHANNEL}</Channel>\
          <Computer>{}</Computer>\
@@ -219,7 +219,7 @@ pub fn process_start_xml(
          <EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode>\
          <Keywords>0x8000000000000000</Keywords>\
          <TimeCreated SystemTime=\"{}\"/>\
-         <EventRecordID>0</EventRecordID><Correlation/>\
+         <Correlation/>\
          <Execution ProcessID=\"{}\" ThreadID=\"0\"/>\
          <Channel>{SIGMACATCH_CHANNEL}</Channel>\
          <Computer>{}</Computer>\

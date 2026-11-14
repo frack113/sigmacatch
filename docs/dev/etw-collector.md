@@ -418,4 +418,22 @@ events 2/11/23/503/504/505/506 therefore need a hand-written `fltmgr` FFI in
 the driver crate (`#[link(name = "fltmgr")]` plus the structure definitions),
 which is the next sub-project.
 
+**End to end on a Sysmon-less host.** With the driver loaded, the collector ran
+one cycle against the SigmaHQ clone: its EID 7 events matched real
+`image_load` rules (e.g. *Potential DLL Sideloading Of DBGHELP.DLL*) and the
+regression set was written and validated:
+
+```yaml
+regression_tests_info:
+    - name: Positive Detection Test
+      type: evtx
+      provider: sigmacatch
+      match_count: 1
+```
+
+The synthetic events deliberately carry **no `EventRecordID`**: that is the
+signal `regression::evtx::write_evtx` uses to write the `.evtx` from the event
+XML with the pure-Rust writer, instead of `EvtExportLog` on
+`sigmacatch/Operational` (a channel that does not exist in the Event Log).
+
 Next: D2b.2, the minifilter for file events 2/11/23/503/504/505/506.
