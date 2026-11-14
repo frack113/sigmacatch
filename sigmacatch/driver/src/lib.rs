@@ -259,7 +259,7 @@ unsafe extern "C" fn process_notify(
         event.parent_pid = info.ParentProcessId as usize as u32;
         // `ImageFileName` and `CommandLine` are `PCUNICODE_STRING` here; both
         // may be null, and the strings are copied out immediately.
-        // SAFETY: the pointers and their UNICODE_STRINGs are valid for the
+        // SAFETY: the pointers and their UNICODE_STRING values are valid for the
         // duration of the callback.
         unsafe {
             if !info.ImageFileName.is_null() {
@@ -378,7 +378,7 @@ extern "system" fn driver_entry(
         return status;
     }
 
-    // A legacy `sc create type= kernel` service is not PnP-enumerated, so
+    // A legacy `sc create type= kernel` service is not Plug-and-Play enumerated, so
     // `EvtDriverDeviceAdd` would never run: allocate the control device here.
     let sddl = unicode_string(&SDDL);
     // SAFETY: `driver_handle` came from `WdfDriverCreate`; the SDDL string is
