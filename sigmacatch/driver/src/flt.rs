@@ -300,6 +300,12 @@ unsafe extern "C" fn post_create(
     let mut information: *mut FltFileNameInformation = core::ptr::null_mut();
     // SAFETY: fltmgr allocates the name information; released below.
     if unsafe { FltGetFileNameInformation(data, NAME_FLAGS, &mut information) } != STATUS_SUCCESS {
+        // Diagnostic: the callback ran but the name query failed.
+        let mut event = SensorEvent::empty();
+        event.version = SIGMACATCH_PROTOCOL_VERSION;
+        event.kind = kind::FILE_CREATE;
+        event.detail = 0xDEAD;
+        unsafe { ring_push(&event) };
         return POSTOP_FINISHED;
     }
     // SAFETY: `information` is live until the release below.
