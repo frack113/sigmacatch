@@ -49,6 +49,11 @@ jobs:
         shell: pwsh
         run: Copy-Item -Recurse -Force _temp/windows-drivers-rs/.github/actions .github/
 
+      - name: Install Winget
+        uses: ./.github/actions/install-winget
+        with:
+          force-cli-install: 'false'
+
       - name: Install LLVM 17.0.6
         uses: ./.github/actions/install-llvm
         with:
