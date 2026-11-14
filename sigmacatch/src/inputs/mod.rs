@@ -15,6 +15,9 @@
 pub mod channels;
 #[cfg(feature = "winevt")]
 pub mod winevt;
+// Windows orchestrator: Event Log channels + kernel sensor or ETW.
+#[cfg(all(target_os = "windows", feature = "winevt"))]
+pub mod windows;
 // Native ETW collector (feature `etw`): no Sysmon, no driver. The session
 // layer and the TDH decoder are only meaningful on Windows.
 #[cfg(all(target_os = "windows", feature = "etw"))]

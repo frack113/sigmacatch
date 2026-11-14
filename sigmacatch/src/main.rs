@@ -58,7 +58,7 @@ async fn run_evtx(evtx_path: Option<PathBuf>) -> Result<()> {
 async fn dispatch_collector() -> Result<()> {
     #[cfg(all(target_os = "windows", feature = "winevt"))]
     {
-        return sigmacatch::inputs::winevt::run().await;
+        return sigmacatch::inputs::windows::run().await;
     }
     #[cfg(all(
         target_os = "linux",

@@ -328,6 +328,59 @@ fn integrity_name(sid: &str) -> Option<String> {
     )
 }
 
+/// Tracks the processes seen during a capture.
+///
+/// A process is reported once, the first time its pid appears *and* its
+/// creation time falls inside the capture, so nothing pre-existing is
+/// invented. The facts cache also supplies `ParentImage`/`ParentCommandLine`.
+#[derive(Debug)]
+pub struct ProcessTracker {
+    started: DateTime<Utc>,
+    seen: std::collections::HashSet<u32>,
+    facts: std::collections::HashMap<u32, ProcessFacts>,
+}
+
+impl Default for ProcessTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProcessTracker {
+    /// Capture start, minus a small tolerance for a process created just
+    /// before the session attached.
+    pub fn new() -> Self {
+        Self {
+            started: Utc::now() - chrono::Duration::seconds(2),
+            seen: std::collections::HashSet::new(),
+            facts: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Observe a pid. Returns `(facts, parent)` for a process created during
+    /// the capture, once.
+    pub fn observe(&mut self, pid: u32) -> Option<(ProcessFacts, Option<ProcessFacts>)> {
+        if pid <= 4 || !self.seen.insert(pid) {
+            return None;
+        }
+        let facts = enrich(pid)?;
+        let new = facts.created.is_some_and(|created| created >= self.started);
+        let parent = self.facts.get(&facts.parent_pid).cloned();
+        if new {
+            self.facts.insert(pid, facts.clone());
+            Some((facts, parent))
+        } else {
+            self.facts.insert(pid, facts);
+            None
+        }
+    }
+
+    /// Facts for a pid already seen, if any.
+    pub fn get(&self, pid: u32) -> Option<&ProcessFacts> {
+        self.facts.get(&pid)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

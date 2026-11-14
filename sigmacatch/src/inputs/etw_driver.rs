@@ -124,6 +124,10 @@ impl Device {
     }
 }
 
+// SAFETY: the handle is only used from the producer's task; the raw pointer is
+// not shared across threads.
+unsafe impl Send for Device {}
+
 impl Drop for Device {
     fn drop(&mut self) {
         // SAFETY: the handle came from `CreateFileW` exactly once.
@@ -266,4 +270,76 @@ impl Mapper {
 fn wide(field: &[u16], length: u16) -> String {
     let units = (length as usize).min(field.len());
     String::from_utf16_lossy(&field[..units])
+}
+
+// ---------------------------------------------------------------------------
+// Async producer: the kernel sensor as an `EventProducer`.
+// ---------------------------------------------------------------------------
+
+/// True when the driver is loaded and speaks our protocol version.
+pub fn is_available() -> bool {
+    Device::open()
+        .map(|device| device.version() == Some(SIGMACATCH_PROTOCOL_VERSION))
+        .unwrap_or(false)
+}
+
+/// Async producer draining the kernel sensor into detection events.
+pub struct EventCollector;
+
+impl EventCollector {
+    /// Create the producer.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for EventCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::types::EventProducer for EventCollector {
+    async fn run(
+        self: Box<Self>,
+        tx: tokio::sync::mpsc::Sender<crate::types::Event>,
+        mut stop: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<(), crate::types::ProducerError> {
+        let Some(device) = Device::open() else {
+            tracing::info!("kernel sensor not loaded — driver path disabled");
+            return Ok(());
+        };
+        if device.version() != Some(SIGMACATCH_PROTOCOL_VERSION) {
+            tracing::warn!(
+                "kernel sensor protocol mismatch (driver {:?}, collector {}) — driver path disabled",
+                device.version(),
+                SIGMACATCH_PROTOCOL_VERSION
+            );
+            return Ok(());
+        }
+
+        let mut mapper = Mapper::new();
+        let mut events = Vec::new();
+        loop {
+            if *stop.borrow() {
+                break;
+            }
+            match device.read_events(&mut events) {
+                Ok(_) => {
+                    for record in &events {
+                        if let Some(event) = mapper.map(record)
+                            && tx.send(event).await.is_err()
+                        {
+                            return Ok(());
+                        }
+                    }
+                }
+                Err(error) => tracing::warn!("kernel sensor read failed: {error:#}"),
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        let _ = &mut stop;
+        Ok(())
+    }
 }

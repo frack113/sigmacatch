@@ -694,3 +694,153 @@ impl Drop for RunningSession {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Async producer: the ETW path as an `EventProducer`.
+// ---------------------------------------------------------------------------
+
+/// Name of the process-latency session.
+const PROCESS_SESSION_NAME: &str = "sigmacatch-process";
+/// Name of the burst-tolerant session.
+const MAIN_SESSION_NAME: &str = "sigmacatch-main";
+/// Process-table poll interval, in milliseconds.
+const POLL_INTERVAL_MS: u64 = 50;
+
+/// Async producer running the ETW sessions (process creation via the live
+/// process, EID 1). The kernel sensor supersedes it when it is loaded; see
+/// [`crate::inputs::windows`].
+pub struct EventCollector;
+
+impl EventCollector {
+    /// Create the producer.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for EventCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Enrich `pid` and, when it is a process created during the capture, send
+/// its EID 1 event.
+fn emit_process(
+    tracker: &std::sync::Mutex<crate::inputs::etw_process::ProcessTracker>,
+    computer: &str,
+    tx: &tokio::sync::mpsc::Sender<crate::types::Event>,
+    pid: u32,
+) {
+    let observed = tracker
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .observe(pid);
+    let Some((facts, parent)) = observed else {
+        return;
+    };
+    let xml = crate::inputs::etw_sysmon::process_start_xml(computer, &facts, parent.as_ref());
+    if let Ok(event) = crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")) {
+        let _ = tx.blocking_send(event);
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::types::EventProducer for EventCollector {
+    async fn run(
+        self: Box<Self>,
+        tx: tokio::sync::mpsc::Sender<crate::types::Event>,
+        mut stop: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<(), crate::types::ProducerError> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        use crate::inputs::etw_process::ProcessTracker;
+
+        let tracker = Arc::new(Mutex::new(ProcessTracker::new()));
+        let computer = std::env::var("COMPUTERNAME").unwrap_or_default();
+        let halt = Arc::new(AtomicBool::new(false));
+
+        let sink: Sink = {
+            let tx = tx.clone();
+            let tracker = Arc::clone(&tracker);
+            let computer = computer.clone();
+            let halt = Arc::clone(&halt);
+            Box::new(move |record: &EVENT_RECORD| {
+                if halt.load(Ordering::Relaxed) {
+                    return;
+                }
+                emit_process(&tracker, &computer, &tx, record.EventHeader.ProcessId);
+            })
+        };
+
+        let process =
+            TraceSession::start(PROCESS_SESSION_NAME, SessionConfig::PROCESS).map_err(|e| {
+                crate::types::ProducerError::Message(format!("ETW process session: {e:#}"))
+            })?;
+        let running = RunningSession::spawn_with_flush(
+            process,
+            PROCESS_SESSION_NAME,
+            PROCESS_SESSION_PROVIDERS,
+            sink,
+            Some(std::time::Duration::from_millis(5)),
+        )
+        .map_err(|e| {
+            crate::types::ProducerError::Message(format!("ETW process consumer: {e:#}"))
+        })?;
+
+        // The main session is optional: a failure there must not kill the
+        // process path.
+        let main = match TraceSession::start(MAIN_SESSION_NAME, SessionConfig::MAIN) {
+            Ok(session) => RunningSession::spawn_with_flush(
+                session,
+                MAIN_SESSION_NAME,
+                MAIN_SESSION_PROVIDERS,
+                Box::new(|_: &EVENT_RECORD| {}),
+                Some(std::time::Duration::from_millis(20)),
+            )
+            .ok(),
+            Err(error) => {
+                tracing::warn!("ETW main session unavailable: {error:#}");
+                None
+            }
+        };
+
+        // The poller catches processes whose events the session never
+        // delivered (short-lived ones on this platform).
+        let poller = {
+            let tracker = Arc::clone(&tracker);
+            let computer = computer.clone();
+            let tx = tx.clone();
+            let halt = Arc::clone(&halt);
+            std::thread::Builder::new()
+                .name("etw-poller".into())
+                .spawn(move || {
+                    while !halt.load(Ordering::Relaxed) {
+                        for pid in crate::inputs::etw_process::snapshot() {
+                            emit_process(&tracker, &computer, &tx, pid);
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
+                    }
+                })
+                .ok()
+        };
+
+        loop {
+            if *stop.borrow() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        halt.store(true, Ordering::Relaxed);
+        let _ = running.stop();
+        if let Some(main) = main {
+            let _ = main.stop();
+        }
+        if let Some(poller) = poller {
+            let _ = poller.join();
+        }
+        let _ = &mut stop;
+        Ok(())
+    }
+}
