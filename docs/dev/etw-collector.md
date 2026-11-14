@@ -78,9 +78,10 @@ Concretely:
   event with `CommandLine` absent rather than the truncated value.
 - File create/delete/rename events whose path cannot be resolved completely are
   **not** committed. A partial `TargetFilename` is worse than no event.
-- Registry `TargetObject` is an NT path (`\REGISTRY\MACHINE\...`), never
-  `HKLM\...`. The committed value must be the NT path (that is what the field
-  carries), not a re-mapped guess.
+- Registry `TargetObject` must be an NT path (`\REGISTRY\MACHINE\...`), never a
+  re-mapped `HKLM\...` guess. Measured: the provider's `RelativeName` is only a
+  full NT path when the base key is a root, so an event is committed only when
+  the `BaseObject`/`KeyObject` chain resolves to a root.
 
 ## Architecture (mirrors the eBPF collector)
 
@@ -144,10 +145,12 @@ Each is a bug Rustinel fixed the hard way; our `etw.rs` encodes it as a test:
 - **M0 — spike on the win11 VM**: confirm `windows` 0.62.2 exposes the ETW+TDH
   surface we need, enable the four core providers, capture a short trace, and
   verify the coverage verdicts (CommandLine presence, file-path quality,
-  registry NT paths). No Rust collector yet.
+  registry NT paths). No Rust collector yet. **Done — see
+  [M0 results](#m0-results-win11-vm-2026-11-14).**
 - **M1 — session scaffold** (`etw.rs`): privilege check, `StartTraceW`/
   `EnableTraceEx2`/`OpenTraceW`/`ProcessTrace` callback loop, the two-session
-  split, clean shutdown.
+  split, clean shutdown. **Done** (`etw.rs` + `etw_event.rs` + the
+  `examples/etw_dump.rs` probe).
 - **M2 — builder** (`etw_event.rs`): TDH decode + field mapping (provider table
   from `providers.rs`, field maps from `field_maps.rs`) → Sysmon-shaped data →
   `from_xml_injected`. Start with EID 1/3/5/22.
@@ -157,6 +160,64 @@ Each is a bug Rustinel fixed the hard way; our `etw.rs` encodes it as a test:
   and validate on the VM; apply the fidelity rule (exclude ambiguous paths).
 - **M5 — extend coverage**: image load, file (path-complete only), registry,
   PowerShell/WMI/TaskScheduler; document the gap table in `collectors.md`.
+
+## M0 results (win11 VM, 2026-11-14)
+
+Measured with `logman`/`tracerpt` in file mode and with the Rust probe
+(`sigmacatch/examples/etw_dump.rs`, feature `etw`) in realtime mode.
+
+**Surface.** `windows` 0.62.2 exposes everything the design needs
+(`Win32_System_Diagnostics_Etw` + `Win32_System_Time`): `StartTraceW`,
+`EnableTraceEx2`, `OpenTraceW`, `ProcessTrace`, `ControlTraceW`, `CloseTrace`,
+`TdhGetEventInformation`, `TdhGetProperty(Size)`. The WinRM session on the test
+VM carries a **high-integrity token**, so kernel providers can be enabled; the
+skill's "no elevated admin" note is stale.
+
+**What the providers actually give us.**
+
+| Provider | Fields observed | Verdict |
+|---|---|---|
+| Kernel-Process 1 (ProcessStart) | `ProcessID`, `ParentProcessID`, `CreateTime`, `MandatoryLabel`, `ImageName` (device path), `ProcessTokenIsElevated` | no `CommandLine`, no `UserSID` |
+| Kernel-Process 2 (ProcessStop) | exit stats; `ImageName` is a **basename only** | usable for EID 5, image path via the start cache |
+| Kernel-Process 5 (ImageLoad) | `ImageName` (device path), `ImageBase`, `ImageChecksum`, `TimeDateStamp` | no signature fields |
+| Kernel-Network 10/11/12/15/42/43 | `PID`, `saddr`/`daddr`, `sport`/`dport`, `size` | EID 3 without hostnames/image |
+| Kernel-File 12/13/14/… | `FileName` as `\Device\HarddiskVolume3\...`, caller-preserved case, ~1 % empty | device→DOS mapping required |
+| Kernel-Registry 1/2/5/6/13 | `RelativeName` (**sometimes** `\Registry\Machine\...`, sometimes `Software\...`), `KeyName` empty on `SetValueKey`, `BaseName` always empty | pairing by `KeyObject` required |
+| DNS-Client 3006/3008/3010/3020 | `QueryName`, `QueryResults`, `QueryStatus`, `ClientPID` | EID 22 |
+| Classic kernel logger (opcode 1) | `ProcessId`, `ParentId`, `UserSID`, `ImageFileName`, `CommandLine`, `PackageFullName`, `ApplicationId` | the only source of EID 1 `CommandLine`/`User` |
+
+**Corrections to the design.**
+
+1. **Registry paths are not NT paths.** `RelativeName` is a full NT path only
+   when the base object is a root; otherwise it is relative to the base key and
+   must be rebuilt through the `BaseObject`/`KeyObject` chain. The fidelity rule
+   becomes: emit `TargetObject` only when the chain resolves to a root, never
+   as a guessed `HKLM\...` mapping.
+2. **The classic kernel logger needs the system-logger bit.**
+   `EVENT_TRACE_REAL_TIME_MODE` alone starts the session, delivers its
+   configuration events and then goes silent; `EVENT_TRACE_SYSTEM_LOGGER_MODE`
+   is what makes live process events flow.
+3. **TDH does not decode classic (MOF) kernel events.** They arrive with the
+   Process MOF provider GUID `3d6fa8d0-…` and `EventID 0`; `TdhGetEventInformation`
+   returns the `MSNT_SystemTrace` generic template (`GroupMask*`), not the
+   `CommandLine` fields `tracerpt` shows. Command lines and SIDs therefore need
+   either a hand-written MOF (`PERFINFO_PROCESS`) parser or the live-process PEB
+   back-fill.
+4. **Keyword filtering suppresses the events we need.** Enabling
+   `Microsoft-Windows-Kernel-Process` with its own manifest keywords
+   (`0x10 | 0x40`) delivers `ImageLoad` but **no** `ProcessStart`; only a
+   keyword-less subscription (level `Verbose`) delivers the process lifecycle —
+   the same class of silent-miss bug as Rustinel #279. DNS-Client behaves the
+   same way: events 3006/3008 carry keyword `0`, so the Operational-channel mask
+   never receives them.
+
+**Open issue (blocks M2).** In realtime mode, `ProcessStart`/`ProcessStop` are
+captured for long-lived processes only: five `cmd /c ping` runs produced zero
+`ProcessStart` records in a 20 s window, while a concurrent `logman` file-mode
+session on the same provider captured 34/34 in the same window. Buffer size
+(32 KiB and 256 KiB), pool depth and flush timer made no difference, and the
+session reports `EventsLost = 0`. Until this is resolved, EID 1 cannot be
+generated from realtime ETW.
 
 ## Phase 2 (optional): test-signed driver
 
