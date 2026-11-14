@@ -273,6 +273,10 @@ Constraints accepted up front, unchanged from the original Phase 2 note:
   user-mode path must keep working when the driver is absent, refused by HVCI,
   or not loaded.
 
+The crate is `sigmacatch/driver/` (excluded from the workspace, built by
+`.github/workflows/driver.yml` on a `windows-latest` runner with the WDK and
+LLVM). D0 — the control device and its version IOCTL — compiles there today.
+
 Milestones:
 
 - **D0 — process creation**: `PsSetCreateProcessNotifyRoutineEx` →
