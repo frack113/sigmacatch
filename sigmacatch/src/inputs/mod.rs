@@ -25,6 +25,9 @@ pub mod etw_event;
 pub mod etw_process;
 #[cfg(all(target_os = "windows", feature = "etw"))]
 pub mod etw_sysmon;
+// Kernel-sensor client (feature `driver`, implies `etw`).
+#[cfg(all(target_os = "windows", feature = "driver"))]
+pub mod etw_driver;
 
 // One-shot EVTX cross-platform input. Not `target_os`-gated: pure file
 // parsing, runs on Windows and Linux alike.

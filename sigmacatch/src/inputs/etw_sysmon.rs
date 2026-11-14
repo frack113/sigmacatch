@@ -19,6 +19,47 @@ use crate::inputs::etw_process::ProcessFacts;
 const SIGMACATCH_PROVIDER: &str = "{a3e1f6c2-4b5d-4e9f-9c1a-2d7b8e0f3a6c}";
 const SIGMACATCH_CHANNEL: &str = "sigmacatch/Operational";
 
+/// Render a Sysmon **EID 5 (ProcessTerminate)** event.
+pub fn process_terminate_xml(computer: &str, facts: &ProcessFacts) -> String {
+    let mut data = String::new();
+    field(&mut data, "RuleName", "");
+    field(
+        &mut data,
+        "UtcTime",
+        &facts.created.map(sysmon_utc).unwrap_or_default(),
+    );
+    field(&mut data, "ProcessId", &facts.pid.to_string());
+    if let Some(image) = &facts.image {
+        field(&mut data, "Image", image);
+    }
+    if let Some(user) = &facts.user {
+        field(&mut data, "User", user);
+    }
+
+    let time = facts
+        .created
+        .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true))
+        .unwrap_or_default();
+    format!(
+        "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
+         <System>\
+         <Provider Name=\"sigmacatch\" Guid=\"{SIGMACATCH_PROVIDER}\"/>\
+         <EventID>5</EventID><Version>5</Version><Level>4</Level><Task>5</Task><Opcode>0</Opcode>\
+         <Keywords>0x8000000000000000</Keywords>\
+         <TimeCreated SystemTime=\"{}\"/>\
+         <EventRecordID>0</EventRecordID><Correlation/>\
+         <Execution ProcessID=\"{}\" ThreadID=\"0\"/>\
+         <Channel>{SIGMACATCH_CHANNEL}</Channel>\
+         <Computer>{}</Computer>\
+         </System>\
+         <EventData>{data}</EventData>\
+         </Event>",
+        escape(&time),
+        facts.pid,
+        escape(computer)
+    )
+}
+
 /// Render a Sysmon **EID 1 (ProcessCreate)** event.
 ///
 /// `parent` is the creating process's facts when they are still available (the
