@@ -43,8 +43,8 @@ fn main() -> anyhow::Result<()> {
                 &event.secondary[..(event.secondary_length as usize).min(event.secondary.len())],
             );
             println!(
-                "t={second}s kind={} pid={} parent={} image={image} command={command_line}",
-                event.kind, event.pid, event.parent_pid
+                "t={second}s kind={} pid={} parent={} detail={} image={image} command={command_line}",
+                event.kind, event.pid, event.parent_pid, event.detail
             );
             if let Some(mapped) = mapper.map(event) {
                 println!("  -> {}", serde_json::to_string(&*mapped.event_json_raw)?);
