@@ -277,22 +277,49 @@ The crate is `sigmacatch/driver/` (excluded from the workspace, built by
 `.github/workflows/driver.yml` on a `windows-latest` runner with the WDK and
 LLVM). D0 — the control device and its version IOCTL — compiles there today.
 
+One taxonomy, both platforms. The Linux eBPF collector emits Sysmon-schema
+events plus a set of sigmacatch extensions in the 5xx range (500-508); the
+Windows side must emit the same event ids so one rule set runs on both. The
+driver is the source of the ids user-mode ETW cannot produce; the rest stay in
+user mode, and two are Linux-only.
+
+| id | meaning | Windows source |
+|---|---|---|
+| 1, 5 | process create / exit | driver — D1, `PsSetCreateProcessNotifyRoutineEx` |
+| 2, 11, 23 | file create / change / delete | driver — D2, minifilter |
+| 3, 22 | network connect / DNS query | user-mode ETW (Kernel-Network / DNS-Client) |
+| 6 | image (driver) load | user-mode ETW (Kernel-Process `ImageLoad`) or `PsSetLoadImageNotifyRoutine` |
+| 9 | raw access | driver — D2 (no clean public hook) |
+| 10 | process access | driver — D2, `ObRegisterCallbacks` |
+| 17 | pipe create | driver — D2 (no public callback, hardest gap) |
+| 25 | process tampering | driver — D2, `ObRegisterCallbacks` post-op heuristic |
+| 500 | network listen | user-mode ETW (Kernel-Network accept) |
+| 501 | credential change | Linux-only (`setuid`) — no Windows equivalent |
+| 502 | capability change | Linux-only (capabilities) — no Windows equivalent |
+| 503 | file rename | driver — D2, minifilter `FileRenameInformation` |
+| 504 | file chmod (ACL) | driver — D2, minifilter `IRP_MJ_SET_SECURITY` |
+| 505 | file chown (owner) | driver — D2, minifilter `IRP_MJ_SET_SECURITY` |
+| 506 | file truncate | driver — D2, minifilter `FileEndOfFileInformation` |
+| 507 | module unload | user-mode ETW (Kernel-Process `ImageUnload`) |
+| 508 | DNS response | user-mode ETW (DNS-Client 3008/3010/3020) |
+
 Milestones:
 
-- **D0 — process creation**: `PsSetCreateProcessNotifyRoutineEx` →
-  EID 1/5 with the creation-time command line, no polling and no PEB race.
-  This is the smallest driver that proves the channel end to end.
-- **D1 — file system**: a minifilter for creation/rename/delete with complete
-  `FLT_FILE_NAME_INFORMATION` paths, closing the "path incomplete → drop the
-  event" cases.
-- **D2 — the rest**: `ObRegisterCallbacks` for EID 10, named pipes for EID
-  17/18, and the EID 2/15/26 cases.
+- **D0 — channel** (done): control device `\Device\sigmacatch`, version
+  IOCTL; compiles in CI.
+- **D1 — process creation** (done): `PsSetCreateProcessNotifyRoutineEx` into a
+  ring, drained via `IOCTL_READ_EVENTS`.
+- **D2 — file system + process access**: minifilter for 2/11/23/503/504/505/506
+  with complete `FLT_FILE_NAME_INFORMATION` paths, `ObRegisterCallbacks` for
+  10/25, and 9/17 where a public hook exists.
+- **D3 — parity**: the Windows collector emits the same event-id set as the
+  Linux collector; 501/502 documented as Linux-only.
 
 The user-mode collector keeps its own process trigger (snapshot + ETW) so the
 same event is never lost, and the two paths are deduplicated by `(pid,
 creation time)`.
 
-## Phase 2 (optional): test-signed driver (superseded by the decision above)## Phase 2 (optional): test-signed driver (superseded)
+## Phase 2 (optional): test-signed driver (superseded)
 
 Closes the file-path / process-access / named-pipe gaps. In the QEMU VM this is
 signing-free (`bcdedit /set testsigning on` + Secure Boot off + self-signed cert
