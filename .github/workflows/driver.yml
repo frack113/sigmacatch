@@ -77,3 +77,31 @@ jobs:
           --manifest-path sigmacatch/driver/Cargo.toml
           --release
           --target x86_64-pc-windows-msvc
+
+      # Diagnostic: the wdk-sys bindings are generated from the WDK headers at
+      # build time, so their exact shape is only visible here.
+      - name: Dump relevant bindings
+        if: always()
+        shell: pwsh
+        run: |
+          $bindings = Get-ChildItem -Recurse -Filter bindings.rs -Path sigmacatch/driver/target -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $bindings) { Write-Host "no bindings.rs found"; exit 0 }
+          Write-Host "BINDINGS: $($bindings.FullName)"
+          $patterns = @(
+            'pub struct _WDF_IO_QUEUE_CONFIG',
+            'pub struct _WDF_DRIVER_CONFIG',
+            'pub const _WDF_IO_QUEUE_DISPATCH_TYPE',
+            'pub const _WDF_DEVICE_IO_TYPE',
+            'pub type WDFQUEUE',
+            'pub type WDFDEVICE',
+            'pub type WDFDRIVER',
+            'pub type WDFREQUEST',
+            'pub type WDFOBJECT',
+            'pub struct _WDF_OBJECT_ATTRIBUTES'
+          )
+          foreach ($p in $patterns) {
+            Write-Host "=== $p ==="
+            Select-String -Path $bindings.FullName -Pattern $p -Context 0,24 | ForEach-Object { $_.Line; $_.Context.PostContext }
+          }
+          Write-Host "=== macro call_unsafe_wdf_function_binding ==="
+          Select-String -Path $bindings.FullName -Pattern 'macro_rules! call_unsafe_wdf_function_binding' -Context 0,40 | ForEach-Object { $_.Line; $_.Context.PostContext }
