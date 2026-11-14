@@ -179,6 +179,8 @@ const SKIP_PAGING_IO: u32 = 0x0001;
 const NAME_FLAGS: u32 = 0x01 | 0x0100;
 /// `FLT_POSTOP_FINISHED_PROCESSING`.
 const POSTOP_FINISHED: i32 = 0;
+/// `FLT_PREOP_SUCCESS_WITH_CALLBACK`: the post-op must run.
+const PREOP_SUCCESS_WITH_CALLBACK: i32 = 0;
 /// `IRP_MJ_OPERATION_END`: terminator of the operation array.
 const IRP_MJ_OPERATION_END: u8 = 0x80;
 /// `IRP_MJ_CREATE`.
@@ -188,7 +190,7 @@ static OPERATIONS: [FltOperationRegistration; 2] = [
     FltOperationRegistration {
         major_function: IRP_MJ_CREATE,
         flags: SKIP_PAGING_IO,
-        pre_operation: None,
+        pre_operation: Some(pre_create),
         post_operation: Some(post_create),
         reserved1: core::ptr::null_mut(),
     },
@@ -268,6 +270,15 @@ unsafe extern "C" fn instance_setup(
 /// `FilterUnloadCallback`.
 unsafe extern "C" fn filter_unload(_filter: PfltFilter) -> NTSTATUS {
     STATUS_SUCCESS
+}
+
+/// Pre-op on `IRP_MJ_CREATE`: request the post-op, change nothing.
+unsafe extern "C" fn pre_create(
+    _data: *mut FltCallbackData,
+    _flt_objects: *mut core::ffi::c_void,
+    _completion_context: *mut *mut core::ffi::c_void,
+) -> i32 {
+    PREOP_SUCCESS_WITH_CALLBACK
 }
 
 /// Post-op on `IRP_MJ_CREATE`: report files actually created (EID 11).
