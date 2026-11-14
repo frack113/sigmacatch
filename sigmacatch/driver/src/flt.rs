@@ -282,12 +282,12 @@ unsafe extern "C" fn post_create(
         return POSTOP_FINISHED;
     };
     // SAFETY: `IoStatus` is a plain field of the callback data.
-    let status = unsafe { callback.io_status.Anonymous.Status };
+    let status = unsafe { callback.io_status.__bindgen_anon_1.Status };
     if status < 0 {
         return POSTOP_FINISHED;
     }
     // SAFETY: plain field read.
-    if unsafe { callback.io_status.Information } != FILE_CREATED as usize {
+    if unsafe { callback.io_status.Information } != u64::from(FILE_CREATED) {
         return POSTOP_FINISHED;
     }
 

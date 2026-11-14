@@ -460,8 +460,8 @@ unsafe extern "C" fn evt_driver_unload(_driver: WDFDRIVER) {
             let _ = PsRemoveLoadImageNotifyRoutine(Some(image_notify));
             IMAGE_NOTIFY_REGISTERED = false;
         }
-        // SAFETY: releases the fltmgr registration created in `driver_entry`.
-        unsafe { flt::unregister() };
+        // Releases the fltmgr registration created in `driver_entry`.
+        flt::unregister();
     }
 }
 
