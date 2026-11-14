@@ -7,9 +7,9 @@ a plan, not an implementation.
 ## Scope and decisions
 
 - **Environment**: the QEMU Windows 11 test VM (`heiter-test-vms-qemu`). No
-  distribution target, no code-signing budget. A kernel driver that must be
-  distributed as a Microsoft-signed artifact is out of scope for this plan; see
-  [Phase 2 (optional)](#phase-2-optional-test-signed-driver).
+  distribution target, no code-signing budget: the kernel driver is
+  test-signed there, and a distributable build is a separate signing effort.
+  See [the driver decision](#decision-the-driver-is-the-target).
 - **No ferrisetw**: the crate is dormant (last push 2025-10), pins `windows`
   0.61 against our 0.62, and its manifest decode is re-implementable on the
   `windows` crate we already depend on. Hand-roll on `windows` 0.62.2
@@ -85,7 +85,7 @@ Concretely:
 
 ## Architecture (mirrors the eBPF collector)
 
-```
+```text
 sigmacatch/src/inputs/
 ├── etw.rs          # feature `etw` (windows-only): session + callback loop, the
 │                   #   analogue of ebpf.rs (loader + ring-buffer dispatch)
