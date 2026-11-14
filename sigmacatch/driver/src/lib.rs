@@ -26,23 +26,24 @@ extern crate wdk_panic;
 use wdk::println;
 use wdk_sys::_OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS;
 use wdk_sys::ntddk::{
-    KeQuerySystemTime, ObRegisterCallbacks, ObUnRegisterCallbacks, PsGetCurrentProcessId,
-    PsGetProcessId, PsSetCreateProcessNotifyRoutineEx,
+    ObRegisterCallbacks, ObUnRegisterCallbacks, PsGetCurrentProcessId, PsGetProcessId,
+    PsSetCreateProcessNotifyRoutineEx,
 };
 use wdk_sys::{
-    _WDF_DEVICE_IO_TYPE, _WDF_IO_QUEUE_DISPATCH_TYPE, HANDLE, LARGE_INTEGER, NTSTATUS,
-    OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE,
-    OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS,
-    PCUNICODE_STRING, PDRIVER_OBJECT, PEPROCESS, POB_POST_OPERATION_INFORMATION,
-    POB_PRE_OPERATION_INFORMATION, POBJECT_TYPE, PPS_CREATE_NOTIFY_INFO, PVOID, PWDFDEVICE_INIT,
-    STATUS_INVALID_DEVICE_REQUEST, STATUS_SUCCESS, UNICODE_STRING, WDF_DRIVER_CONFIG,
-    WDF_IO_QUEUE_CONFIG, WDF_NO_OBJECT_ATTRIBUTES, WDFDEVICE, WDFDRIVER, WDFQUEUE, WDFREQUEST,
-    WDFSPINLOCK, call_unsafe_wdf_function_binding,
+    _WDF_DEVICE_IO_TYPE, _WDF_IO_QUEUE_DISPATCH_TYPE, HANDLE, NTSTATUS, OB_CALLBACK_REGISTRATION,
+    OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE,
+    OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS, PCUNICODE_STRING, PDRIVER_OBJECT,
+    PEPROCESS, POB_POST_OPERATION_INFORMATION, POB_PRE_OPERATION_INFORMATION, POBJECT_TYPE,
+    PPS_CREATE_NOTIFY_INFO, PVOID, PWDFDEVICE_INIT, STATUS_INVALID_DEVICE_REQUEST, STATUS_SUCCESS,
+    UNICODE_STRING, WDF_DRIVER_CONFIG, WDF_IO_QUEUE_CONFIG, WDF_NO_OBJECT_ATTRIBUTES, WDFDEVICE,
+    WDFDRIVER, WDFQUEUE, WDFREQUEST, WDFSPINLOCK, call_unsafe_wdf_function_binding,
 };
 
-// `PsProcessType` is not bound by wdk-sys; it is an exported kernel variable.
+// `PsProcessType` and `KeQuerySystemTime` are not bound by wdk-sys; both are
+// exported kernel symbols, declared here.
 unsafe extern "C" {
     static PsProcessType: POBJECT_TYPE;
+    fn KeQuerySystemTime(current: *mut i64);
 }
 
 // The protocol lives in the user-mode crate and is included verbatim, so the
@@ -210,10 +211,10 @@ fn unicode_string(buffer: &'static [u16]) -> UNICODE_STRING {
 
 /// Current system time as FILETIME ticks (100 ns since 1601).
 fn now_filetime() -> u64 {
-    let mut time = LARGE_INTEGER::default();
-    // SAFETY: `time` is a valid out-parameter.
+    let mut time: i64 = 0;
+    // SAFETY: `time` is a valid out-parameter (a LARGE_INTEGER).
     unsafe { KeQuerySystemTime(&mut time) };
-    time.QuadPart as u64
+    time as u64
 }
 
 /// Copy a counted wide string into a fixed buffer, reporting the characters
