@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+#
+# Standalone crate nested in the sigmacatch package, deliberately EXCLUDED
+# from the root workspace: a kernel driver only builds on a Windows host with
+# the WDK (see README.md). The user-mode collector treats it as optional and
+# must keep working when it is absent.
+
+[workspace]
+
+[package]
+name = "sigmacatch-driver"
+version = "0.1.0"
+edition = "2021"
+description = "sigmacatch kernel sensor (Sysmon-schema telemetry without Sysmon)"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.wdk.driver-model]
+driver-type = "KMDF"
+kmdf-version-major = 1
+target-kmdf-version-minor = 33
+
+[dependencies]
+wdk = "0.5"
+wdk-alloc = "0.4"
+wdk-panic = "0.5"
+wdk-sys = "0.5"
+
+[build-dependencies]
+wdk-build = "0.6"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

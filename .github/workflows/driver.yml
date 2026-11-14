@@ -1,0 +1,74 @@
+name: Driver
+
+on:
+  push:
+    paths:
+      - 'sigmacatch/driver/**'
+      - '.github/workflows/driver.yml'
+  pull_request:
+    paths:
+      - 'sigmacatch/driver/**'
+      - '.github/workflows/driver.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build kernel driver
+    runs-on: windows-latest
+    env:
+      RUSTFLAGS: >-
+        -D warnings
+        -C target-feature=+crt-static
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The WDK install/LLVM actions are maintained by the windows-drivers-rs
+      # project; copy them in rather than re-implementing the installers.
+      - name: Checkout windows-drivers-rs actions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: microsoft/windows-drivers-rs
+          ref: main
+          path: _temp/windows-drivers-rs
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions
+          sparse-checkout-cone-mode: false
+
+      - name: Copy actions to workspace
+        shell: pwsh
+        run: Copy-Item -Recurse -Force _temp/windows-drivers-rs/.github/actions .github/
+
+      - name: Install LLVM 17.0.6
+        uses: ./.github/actions/install-llvm
+        with:
+          version: 17.0.6
+
+      - name: Install WDK 10.0.22621
+        uses: ./.github/actions/install-wdk
+        with:
+          version: 10.0.22621
+          source: winget
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build
+        run: >
+          cargo build
+          --manifest-path sigmacatch/driver/Cargo.toml
+          --release
+          --target x86_64-pc-windows-msvc
