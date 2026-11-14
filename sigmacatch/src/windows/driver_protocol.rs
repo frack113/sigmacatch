@@ -28,6 +28,11 @@ pub const IOCTL_GET_VERSION: u32 = 0x0022_2000;
 pub const IOCTL_READ_EVENTS: u32 = 0x0022_2004;
 
 /// Event kinds carried by [`SensorEvent::kind`].
+///
+/// The D2 file/access kinds are not produced by the driver yet; they are
+/// declared here so the record layout and the user-mode mapper can be written
+/// against them before D2 lands.
+#[allow(dead_code)]
 pub mod kind {
     /// Process created (`PsSetCreateProcessNotifyRoutineEx`, create path).
     pub const PROCESS_CREATE: u32 = 1;
