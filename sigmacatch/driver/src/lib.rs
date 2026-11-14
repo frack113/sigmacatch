@@ -39,11 +39,9 @@ use wdk_sys::{
     WDFDRIVER, WDFQUEUE, WDFREQUEST, WDFSPINLOCK, call_unsafe_wdf_function_binding,
 };
 
-// `PsProcessType` and `KeQuerySystemTime` are not bound by wdk-sys; both are
-// exported kernel symbols, declared here.
+// `PsProcessType` is not bound by wdk-sys; it is an exported kernel variable.
 unsafe extern "C" {
     static PsProcessType: POBJECT_TYPE;
-    fn KeQuerySystemTime(current: *mut i64);
 }
 
 // The protocol lives in the user-mode crate and is included verbatim, so the
@@ -209,14 +207,6 @@ fn unicode_string(buffer: &'static [u16]) -> UNICODE_STRING {
     }
 }
 
-/// Current system time as FILETIME ticks (100 ns since 1601).
-fn now_filetime() -> u64 {
-    let mut time: i64 = 0;
-    // SAFETY: `time` is a valid out-parameter (a LARGE_INTEGER).
-    unsafe { KeQuerySystemTime(&mut time) };
-    time as u64
-}
-
 /// Copy a counted wide string into a fixed buffer, reporting the characters
 /// copied. Silently truncates to the buffer (the consumer also bounds reads).
 unsafe fn copy_wide(source: &UNICODE_STRING, destination: &mut [u16], copied: &mut u16) {
@@ -261,7 +251,6 @@ unsafe extern "C" fn process_notify(
 ) {
     let mut event = SensorEvent::empty();
     event.version = SIGMACATCH_PROTOCOL_VERSION;
-    event.timestamp = now_filetime();
     event.pid = process_id as usize as u32;
     if !create_info.is_null() {
         event.kind = kind::PROCESS_CREATE;
@@ -323,7 +312,6 @@ unsafe extern "C" fn process_access_post_op(
     }
     let mut event = SensorEvent::empty();
     event.version = SIGMACATCH_PROTOCOL_VERSION;
-    event.timestamp = now_filetime();
     event.kind = kind::PROCESS_ACCESS;
     event.pid = source_pid;
     event.parent_pid = target_pid;
