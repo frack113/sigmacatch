@@ -421,7 +421,9 @@ extern "system" fn driver_entry(
     // SAFETY: `driver` is the I/O manager's object, valid for the load.
     let flt_status = unsafe { flt::register(driver as *mut wdk_sys::DRIVER_OBJECT) };
     if flt_status != STATUS_SUCCESS {
+        // Temporary: surface the minifilter failure through `sc start`.
         println!("sigmacatch: FltRegisterFilter failed {flt_status:#010X}");
+        return flt_status;
     }
 
     // A legacy `sc create type= kernel` service is not Plug-and-Play enumerated, so
