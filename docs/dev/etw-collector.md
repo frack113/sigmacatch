@@ -159,8 +159,9 @@ Each is a bug Rustinel fixed the hard way; our `etw.rs` encodes it as a test:
   wiring, `mod.rs` gate, `main.rs` dispatch, docs.
 - **M4 — regression** (`DataFormat::Evtx` + `regressiondata-check`): generate
   and validate on the VM; apply the fidelity rule (exclude ambiguous paths).
-- **M5 — extend coverage**: image load, file (path-complete only), registry,
-  PowerShell/WMI/TaskScheduler; document the gap table in `collectors.md`.
+- **M5 — extend coverage**: image load, file (path-complete only, rename via
+  events 20/27 + the `FileKey` path cache), registry, PowerShell/WMI/
+  TaskScheduler; document the gap table in `collectors.md`.
 
 ## M0 results (win11 VM, 2026-11-14)
 
@@ -239,7 +240,43 @@ Sysmon-only enrichments that cannot be sourced exactly (`ProcessGuid`,
 `LogonGuid`, `Hashes`, `FileVersion`, `Company`, ...) are omitted rather than
 approximated.
 
-## Phase 2 (optional): test-signed driver
+## Decision: no driver
+
+Recorded on 2026-11-14, replacing the "Phase 2" ambition below.
+
+A `sigmacatch` kernel driver is **not worth it**, because it would only be
+needed to *replace Sysmon* on hosts that do not have it, and the two sources
+that already exist cover the events the driver was meant to unlock:
+
+- **Sysmon installed** → its channel (`Microsoft-Windows-Sysmon/Operational`)
+  is read **live** by the `winevt` collector: EID 10, 17/18, 2, 15, 26 and the
+  exact fields (`GrantedAccess`, `PipeName`, `Hashes`, ...) come for free. No
+  driver of ours is involved.
+- **Without Sysmon** → the user-mode kernel providers cover the rest, including
+  the two gaps that used to justify a mini-filter:
+  - **file create/delete** carry their full `\Device\...\path` in event 12/10;
+  - **rename** is complete: event 20 reports the old name with the `FileKey`,
+    event 27 the **new full path**, and events 10/11 name the `FileKey` — the
+    same object→path cache the registry path needs. Measured on the test VM:
+
+    | id | payload |
+    |---|---|
+    | 20 | `FileKey`, `FileName = "rn-a.txt"` (old, basename only) |
+    | 27 | `FileKey`, `FilePath = \Device\HarddiskVolume3\Users\...\rn-b.txt` |
+    | 10/11 | `FileKey`, full path (NameCreate/NameDelete, old and new) |
+    | 12 | `FileKey`, `FileObject`, full path |
+
+- **Native channels** (Security, PowerShell, ...) are already read live by
+  `winevt`.
+
+What a driver would still add is limited to hosts that run neither Sysmon nor
+anything else publishing those events: EID 10, 17/18, 2, 15, 26. That is a
+deployment choice, documented as a coverage gap, not an architecture
+requirement — and the cost is not small: the WDK is not available in the
+`cargo xwin` chain (no driver build from Linux), every build needs its own
+signature, and a kernel bug is a BSOD.
+
+## Phase 2 (optional): test-signed driver (superseded)
 
 Closes the file-path / process-access / named-pipe gaps. In the QEMU VM this is
 signing-free (`bcdedit /set testsigning on` + Secure Boot off + self-signed cert
