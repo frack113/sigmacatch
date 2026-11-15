@@ -96,6 +96,28 @@ struct FltFileNameInformation {
     volume: UNICODE_STRING,
 }
 
+/// `FILE_RENAME_INFORMATION` (as passed in `SetFileInformation.InfoBuffer`).
+#[repr(C)]
+#[allow(dead_code)]
+struct FileRenameInformation {
+    replace_if_exists: u8,
+    root_directory: HANDLE,
+    file_name_length: u32,
+    file_name: [u16; 1],
+}
+
+/// `FILE_END_OF_FILE_INFORMATION`.
+#[repr(C)]
+struct FileEndOfFileInformation {
+    end_of_file: i64,
+}
+
+/// `FILE_DISPOSITION_INFORMATION`.
+#[repr(C)]
+struct FileDispositionInformation {
+    delete_file: u8,
+}
+
 /// `FLT_OPERATION_REGISTRATION`.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -169,6 +191,16 @@ unsafe extern "C" {
     fn FltParseFileNameInformation(information: *mut FltFileNameInformation) -> NTSTATUS;
     fn FltReleaseFileNameInformation(information: *mut FltFileNameInformation);
     fn FltGetRequestorProcessId(data: *mut FltCallbackData) -> HANDLE;
+    fn FltGetDestinationFileNameInformation(
+        data: *mut FltCallbackData,
+        instance: *mut core::ffi::c_void,
+        file_object: *mut core::ffi::c_void,
+        root_directory: HANDLE,
+        file_name: *mut u16,
+        file_name_length: u32,
+        options: u32,
+        information: *mut *mut FltFileNameInformation,
+    ) -> NTSTATUS;
 }
 
 /// `FLT_REGISTRATION_VERSION` (2.03 on Windows 10+).
@@ -185,13 +217,38 @@ const PREOP_SUCCESS_WITH_CALLBACK: i32 = 0;
 const IRP_MJ_OPERATION_END: u8 = 0x80;
 /// `IRP_MJ_CREATE`.
 const IRP_MJ_CREATE: u8 = 0;
+/// `IRP_MJ_SET_INFORMATION`.
+const IRP_MJ_SET_INFORMATION: u8 = 6;
+/// `IRP_MJ_SET_SECURITY`.
+const IRP_MJ_SET_SECURITY: u8 = 21;
+/// `FILE_INFORMATION_CLASS` values handled by the SetInformation post-op.
+const FILE_RENAME_INFORMATION_CLASS: u32 = 10;
+const FILE_DISPOSITION_INFORMATION_CLASS: u32 = 13;
+const FILE_END_OF_FILE_INFORMATION_CLASS: u32 = 20;
+/// `SECURITY_INFORMATION` bits.
+const OWNER_SECURITY_INFORMATION: u32 = 0x1;
+const DACL_SECURITY_INFORMATION: u32 = 0x4;
 
-static OPERATIONS: [FltOperationRegistration; 2] = [
+static OPERATIONS: [FltOperationRegistration; 4] = [
     FltOperationRegistration {
         major_function: IRP_MJ_CREATE,
         flags: SKIP_PAGING_IO,
         pre_operation: Some(pre_create),
         post_operation: Some(post_create),
+        reserved1: core::ptr::null_mut(),
+    },
+    FltOperationRegistration {
+        major_function: IRP_MJ_SET_INFORMATION,
+        flags: SKIP_PAGING_IO,
+        pre_operation: Some(pre_pass),
+        post_operation: Some(post_set_information),
+        reserved1: core::ptr::null_mut(),
+    },
+    FltOperationRegistration {
+        major_function: IRP_MJ_SET_SECURITY,
+        flags: SKIP_PAGING_IO,
+        pre_operation: Some(pre_pass),
+        post_operation: Some(post_set_security),
         reserved1: core::ptr::null_mut(),
     },
     FltOperationRegistration {
@@ -286,6 +343,167 @@ unsafe extern "C" fn pre_create(
     _completion_context: *mut *mut core::ffi::c_void,
 ) -> i32 {
     PREOP_SUCCESS_WITH_CALLBACK
+}
+
+/// Pre-op for every operation that only needs the post-op.
+unsafe extern "C" fn pre_pass(
+    _data: *mut FltCallbackData,
+    _flt_objects: *mut core::ffi::c_void,
+    _completion_context: *mut *mut core::ffi::c_void,
+) -> i32 {
+    PREOP_SUCCESS_WITH_CALLBACK
+}
+
+/// Push an event carrying the file's current normalized name.
+unsafe fn push_named(data: *mut FltCallbackData, kind: u32, detail: u32) {
+    let mut information: *mut FltFileNameInformation = core::ptr::null_mut();
+    // SAFETY: fltmgr allocates the name information; released below.
+    if unsafe { FltGetFileNameInformation(data, NAME_FLAGS, &mut information) } != STATUS_SUCCESS {
+        return;
+    }
+    // SAFETY: `information` is live until the release below.
+    unsafe {
+        let _ = FltParseFileNameInformation(information);
+        if let Some(name_info) = information.as_ref() {
+            let mut event = SensorEvent::empty();
+            event.version = SIGMACATCH_PROTOCOL_VERSION;
+            event.kind = kind;
+            event.detail = detail;
+            event.pid = FltGetRequestorProcessId(data) as usize as u32;
+            copy_wide(
+                &name_info.name,
+                &mut event.primary,
+                &mut event.primary_length,
+            );
+            ring_push(&event);
+        }
+        FltReleaseFileNameInformation(information);
+    }
+}
+
+/// `IRP_MJ_SET_INFORMATION` post-op: rename (503), truncate (506), delete (23).
+unsafe extern "C" fn post_set_information(
+    data: *mut FltCallbackData,
+    _flt_objects: *mut core::ffi::c_void,
+    _context: *mut core::ffi::c_void,
+    _flags: u32,
+) -> i32 {
+    // SAFETY: `data` is valid for the callback's duration.
+    let Some(callback) = (unsafe { data.as_ref() }) else {
+        return POSTOP_FINISHED;
+    };
+    if unsafe { callback.io_status.__bindgen_anon_1.Status } < 0 {
+        return POSTOP_FINISHED;
+    }
+    // SAFETY: `iopb` points to the live parameter block.
+    let Some(iopb) = (unsafe { callback.iopb.as_ref() }) else {
+        return POSTOP_FINISHED;
+    };
+    // SAFETY: the SetFileInformation member is the active union member for
+    // this major function.
+    let parameters = unsafe { &iopb.parameters.set_file_information };
+    match parameters.file_information_class {
+        FILE_RENAME_INFORMATION_CLASS => {
+            // SAFETY: the buffer holds a FILE_RENAME_INFORMATION for this class.
+            let rename = parameters.info_buffer.cast::<FileRenameInformation>();
+            if rename.is_null() {
+                return POSTOP_FINISHED;
+            }
+            let rename = unsafe { &*rename };
+            let mut old = core::ptr::null_mut();
+            if unsafe { FltGetFileNameInformation(data, NAME_FLAGS, &mut old) } != STATUS_SUCCESS {
+                return POSTOP_FINISHED;
+            }
+            let mut new = core::ptr::null_mut();
+            let status = unsafe {
+                FltGetDestinationFileNameInformation(
+                    data,
+                    iopb.target_instance,
+                    iopb.target_file_object,
+                    rename.root_directory,
+                    rename.file_name.as_ptr().cast_mut(),
+                    rename.file_name_length,
+                    NAME_FLAGS,
+                    &mut new,
+                )
+            };
+            unsafe {
+                let _ = FltParseFileNameInformation(old);
+                if status == STATUS_SUCCESS {
+                    let _ = FltParseFileNameInformation(new);
+                    let mut event = SensorEvent::empty();
+                    event.version = SIGMACATCH_PROTOCOL_VERSION;
+                    event.kind = kind::FILE_RENAME;
+                    event.pid = FltGetRequestorProcessId(data) as usize as u32;
+                    if let Some(old_info) = old.as_ref() {
+                        copy_wide(
+                            &old_info.name,
+                            &mut event.primary,
+                            &mut event.primary_length,
+                        );
+                    }
+                    if let Some(new_info) = new.as_ref() {
+                        copy_wide(
+                            &new_info.name,
+                            &mut event.secondary,
+                            &mut event.secondary_length,
+                        );
+                    }
+                    ring_push(&event);
+                    FltReleaseFileNameInformation(new);
+                }
+                FltReleaseFileNameInformation(old);
+            }
+        }
+        FILE_END_OF_FILE_INFORMATION_CLASS => {
+            // SAFETY: the buffer holds a FILE_END_OF_FILE_INFORMATION.
+            let truncate = parameters.info_buffer.cast::<FileEndOfFileInformation>();
+            if truncate.is_null() {
+                return POSTOP_FINISHED;
+            }
+            let size = unsafe { (*truncate).end_of_file };
+            unsafe { push_named(data, kind::FILE_TRUNCATE, size as u32) };
+        }
+        FILE_DISPOSITION_INFORMATION_CLASS => {
+            // SAFETY: the buffer holds a FILE_DISPOSITION_INFORMATION.
+            let disposition = parameters.info_buffer.cast::<FileDispositionInformation>();
+            if disposition.is_null() || unsafe { (*disposition).delete_file } == 0 {
+                return POSTOP_FINISHED;
+            }
+            unsafe { push_named(data, kind::FILE_DELETE, 0) };
+        }
+        _ => {}
+    }
+    POSTOP_FINISHED
+}
+
+/// `IRP_MJ_SET_SECURITY` post-op: DACL change (504) and owner change (505).
+unsafe extern "C" fn post_set_security(
+    data: *mut FltCallbackData,
+    _flt_objects: *mut core::ffi::c_void,
+    _context: *mut core::ffi::c_void,
+    _flags: u32,
+) -> i32 {
+    // SAFETY: `data` is valid for the callback's duration.
+    let Some(callback) = (unsafe { data.as_ref() }) else {
+        return POSTOP_FINISHED;
+    };
+    if unsafe { callback.io_status.__bindgen_anon_1.Status } < 0 {
+        return POSTOP_FINISHED;
+    }
+    // SAFETY: `iopb` points to the live parameter block.
+    let Some(iopb) = (unsafe { callback.iopb.as_ref() }) else {
+        return POSTOP_FINISHED;
+    };
+    // SAFETY: the SetSecurity member is the active union member here.
+    let security_information = unsafe { iopb.parameters.set_security.security_information };
+    if security_information & DACL_SECURITY_INFORMATION != 0 {
+        unsafe { push_named(data, kind::FILE_SET_SECURITY, 0) };
+    }
+    if security_information & OWNER_SECURITY_INFORMATION != 0 {
+        unsafe { push_named(data, kind::FILE_SET_SECURITY, 1) };
+    }
+    POSTOP_FINISHED
 }
 
 /// Post-op on `IRP_MJ_CREATE`: report files actually created (EID 11).

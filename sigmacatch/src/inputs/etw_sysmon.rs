@@ -19,6 +19,48 @@ use crate::inputs::etw_process::ProcessFacts;
 const SIGMACATCH_PROVIDER: &str = "{a3e1f6c2-4b5d-4e9f-9c1a-2d7b8e0f3a6c}";
 const SIGMACATCH_CHANNEL: &str = "sigmacatch/Operational";
 
+/// Render a file event with an arbitrary event id and extra fields.
+///
+/// Used for the Sysmon file events (23) and the sigmacatch extensions
+/// (503 rename, 504 ACL, 505 owner, 506 truncate), which share the shape:
+/// `UtcTime`, `ProcessId`, `Image`, then the kind-specific fields.
+pub fn file_event_xml(
+    computer: &str,
+    event_id: u16,
+    at: chrono::DateTime<chrono::Utc>,
+    process_id: u32,
+    process_image: Option<&str>,
+    fields: &[(&str, &str)],
+) -> String {
+    let mut data = String::new();
+    field(&mut data, "RuleName", "");
+    field(&mut data, "UtcTime", &sysmon_utc(at));
+    field(&mut data, "ProcessId", &process_id.to_string());
+    if let Some(image) = process_image {
+        field(&mut data, "Image", image);
+    }
+    for (name, value) in fields {
+        field(&mut data, name, value);
+    }
+    format!(
+        "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
+         <System>\
+         <Provider Name=\"sigmacatch\" Guid=\"{SIGMACATCH_PROVIDER}\"/>\
+         <EventID>{event_id}</EventID><Version>5</Version><Level>4</Level><Task>{event_id}</Task><Opcode>0</Opcode>\
+         <Keywords>0x8000000000000000</Keywords>\
+         <TimeCreated SystemTime=\"{}\"/>\
+         <Correlation/>\
+         <Execution ProcessID=\"{process_id}\" ThreadID=\"0\"/>\
+         <Channel>{SIGMACATCH_CHANNEL}</Channel>\
+         <Computer>{}</Computer>\
+         </System>\
+         <EventData>{data}</EventData>\
+         </Event>",
+        escape(&at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)),
+        escape(computer)
+    )
+}
+
 /// Render a Sysmon **EID 11 (FileCreate)** event.
 pub fn file_create_xml(
     computer: &str,

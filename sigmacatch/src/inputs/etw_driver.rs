@@ -25,8 +25,8 @@ use windows::core::PCWSTR;
 use crate::inputs::etw_event::filetime_to_utc;
 use crate::inputs::etw_process::{ProcessFacts, enrich};
 use crate::inputs::etw_sysmon::{
-    driver_load_xml, file_create_xml, image_load_xml, process_access_xml, process_start_xml,
-    process_terminate_xml,
+    driver_load_xml, file_create_xml, file_event_xml, image_load_xml, process_access_xml,
+    process_start_xml, process_terminate_xml,
 };
 use crate::types::Event;
 
@@ -170,6 +170,10 @@ impl Mapper {
             kind::IMAGE_LOAD => self.map_image_load(event, false),
             kind::DRIVER_LOAD => self.map_image_load(event, true),
             kind::FILE_CREATE => self.map_file_create(event),
+            kind::FILE_RENAME => self.map_file_rename(event),
+            kind::FILE_TRUNCATE => self.map_file_simple(event, 506, true),
+            kind::FILE_DELETE => self.map_file_simple(event, 23, false),
+            kind::FILE_SET_SECURITY => self.map_file_security(event),
             _ => None,
         }
     }
@@ -177,6 +181,68 @@ impl Mapper {
     /// Event time from the kernel record, falling back to "now".
     fn event_time(event: &SensorEvent) -> chrono::DateTime<chrono::Utc> {
         filetime_to_utc(event.timestamp as i64).unwrap_or_else(chrono::Utc::now)
+    }
+
+    fn file_image(&self, pid: u32) -> Option<String> {
+        self.cache.get(&pid).and_then(|f| f.image.clone())
+    }
+
+    fn map_file_rename(&mut self, event: &SensorEvent) -> Option<Event> {
+        let old = wide(&event.primary, event.primary_length);
+        let new = wide(&event.secondary, event.secondary_length);
+        if old.is_empty() || new.is_empty() {
+            return None;
+        }
+        let image = self.file_image(event.pid);
+        let xml = file_event_xml(
+            &self.computer,
+            503,
+            Self::event_time(event),
+            event.pid,
+            image.as_deref(),
+            &[("TargetFilename", &new), ("SourceFilename", &old)],
+        );
+        Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+    }
+
+    fn map_file_simple(&mut self, event: &SensorEvent, id: u16, with_size: bool) -> Option<Event> {
+        let path = wide(&event.primary, event.primary_length);
+        if path.is_empty() {
+            return None;
+        }
+        let image = self.file_image(event.pid);
+        let size = event.detail.to_string();
+        let mut fields: Vec<(&str, &str)> = vec![("TargetFilename", &path)];
+        if with_size {
+            fields.push(("Size", &size));
+        }
+        let xml = file_event_xml(
+            &self.computer,
+            id,
+            Self::event_time(event),
+            event.pid,
+            image.as_deref(),
+            &fields,
+        );
+        Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+    }
+
+    fn map_file_security(&mut self, event: &SensorEvent) -> Option<Event> {
+        let path = wide(&event.primary, event.primary_length);
+        if path.is_empty() {
+            return None;
+        }
+        let image = self.file_image(event.pid);
+        let id = if event.detail == 0 { 504 } else { 505 };
+        let xml = file_event_xml(
+            &self.computer,
+            id,
+            Self::event_time(event),
+            event.pid,
+            image.as_deref(),
+            &[("TargetFilename", &path)],
+        );
+        Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
 
     fn map_file_create(&mut self, event: &SensorEvent) -> Option<Event> {
