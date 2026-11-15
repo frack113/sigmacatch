@@ -39,11 +39,13 @@ Delivered and validated in the test VM:
 
 Blocked / remaining:
 
-- **D2b.2 — file system** (blocked): EID 2/11/23 and the sigmacatch
-  extensions 503/504/505/506 need a minifilter. `wdk-sys` does **not** bind
-  `fltmgr`, so this requires a hand-written `fltmgr` FFI
-  (`FltRegisterFilter`, `FLT_REGISTRATION`, `FLT_CALLBACK_DATA`,
-  `FltGetFileNameInformation`, ...) and an INF/altitude install.
+- **D2b.2a — file create** (done): hand-written `fltmgr` FFI (wdk-sys does not
+  bind it), `IRP_MJ_CREATE` post-op → EID 11 with the normalized NT path.
+  Installed with `sc create` plus the `Instances`/`DefaultInstance` registry
+  keys (altitude 380000).
+- **D2b.2b — the other file kinds** (next): rename (503), truncate (506),
+  delete (23), chmod/chown (504/505), reusing the same registration and the
+  `FLT_PARAMETERS` members already declared.
 - **EID 9 (raw access), 17/18 (pipes)**: no public user-mode or documented
   kernel hook; documented as gaps.
 

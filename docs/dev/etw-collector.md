@@ -436,4 +436,32 @@ signal `regression::evtx::write_evtx` uses to write the `.evtx` from the event
 XML with the pure-Rust writer, instead of `EvtExportLog` on
 `sigmacatch/Operational` (a channel that does not exist in the Event Log).
 
-Next: D2b.2, the minifilter for file events 2/11/23/503/504/505/506.
+**D2b.2a — file create (EID 11)** is validated. The minifilter is a
+hand-written `fltmgr` FFI (wdk-sys does not bind it), transcribed from the WDK
+22621 `fltkernel.h`: `FLT_REGISTRATION` (2.03), the operation table, the
+`FLT_CALLBACK_DATA` and `FLT_IO_PARAMETER_BLOCK` prefixes, and
+`FLT_FILE_NAME_INFORMATION`. Only `FltRegisterFilter`, `FltStartFiltering`,
+`FltGetFileNameInformation`, `FltParseFileNameInformation`,
+`FltReleaseFileNameInformation` and `FltGetRequestorProcessId` are needed.
+
+Two bugs cost a bugcheck each:
+
+- **`FLT_POST_OPERATION_CALLBACK` takes `Data` first**, not `FltObjects`. The
+  driver had the two swapped, so it read `IoStatus` out of
+  `FLT_RELATED_OBJECTS` — every create looked like a non-create with a
+  pointer-shaped `Information`.
+- **`FltStartFiltering` delivers callbacks immediately.** Starting it before
+  `create_device` built the ring's KMDF spinlock gave a
+  `WDF_VIOLATION (0x10D)` bugcheck on load. `register` and `start` are now
+  separate, and `start` runs after the spinlock exists.
+
+Measured in the VM: creating files produced EID 11 with the normalized NT
+path, e.g.
+`TargetFilename=\Device\HarddiskVolume3\Users\...\probe11k.out`, the
+requestor pid, and the image from the pid cache.
+
+Remaining kinds (rename/truncate/delete/security) reuse the same registration
+and the `FLT_PARAMETERS.SetFileInformation`/`SetSecurity` members already
+declared in the FFI.
+
+Next: the remaining file kinds (2/23/503/504/505/506).
