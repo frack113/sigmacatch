@@ -10,8 +10,10 @@
 //! partial prefix is layout-compatible, and the `FLT_PARAMETERS` union only
 //! needs the members we dereference.
 //!
-//! D2b.2a covers `IRP_MJ_CREATE` post-op (EID 11). The other file kinds
-//! (rename/truncate/delete/security) reuse the same registration.
+//! Coverage: `IRP_MJ_CREATE` (EID 11, and EID 17 on the named-pipe volume),
+//! `IRP_MJ_SET_INFORMATION` (EID 2 creation time, 23 delete, 503 rename, 506
+//! truncate), `IRP_MJ_SET_SECURITY` (EID 504/505) and `IRP_MJ_READ` (EID 9,
+//! raw volume reads).
 
 use wdk_sys::ntddk::PsGetCurrentProcessId;
 use wdk_sys::{
@@ -83,6 +85,61 @@ struct FltSetInformationParameters {
 struct FltSetSecurityParameters {
     security_information: u32,
     security_descriptor: *mut core::ffi::c_void,
+}
+
+/// `FILE_OBJECT` prefix: the fields needed to recognise a raw volume handle
+/// (`FileName` empty, no parent) and to read a named pipe's relative name.
+///
+/// Offsets on x64: `RelatedFileObject` 0x40, `Flags` 0x50, `FileName` 0x58.
+#[repr(C)]
+#[allow(dead_code)]
+struct FileObject {
+    file_type: i16,
+    size: i16,
+    device_object: *mut core::ffi::c_void,
+    vpb: *mut core::ffi::c_void,
+    fs_context: *mut core::ffi::c_void,
+    fs_context2: *mut core::ffi::c_void,
+    section_object_pointer: *mut core::ffi::c_void,
+    private_cache_map: *mut core::ffi::c_void,
+    final_status: i32,
+    related_file_object: *mut FileObject,
+    lock_operation: u8,
+    delete_pending: u8,
+    read_access: u8,
+    write_access: u8,
+    delete_access: u8,
+    shared_read: u8,
+    shared_write: u8,
+    shared_delete: u8,
+    flags: u32,
+    file_name: UNICODE_STRING,
+}
+
+/// `FLT_RELATED_OBJECTS`.
+#[repr(C)]
+#[allow(dead_code)]
+struct FltRelatedObjects {
+    size: u16,
+    transaction_context: u16,
+    filter: *mut core::ffi::c_void,
+    volume: *mut core::ffi::c_void,
+    instance: *mut core::ffi::c_void,
+    file_object: *mut FileObject,
+    transaction: *mut core::ffi::c_void,
+}
+
+/// `FILE_BASIC_INFORMATION`. When *setting* it, `ChangeTime` carries the new
+/// creation time (the other three times are ignored by the file systems).
+#[repr(C)]
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+struct FileBasicInformation {
+    creation_time: i64,
+    last_access_time: i64,
+    last_write_time: i64,
+    change_time: i64,
+    file_attributes: u32,
 }
 
 /// `FLT_FILE_NAME_INFORMATION`.
@@ -201,6 +258,19 @@ unsafe extern "C" {
     fn FltParseFileNameInformation(information: *mut FltFileNameInformation) -> NTSTATUS;
     fn FltReleaseFileNameInformation(information: *mut FltFileNameInformation);
     fn FltGetRequestorProcessId(data: *mut FltCallbackData) -> HANDLE;
+    fn FltGetVolumeName(
+        volume: *mut core::ffi::c_void,
+        volume_name: *mut UNICODE_STRING,
+        buffer_size_needed: *mut u32,
+    ) -> NTSTATUS;
+    fn FltQueryInformationFile(
+        instance: *mut core::ffi::c_void,
+        file_object: *mut core::ffi::c_void,
+        file_information: *mut core::ffi::c_void,
+        length: u32,
+        file_information_class: u32,
+        length_returned: *mut u32,
+    ) -> NTSTATUS;
     fn FltGetDestinationFileNameInformation(
         instance: *mut core::ffi::c_void,
         file_object: *mut core::ffi::c_void,
@@ -216,16 +286,43 @@ unsafe extern "C" {
 const FLT_REGISTRATION_VERSION: u16 = 0x0203;
 /// `FLTFL_OPERATION_REGISTRATION_SKIP_PAGING_IO`.
 const SKIP_PAGING_IO: u32 = 0x0001;
+/// `FLTFL_OPERATION_REGISTRATION_SKIP_CACHED_IO`: a raw volume read never
+/// comes from the cache, and skipping cached I/O keeps ordinary reads out.
+const SKIP_CACHED_IO: u32 = 0x0002;
 /// `FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT`.
 const NAME_FLAGS: u32 = 0x01 | 0x0100;
 /// `FLT_POSTOP_FINISHED_PROCESSING`.
 const POSTOP_FINISHED: i32 = 0;
 /// `FLT_PREOP_SUCCESS_WITH_CALLBACK`: the post-op must run.
 const PREOP_SUCCESS_WITH_CALLBACK: i32 = 0;
+/// `FLT_PREOP_SUCCESS_NO_CALLBACK`: the post-op is not wanted.
+const PREOP_SUCCESS_NO_CALLBACK: i32 = 1;
+/// `\Device\NamedPipe`: the NPFS volume device name.
+const NAMED_PIPE_DEVICE: &[u16] = &[
+    b'\\' as u16,
+    b'D' as u16,
+    b'e' as u16,
+    b'v' as u16,
+    b'i' as u16,
+    b'c' as u16,
+    b'e' as u16,
+    b'\\' as u16,
+    b'N' as u16,
+    b'a' as u16,
+    b'm' as u16,
+    b'e' as u16,
+    b'd' as u16,
+    b'P' as u16,
+    b'i' as u16,
+    b'p' as u16,
+    b'e' as u16,
+];
 /// `IRP_MJ_OPERATION_END`: terminator of the operation array.
 const IRP_MJ_OPERATION_END: u8 = 0x80;
 /// `IRP_MJ_CREATE`.
 const IRP_MJ_CREATE: u8 = 0;
+/// `IRP_MJ_READ`.
+const IRP_MJ_READ: u8 = 3;
 /// `IRP_MJ_SET_INFORMATION`.
 const IRP_MJ_SET_INFORMATION: u8 = 6;
 /// `IRP_MJ_SET_SECURITY`.
@@ -234,6 +331,7 @@ const IRP_MJ_SET_SECURITY: u8 = 21;
 const FILE_RENAME_INFORMATION_CLASS: u32 = 10;
 const FILE_DISPOSITION_INFORMATION_CLASS: u32 = 13;
 const FILE_END_OF_FILE_INFORMATION_CLASS: u32 = 20;
+const FILE_BASIC_INFORMATION_CLASS: u32 = 4;
 const FILE_DISPOSITION_INFORMATION_EX_CLASS: u32 = 64;
 const FILE_RENAME_INFORMATION_EX_CLASS: u32 = 65;
 /// `FILE_DISPOSITION_INFORMATION_EX.Flags` bit that requests the delete.
@@ -242,7 +340,7 @@ const FILE_DISPOSITION_DELETE: u32 = 0x1;
 const OWNER_SECURITY_INFORMATION: u32 = 0x1;
 const DACL_SECURITY_INFORMATION: u32 = 0x4;
 
-static OPERATIONS: [FltOperationRegistration; 4] = [
+static OPERATIONS: [FltOperationRegistration; 5] = [
     FltOperationRegistration {
         major_function: IRP_MJ_CREATE,
         flags: SKIP_PAGING_IO,
@@ -262,6 +360,13 @@ static OPERATIONS: [FltOperationRegistration; 4] = [
         flags: SKIP_PAGING_IO,
         pre_operation: Some(pre_pass),
         post_operation: Some(post_set_security),
+        reserved1: core::ptr::null_mut(),
+    },
+    FltOperationRegistration {
+        major_function: IRP_MJ_READ,
+        flags: SKIP_PAGING_IO | SKIP_CACHED_IO,
+        pre_operation: Some(pre_read),
+        post_operation: None,
         reserved1: core::ptr::null_mut(),
     },
     FltOperationRegistration {
@@ -349,6 +454,73 @@ unsafe extern "C" fn filter_unload(_filter: PfltFilter) -> NTSTATUS {
     STATUS_SUCCESS
 }
 
+/// Copy a volume's device name (e.g. `\Device\HarddiskVolume3`) into
+/// `buffer`, returning the number of code units written.
+unsafe fn volume_device_name(volume: *mut core::ffi::c_void, buffer: &mut [u16]) -> Option<usize> {
+    let mut name = UNICODE_STRING {
+        Length: 0,
+        MaximumLength: (buffer.len() * 2) as u16,
+        Buffer: buffer.as_mut_ptr(),
+    };
+    let mut needed = 0u32;
+    // SAFETY: fltmgr writes at most `MaximumLength` bytes into `buffer`.
+    let status = unsafe { FltGetVolumeName(volume, &mut name, &mut needed) };
+    (status == STATUS_SUCCESS).then_some(name.Length as usize / 2)
+}
+
+/// True when the request targets the named-pipe (NPFS) volume.
+unsafe fn on_named_pipe_volume(flt_objects: *mut core::ffi::c_void) -> bool {
+    // SAFETY: `flt_objects` is a live FLT_RELATED_OBJECTS for the call.
+    let Some(objects) = (unsafe { (flt_objects as *mut FltRelatedObjects).as_ref() }) else {
+        return false;
+    };
+    let mut buffer = [0u16; 128];
+    let Some(units) = (unsafe { volume_device_name(objects.volume, &mut buffer) }) else {
+        return false;
+    };
+    buffer[..units].eq_ignore_ascii_case(NAMED_PIPE_DEVICE)
+}
+
+/// `IRP_MJ_READ` pre-op: raw volume reads (EID 9).
+///
+/// A raw read comes from a handle opened on a volume itself rather than on a
+/// file inside it: the file object carries no name and no parent. It is
+/// reported from the pre-op because the post-op can run at DPC level, where
+/// the volume name lookup is not allowed.
+unsafe extern "C" fn pre_read(
+    data: *mut FltCallbackData,
+    flt_objects: *mut core::ffi::c_void,
+    _completion_context: *mut *mut core::ffi::c_void,
+) -> i32 {
+    // SAFETY: `flt_objects` is a live FLT_RELATED_OBJECTS for the call.
+    let Some(objects) = (unsafe { (flt_objects as *mut FltRelatedObjects).as_ref() }) else {
+        return PREOP_SUCCESS_NO_CALLBACK;
+    };
+    // SAFETY: the file object belongs to the volume the request targets.
+    let Some(file) = (unsafe { objects.file_object.as_ref() }) else {
+        return PREOP_SUCCESS_NO_CALLBACK;
+    };
+    if file.file_name.Length != 0 || !file.related_file_object.is_null() {
+        return PREOP_SUCCESS_NO_CALLBACK;
+    }
+    let mut buffer = [0u16; 128];
+    let Some(units) = (unsafe { volume_device_name(objects.volume, &mut buffer) }) else {
+        return PREOP_SUCCESS_NO_CALLBACK;
+    };
+    let mut event = SensorEvent::empty();
+    event.version = SIGMACATCH_PROTOCOL_VERSION;
+    event.kind = kind::RAW_READ;
+    event.pid = unsafe { FltGetRequestorProcessId(data) } as usize as u32;
+    let count = units.min(event.primary.len());
+    // SAFETY: both buffers are local and `count` is bounded by both.
+    unsafe {
+        core::ptr::copy_nonoverlapping(buffer.as_ptr(), event.primary.as_mut_ptr(), count);
+        event.primary_length = count as u16;
+        ring_push(&event);
+    }
+    PREOP_SUCCESS_NO_CALLBACK
+}
+
 /// Pre-op on `IRP_MJ_CREATE`: request the post-op, change nothing.
 unsafe extern "C" fn pre_create(
     _data: *mut FltCallbackData,
@@ -382,6 +554,55 @@ unsafe extern "C" fn pre_set_information(
     // SAFETY: the SetFileInformation member is the active union member here.
     let parameters = unsafe { &iopb.parameters.set_file_information };
     match parameters.file_information_class {
+        FILE_BASIC_INFORMATION_CLASS => {
+            // SAFETY: the buffer holds a FILE_BASIC_INFORMATION.
+            let basic = parameters.info_buffer.cast::<FileBasicInformation>();
+            if basic.is_null() {
+                return PREOP_SUCCESS_WITH_CALLBACK;
+            }
+            // A basic-information set carries the new creation time in
+            // `ChangeTime`; zero means "leave it alone".
+            let new_creation = unsafe { (*basic).change_time };
+            if new_creation == 0 {
+                return PREOP_SUCCESS_WITH_CALLBACK;
+            }
+            let mut previous = FileBasicInformation {
+                creation_time: 0,
+                last_access_time: 0,
+                last_write_time: 0,
+                change_time: 0,
+                file_attributes: 0,
+            };
+            let mut returned = 0u32;
+            // SAFETY: `previous` is sized for the class; the query is issued
+            // on the file object of this very operation.
+            let status = unsafe {
+                FltQueryInformationFile(
+                    iopb.target_instance,
+                    iopb.target_file_object,
+                    (&raw mut previous).cast::<core::ffi::c_void>(),
+                    core::mem::size_of::<FileBasicInformation>() as u32,
+                    FILE_BASIC_INFORMATION_CLASS,
+                    &mut returned,
+                )
+            };
+            let old = if status == STATUS_SUCCESS {
+                previous.creation_time
+            } else {
+                0
+            };
+            if old != 0 && old == new_creation {
+                return PREOP_SUCCESS_WITH_CALLBACK;
+            }
+            // A negative value means "now"; the resulting stamp is not
+            // exposed here, so it is left out rather than invented.
+            let new_value = u64::try_from(new_creation).unwrap_or(0);
+            let old_value = u64::try_from(old).unwrap_or(0);
+            unsafe {
+                push_named_values(data, kind::FILE_CREATION_TIME, 0, old_value, new_value);
+            }
+            return PREOP_SUCCESS_WITH_CALLBACK;
+        }
         FILE_DISPOSITION_INFORMATION_CLASS => {
             // SAFETY: the buffer holds a FILE_DISPOSITION_INFORMATION.
             let disposition = parameters.info_buffer.cast::<FileDispositionInformation>();
@@ -470,6 +691,18 @@ unsafe extern "C" fn pre_pass(
 
 /// Push an event carrying the file's current normalized name.
 unsafe fn push_named(data: *mut FltCallbackData, kind: u32, detail: u32) {
+    // SAFETY: forwarded to the value-carrying variant with no values.
+    unsafe { push_named_values(data, kind, detail, 0, 0) };
+}
+
+/// [`push_named`] plus the two kind-specific 64-bit values.
+unsafe fn push_named_values(
+    data: *mut FltCallbackData,
+    kind: u32,
+    detail: u32,
+    value_a: u64,
+    value_b: u64,
+) {
     let mut information: *mut FltFileNameInformation = core::ptr::null_mut();
     // SAFETY: fltmgr allocates the name information; released below.
     if unsafe { FltGetFileNameInformation(data, NAME_FLAGS, &mut information) } != STATUS_SUCCESS {
@@ -483,6 +716,8 @@ unsafe fn push_named(data: *mut FltCallbackData, kind: u32, detail: u32) {
             event.version = SIGMACATCH_PROTOCOL_VERSION;
             event.kind = kind;
             event.detail = detail;
+            event.value_a = value_a;
+            event.value_b = value_b;
             event.pid = FltGetRequestorProcessId(data) as usize as u32;
             copy_wide(
                 &name_info.name,
@@ -567,7 +802,7 @@ unsafe extern "C" fn post_set_security(
 /// Post-op on `IRP_MJ_CREATE`: report files actually created (EID 11).
 unsafe extern "C" fn post_create(
     data: *mut FltCallbackData,
-    _flt_objects: *mut core::ffi::c_void,
+    flt_objects: *mut core::ffi::c_void,
     _context: *mut core::ffi::c_void,
     _flags: u32,
 ) -> i32 {
@@ -581,6 +816,14 @@ unsafe extern "C" fn post_create(
         return POSTOP_FINISHED;
     }
     if callback.io_status.Information != u64::from(FILE_CREATED) {
+        return POSTOP_FINISHED;
+    }
+
+    // A named pipe is created on the NPFS volume, which the filter also
+    // attaches to: report EID 17 with the pipe's relative name instead of a
+    // file creation.
+    if unsafe { on_named_pipe_volume(flt_objects) } {
+        unsafe { push_pipe_create(data, flt_objects) };
         return POSTOP_FINISHED;
     }
 
@@ -613,6 +856,31 @@ unsafe extern "C" fn post_create(
         FltReleaseFileNameInformation(information);
     }
     POSTOP_FINISHED
+}
+
+/// Report a named pipe creation (EID 17) with its relative name.
+unsafe fn push_pipe_create(data: *mut FltCallbackData, flt_objects: *mut core::ffi::c_void) {
+    // SAFETY: `flt_objects` is a live FLT_RELATED_OBJECTS for the call.
+    let Some(objects) = (unsafe { (flt_objects as *mut FltRelatedObjects).as_ref() }) else {
+        return;
+    };
+    // SAFETY: the file object belongs to the volume the request targets.
+    let Some(file) = (unsafe { objects.file_object.as_ref() }) else {
+        return;
+    };
+    let mut event = SensorEvent::empty();
+    event.version = SIGMACATCH_PROTOCOL_VERSION;
+    event.kind = kind::PIPE_CREATE;
+    event.pid = unsafe { FltGetRequestorProcessId(data) } as usize as u32;
+    // SAFETY: the name lives as long as the file object we hold.
+    unsafe {
+        copy_wide(
+            &file.file_name,
+            &mut event.primary,
+            &mut event.primary_length,
+        );
+        ring_push(&event);
+    }
 }
 
 /// Copy a counted wide string into a fixed record field.

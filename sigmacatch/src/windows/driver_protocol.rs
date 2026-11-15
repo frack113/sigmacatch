@@ -20,7 +20,7 @@
 
 /// Bumped whenever the layout or the IOCTL set changes; both sides refuse to
 /// talk across a mismatch.
-pub const SIGMACATCH_PROTOCOL_VERSION: u32 = 5;
+pub const SIGMACATCH_PROTOCOL_VERSION: u32 = 6;
 
 /// `CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_READ_DATA)`.
 pub const IOCTL_GET_VERSION: u32 = 0x0022_2000;
@@ -56,6 +56,13 @@ pub mod kind {
     pub const IMAGE_LOAD: u32 = 9;
     /// Driver loaded (EID 6): `primary` = image path.
     pub const DRIVER_LOAD: u32 = 10;
+    /// File creation time changed (EID 2): `primary` = path, `value_a` =
+    /// previous creation time, `value_b` = new creation time (FILETIME).
+    pub const FILE_CREATION_TIME: u32 = 11;
+    /// Raw volume read (EID 9): `primary` = volume device name.
+    pub const RAW_READ: u32 = 12;
+    /// Named pipe created (EID 17): `primary` = pipe name.
+    pub const PIPE_CREATE: u32 = 13;
 }
 
 /// One event record, as the driver observed it.
@@ -83,6 +90,10 @@ pub struct SensorEvent {
     pub detail: u32,
     /// Event time as FILETIME ticks (100 ns since 1601), from the kernel.
     pub timestamp: u64,
+    /// Kind-dependent 64-bit value: EID 2 → previous creation time (FILETIME).
+    pub value_a: u64,
+    /// Kind-dependent 64-bit value: EID 2 → new creation time (FILETIME).
+    pub value_b: u64,
 }
 
 impl SensorEvent {
@@ -99,6 +110,8 @@ impl SensorEvent {
             secondary: [0; 2048],
             detail: 0,
             timestamp: 0,
+            value_a: 0,
+            value_b: 0,
         }
     }
 }

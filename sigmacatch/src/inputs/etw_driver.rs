@@ -26,7 +26,7 @@ use crate::inputs::etw_event::filetime_to_utc;
 use crate::inputs::etw_process::{ProcessFacts, enrich};
 use crate::inputs::etw_sysmon::{
     driver_load_xml, file_create_xml, file_event_xml, image_load_xml, process_access_xml,
-    process_start_xml, process_terminate_xml,
+    process_start_xml, process_terminate_xml, sysmon_utc,
 };
 use crate::types::Event;
 
@@ -174,6 +174,9 @@ impl Mapper {
             kind::FILE_TRUNCATE => self.map_file_simple(event, 506, true),
             kind::FILE_DELETE => self.map_file_simple(event, 23, false),
             kind::FILE_SET_SECURITY => self.map_file_security(event),
+            kind::FILE_CREATION_TIME => self.map_file_creation_time(event),
+            kind::RAW_READ => self.map_raw_read(event),
+            kind::PIPE_CREATE => self.map_pipe_create(event),
             _ => None,
         }
     }
@@ -241,6 +244,73 @@ impl Mapper {
             event.pid,
             image.as_deref(),
             &[("TargetFilename", &path)],
+        );
+        Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+    }
+
+    /// EID 2: the file's creation time was rewritten (`touch -t`, `SetFileTime`).
+    fn map_file_creation_time(&mut self, event: &SensorEvent) -> Option<Event> {
+        let path = wide(&event.primary, event.primary_length);
+        if path.is_empty() {
+            return None;
+        }
+        let image = self.file_image(event.pid);
+        let previous = filetime_to_utc(event.value_a as i64).map(sysmon_utc);
+        let created = filetime_to_utc(event.value_b as i64).map(sysmon_utc);
+        let mut fields: Vec<(&str, &str)> = vec![("TargetFilename", &path)];
+        if let Some(previous) = previous.as_deref() {
+            fields.push(("PreviousCreationUtcTime", previous));
+        }
+        if let Some(created) = created.as_deref() {
+            fields.push(("CreationUtcTime", created));
+        }
+        let xml = file_event_xml(
+            &self.computer,
+            2,
+            Self::event_time(event),
+            event.pid,
+            image.as_deref(),
+            &fields,
+        );
+        Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+    }
+
+    /// EID 9: a raw read of a volume device (`\\.\C:` style).
+    fn map_raw_read(&mut self, event: &SensorEvent) -> Option<Event> {
+        let device = wide(&event.primary, event.primary_length);
+        if device.is_empty() {
+            return None;
+        }
+        let image = self.file_image(event.pid);
+        let xml = file_event_xml(
+            &self.computer,
+            9,
+            Self::event_time(event),
+            event.pid,
+            image.as_deref(),
+            &[("Device", &device)],
+        );
+        Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+    }
+
+    /// EID 17: a named pipe was created. Sysmon prefixes the relative name
+    /// NPFS reports with a single backslash.
+    fn map_pipe_create(&mut self, event: &SensorEvent) -> Option<Event> {
+        let mut pipe = wide(&event.primary, event.primary_length);
+        if pipe.is_empty() {
+            return None;
+        }
+        if !pipe.starts_with('\\') {
+            pipe.insert(0, '\\');
+        }
+        let image = self.file_image(event.pid);
+        let xml = file_event_xml(
+            &self.computer,
+            17,
+            Self::event_time(event),
+            event.pid,
+            image.as_deref(),
+            &[("PipeName", &pipe)],
         );
         Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }

@@ -21,8 +21,9 @@ const SIGMACATCH_CHANNEL: &str = "sigmacatch/Operational";
 
 /// Render a file event with an arbitrary event id and extra fields.
 ///
-/// Used for the Sysmon file events (23) and the sigmacatch extensions
-/// (503 rename, 504 ACL, 505 owner, 506 truncate), which share the shape:
+/// Used for the Sysmon file/pipe events (2 creation time, 9 raw read, 17 pipe
+/// created, 23 delete) and the sigmacatch file extensions (503 rename, 504
+/// ACL, 505 owner, 506 truncate), which share the shape:
 /// `UtcTime`, `ProcessId`, `Image`, then the kind-specific fields.
 pub fn file_event_xml(
     computer: &str,
@@ -314,7 +315,7 @@ pub fn process_start_xml(
 /// Built by hand: a `chrono` format string round-trips through
 /// `DelayedFormat::to_string`, which panics on a formatting error — inside the
 /// ETW callback that would cost the whole capture.
-fn sysmon_utc(time: chrono::DateTime<chrono::Utc>) -> String {
+pub fn sysmon_utc(time: chrono::DateTime<chrono::Utc>) -> String {
     format!(
         "{}.{:03}",
         time.format("%Y-%m-%d %H:%M:%S"),
