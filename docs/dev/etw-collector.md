@@ -42,6 +42,11 @@ provider table, field maps and buffer findings are the authority for this plan.
 
 ## Coverage matrix
 
+The settled comparison — every Sysmon Event ID against what sigmacatch
+produces, with the fields that stay absent — is
+[Sysmon vs sigmacatch](sysmon-vs-sigmacatch.md). What follows is the original
+planning matrix.
+
 Sysmon Event IDs to the ETW provider that can produce them, and the verdict for
 regression-data generation. Provider GUIDs, keywords and event IDs are in
 [Rustinel `providers.rs`](https://github.com/Karib0u/rustinel/blob/main/src/sensor/windows/etw/providers.rs);
