@@ -13,6 +13,12 @@ license.workspace = true
 [lib]
 doctest = false
 
+# `md-5` is only reachable from the Windows `etw` path (`inputs/windows/nt_file.rs`)
+# and its crate name (`md5`) does not match the package name, which is what the
+# unused-dependency scan looks for.
+[package.metadata.cargo-machete]
+ignored = ["md-5"]
+
 # Inputs are selected with cargo features:
 #   Windows: winevt (live Event Log), evtx (one-shot EVTX files)
 #   Linux:   auditd, builtin (system syslog), sysmon (Sysmon-for-Linux tail), ebpf (native probes)
