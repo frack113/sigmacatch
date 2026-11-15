@@ -5,10 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-11-15
 
 ### Added
 
+- Windows without Sysmon: the native ETW collector (`etw`, two realtime sessions + live-process facts) and the `sigmacatch` kernel driver (`driver`: process, file, registry rename, image, pipe and thread callbacks + minifilter) emit Sysmon-schema events (EID 1-29 and 500-511 where a source exists) under the `sigmacatch` provider / `sigmacatch/Operational` channel, mapped to `service: sysmon`. The Windows orchestrator runs the Event Log channels next to exactly one process source (driver when loaded, ETW otherwise).
+- Windows: image and driver load events carry SHA1/SHA256/MD5/IMPHASH hashes, PE version fields and Authenticode status (embedded signature and security catalogs).
+- Docs: new pages for Windows without Sysmon (ETW, kernel driver, driver events, Sysmon coverage, measurements, dev VM), one page per input family under `dev/collectors/`, and separate pages for the `regressiondata-check` validator and the diagnostic subcommands.
 - eBPF input: `execveat` is now captured for process creation (EID 1) alongside `execve`.
 - eBPF input: fork/clone lineage is tracked so parent process resolution has a lineage fallback.
 - eBPF input: credential and capability changes are captured as sigmacatch extensions EID 501 (`credential_change`: setuid/setgid/setgroups family) and EID 502 (`capability_change`: `capset`, `prctl`).
@@ -40,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Docs: the tree is English-only and one topic per page (`user/`, `regression_data/`, `dev/collectors/`, `dev/windows/`), the CLI/troubleshooting/pipeline pages are split by subject, the diagrams are interactive Archify viewers embedded as iframes (Flow/Live motion) instead of static images, the reading grid follows the window (`min(96rem, 92vw)`) and the README is a landing page pointing at the docs.
 - Git: the per-rule commit patches only the trees along the changed paths instead of rewriting the whole HEAD tree.
 - Git: checkout skips files that already match the tree, and the fixed 200 ms sleep in repository init is gone.
 - EVTX input: binary XML is rendered on all cores (`num_threads(0)`) and the XML to event conversion runs in parallel over bounded chunks, preserving record order. The EventRecordID strip edits the unique JSON in place instead of deep-copying every event.

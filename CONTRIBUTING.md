@@ -39,7 +39,7 @@ npx --yes markdownlint-cli2 "docs/**/*.md" "*.md"
 (`markdownlint` runs in CI as the `DavidAnson/markdownlint-cli2-action`; `npx` is the local
 equivalent.)
 
-- `typos` — spelling, configured in `.typos.toml`. `docs/fr/**` is excluded (French is legitimate).
+- `typos` — spelling, configured in `.typos.toml`.
 - `zizmor` — GitHub Actions security audit. All `uses:` are SHA-pinned; never introduce an
   unpinned action or a checkout without `persist-credentials: false`.
 - `markdownlint` — configured in `.markdownlint-cli2.yaml`. Keep tables and headings clean.
@@ -75,12 +75,12 @@ type with emoji and commit hashes), `## Tests` (results of fmt/clippy/test/build
 ## Architecture
 
 Architectural invariants are non-negotiable; read them in
-[`docs/fr/architecture.md`](docs/fr/architecture.md) before touching the
+[`docs/dev/architecture.md`](docs/dev/architecture.md) before touching the
 pipeline. Highlights:
 
 - One continuous run until Ctrl+C: collect + evaluate + generate (30s) + commit + push.
 - All aggregation in memory — no intermediate database.
-- Windows collection via the Windows Event Log API (`EvtQueryW`/`EvtNext`/`EvtRender`); Linux collection via auditd tail, builtin syslog files, and Sysmon-for-Linux.
+- Windows collection via the Event Log channels, native ETW (`etw`) and the `sigmacatch` kernel driver (`driver`); Linux collection via auditd tail, builtin syslog files, Sysmon-for-Linux and native eBPF probes.
 - Git is SSH-only: transport (clone/fetch/push) goes through the system `ssh` binary (exec'd by grit-lib) in the `repo` module of the `sigmacatch` package; object/index/refs operations go through grit-lib. No token, no HTTP.
 - No hand-rolled parsers: use `rsigma-parser`, `serde_yaml`, `serde_json`, etc.
 - Security first: validate paths, cap sizes, sanitize inputs.

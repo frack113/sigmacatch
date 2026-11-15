@@ -41,7 +41,7 @@ jobs:
         # cache restore/save to avoid cache-poisoning (zizmor cache-poisoning).
         with:
           lookup-only: true
-      # One binary per input flavour (docs/build.md): the base auditd+builtin
+      # One binary per input flavour (docs/dev/build.md): the base auditd+builtin
       # build and the +sysmon / +ebpf variants must stay separate — ebpf needs
       # nightly + bpf-linker and changes the execution path, it must never be
       # merged with sysmon in a single artefact.
@@ -90,7 +90,7 @@ jobs:
         with:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
-      # Two Windows flavours (docs/build.md): winevt (default feature) and the
+      # Two Windows flavours (docs/dev/build.md): winevt (default feature) and the
       # +evtx one-shot writer — never a merged build.
       - name: Build sigmacatch (winevt) + regressiondata-check
         run: cargo build --release --locked --target x86_64-pc-windows-msvc -p sigmacatch --all-targets

@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 site_name: Sigmacatch
-site_description: Headless tool that captures real Windows events via Winevt API and matches them against SigmaHQ rules
+site_description: Headless tool that captures real OS events (Windows Event Log, EVTX files, Linux auditd, syslog, Sysmon and eBPF) and matches them against SigmaHQ rules
 repo_url: https://github.com/frack113/sigmacatch
 edit_uri: edit/main/docs/
 
@@ -34,37 +34,49 @@ theme:
 
 nav:
   - Home: index.md
-  - English:
-    - Overview: architecture.md
-    - Build: build.md
-    - Configuration: config.md
-    - CLI: cli.md
-    - Git: git.md
-    - Output Format: output-format.md
-    - Regression Data Format: regression-data-format.md
+  - Getting Started: getting-started.md
+  - User:
+    - CLI: user/cli.md
+    - Diagnostics: user/diagnostics.md
+    - regressiondata-check: user/regressiondata-check.md
+    - Configuration: user/config.md
+    - Troubleshooting:
+      - Overview: user/troubleshooting.md
+      - Run and git: user/troubleshooting/run.md
+      - Windows: user/troubleshooting/windows.md
+      - Linux: user/troubleshooting/linux.md
+  - Regression Data:
+    - Overview: regression_data/index.md
+    - info.yml: regression_data/info-yml.md
+    - Data Files: regression_data/data-files.md
+    - Validation: regression_data/validation.md
+  - Dev:
+    - Architecture: dev/architecture.md
+    - Layout: dev/layout.md
+    - Collectors:
+      - Overview: dev/collectors/index.md
+      - Windows: dev/collectors/windows.md
+      - Linux: dev/collectors/linux.md
+      - EVTX: dev/collectors/evtx.md
+    - Windows telemetry:
+      - Overview: dev/windows/index.md
+      - ETW: dev/windows/etw.md
+      - ETW events: dev/windows/etw-events.md
+      - Kernel driver: dev/windows/driver.md
+      - Driver events: dev/windows/driver-events.md
+      - Sysmon coverage: dev/windows/coverage.md
+      - Measurements: dev/windows/evidence.md
+      - Dev VM: dev/windows/vm.md
+    - Pipeline: dev/pipeline.md
+    - Design Notes: dev/design-notes.md
+    - Build: dev/build.md
+    - SigmaHQ Workflow: dev/git.md
 
 plugins:
   - search
-  - i18n:
-      docs_structure: folder
-      languages:
-        - locale: en
-          name: English
-          default: true
-          build: true
-        - locale: fr
-          name: Français
-          default: false
-          build: true
-          nav_translations:
-            Home: Accueil
-            Overview: Aperçu
-            Build: Build
-            Configuration: Configuration
-            CLI: CLI
-            Git: Git
-            Output Format: Format de Sortie
-            Regression Data Format: Format des Données de Régression
+
+extra_css:
+  - stylesheets/extra.css
 
 markdown_extensions:
   - admonition
@@ -79,6 +91,6 @@ markdown_extensions:
 
 validation:
   links:
-    not_found: info
+    not_found: warn
     absolute_links: info
     unrecognized_links: info

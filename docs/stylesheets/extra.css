@@ -1,0 +1,11 @@
+/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2026 sigmacatch contributors */
+
+/*
+ * Let the reading grid follow the window instead of Material's fixed 61rem:
+ * 92vw until 96rem, then a readable cap. The diagram iframes are 100% of this
+ * grid, so they grow with it.
+ */
+.md-grid {
+  max-width: min(96rem, 92vw);
+}
