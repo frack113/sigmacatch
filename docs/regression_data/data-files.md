@@ -84,7 +84,7 @@ when the EVTX format is not applicable. The `provider` field in
 
 The auditd, syslog and Sysmon-tail collectors run in parallel, each guarded
 by its source — the full specification (tailed files, guards, parsing) lives
-in [collectors.md](../dev/collectors.md). Their regression data uses
+in [Linux collectors](../dev/collectors/linux.md). Their regression data uses
 `.log` (complete original lines: auditd records grouped by
 `timestamp:sequence`, RFC3164 syslog lines, or Sysmon-for-Linux XML).
 

@@ -66,7 +66,11 @@ A built version of this documentation is published to GitHub Pages:
   - [Validation](regression_data/validation.md)
 - **Dev**
   - [Architecture](dev/architecture.md)
-  - [Collectors](dev/collectors.md)
+  - [Layout](dev/layout.md)
+  - [Collectors](dev/collectors/index.md)
+  - [Windows collector](dev/collectors/windows.md)
+  - [Linux collectors](dev/collectors/linux.md)
+  - [EVTX input](dev/collectors/evtx.md)
   - [Windows without Sysmon](dev/etw-collector.md)
   - [Sysmon vs sigmacatch](dev/sysmon-vs-sigmacatch.md)
   - [Pipeline](dev/pipeline.md)

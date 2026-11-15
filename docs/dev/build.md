@@ -31,7 +31,7 @@ collector runs the Event Log channels next to exactly one process source (the
 kernel driver when loaded, native ETW otherwise); on Linux every compiled **and
 available** input runs in parallel. Bail at startup if no source is found.
 The collectors' full specification (tailed files, guards, parsing) lives in
-[collectors.md](collectors.md); the runtime selection is documented in
+[Collectors](collectors/index.md); the runtime selection is documented in
 [cli.md](../user/cli.md#windows-which-sources-run).
 
 ## Linux
