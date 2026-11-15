@@ -40,7 +40,7 @@ use wdk_sys::{
     POB_PRE_OPERATION_INFORMATION, POBJECT_TYPE, PPS_CREATE_NOTIFY_INFO, PUNICODE_STRING, PVOID,
     PWDFDEVICE_INIT, STATUS_INVALID_DEVICE_REQUEST, STATUS_INVALID_PARAMETER, STATUS_SUCCESS,
     UNICODE_STRING, WDF_DRIVER_CONFIG, WDF_IO_QUEUE_CONFIG, WDF_NO_OBJECT_ATTRIBUTES, WDFDEVICE,
-    WDFDRIVER, WDFQUEUE, WDFREQUEST, WDFSPINLOCK, call_unsafe_wdf_function_binding,
+    WDFDRIVER, WDFMEMORY, WDFQUEUE, WDFREQUEST, WDFSPINLOCK, call_unsafe_wdf_function_binding,
 };
 
 // `PsProcessType` is not bound by wdk-sys; it is an exported kernel variable.
@@ -777,31 +777,33 @@ unsafe extern "C" fn evt_io_device_control(
     // SAFETY: KMDF owns the request for the duration of the callback.
     unsafe {
         if io_control_code == IOCTL_GET_VERSION {
-            let mut buffer: *mut core::ffi::c_void = core::ptr::null_mut();
-            let mut length: usize = 0;
+            // The output buffer is written through WDF's own copy routine
+            // rather than through a raw pointer: the pointer
+            // `WdfRequestRetrieveOutputBuffer` returns is only valid under a
+            // contract static analysis cannot see, and `WdfMemoryCopyFromBuffer`
+            // enforces it at run time.
+            let mut memory: WDFMEMORY = core::ptr::null_mut();
             let status = call_unsafe_wdf_function_binding!(
-                WdfRequestRetrieveOutputBuffer,
+                WdfRequestRetrieveOutputMemory,
                 request,
-                core::mem::size_of::<u32>(),
-                &mut buffer,
-                &mut length,
+                &mut memory,
             );
             if status != STATUS_SUCCESS {
                 call_unsafe_wdf_function_binding!(WdfRequestComplete, request, status);
                 return;
             }
-            // The buffer is only usable when the call succeeded *and* reports
-            // room for what we write: WDF guarantees neither on its own.
-            if buffer.is_null() || length < core::mem::size_of::<u32>() {
-                call_unsafe_wdf_function_binding!(
-                    WdfRequestComplete,
-                    request,
-                    STATUS_INVALID_PARAMETER,
-                );
+            let version: u32 = SIGMACATCH_PROTOCOL_VERSION;
+            let status = call_unsafe_wdf_function_binding!(
+                WdfMemoryCopyFromBuffer,
+                memory,
+                0,
+                (&raw const version).cast_mut().cast::<core::ffi::c_void>(),
+                core::mem::size_of::<u32>(),
+            );
+            if status != STATUS_SUCCESS {
+                call_unsafe_wdf_function_binding!(WdfRequestComplete, request, status);
                 return;
             }
-            // SAFETY: non-null and at least four bytes, per the checks above.
-            buffer.cast::<u32>().write(SIGMACATCH_PROTOCOL_VERSION);
             call_unsafe_wdf_function_binding!(
                 WdfRequestCompleteWithInformation,
                 request,
