@@ -292,6 +292,14 @@ unsafe extern "C" fn post_create(
     _context: *mut core::ffi::c_void,
     _flags: u32,
 ) -> i32 {
+    // Diagnostic: prove the post-op is invoked at all.
+    {
+        let mut event = SensorEvent::empty();
+        event.version = SIGMACATCH_PROTOCOL_VERSION;
+        event.kind = kind::FILE_CREATE;
+        event.detail = 0xCAFE;
+        unsafe { ring_push(&event) };
+    }
     // SAFETY: `data` is valid for the callback's duration.
     let Some(callback) = (unsafe { data.as_ref() }) else {
         return POSTOP_FINISHED;
