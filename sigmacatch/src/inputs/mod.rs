@@ -27,7 +27,11 @@ pub mod etw_event;
 #[cfg(all(target_os = "windows", feature = "etw"))]
 pub mod etw_process;
 #[cfg(all(target_os = "windows", feature = "etw"))]
+pub mod etw_registry;
+#[cfg(all(target_os = "windows", feature = "etw"))]
 pub mod etw_sysmon;
+#[cfg(any(feature = "etw", test))]
+pub mod registry_format;
 // Kernel-sensor client (feature `driver`, implies `etw`).
 #[cfg(all(target_os = "windows", feature = "driver"))]
 pub mod etw_driver;

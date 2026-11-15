@@ -572,7 +572,42 @@ Two findings worth keeping:
 `Kernel-File` and `Kernel-Registry` stay subscribed but unrouted: the driver
 covers files, and registry needs the key-path cache described below.
 
+## Registry (EID 12/13/14)
+
+`Microsoft-Windows-Kernel-Registry` delivers `SetValueKey`, `DeleteValueKey`
+and `DeleteKey` with an **empty `KeyName`**; only `CreateKey`/`OpenKey` carry a
+path (`RelativeName`, keyed by the `KeyObject` handle) and `CloseKey` releases
+it. `inputs/etw_registry.rs` keeps that handle → path cache, and
+`inputs/registry_format.rs` turns the native path into the `TargetObject`
+spelling rules use (`\REGISTRY\MACHINE\…` → `HKLM\…`, `\REGISTRY\USER\…` →
+`HKU\…`; both spellings of the prefix appear on the wire).
+
+`Details` on EID 13 is the value **data**, not the value name: the provider
+declares `CapturedData` but delivers it empty unless the enablement carries an
+`EVENT_FILTER_DESCRIPTOR` whose four-byte payload has bit `0x2` set (undocumented
+— it is how Sysmon-compatible collectors get the payload, and the ~180 SigmaHQ
+rules that match `Details` are written against it). `TraceSession::enable_provider`
+re-enables the registry provider with that descriptor; the failure is non-fatal
+and only costs `Details`.
+
+Measured in the VM (`reg add` SZ/DWORD/BINARY, `reg delete /v`, `reg delete /f`):
+
+```
+12 CreateKey    HKU\S-1-5-…\Software\sigmacatch-probe
+13 SetValue     …\sigmacatch-probe\test   Details: hello world
+13 SetValue     …\sigmacatch-probe\num    Details: DWORD (0x0000002A)
+13 SetValue     …\sigmacatch-probe\bin    Details: Binary Data
+13 DeleteValue  …\sigmacatch-probe\test
+12 DeleteKey    HKU\S-1-5-…\Software\sigmacatch-probe
+```
+
+**Known gap:** `Image` is resolved from the live process, so a writer that has
+already exited when the record is delivered (a one-shot `reg.exe`) leaves it
+absent. The fix is a pid → image cache shared with the driver, which learns the
+path at process start; until then the field is missing rather than wrong.
+
 Remaining gaps: EID 18 (pipe connect) is deliberately not produced, EID 508
 has no distinct Windows source (3008 is already EID 22, and its `QueryStatus`
-is a Win32 error where the Linux extension carries the DNS RCODE), and
-EID 8/15/19-21/24-29 are still missing — registry and WMI come next.
+is a Win32 error where the Linux extension carries the DNS RCODE), EID 14
+(rename key) needs `RenameKeyInformation`, and EID 8/15/19-21/24-29 are still
+missing — WMI (19-21) is the next ETW provider to wire.

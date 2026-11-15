@@ -29,7 +29,8 @@ use anyhow::{Context, Result, bail};
 use windows::Win32::Foundation::{ERROR_SUCCESS, HANDLE, WIN32_ERROR};
 use windows::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation};
 use windows::Win32::System::Diagnostics::Etw::{
-    CONTROLTRACE_HANDLE, EVENT_CONTROL_CODE_ENABLE_PROVIDER, EVENT_RECORD,
+    CONTROLTRACE_HANDLE, ENABLE_TRACE_PARAMETERS, ENABLE_TRACE_PARAMETERS_VERSION_2,
+    EVENT_CONTROL_CODE_ENABLE_PROVIDER, EVENT_FILTER_DESCRIPTOR, EVENT_RECORD,
     EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_FLAG, EVENT_TRACE_LOGFILEW,
     EVENT_TRACE_NO_PER_PROCESSOR_BUFFERING, EVENT_TRACE_PROPERTIES, EVENT_TRACE_REAL_TIME_MODE,
     EVENT_TRACE_SYSTEM_LOGGER_MODE, EnableTraceEx2, OpenTraceW, PROCESS_TRACE_MODE_EVENT_RECORD,
@@ -344,6 +345,54 @@ impl TraceSession {
         })
     }
 
+    /// Ask `Microsoft-Windows-Kernel-Registry` to fill `CapturedData`.
+    ///
+    /// Undocumented: the provider declares `CapturedData` on `SetValueKey` but
+    /// delivers it empty unless the enablement carries an
+    /// `EVENT_FILTER_DESCRIPTOR` whose four-byte payload has bit `0x2` set.
+    /// Without it `Details` would have to be omitted, and the ~180 SigmaHQ
+    /// rules that match on the value data would silently stop matching.
+    ///
+    /// The provider is re-enabled, which replaces the first enablement: level
+    /// and keywords have to be passed again or the session widens.
+    fn enable_value_data(&self, provider: &ProviderSpec) -> Result<()> {
+        let capture: u32 = 0x2;
+        let mut descriptors = [EVENT_FILTER_DESCRIPTOR {
+            Ptr: std::ptr::addr_of!(capture) as u64,
+            Size: std::mem::size_of::<u32>() as u32,
+            Type: 0,
+        }];
+        let parameters = ENABLE_TRACE_PARAMETERS {
+            Version: ENABLE_TRACE_PARAMETERS_VERSION_2,
+            EnableProperty: 0,
+            ControlFlags: 0,
+            SourceId: GUID::zeroed(),
+            EnableFilterDesc: descriptors.as_mut_ptr(),
+            FilterDescCount: descriptors.len() as u32,
+        };
+        // SAFETY: the session handle is live, the descriptor and its payload
+        // outlive the call, and `parameters` points at them.
+        let status = unsafe {
+            EnableTraceEx2(
+                self.handle,
+                &provider.guid,
+                EVENT_CONTROL_CODE_ENABLE_PROVIDER.0,
+                provider.level,
+                provider.keywords,
+                0,
+                0,
+                Some(&parameters),
+            )
+        };
+        if status.is_err() {
+            anyhow::bail!(
+                "registry value data unavailable ({}): {status:?}",
+                provider.name
+            );
+        }
+        Ok(())
+    }
+
     /// Subscribe a manifest provider to this session.
     pub fn enable_provider(&self, provider: &ProviderSpec) -> Result<()> {
         let status = unsafe {
@@ -360,6 +409,13 @@ impl TraceSession {
             )
         };
         if status == ERROR_SUCCESS {
+            if provider.name == KERNEL_REGISTRY.name
+                && let Err(error) = self.enable_value_data(provider)
+            {
+                // Non-fatal by design: registry events still flow without
+                // `Details`, which is better than losing the whole provider.
+                tracing::warn!("{error:#}");
+            }
             return Ok(());
         }
         // Kernel providers need a matching system-wide privilege; a failure
@@ -703,6 +759,8 @@ impl Drop for RunningSession {
 const KERNEL_NETWORK_NAME: &str = "Microsoft-Windows-Kernel-Network";
 /// Provider name `decode` reports for the DNS client provider.
 const DNS_CLIENT_NAME: &str = "Microsoft-Windows-DNS-Client";
+/// Provider name `decode` reports for the kernel registry provider.
+const KERNEL_REGISTRY_NAME: &str = "Microsoft-Windows-Kernel-Registry";
 
 // `Microsoft-Windows-Kernel-Network` event ids. The provider publishes one id
 // per operation and its opcode repeats the id; these four were measured with
@@ -734,6 +792,8 @@ pub struct MainRouter {
     tracker: std::sync::Arc<std::sync::Mutex<crate::inputs::etw_process::ProcessTracker>>,
     /// `(pid, ip)` → queried name, filled from the DNS answers.
     dns: std::sync::Mutex<std::collections::HashMap<(u32, String), String>>,
+    /// Key-handle → path cache for the registry events.
+    registry: std::sync::Mutex<crate::inputs::etw_registry::RegistryMapper>,
 }
 
 impl MainRouter {
@@ -747,6 +807,7 @@ impl MainRouter {
             computer,
             tracker,
             dns: std::sync::Mutex::new(std::collections::HashMap::new()),
+            registry: std::sync::Mutex::new(crate::inputs::etw_registry::RegistryMapper::new()),
         }
     }
 
@@ -762,6 +823,7 @@ impl MainRouter {
             (KERNEL_NETWORK_NAME, NET_UDP_SEND) => self.connection(&decoded, at, "udp", true),
             (KERNEL_NETWORK_NAME, NET_TCP_ACCEPT) => self.listen(&decoded, at),
             (DNS_CLIENT_NAME, DNS_QUERY_COMPLETED) => self.dns(&decoded, at),
+            (KERNEL_REGISTRY_NAME, _) => self.registry_event(&decoded, at),
             _ => None,
         }
     }
@@ -878,6 +940,37 @@ impl MainRouter {
                 ("QueryStatus", &status),
                 ("QueryResults", results),
             ],
+        );
+        crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+    }
+
+    /// `Microsoft-Windows-Kernel-Registry` → EID 12/13/14.
+    fn registry_event(
+        &self,
+        decoded: &crate::inputs::etw_event::DecodedEvent,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Option<crate::types::Event> {
+        let event = self
+            .registry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .observe(decoded)?;
+        let pid = decoded.process_id;
+        let image = self.image_of(pid);
+        let mut fields: Vec<(&str, &str)> = vec![
+            ("EventType", event.event_type),
+            ("TargetObject", &event.target_object),
+        ];
+        if let Some(details) = event.details.as_deref() {
+            fields.push(("Details", details));
+        }
+        let xml = crate::inputs::etw_sysmon::event_xml(
+            &self.computer,
+            event.event_id,
+            at,
+            pid,
+            image.as_deref(),
+            &fields,
         );
         crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
