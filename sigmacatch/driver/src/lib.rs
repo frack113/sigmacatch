@@ -38,9 +38,9 @@ use wdk_sys::{
     OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS,
     PCUNICODE_STRING, PDRIVER_OBJECT, PEPROCESS, PIMAGE_INFO, POB_POST_OPERATION_INFORMATION,
     POB_PRE_OPERATION_INFORMATION, POBJECT_TYPE, PPS_CREATE_NOTIFY_INFO, PUNICODE_STRING, PVOID,
-    PWDFDEVICE_INIT, STATUS_INVALID_DEVICE_REQUEST, STATUS_SUCCESS, UNICODE_STRING,
-    WDF_DRIVER_CONFIG, WDF_IO_QUEUE_CONFIG, WDF_NO_OBJECT_ATTRIBUTES, WDFDEVICE, WDFDRIVER,
-    WDFQUEUE, WDFREQUEST, WDFSPINLOCK, call_unsafe_wdf_function_binding,
+    PWDFDEVICE_INIT, STATUS_INVALID_DEVICE_REQUEST, STATUS_INVALID_PARAMETER, STATUS_SUCCESS,
+    UNICODE_STRING, WDF_DRIVER_CONFIG, WDF_IO_QUEUE_CONFIG, WDF_NO_OBJECT_ATTRIBUTES, WDFDEVICE,
+    WDFDRIVER, WDFQUEUE, WDFREQUEST, WDFSPINLOCK, call_unsafe_wdf_function_binding,
 };
 
 // `PsProcessType` is not bound by wdk-sys; it is an exported kernel variable.
@@ -790,6 +790,17 @@ unsafe extern "C" fn evt_io_device_control(
                 call_unsafe_wdf_function_binding!(WdfRequestComplete, request, status);
                 return;
             }
+            // The buffer is only usable when the call succeeded *and* reports
+            // room for what we write: WDF guarantees neither on its own.
+            if buffer.is_null() || length < core::mem::size_of::<u32>() {
+                call_unsafe_wdf_function_binding!(
+                    WdfRequestComplete,
+                    request,
+                    STATUS_INVALID_PARAMETER,
+                );
+                return;
+            }
+            // SAFETY: non-null and at least four bytes, per the checks above.
             buffer.cast::<u32>().write(SIGMACATCH_PROTOCOL_VERSION);
             call_unsafe_wdf_function_binding!(
                 WdfRequestCompleteWithInformation,
@@ -814,6 +825,15 @@ unsafe extern "C" fn evt_io_device_control(
                 call_unsafe_wdf_function_binding!(WdfRequestComplete, request, status);
                 return;
             }
+            if buffer.is_null() {
+                call_unsafe_wdf_function_binding!(
+                    WdfRequestComplete,
+                    request,
+                    STATUS_INVALID_PARAMETER,
+                );
+                return;
+            }
+            // SAFETY: non-null, and `capacity` bounds every write below.
             let output = buffer.cast::<SensorEvent>();
             let capacity = length / core::mem::size_of::<SensorEvent>();
 
@@ -824,6 +844,8 @@ unsafe extern "C" fn evt_io_device_control(
             // Drain the oldest `count` records.
             for index in 0..count {
                 let source = ring.events[(ring.head + index) % RING_CAPACITY];
+                // SAFETY: `index < count <= capacity`, so the slot is inside
+                // the buffer WDF handed us.
                 output.add(index).write(source);
             }
             ring.head = (ring.head + count) % RING_CAPACITY;
