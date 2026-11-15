@@ -7,10 +7,10 @@
   <meta name="archify-reader-contract" content="declared-wide-v1">
   <title>Module dependency graph Diagram</title>
   <script>
-    // Embedded in the documentation: start in Live motion unless the reader
-    // already chose Still (the viewer stores that preference per site).
+    // Embedded in the documentation: always start in Live motion. The viewer's
+    // own Still choice belongs to the full viewer, not to these framed copies.
     (function () { try {
-      if (!localStorage.getItem('archify-motion')) localStorage.setItem('archify-motion', 'live');
+      localStorage.setItem('archify-motion', 'live');
     } catch (_) {} })();
   </script>
   <script>
@@ -3638,7 +3638,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     /* The motion button breathes on the relay cycle, so the chrome keeps time
        with the wave it controls. Motion Governor mirrors the planned cycle from
        the diagram SVG onto the document. */
-    html[data-ambient-motion="running"][data-motion="live"]:not([data-motion-owner]):not([data-embed]):not([data-share-playback]):not([data-document-hidden]) #btn-motion .motion-control-dot {
+    html[data-ambient-motion="running"][data-motion="live"]:not([data-motion-owner]):not([data-share-playback]):not([data-document-hidden]) #btn-motion .motion-control-dot {
       animation: archify-motion-dot-breathe var(--flow-cycle-chrome, 6.4s) ease-in-out infinite;
     }
     @keyframes archify-motion-dot-breathe {
@@ -4868,7 +4868,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       stroke: color-mix(in srgb, var(--arrow-emphasis) 55%, white);
       stroke-width: 2;
     }
-    html[data-ambient-motion="running"][data-motion="live"]:not([data-motion-owner]):not([data-embed]):not([data-share-playback]):not([data-document-hidden]) .ambient-edge-flow {
+    html[data-ambient-motion="running"][data-motion="live"]:not([data-motion-owner]):not([data-share-playback]):not([data-document-hidden]) .ambient-edge-flow {
       display: inline;
       animation-name: var(--flow-name, none);
       animation-duration: var(--flow-cycle, 6.4s);
@@ -4950,25 +4950,25 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
        walk token rests on it, as a message lands, or as the playhead passes.
        During the bounded entrance all three animations run; the entrance pulse is
        listed after the repeating glow and wins on filter until it completes. */
-    html[data-ambient-motion="running"][data-motion="live"]:not([data-motion-owner]):not([data-embed]):not([data-share-playback]):not([data-document-hidden]) svg[data-animation="trace"] [data-animate="node"] {
+    html[data-ambient-motion="running"][data-motion="live"]:not([data-motion-owner]):not([data-share-playback]):not([data-document-hidden]) svg[data-animation="trace"] [data-animate="node"] {
       animation: var(--flow-node-name, none) var(--flow-cycle, 6.4s) linear infinite;
     }
-    html[data-ambient-motion="running"][data-motion="live"]:not([data-motion-owner]):not([data-embed]):not([data-share-playback]):not([data-document-hidden])[data-ambient-entry="running"] svg[data-animation="trace"] [data-animate="node"] {
+    html[data-ambient-motion="running"][data-motion="live"]:not([data-motion-owner]):not([data-share-playback]):not([data-document-hidden])[data-ambient-entry="running"] svg[data-animation="trace"] [data-animate="node"] {
       animation: var(--flow-node-name, none) var(--flow-cycle, 6.4s) linear infinite,
         archify-node-pulse 3.6s ease-in-out 1 calc(var(--step, 0) * 160ms),
         archify-node-enter 0.9s cubic-bezier(0.22, 1, 0.36, 1) backwards calc(var(--step, 0) * 160ms);
     }
-    html[data-ambient-motion="running"][data-motion="live"]:not([data-motion-owner]):not([data-embed]):not([data-share-playback]):not([data-document-hidden])[data-ambient-entry="running"] svg[data-preset="signal-flow"][data-animation="trace"] [data-animate="node"] {
+    html[data-ambient-motion="running"][data-motion="live"]:not([data-motion-owner]):not([data-share-playback]):not([data-document-hidden])[data-ambient-entry="running"] svg[data-preset="signal-flow"][data-animation="trace"] [data-animate="node"] {
       animation: var(--flow-node-name, none) var(--flow-cycle, 6.4s) linear infinite,
         archify-node-pulse 3.1s ease-in-out 1 calc(var(--step, 0) * 160ms),
         archify-node-enter 0.9s cubic-bezier(0.22, 1, 0.36, 1) backwards calc(var(--step, 0) * 160ms);
     }
-    html[data-ambient-motion="running"][data-motion="live"]:not([data-motion-owner]):not([data-embed]):not([data-share-playback]):not([data-document-hidden])[data-ambient-entry="running"] svg[data-preset="blueprint"][data-animation="trace"] [data-animate="node"] {
+    html[data-ambient-motion="running"][data-motion="live"]:not([data-motion-owner]):not([data-share-playback]):not([data-document-hidden])[data-ambient-entry="running"] svg[data-preset="blueprint"][data-animation="trace"] [data-animate="node"] {
       animation: var(--flow-node-name, none) var(--flow-cycle, 6.4s) linear infinite,
         archify-blueprint-node-pulse 3.8s ease-in-out 1 calc(var(--step, 0) * 160ms),
         archify-node-enter 0.9s cubic-bezier(0.22, 1, 0.36, 1) backwards calc(var(--step, 0) * 160ms);
     }
-    html[data-ambient-motion="running"][data-motion="live"]:not([data-motion-owner]):not([data-embed]):not([data-share-playback]):not([data-document-hidden])[data-ambient-entry="running"] svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] {
+    html[data-ambient-motion="running"][data-motion="live"]:not([data-motion-owner]):not([data-share-playback]):not([data-document-hidden])[data-ambient-entry="running"] svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] {
       animation: var(--flow-node-name, none) var(--flow-cycle, 6.4s) linear infinite,
         archify-editorial-node-pulse 3.5s ease-in-out 1 calc(var(--step, 0) * 160ms),
         archify-node-enter 0.9s cubic-bezier(0.22, 1, 0.36, 1) backwards calc(var(--step, 0) * 160ms);
@@ -8210,7 +8210,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         var systemPaused = reducedMotion();
         var paused = effectivePaused();
         html.setAttribute('data-motion', paused ? 'still' : 'live');
-        renderAmbient(paused || owner || html.hasAttribute('data-embed') || html.hasAttribute('data-share-playback') || html.hasAttribute('data-document-hidden'));
+        renderAmbient(paused || owner || html.hasAttribute('data-share-playback') || html.hasAttribute('data-document-hidden'));
         btn.setAttribute('aria-pressed', paused ? 'false' : 'true');
         btn.disabled = systemPaused;
         label.textContent = viewerText(paused ? 'viewer.motion.still' : 'viewer.motion.live');

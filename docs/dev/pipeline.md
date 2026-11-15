@@ -5,66 +5,39 @@ collector — continuous and one-shot alike. Collectors push events into an
 mpsc channel; the runner runs the detection engine and the regression
 generation off it.
 
+<!-- markdownlint-disable MD033 -->
+<iframe src="../media/interactive/run-pipeline.html?embed=1" loading="lazy"
+        title="The run pipeline, interactive (Flow + Live)"
+        style="display:block;width:100%;aspect-ratio:846/652;border:0;margin:0 auto"></iframe>
+<!-- markdownlint-enable MD033 -->
+
+*Startup → one collector → the event loop → the 30-second generation cycle.*
+
 ## Pipeline (shared runner)
 
-```text
-1. parse_args() + Config::load_with_cli("config.yaml", cli)
-   └── -n/--dry-run: lightweight load (no git validation), zero on-disk state (no
-       config.yaml, no logs/), exits after validating the rules + the engine
-2. setup_console() (Windows) ; runner's logging::init(&config, verbose) → tracing (stderr `error` by default, `info` with `-v`, file debug)
-3. ensure_dirs() → sigma repo dir + logs/
-4. SigmaRepo init: set_info_user/set_info_http|ssh (+ ensure_ssh_host_config when ssh+network),
-   set_signing_key (if ssh_key_path), set_git_operations(offline, contrib),
-   set_remote_url(fork) → set_working_branch(<branch>) → check_remote_working_branch()
-   — fully no-op offline (no `.git` required, local files used as-is)
-5. SigmahqRegression::new() → set_author/max_failed_cycles/format(kind)/add_json_output
-   └── existing_rules = regression.get_sigma_id() ∪ sigma_repo.pending_regression_rule_ids()
-       (remote sigmacatch/* branches pending merge; scan skipped offline) → HashSet<Uuid> (empty with --all-rules)
-6. SigmahqRules::new() → load + dedupe; remove_id(existing_rules)
-   └── filter(SigmaFilterConfig { product, min_status, min_level, author, max_rule_size }); 0 rules → bail
-7. custom_map = load_custom_channel_mapping("custom_channels.yaml")
-8. DetectionEngine::new(&rules)  (pipelines + bloom + LogSourceExtractor)
-   └── cycle_channels = kind.channels(&engine, &custom_map)
-       ├── Some(empty) (winevt with no resolved channel) → warn + return
-       └── None (linux, evtx) → no channel resolution
-9. Shutdown handlers (watch channel): Ctrl+C, plus stop-file poller (500 ms) when live_capture()
-   ; output_base = <sigma_repo_path>/regression_data ; clean_partial_artifacts()
-10. collector = kind.build(&cycle_channels) → tokio::spawn(collector.run(tx, stop))
-    ├── sigmacatch --evtx (one-shot) → EvtxCollector.run(tx, stop): enumerate files, send every parsed event,
-    │                                  returns when exhausted → sender dropped
-    ├── sigmacatch (Windows)          → MultiCollector (WindowsCollector): the channel collector plus exactly
-    │                                  one process source — the kernel driver when loaded (`etw_driver`),
-    │                                  native ETW otherwise (`etw`); ETW main session alongside the driver
-    └── sigmacatch (Linux)            → MultiCollector (every compiled, available tail in parallel, rotation detected)
-11. Loop: tokio::select!
-    ├── shutdown_rx (Ctrl+C, or stop file / --max-runs reached when live_capture()) → break
-    ├── event from rx → engine.put_events(vec![event])
-    ├── generate_interval (30s, live_capture only) → spawn_blocking(process_and_generate) → upload_regression() if files
-    └── [one-shot only] rx.recv() → None (sender dropped, collector finished) → break
-12. Final flush: collector stop (10s timeout, abort otherwise) → drain remaining events (5s timeout)
-    → process_and_generate() → upload_regression() (per-rule commit) → single push if contrib
-    — one-shot propagates the final upload's error (non-zero exit); live mode logs and continues
-```
+<!-- markdownlint-disable MD033 -->
+<iframe src="../media/interactive/shared-runner.html?embed=1" loading="lazy"
+        title="The shared runner, interactive (Flow + Live)"
+        style="display:block;width:100%;aspect-ratio:920/748;border:0;margin:0 auto"></iframe>
+<!-- markdownlint-enable MD033 -->
 
-`process_and_generate()`:
+*Startup, then one Event at a time, then the final flush — calls in order.*
 
-```text
-engine.process_events() → get_alerts()
-    ├── alerts empty → return (no "evaluation complete" log)
-    ├── regression.begin_cycle() ; log stats (events_processed, matches_found, alerts_count)
-    └── per alert: regression.add(&alert) → Option<Vec<String>>
-         ├── None if rule already retired / no valid id / info.yml exists
-         └── Some(files) → write files + regression_tests_path + retire rule
-    └── retired_ids += regression.take_blocked() (rules blocked after N failing cycles)
-    └── retired rules → rules.remove_id() → engine.reload_rules() (single batch reload)
-    ↓
-returns (restored Pipeline, batches: Vec<(Uuid, Vec<String>)>)
-    ↓
-upload_regression() → upload_rule_batches()   # in sigmacatch::repo
-     ├── one commit per rule: "🧪 test: add regression data for rule {rule_id}"
-     ├── commit/push failure → rollback local branch to pre-batch tip
-     └── SINGLE push if git.contrib: true (otherwise local commits only)
-```
+Behaviour the diagram cannot show: `--dry-run` stops after building the engine
+(no repo, no logs); an empty resolved channel list warns and returns; the stop
+file is polled every 500 ms; `--evtx` has no 30-second interval and no
+stop-file poller.
+
+## The 30-second cycle
+
+<!-- markdownlint-disable MD033 -->
+<iframe src="../media/interactive/process-and-generate.html?embed=1" loading="lazy"
+        title="process_and_generate: from alerts to one commit per rule, interactive (Flow + Live)"
+        style="display:block;width:100%;aspect-ratio:903/652;border:0;margin:0 auto"></iframe>
+<!-- markdownlint-enable MD033 -->
+
+*Alerts → write (or skip) → batches → one commit per rule; a failed commit or
+push resets the branch to its pre-batch tip.*
 
 All generation runs in `spawn_blocking` (the `Pipeline` state is moved out and returned) —
 `EvtExportLog` retries never freeze collection (events keep buffering in the mpsc channel).

@@ -55,5 +55,10 @@ deep copy of the JSON tree. `parse_winevt_xml_both` parses the Winevt XML once
 payload is `Arc`-shared: the per-event path pays for one parse and no deep
 clone of the transformed tree. Measured on a constant-volume live stream:
 −47 % working set on Windows (247→130 MB) and −19 % RSS on Linux
-(~204→164 MB). Diagram:
-[event-pipeline-dark.svg](../media/event-pipeline-dark.svg) (dark theme).
+(~204→164 MB). <!-- markdownlint-disable MD033 -->
+<iframe src="../media/interactive/event-pipeline.html?embed=1" loading="lazy"
+        title="Event pipeline: one parse, shared payload (Flow + Live)"
+        style="display:block;width:100%;aspect-ratio:1068/512;border:0;margin:0 auto"></iframe>
+<!-- markdownlint-enable MD033 -->
+
+*One parse, two views, and a payload shared by reference between the rules.*
