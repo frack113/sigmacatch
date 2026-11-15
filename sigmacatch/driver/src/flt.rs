@@ -468,6 +468,20 @@ unsafe fn volume_device_name(volume: *mut core::ffi::c_void, buffer: &mut [u16])
     (status == STATUS_SUCCESS).then_some(name.Length as usize / 2)
 }
 
+/// ASCII-case-insensitive comparison of two wide strings (no `alloc`, and the
+/// core slice helper does not exist for `u16`).
+fn wide_eq_ignore_ascii_case(left: &[u16], right: &[u16]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            let left = if *left >= u16::from(b'A') && *left <= u16::from(b'Z') {
+                *left + 32
+            } else {
+                *left
+            };
+            left == *right
+        })
+}
+
 /// True when the request targets the named-pipe (NPFS) volume.
 unsafe fn on_named_pipe_volume(flt_objects: *mut core::ffi::c_void) -> bool {
     // SAFETY: `flt_objects` is a live FLT_RELATED_OBJECTS for the call.
@@ -478,7 +492,7 @@ unsafe fn on_named_pipe_volume(flt_objects: *mut core::ffi::c_void) -> bool {
     let Some(units) = (unsafe { volume_device_name(objects.volume, &mut buffer) }) else {
         return false;
     };
-    buffer[..units].eq_ignore_ascii_case(NAMED_PIPE_DEVICE)
+    wide_eq_ignore_ascii_case(&buffer[..units], NAMED_PIPE_DEVICE)
 }
 
 /// `IRP_MJ_READ` pre-op: raw volume reads (EID 9).
