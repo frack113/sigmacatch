@@ -138,6 +138,36 @@ impl Drop for Device {
     }
 }
 
+/// Upper bound on the bytes hashed for one file; larger content is hashed
+/// from the start only.
+pub const HASH_LIMIT: usize = crate::inputs::nt_file::HASH_LIMIT;
+
+/// SHA1 of the first [`HASH_LIMIT`] bytes of the file at an NT path, the way
+/// Sysmon spells it (`SHA1=…`), or `None` when it cannot be read.
+fn sha1_of_nt_path(path: &str) -> Option<String> {
+    let bytes = crate::inputs::nt_file::read_prefix(path, HASH_LIMIT)?;
+    use sha1::{Digest, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(&bytes);
+    let digest = hasher.finalize();
+    let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    Some(format!("SHA1={hex}"))
+}
+
+/// Delay before a created file is inspected for a PE header: the writer has
+/// usually finished by then, which a create callback cannot know.
+const PE_CHECK_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// True when the bytes start with the PE signature.
+fn is_pe(bytes: &[u8]) -> bool {
+    bytes.len() >= 2 && bytes[0] == b'M' && bytes[1] == b'Z'
+}
+
+/// `Hashes` of a process image, whichever path shape it carries.
+fn image_hashes(image: &str) -> Option<String> {
+    crate::inputs::nt_file::hashes_of(image.strip_prefix(r"\??\").unwrap_or(image))
+}
+
 /// Turns a stream of [`SensorEvent`] records into [`Event`]s, keeping the
 /// pid → facts cache that fills `ParentImage`/`ParentCommandLine`.
 pub struct Mapper {
@@ -181,6 +211,7 @@ impl Mapper {
             kind::FILE_RENAME => self.map_file_rename(event),
             kind::FILE_TRUNCATE => self.map_file_simple(event, 506, true),
             kind::FILE_DELETE => self.map_file_simple(event, 23, false),
+            kind::FILE_DELETE_DETECTED => self.map_file_simple(event, 26, false),
             kind::FILE_SET_SECURITY => self.map_file_security(event),
             kind::FILE_CREATION_TIME => self.map_file_creation_time(event),
             kind::RAW_READ => self.map_raw_read(event),
@@ -397,21 +428,26 @@ impl Mapper {
     }
 
     /// EID 15: an alternate data stream was created. `TargetFilename` carries
-    /// the stream (`file.txt:stream:$DATA`); `Hash` is absent because the
-    /// kernel does not read the stream.
+    /// the stream (`file.txt:stream:$DATA`) and `Hash` its content, read and
+    /// hashed here: the kernel does not read file data.
     fn map_file_stream(&mut self, event: &SensorEvent) -> Option<Event> {
         let path = wide(&event.primary, event.primary_length);
         if path.is_empty() {
             return None;
         }
         let image = self.file_image(event.pid);
+        let mut fields: Vec<(&str, &str)> = vec![("TargetFilename", &path)];
+        let hash = sha1_of_nt_path(&path);
+        if let Some(hash) = hash.as_deref() {
+            fields.push(("Hash", hash));
+        }
         let xml = event_xml(
             &self.computer,
             15,
             Self::event_time(event),
             event.pid,
             image.as_deref(),
-            &[("TargetFilename", &path)],
+            &fields,
         );
         Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
@@ -498,6 +534,10 @@ impl Mapper {
         if let Some(image) = facts.image.as_deref() {
             self.images.insert(event.pid, image);
         }
+        // Sysmon reports the hashes of the process image; the kernel does not
+        // hash, so this is done here, from the image on disk.
+        let hashes = facts.image.as_deref().and_then(|image| image_hashes(image));
+        facts.hashes = hashes;
         self.cache.insert(event.pid, facts.clone());
         let xml = process_start_xml(&self.computer, &facts, parent.as_ref());
         Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
@@ -585,6 +625,51 @@ impl crate::types::EventProducer for EventCollector {
 
         let mut mapper = Mapper::with_images(self.images.clone());
         let mut events = Vec::new();
+
+        // EID 29 (FileExecutableDetected): a PE written to disk. The create
+        // callback sees the file before its content exists, so the header is
+        // inspected shortly after, when the writer has usually finished.
+        let (pe_tx, pe_rx) = std::sync::mpsc::channel::<(u32, String)>();
+        let pe_worker = {
+            let tx = tx.clone();
+            let images = self.images.clone();
+            let computer = std::env::var("COMPUTERNAME").unwrap_or_default();
+            std::thread::Builder::new()
+                .name("sigmacatch-pe-check".into())
+                .spawn(move || {
+                    for (pid, path) in pe_rx {
+                        std::thread::sleep(PE_CHECK_DELAY);
+                        let Some(header) = crate::inputs::nt_file::read_prefix(&path, 2) else {
+                            continue;
+                        };
+                        if !is_pe(&header) {
+                            continue;
+                        }
+                        let image = images.get(pid);
+                        let mut fields: Vec<(&str, &str)> = vec![("TargetFilename", &path)];
+                        let hash = sha1_of_nt_path(&path);
+                        if let Some(hash) = hash.as_deref() {
+                            fields.push(("Hashes", hash));
+                        }
+                        let xml = event_xml(
+                            &computer,
+                            29,
+                            chrono::Utc::now(),
+                            pid,
+                            image.as_deref(),
+                            &fields,
+                        );
+                        if let Ok(event) =
+                            crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon"))
+                            && tx.blocking_send(event).is_err()
+                        {
+                            break;
+                        }
+                    }
+                })
+                .ok()
+        };
+
         loop {
             if *stop.borrow() {
                 break;
@@ -592,6 +677,12 @@ impl crate::types::EventProducer for EventCollector {
             match device.read_events(&mut events) {
                 Ok(_) => {
                     for record in &events {
+                        if record.kind == kind::FILE_CREATE {
+                            let path = wide(&record.primary, record.primary_length);
+                            if !path.is_empty() {
+                                let _ = pe_tx.send((record.pid, path));
+                            }
+                        }
                         if let Some(event) = mapper.map(record)
                             && tx.send(event).await.is_err()
                         {
@@ -602,6 +693,10 @@ impl crate::types::EventProducer for EventCollector {
                 Err(error) => tracing::warn!("kernel sensor read failed: {error:#}"),
             }
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        drop(pe_tx);
+        if let Some(worker) = pe_worker {
+            let _ = worker.join();
         }
         let _ = &mut stop;
         Ok(())

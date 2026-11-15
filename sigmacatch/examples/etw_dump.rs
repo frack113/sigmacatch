@@ -314,12 +314,12 @@ mod probe {
         let eid1 = options.eid1;
         let sink: etw::Sink = Box::new(move |record: &EVENT_RECORD| {
             collect(record, &stats, full, raw_opcode);
-            if let Some(router) = &router
-                && let Some(event) = router.map(record)
-            {
-                match serde_json::to_string(&*event.event_json_raw) {
-                    Ok(json) => println!("\nMAPPED {json}"),
-                    Err(error) => eprintln!("map: {error}"),
+            if let Some(router) = &router {
+                for event in router.map(record) {
+                    match serde_json::to_string(&*event.event_json_raw) {
+                        Ok(json) => println!("\nMAPPED {json}"),
+                        Err(error) => eprintln!("map: {error}"),
+                    }
                 }
             }
             if eid1 {

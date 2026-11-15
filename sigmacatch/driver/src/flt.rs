@@ -686,7 +686,13 @@ unsafe extern "C" fn pre_set_information(
             // SAFETY: the buffer holds a FILE_DISPOSITION_INFORMATION.
             let disposition = parameters.info_buffer.cast::<FileDispositionInformation>();
             if !disposition.is_null() && unsafe { (*disposition).delete_file } != 0 {
-                unsafe { push_named(data, kind::FILE_DELETE, 0) };
+                // Sysmon reports both ids for one delete: 23 (FileDelete,
+                // archived) and 26 (FileDeleteDetected, no backup). This
+                // sensor keeps no archive, so both carry the same shape.
+                unsafe {
+                    push_named(data, kind::FILE_DELETE, 0);
+                    push_named(data, kind::FILE_DELETE_DETECTED, 0);
+                }
             }
             return PREOP_SUCCESS_WITH_CALLBACK;
         }
@@ -698,7 +704,10 @@ unsafe extern "C" fn pre_set_information(
             if !disposition.is_null()
                 && unsafe { (*disposition).flags } & FILE_DISPOSITION_DELETE != 0
             {
-                unsafe { push_named(data, kind::FILE_DELETE, 0) };
+                unsafe {
+                    push_named(data, kind::FILE_DELETE, 0);
+                    push_named(data, kind::FILE_DELETE_DETECTED, 0);
+                }
             }
             return PREOP_SUCCESS_WITH_CALLBACK;
         }

@@ -22,7 +22,7 @@ detector for the field predicates (`match_count: 1`).
 
 | EID | Sysmon event | Sigma category | sigmacatch source | State | Missing vs Sysmon |
 |---|---|---|---|---|---|
-| 1 | ProcessCreate | `process_creation` | driver `PsSetCreateProcessNotifyRoutineEx` | ✅ | `ProcessGuid`, `ParentProcessGuid`, `Hashes`, `FileVersion`/`Description`/`Product`/`Company`/`OriginalFileName`, `LogonGuid`/`LogonId`, `TerminalSessionId` |
+| 1 | ProcessCreate | `process_creation` | driver `PsSetCreateProcessNotifyRoutineEx` | ✅ | `ProcessGuid`, `ParentProcessGuid`, version/company fields, `LogonGuid`/`LogonId`, `TerminalSessionId`; `Hashes` is SHA1+SHA256+MD5 of the image |
 | 2 | FileCreateTime | `file_change` | driver `IRP_MJ_SET_INFORMATION`/`FileBasicInformation` | ✅ | `ProcessGuid` |
 | 3 | NetworkConnect | `network_connection` | ETW `Kernel-Network` 12 / 42 | ✅ | `ProcessGuid`, `User`; `DestinationHostname` is filled from the session's own DNS answers |
 | 4 | SysmonServiceStateChanged | `sysmon_status` | — | ❌ | nothing to report: it describes Sysmon itself |
@@ -36,7 +36,7 @@ detector for the field predicates (`match_count: 1`).
 | 12 | CreateKey / DeleteKey | `registry_event` (`registry_add`) | ETW `Kernel-Registry` 1/2/3 | ✅ | `ProcessGuid` |
 | 13 | SetValue / DeleteValue | `registry_event` (`registry_set`) | ETW `Kernel-Registry` 5/6 | ✅ | `ProcessGuid`; `Details` is the value data (needs the undocumented `CapturedData` request) |
 | 14 | RenameKey | `registry_event` (`registry_rename`) | driver `CmRegisterCallbackEx`/`RegNtPreRenameKey` | ✅ | `ProcessGuid` |
-| 15 | FileCreateStreamHash | `create_stream_hash` | driver minifilter (name carries `:stream`) | ⚠️ | `Hash`, `CreationUtcTime`, `ProcessGuid` — `TargetFilename` and `Image` are present |
+| 15 | FileCreateStreamHash | `create_stream_hash` | driver minifilter (name carries `:stream`) | ✅ | `CreationUtcTime`, `ProcessGuid`; `Hash` is SHA1 of the first 16 MiB |
 | 16 | ServiceConfigurationChange | `sysmon_status` | — | ❌ | nothing to report: it is Sysmon's own config change |
 | 17 | PipeCreated | `pipe_created` | driver `IRP_MJ_CREATE_NAMED_PIPE` | ✅ | `ProcessGuid` |
 | 18 | PipeConnected | `pipe_created` | driver minifilter create on the NPFS volume | ✅ | `ProcessGuid` |
@@ -46,11 +46,11 @@ detector for the field predicates (`match_count: 1`).
 | 22 | DnsQuery | `dns_query` | ETW `DNS-Client` 3008 | ✅ | `ProcessGuid`, `User` |
 | 23 | FileDelete | `file_delete` | driver minifilter disposition (13/64) | ✅ | `ProcessGuid`, `Hashes`, `IsExecutable`, `Archived` |
 | 24 | ClipboardCapture | `clipboard_capture` | — | ❌ | no public ETW provider nor documented kernel hook |
-| 25 | ProcessTampering | `process_tampering` | — | ❌ | needs per-process main-image tracking; a heuristic would be noise |
-| 26 | FileDeleteDetected | `file_delete_detected` | — | ❌ | Sysmon-only logging of its own blocked deletes |
+| 25 | ProcessTampering | `process_tampering` | ETW `Kernel-Process` 6, when the unloaded image is the process's own and it is still running | ✅ | `ProcessGuid`; only `Type=ImageUnloaded` (no herpaderping) |
+| 26 | FileDeleteDetected | `file_delete_detected` | driver, the same disposition that reports 23 | ✅ | `Hashes`, `IsExecutable`, `Archived`, `ProcessGuid` — no archive is kept, so 23 and 26 carry the same shape |
 | 27 | FileBlockExecutable | `file_block_executable` | — | ❌ | Sysmon's own blocking feature |
 | 28 | FileBlockShredding | `file_block_shredding` | — | ❌ | Sysmon's own blocking feature |
-| 29 | FileExecutableDetected | `file_executable_detected` | — | ❌ | Sysmon-only |
+| 29 | FileExecutableDetected | `file_executable_detected` | user mode, ~300 ms after a created file, when it starts with `MZ` | ✅ | `ProcessGuid`; `Hashes` over the first 16 MiB, `TargetFilename`/`Image` present |
 | 255 | SysmonError | `sysmon_error` | — | ❌ | nothing to report: Sysmon's own error stream |
 
 ## sigmacatch extensions (Sysmon has no such IDs)
@@ -75,8 +75,9 @@ match on a sigmacatch host:
 - **`ProcessGuid`** — every event carries `ProcessId` and `Image`, never a
   per-process GUID. Pivoting on `ProcessGuid` is impossible; `ProcessId` +
   `Image` + `UtcTime` is the equivalent.
-- **`Hashes`** — no file hashing: the driver does not read file content and no
-  user-mode hasher is wired (affects 1, 6, 7, 15, 23).
+- **`Hashes`** — present on 1, 15 and 29 (SHA1/SHA256/MD5 computed in user mode
+  from the file on disk, first 16 MiB only); absent on 6, 7 and 23, whose events
+  would need a hash of every loaded image or of a deleted file.
 - **Authenticode** (`Signed`, `Signature`, `SignatureStatus`) — affects 6, 7.
 - **`User` / `LogonId` / `IntegrityLevel`** — present on 1 and 5 only, absent
   from the file/network/registry events.

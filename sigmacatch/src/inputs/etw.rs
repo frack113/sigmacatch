@@ -184,8 +184,10 @@ pub const KERNEL_PROCESS_UNLOAD: ProviderSpec = ProviderSpec {
     name: "Microsoft-Windows-Kernel-Process",
     guid: GUID::from_u128(0x22fb2cd6_0e7b_422b_a0c7_2fad1fd0e716),
     level: 4,
-    // IMAGE (0x40)
-    keywords: 0x0040,
+    // IMAGE (0x40) for the unloads, PROCESS (0x10) for the exits: an image
+    // unloaded from a process that has *not* exited is process tampering, and
+    // the exit is the only way to tell the two apart.
+    keywords: 0x0040 | 0x0010,
 };
 
 /// Classic kernel logger flags used for command lines and SIDs.
@@ -796,6 +798,10 @@ const WMI_PROVIDER_OPERATION: u16 = 5858;
 const KERNEL_PROCESS_NAME: &str = "Microsoft-Windows-Kernel-Process";
 /// `ImageUnload`: an image was unmapped from a process (EID 507).
 const IMAGE_UNLOAD: u16 = 6;
+/// `ProcessStop`: the process is exiting — its images unload next.
+const PROCESS_STOP: u16 = 2;
+/// Upper bound on the set of processes known to have exited.
+const EXITED_LIMIT: usize = 4096;
 // `Kernel-Registry` ids the router accepts (see `inputs::etw_registry`).
 const CREATE_KEY_ID: u16 = 1;
 const OPEN_KEY_ID: u16 = 2;
@@ -838,6 +844,9 @@ pub struct MainRouter {
     registry: std::sync::Mutex<crate::inputs::etw_registry::RegistryMapper>,
     /// Image paths the kernel sensor published at process start.
     images: crate::inputs::etw_process::ImageCache,
+    /// Processes the same session saw exiting: their image unloads are
+    /// teardown, not tampering.
+    exited: std::sync::Mutex<std::collections::HashSet<u32>>,
 }
 
 impl MainRouter {
@@ -854,6 +863,7 @@ impl MainRouter {
             dns: std::sync::Mutex::new(std::collections::HashMap::new()),
             registry: std::sync::Mutex::new(crate::inputs::etw_registry::RegistryMapper::new()),
             images,
+            exited: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -882,34 +892,68 @@ impl MainRouter {
                 ],
             )
             || has(&WMI_ACTIVITY, &[WMI_PROVIDER_OPERATION])
-            || has(&KERNEL_PROCESS_UNLOAD, &[IMAGE_UNLOAD])
+            || has(&KERNEL_PROCESS_UNLOAD, &[IMAGE_UNLOAD, PROCESS_STOP])
     }
 
-    /// Map one record, or `None` when this provider/id is not routed.
+    /// Map one record into zero, one or two events.
     ///
     /// Unknown providers and ids are dropped silently: the main session is
-    /// deliberately subscribed to more than it maps.
-    pub fn map(&self, record: &EVENT_RECORD) -> Option<crate::types::Event> {
+    /// deliberately subscribed to more than it maps. The vector is a `Vec`
+    /// because one record can produce a pair — an image unloaded from a live
+    /// process is both a module unload (EID 507) and process tampering
+    /// (EID 25).
+    pub fn map(&self, record: &EVENT_RECORD) -> Vec<crate::types::Event> {
         if !Self::wants(record) {
-            return None;
+            return Vec::new();
         }
-        let decoded = crate::inputs::etw_event::decode(record)?;
+        let Some(decoded) = crate::inputs::etw_event::decode(record) else {
+            return Vec::new();
+        };
         let at = decoded.utc().unwrap_or_else(chrono::Utc::now);
+        self.decoded(&decoded, at)
+    }
+
+    /// Wrap the single-event mappers for the `Vec`-returning dispatcher.
+    fn one(event: Option<crate::types::Event>) -> Vec<crate::types::Event> {
+        event.into_iter().collect()
+    }
+
+    /// Dispatch one decoded record.
+    fn decoded(
+        &self,
+        decoded: &crate::inputs::etw_event::DecodedEvent,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Vec<crate::types::Event> {
         match (decoded.provider.as_str(), decoded.event_id) {
-            (KERNEL_NETWORK_NAME, NET_TCP_CONNECT) => self.connection(&decoded, at, "tcp", true),
-            (KERNEL_NETWORK_NAME, NET_UDP_SEND) => self.connection(&decoded, at, "udp", true),
-            (KERNEL_NETWORK_NAME, NET_TCP_ACCEPT) => self.listen(&decoded, at),
-            (DNS_CLIENT_NAME, DNS_QUERY_COMPLETED) => self.dns(&decoded, at),
-            (KERNEL_REGISTRY_NAME, _) => self.registry_event(&decoded, at),
-            (WMI_ACTIVITY_NAME, WMI_PROVIDER_OPERATION) => self.wmi(&decoded, at),
+            (KERNEL_NETWORK_NAME, NET_TCP_CONNECT) => {
+                Self::one(self.connection(&decoded, at, "tcp", true))
+            }
+            (KERNEL_NETWORK_NAME, NET_UDP_SEND) => {
+                Self::one(self.connection(&decoded, at, "udp", true))
+            }
+            (KERNEL_NETWORK_NAME, NET_TCP_ACCEPT) => Self::one(self.listen(&decoded, at)),
+            (DNS_CLIENT_NAME, DNS_QUERY_COMPLETED) => Self::one(self.dns(&decoded, at)),
+            (KERNEL_REGISTRY_NAME, _) => Self::one(self.registry_event(&decoded, at)),
+            (WMI_ACTIVITY_NAME, WMI_PROVIDER_OPERATION) => Self::one(self.wmi(&decoded, at)),
+            (KERNEL_PROCESS_NAME, PROCESS_STOP) => {
+                let mut exited = self
+                    .exited
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if exited.len() >= EXITED_LIMIT {
+                    exited.clear();
+                }
+                exited.insert(decoded.process_id);
+                Vec::new()
+            }
             (KERNEL_PROCESS_NAME, IMAGE_UNLOAD) => self.module_unload(&decoded, at),
-            _ => None,
+            _ => Vec::new(),
         }
     }
 
-    /// Map a record and send it on the producer channel.
+    /// Map a record and send every resulting event on the producer channel.
     fn route(&self, record: &EVENT_RECORD, tx: &tokio::sync::mpsc::Sender<crate::types::Event>) {
-        if let Some(event) = self.map(record) {
+        for event in self.map(record) {
             let _ = tx.blocking_send(event);
         }
     }
@@ -1106,20 +1150,56 @@ impl MainRouter {
         crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
 
-    /// `Kernel-Process` `ImageUnload` → EID 507 (`module_unload` extension).
+    /// `Kernel-Process` `ImageUnload` → EID 507 (`module_unload` extension),
+    /// and EID 25 when the image is the process's own while it is still alive.
     fn module_unload(
         &self,
         decoded: &crate::inputs::etw_event::DecodedEvent,
         at: chrono::DateTime<chrono::Utc>,
-    ) -> Option<crate::types::Event> {
-        let module = decoded.str("ImageName")?;
+    ) -> Vec<crate::types::Event> {
+        let Some(module) = decoded.str("ImageName") else {
+            return Vec::new();
+        };
         if module.is_empty() {
-            return None;
+            return Vec::new();
         }
         let pid = decoded
             .uint("ProcessID")
             .map_or(decoded.process_id, |pid| pid as u32);
         let image = self.image_of(pid);
+        // Process tampering: the image a process was started from is unmapped
+        // while the process keeps running (hollowing). A process that is
+        // exiting unmaps its images too, which is why the exits are tracked.
+        // Two independent filters, because ETW ordering is not a guarantee:
+        // the exit record may arrive after the unloads it explains, so the
+        // process is also asked whether it is still running.
+        let not_exited = !self
+            .exited
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(&pid);
+        let tampering = not_exited
+            && crate::inputs::etw_process::is_running(pid)
+            && image
+                .as_deref()
+                .map(|image| image.strip_prefix(r"\??\").unwrap_or(image))
+                .is_some_and(|image| crate::inputs::nt_file::same_file(module, image));
+        let mut events = Vec::new();
+        if tampering {
+            let xml = crate::inputs::etw_sysmon::event_xml(
+                &self.computer,
+                25,
+                at,
+                pid,
+                image.as_deref(),
+                &[("Type", "ImageUnloaded")],
+            );
+            if let Ok(event) =
+                crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon"))
+            {
+                events.push(event);
+            }
+        }
         let xml = crate::inputs::etw_sysmon::event_xml(
             &self.computer,
             507,
@@ -1128,7 +1208,10 @@ impl MainRouter {
             image.as_deref(),
             &[("ModuleName", module)],
         );
-        crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+        if let Ok(event) = crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")) {
+            events.push(event);
+        }
+        events
     }
 
     /// Record `name` for every address in a `QueryResults` answer list.
@@ -1225,9 +1308,12 @@ fn emit_process(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .observe(pid);
-    let Some((facts, parent)) = observed else {
+    let Some((mut facts, parent)) = observed else {
         return;
     };
+    if let Some(image) = facts.image.as_deref() {
+        facts.hashes = crate::inputs::nt_file::hashes_of(image);
+    }
     let xml = crate::inputs::etw_sysmon::process_start_xml(computer, &facts, parent.as_ref());
     if let Ok(event) = crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")) {
         let _ = tx.blocking_send(event);

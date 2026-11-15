@@ -355,6 +355,9 @@ pub fn process_start_xml(
     if let Some(integrity) = &facts.integrity {
         field(&mut data, "IntegrityLevel", integrity);
     }
+    if let Some(hashes) = &facts.hashes {
+        field(&mut data, "Hashes", hashes);
+    }
     if let Some(parent) = parent {
         field(&mut data, "ParentProcessId", &parent.pid.to_string());
         if let Some(image) = &parent.image {

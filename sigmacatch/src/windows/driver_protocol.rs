@@ -74,6 +74,11 @@ pub mod kind {
     /// Registry key renamed (EID 14): `primary` = old path, `secondary` = the
     /// new leaf name.
     pub const REGISTRY_RENAME: u32 = 17;
+    /// File delete, the *detected* variant (EID 26): same shape as
+    /// [`FILE_DELETE`]. Sysmon reports both ids for one delete — 23 is the
+    /// archived delete, 26 the detection without a backup — and sigmacatch
+    /// keeps no archive either.
+    pub const FILE_DELETE_DETECTED: u32 = 19;
 }
 
 /// One event record, as the driver observed it.

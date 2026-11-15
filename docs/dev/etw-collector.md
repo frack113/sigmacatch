@@ -561,6 +561,7 @@ Measured with `etw_dump --map` in the VM:
 | 22 | `DNS-Client` 3008 | `QueryName`, `QueryStatus`, `QueryResults` |
 | 500 | `Kernel-Network` 15 (accept) | `saddr`/`sport` as the listening endpoint, `Initiated=false` |
 | 507 | `Kernel-Process` 6 (`ImageUnload`) | `ImageName` → `ModuleName` |
+| 25 | `Kernel-Process` 6, same record as 507 | emitted when the unloaded image is the process's *own* and it is still running |
 
 Two findings worth keeping:
 
@@ -582,7 +583,18 @@ was pure cost.
 
 The image notify routine the driver registers only fires on **load**, so EID
 507 comes from `Kernel-Process` `ImageUnload` (event 6, keyword `0x40`) instead;
-that provider is enabled a second time on the main session for it alone.
+that provider is enabled a second time on the main session for it alone. The
+same record yields **EID 25** when the unloaded image is the process's own and
+the process is still running (hollowing). Two filters keep the teardown out,
+because ETW does not order `ProcessStop` before the unloads it explains: the
+pid must not be in the exit set *and* `GetExitCodeProcess` must still report
+`STILL_ACTIVE`. Measured: unmapping the image of a suspended `cmd.exe` produced
+exactly one EID 25 and zero false positives across 214 unloads; without the
+liveness check, four exiting processes were misreported.
+
+`Image` and path comparison use `GetFinalPathNameByHandleW(VOLUME_NAME_NT)`:
+mapping drive letters with `QueryDosDevice` by hand silently failed, which is
+what the first version did (0 detections).
 
 ## Registry (EID 12/13/14)
 

@@ -55,6 +55,40 @@ pub struct ProcessFacts {
     pub integrity: Option<String>,
     /// Process creation time, from `GetProcessTimes`.
     pub created: Option<DateTime<Utc>>,
+    /// `Hashes` of the process image (`SHA1=...,SHA256=...,MD5=...`), filled
+    /// by the mappers from the image on disk. Absent when the file cannot be
+    /// read.
+    pub hashes: Option<String>,
+}
+
+/// Exit code a process reports while it is still running.
+const STILL_ACTIVE: u32 = 259;
+
+/// True when `pid` is running: still openable and not yet terminated.
+///
+/// The process object is signalled at exit, *before* its address space is torn
+/// down, so this is what separates "an image was unmapped from a live process"
+/// (hollowing) from "the process is exiting and unmapping everything".
+pub fn is_running(pid: u32) -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    if pid <= 4 {
+        return false;
+    }
+    // SAFETY: the handle is closed below; the call only reads the exit code.
+    let Ok(handle) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }) else {
+        return false;
+    };
+    let mut code = 0u32;
+    // SAFETY: `code` is a valid out-pointer for the handle.
+    // `STILL_ACTIVE` (259) is the exit code a running process reports.
+    let running =
+        unsafe { GetExitCodeProcess(handle, &raw mut code) }.is_ok() && code == STILL_ACTIVE;
+    // SAFETY: the handle came from `OpenProcess` exactly once.
+    let _ = unsafe { CloseHandle(handle) };
+    running
 }
 
 /// Current process ids, from a Toolhelp snapshot.

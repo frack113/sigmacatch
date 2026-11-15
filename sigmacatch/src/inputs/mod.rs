@@ -28,8 +28,13 @@ pub mod etw_event;
 pub mod etw_process;
 #[cfg(all(target_os = "windows", feature = "etw"))]
 pub mod etw_registry;
+// Included by path, like `windows/driver_protocol.rs`: the `src/windows/`
+// directory holds files shared with the driver crate, not a module tree.
 #[cfg(all(target_os = "windows", feature = "etw"))]
 pub mod etw_sysmon;
+#[cfg(all(target_os = "windows", feature = "etw"))]
+#[path = "../windows/nt_file.rs"]
+pub mod nt_file;
 #[cfg(any(feature = "etw", test))]
 pub mod registry_format;
 #[cfg(any(feature = "etw", test))]
