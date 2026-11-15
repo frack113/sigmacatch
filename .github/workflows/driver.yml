@@ -39,28 +39,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # The WDK install/LLVM actions are maintained by the windows-drivers-rs
-      # project; copy them in rather than re-implementing the installers.
-      - name: Checkout windows-drivers-rs actions
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: microsoft/windows-drivers-rs
-          ref: main
-          path: _temp/windows-drivers-rs
-          persist-credentials: false
-          sparse-checkout: |
-            .github/actions
-          sparse-checkout-cone-mode: false
-
-      - name: Copy actions to workspace
-        shell: pwsh
-        run: Copy-Item -Recurse -Force _temp/windows-drivers-rs/.github/actions .github/
-
-      - name: Install Winget
-        uses: ./.github/actions/install-winget
-        with:
-          force-cli-install: 'false'
-
       # Installing the WDK + LLVM through winget costs ~8 minutes; cache the
       # installed trees instead. On a hit the whole uninstall/install cycle is
       # skipped: wdk-build gives `WDKContentRoot` and `Version_Number`
@@ -106,18 +84,26 @@ jobs:
           Write-Output "LIBCLANG_PATH=C:\Program Files\llvm\bin" >> $env:GITHUB_ENV
           Write-Output "C:\Program Files\llvm\bin" >> $env:GITHUB_PATH
 
+      # Installed with winget rather than through an action: a workflow must not
+      # write into `.github/` and then execute what it wrote, and the winget
+      # packages are the same ones the local dev VM uses.
       - name: Install LLVM ${{ env.LLVM_VERSION }}
         if: steps.toolchain-probe.outputs.ready != 'true'
-        uses: ./.github/actions/install-llvm
-        with:
-          version: ${{ env.LLVM_VERSION }}
+        shell: pwsh
+        run: |
+          winget install --id LLVM.LLVM --version ${{ env.LLVM_VERSION }} `
+            --silent --accept-package-agreements --accept-source-agreements `
+            --disable-interactivity
+          if ($LASTEXITCODE -ne 0) { throw "winget LLVM failed: $LASTEXITCODE" }
 
       - name: Install WDK ${{ env.WDK_VERSION }}
         if: steps.toolchain-probe.outputs.ready != 'true'
-        uses: ./.github/actions/install-wdk
-        with:
-          version: ${{ env.WDK_VERSION }}
-          source: winget
+        shell: pwsh
+        run: |
+          winget install --id Microsoft.WindowsWDK.${{ env.WDK_VERSION }} `
+            --silent --accept-package-agreements --accept-source-agreements `
+            --disable-interactivity
+          if ($LASTEXITCODE -ne 0) { throw "winget WDK failed: $LASTEXITCODE" }
 
       # Only a run that actually installed the toolchain pays for the save;
       # the key is version-pinned so every branch shares the same entry.
