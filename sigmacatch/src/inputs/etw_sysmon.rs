@@ -1,0 +1,558 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+//! Sysmon-schema rendering of the events the ETW collector observes.
+//!
+//! The Windows pipeline is built around Winevt XML (`1_win_logsource.yml`,
+//! `Event::from_xml_injected`), so the collector renders what it observes as
+//! the Sysmon event it corresponds to instead of inventing a second shape.
+//! Only fields that can be sourced exactly are written: a missing field is
+//! always better than an approximated one for committed regression data.
+
+use crate::inputs::etw_process::ProcessFacts;
+
+/// `sigmacatch` provider id. The events are Sysmon-*schema* (same EventIDs
+/// and field names) but are produced by sigmacatch, not Sysmon, so they are
+/// published under our own provider and channel. `service` resolution still
+/// maps the channel to `sysmon` (see `types.rs`), so the stock Sysmon Sigma
+/// rules match unchanged.
+const SIGMACATCH_PROVIDER: &str = "{a3e1f6c2-4b5d-4e9f-9c1a-2d7b8e0f3a6c}";
+const SIGMACATCH_CHANNEL: &str = "sigmacatch/Operational";
+
+/// Render an event with an arbitrary event id and extra fields.
+///
+/// Used for the Sysmon file/pipe events (2 creation time, 9 raw read, 17 pipe
+/// created, 22 DNS query, 23 delete) and the sigmacatch file extensions (503
+/// rename, 504 ACL, 505 owner, 506 truncate), which share the shape:
+/// `UtcTime`, `ProcessId`, `Image`, then the kind-specific fields.
+pub fn event_xml(
+    computer: &str,
+    event_id: u16,
+    at: chrono::DateTime<chrono::Utc>,
+    process_id: u32,
+    process_image: Option<&str>,
+    fields: &[(&str, &str)],
+) -> String {
+    let mut data = String::new();
+    field(&mut data, "RuleName", "");
+    field(&mut data, "UtcTime", &sysmon_utc(at));
+    field(&mut data, "ProcessId", &process_id.to_string());
+    if let Some(image) = process_image {
+        field(&mut data, "Image", image);
+    }
+    for (name, value) in fields {
+        field(&mut data, name, value);
+    }
+    format!(
+        "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
+         <System>\
+         <Provider Name=\"sigmacatch\" Guid=\"{SIGMACATCH_PROVIDER}\"/>\
+         <EventID>{event_id}</EventID><Version>5</Version><Level>4</Level><Task>{event_id}</Task><Opcode>0</Opcode>\
+         <Keywords>0x8000000000000000</Keywords>\
+         <TimeCreated SystemTime=\"{}\"/>\
+         <Correlation/>\
+         <Execution ProcessID=\"{process_id}\" ThreadID=\"0\"/>\
+         <Channel>{SIGMACATCH_CHANNEL}</Channel>\
+         <Computer>{}</Computer>\
+         </System>\
+         <EventData>{data}</EventData>\
+         </Event>",
+        escape(&at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)),
+        escape(computer)
+    )
+}
+
+/// Render a Sysmon **EID 11 (FileCreate)** event.
+pub fn file_create_xml(
+    computer: &str,
+    at: chrono::DateTime<chrono::Utc>,
+    process_id: u32,
+    process_image: Option<&str>,
+    target_filename: &str,
+    creation_utc: Option<&str>,
+) -> String {
+    let mut data = String::new();
+    field(&mut data, "RuleName", "");
+    field(&mut data, "UtcTime", &sysmon_utc(at));
+    field(&mut data, "ProcessId", &process_id.to_string());
+    if let Some(image) = process_image {
+        field(&mut data, "Image", image);
+    }
+    field(&mut data, "TargetFilename", target_filename);
+    if let Some(creation) = creation_utc {
+        field(&mut data, "CreationUtcTime", creation);
+    }
+    format!(
+        "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
+         <System>\
+         <Provider Name=\"sigmacatch\" Guid=\"{SIGMACATCH_PROVIDER}\"/>\
+         <EventID>11</EventID><Version>5</Version><Level>4</Level><Task>11</Task><Opcode>0</Opcode>\
+         <Keywords>0x8000000000000000</Keywords>\
+         <TimeCreated SystemTime=\"{}\"/>\
+         <Correlation/>\
+         <Execution ProcessID=\"{process_id}\" ThreadID=\"0\"/>\
+         <Channel>{SIGMACATCH_CHANNEL}</Channel>\
+         <Computer>{}</Computer>\
+         </System>\
+         <EventData>{data}</EventData>\
+         </Event>",
+        escape(&at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)),
+        escape(computer)
+    )
+}
+
+/// The endpoints of a Sysmon **EID 3 (NetworkConnect)** / **EID 500
+/// (network listen)** event.
+pub struct NetworkFields<'a> {
+    /// `tcp` or `udp`.
+    pub protocol: &'a str,
+    /// True when the process opened the connection (client side).
+    pub initiated: bool,
+    /// Local address of the connection (the bound address when listening).
+    pub source_ip: &'a str,
+    /// Local port.
+    pub source_port: u16,
+    /// Peer address, or the all-zero address for a listening socket.
+    pub destination_ip: &'a str,
+    /// Peer port, or 0 for a listening socket.
+    pub destination_port: u16,
+    /// Resolved name for `DestinationIp`, when a DNS answer was seen for it.
+    pub destination_hostname: Option<&'a str>,
+    /// `User` of the process that opened the socket, when it could be read.
+    pub user: Option<&'a str>,
+}
+
+/// Render a Sysmon **EID 3 (NetworkConnect)** or **EID 500 (network
+/// listen)** event.
+///
+/// `listening` flips the two Sysmon-only fields that separate the extension
+/// (`Initiated=false`, all-zero destination) from a real connection.
+pub fn network_xml(
+    computer: &str,
+    event_id: u16,
+    at: chrono::DateTime<chrono::Utc>,
+    process_id: u32,
+    process_image: Option<&str>,
+    fields: &NetworkFields<'_>,
+) -> String {
+    let mut data = String::new();
+    field(&mut data, "RuleName", "");
+    field(&mut data, "UtcTime", &sysmon_utc(at));
+    field(&mut data, "ProcessId", &process_id.to_string());
+    if let Some(image) = process_image {
+        field(&mut data, "Image", image);
+    }
+    field(&mut data, "Protocol", fields.protocol);
+    field(
+        &mut data,
+        "Initiated",
+        if fields.initiated { "true" } else { "false" },
+    );
+    let source_v6 = fields.source_ip.contains(':');
+    field(&mut data, "SourceIsIpv6", &source_v6.to_string());
+    field(&mut data, "SourceIp", fields.source_ip);
+    field(&mut data, "SourceHostname", "-");
+    field(&mut data, "SourcePort", &fields.source_port.to_string());
+    field(&mut data, "SourcePortName", "-");
+    let destination_v6 = fields.destination_ip.contains(':');
+    field(&mut data, "DestinationIsIpv6", &destination_v6.to_string());
+    field(&mut data, "DestinationIp", fields.destination_ip);
+    field(
+        &mut data,
+        "DestinationHostname",
+        fields.destination_hostname.unwrap_or("-"),
+    );
+    field(
+        &mut data,
+        "DestinationPort",
+        &fields.destination_port.to_string(),
+    );
+    field(&mut data, "DestinationPortName", "-");
+    if let Some(user) = fields.user {
+        field(&mut data, "User", user);
+    }
+    format!(
+        "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
+         <System>\
+         <Provider Name=\"sigmacatch\" Guid=\"{SIGMACATCH_PROVIDER}\"/>\
+         <EventID>{event_id}</EventID><Version>5</Version><Level>4</Level><Task>{event_id}</Task><Opcode>0</Opcode>\
+         <Keywords>0x8000000000000000</Keywords>\
+         <TimeCreated SystemTime=\"{}\"/>\
+         <Correlation/>\
+         <Execution ProcessID=\"{process_id}\" ThreadID=\"0\"/>\
+         <Channel>{SIGMACATCH_CHANNEL}</Channel>\
+         <Computer>{}</Computer>\
+         </System>\
+         <EventData>{data}</EventData>\
+         </Event>",
+        escape(&at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)),
+        escape(computer)
+    )
+}
+
+/// Authenticode facts, as the image renderers need them.
+pub struct SignatureFields<'a> {
+    /// `Signed`.
+    pub signed: bool,
+    /// `Signature`: the signer display name.
+    pub name: Option<&'a str>,
+    /// `SignatureStatus`: `Valid`, `Unavailable` or `Errored`.
+    pub status: &'a str,
+}
+
+/// Append the version-resource fields, in Sysmon's order.
+fn version_facts(data: &mut String, version: Option<&crate::inputs::version_info::VersionInfo>) {
+    let Some(version) = version else {
+        return;
+    };
+    if let Some(value) = &version.file_version {
+        field(data, "FileVersion", value);
+    }
+    if let Some(value) = &version.description {
+        field(data, "Description", value);
+    }
+    if let Some(value) = &version.product {
+        field(data, "Product", value);
+    }
+    if let Some(value) = &version.company {
+        field(data, "Company", value);
+    }
+    if let Some(value) = &version.original_filename {
+        field(data, "OriginalFileName", value);
+    }
+}
+
+/// Append `Hashes` and the three Authenticode fields, in Sysmon's order.
+fn image_facts(data: &mut String, hashes: Option<&str>, signature: Option<&SignatureFields<'_>>) {
+    if let Some(hashes) = hashes {
+        field(data, "Hashes", hashes);
+    }
+    if let Some(signature) = signature {
+        field(
+            data,
+            "Signed",
+            if signature.signed { "true" } else { "false" },
+        );
+        if let Some(name) = signature.name {
+            field(data, "Signature", name);
+        }
+        field(data, "SignatureStatus", signature.status);
+    }
+}
+
+/// Render a Sysmon **EID 7 (ImageLoad)** event.
+pub fn image_load_xml(
+    computer: &str,
+    at: chrono::DateTime<chrono::Utc>,
+    process_id: u32,
+    process_image: Option<&str>,
+    image_loaded: &str,
+    hashes: Option<&str>,
+    signature: Option<&SignatureFields<'_>>,
+    version: Option<&crate::inputs::version_info::VersionInfo>,
+    user: Option<&str>,
+) -> String {
+    let mut data = String::new();
+    field(&mut data, "RuleName", "");
+    field(&mut data, "UtcTime", &sysmon_utc(at));
+    field(&mut data, "ProcessId", &process_id.to_string());
+    if let Some(image) = process_image {
+        field(&mut data, "Image", image);
+    }
+    field(&mut data, "ImageLoaded", image_loaded);
+    version_facts(&mut data, version);
+    image_facts(&mut data, hashes, signature);
+    if let Some(user) = user {
+        field(&mut data, "User", user);
+    }
+    format!(
+        "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
+         <System>\
+         <Provider Name=\"sigmacatch\" Guid=\"{SIGMACATCH_PROVIDER}\"/>\
+         <EventID>7</EventID><Version>5</Version><Level>4</Level><Task>7</Task><Opcode>0</Opcode>\
+         <Keywords>0x8000000000000000</Keywords>\
+         <TimeCreated SystemTime=\"{}\"/>\
+         <Correlation/>\
+         <Execution ProcessID=\"{process_id}\" ThreadID=\"0\"/>\
+         <Channel>{SIGMACATCH_CHANNEL}</Channel>\
+         <Computer>{}</Computer>\
+         </System>\
+         <EventData>{data}</EventData>\
+         </Event>",
+        escape(&at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)),
+        escape(computer)
+    )
+}
+
+/// Render a Sysmon **EID 6 (DriverLoad)** event.
+pub fn driver_load_xml(
+    computer: &str,
+    at: chrono::DateTime<chrono::Utc>,
+    image_loaded: &str,
+    hashes: Option<&str>,
+    signature: Option<&SignatureFields<'_>>,
+) -> String {
+    let mut data = String::new();
+    field(&mut data, "RuleName", "");
+    field(&mut data, "UtcTime", &sysmon_utc(at));
+    field(&mut data, "ImageLoaded", image_loaded);
+    image_facts(&mut data, hashes, signature);
+    format!(
+        "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
+         <System>\
+         <Provider Name=\"sigmacatch\" Guid=\"{SIGMACATCH_PROVIDER}\"/>\
+         <EventID>6</EventID><Version>5</Version><Level>4</Level><Task>6</Task><Opcode>0</Opcode>\
+         <Keywords>0x8000000000000000</Keywords>\
+         <TimeCreated SystemTime=\"{}\"/>\
+         <Correlation/>\
+         <Execution ProcessID=\"0\" ThreadID=\"0\"/>\
+         <Channel>{SIGMACATCH_CHANNEL}</Channel>\
+         <Computer>{}</Computer>\
+         </System>\
+         <EventData>{data}</EventData>\
+         </Event>",
+        escape(&at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)),
+        escape(computer)
+    )
+}
+
+/// Render a Sysmon **EID 10 (ProcessAccess)** event.
+pub fn process_access_xml(
+    computer: &str,
+    source_pid: u32,
+    source_image: Option<&str>,
+    target_pid: u32,
+    target_image: Option<&str>,
+    granted: u32,
+    at: chrono::DateTime<chrono::Utc>,
+) -> String {
+    let mut data = String::new();
+    field(&mut data, "RuleName", "");
+    field(&mut data, "UtcTime", &sysmon_utc(at));
+    field(&mut data, "SourceProcessId", &source_pid.to_string());
+    if let Some(image) = source_image {
+        field(&mut data, "SourceImage", image);
+    }
+    field(&mut data, "TargetProcessId", &target_pid.to_string());
+    if let Some(image) = target_image {
+        field(&mut data, "TargetImage", image);
+    }
+    field(&mut data, "GrantedAccess", &format!("0x{granted:X}"));
+
+    format!(
+        "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
+         <System>\
+         <Provider Name=\"sigmacatch\" Guid=\"{SIGMACATCH_PROVIDER}\"/>\
+         <EventID>10</EventID><Version>5</Version><Level>4</Level><Task>10</Task><Opcode>0</Opcode>\
+         <Keywords>0x8000000000000000</Keywords>\
+         <TimeCreated SystemTime=\"{}\"/>\
+         <Correlation/>\
+         <Execution ProcessID=\"{source_pid}\" ThreadID=\"0\"/>\
+         <Channel>{SIGMACATCH_CHANNEL}</Channel>\
+         <Computer>{}</Computer>\
+         </System>\
+         <EventData>{data}</EventData>\
+         </Event>",
+        escape(&at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)),
+        escape(computer)
+    )
+}
+
+/// Render a Sysmon **EID 5 (ProcessTerminate)** event.
+pub fn process_terminate_xml(
+    computer: &str,
+    facts: &ProcessFacts,
+    at: chrono::DateTime<chrono::Utc>,
+) -> String {
+    let mut data = String::new();
+    field(&mut data, "RuleName", "");
+    field(&mut data, "UtcTime", &sysmon_utc(at));
+    field(&mut data, "ProcessId", &facts.pid.to_string());
+    if let Some(image) = &facts.image {
+        field(&mut data, "Image", image);
+    }
+    if let Some(user) = &facts.user {
+        field(&mut data, "User", user);
+    }
+
+    let time = at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
+    format!(
+        "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
+         <System>\
+         <Provider Name=\"sigmacatch\" Guid=\"{SIGMACATCH_PROVIDER}\"/>\
+         <EventID>5</EventID><Version>5</Version><Level>4</Level><Task>5</Task><Opcode>0</Opcode>\
+         <Keywords>0x8000000000000000</Keywords>\
+         <TimeCreated SystemTime=\"{}\"/>\
+         <Correlation/>\
+         <Execution ProcessID=\"{}\" ThreadID=\"0\"/>\
+         <Channel>{SIGMACATCH_CHANNEL}</Channel>\
+         <Computer>{}</Computer>\
+         </System>\
+         <EventData>{data}</EventData>\
+         </Event>",
+        escape(&time),
+        facts.pid,
+        escape(computer)
+    )
+}
+
+/// Render a Sysmon **EID 1 (ProcessCreate)** event.
+///
+/// `parent` is the creating process's facts when they are still available (the
+/// collector caches them as it sees processes); the parent fields are omitted
+/// rather than guessed when it is not.
+pub fn process_start_xml(
+    computer: &str,
+    facts: &ProcessFacts,
+    parent: Option<&ProcessFacts>,
+) -> String {
+    let mut data = String::new();
+    field(&mut data, "RuleName", "");
+    field(
+        &mut data,
+        "UtcTime",
+        &facts.created.map(sysmon_utc).unwrap_or_default(),
+    );
+    field(&mut data, "ProcessId", &facts.pid.to_string());
+    if let Some(image) = &facts.image {
+        field(&mut data, "Image", image);
+    }
+    if let Some(command_line) = &facts.command_line {
+        field(&mut data, "CommandLine", command_line);
+    }
+    if let Some(user) = &facts.user {
+        field(&mut data, "User", user);
+    }
+    if let Some(integrity) = &facts.integrity {
+        field(&mut data, "IntegrityLevel", integrity);
+    }
+    if let Some(hashes) = &facts.hashes {
+        field(&mut data, "Hashes", hashes);
+    }
+    if let Some(parent) = parent {
+        field(&mut data, "ParentProcessId", &parent.pid.to_string());
+        if let Some(image) = &parent.image {
+            field(&mut data, "ParentImage", image);
+        }
+        if let Some(command_line) = &parent.command_line {
+            field(&mut data, "ParentCommandLine", command_line);
+        }
+        if let Some(user) = &parent.user {
+            field(&mut data, "ParentUser", user);
+        }
+    } else if facts.parent_pid != 0 {
+        field(&mut data, "ParentProcessId", &facts.parent_pid.to_string());
+    }
+
+    let time = facts
+        .created
+        .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true))
+        .unwrap_or_default();
+    format!(
+        "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
+         <System>\
+         <Provider Name=\"sigmacatch\" Guid=\"{SIGMACATCH_PROVIDER}\"/>\
+         <EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode>\
+         <Keywords>0x8000000000000000</Keywords>\
+         <TimeCreated SystemTime=\"{}\"/>\
+         <Correlation/>\
+         <Execution ProcessID=\"{}\" ThreadID=\"0\"/>\
+         <Channel>{SIGMACATCH_CHANNEL}</Channel>\
+         <Computer>{}</Computer>\
+         </System>\
+         <EventData>{data}</EventData>\
+         </Event>",
+        escape(&time),
+        facts.pid,
+        escape(computer)
+    )
+}
+
+/// Sysmon's `UtcTime` format: `YYYY-MM-DD HH:MM:SS.mmm`.
+///
+/// Built by hand: a `chrono` format string round-trips through
+/// `DelayedFormat::to_string`, which panics on a formatting error — inside the
+/// ETW callback that would cost the whole capture.
+pub fn sysmon_utc(time: chrono::DateTime<chrono::Utc>) -> String {
+    format!(
+        "{}.{:03}",
+        time.format("%Y-%m-%d %H:%M:%S"),
+        time.timestamp_subsec_millis()
+    )
+}
+
+/// Append one `EventData` field, escaping it for XML text content.
+fn field(out: &mut String, name: &str, value: &str) {
+    out.push_str("<Data Name=\"");
+    out.push_str(name);
+    out.push_str("\">");
+    out.push_str(&escape(value));
+    out.push_str("</Data>");
+}
+
+fn escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn facts() -> ProcessFacts {
+        ProcessFacts {
+            pid: 4242,
+            parent_pid: 1000,
+            image: Some("C:\\Windows\\System32\\cmd.exe".into()),
+            command_line: Some(r#"cmd.exe /c "echo a & b < c""#.into()),
+            user: Some("MACHINE\\user".into()),
+            user_sid: Some("S-1-5-21-1".into()),
+            integrity: Some("High".into()),
+            created: Some(
+                chrono::Utc
+                    .with_ymd_and_hms(2026, 11, 14, 9, 2, 12)
+                    .unwrap(),
+            ),
+        }
+    }
+
+    #[test]
+    fn renders_process_create_fields() {
+        let xml = process_start_xml("VM", &facts(), None);
+        assert!(xml.contains("<EventID>1</EventID>"));
+        assert!(xml.contains(r#"<Data Name="ProcessId">4242</Data>"#));
+        assert!(xml.contains(r#"<Data Name="UtcTime">2026-11-14 09:02:12.000</Data>"#));
+        assert!(xml.contains(r#"<Data Name="ParentProcessId">1000</Data>"#));
+        // No parent facts: no invented parent image.
+        assert!(!xml.contains("ParentImage"));
+    }
+
+    #[test]
+    fn escapes_command_lines() {
+        let xml = process_start_xml("VM", &facts(), None);
+        assert!(xml.contains("echo a &amp; b &lt; c"));
+        assert!(!xml.contains("echo a & b"));
+    }
+
+    #[test]
+    fn omits_absent_fields() {
+        let bare = ProcessFacts {
+            pid: 7,
+            ..ProcessFacts::default()
+        };
+        let xml = process_start_xml("VM", &bare, None);
+        assert!(!xml.contains("CommandLine"));
+        assert!(!xml.contains("Image"));
+    }
+}

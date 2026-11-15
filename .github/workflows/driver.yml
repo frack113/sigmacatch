@@ -1,0 +1,166 @@
+name: Driver
+
+on:
+  push:
+    paths:
+      - 'sigmacatch/driver/**'
+      - 'sigmacatch/src/windows/**'
+      - '.github/workflows/driver.yml'
+  pull_request:
+    paths:
+      - 'sigmacatch/driver/**'
+      - 'sigmacatch/src/windows/**'
+      - '.github/workflows/driver.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build kernel driver
+    runs-on: windows-latest
+    env:
+      RUSTFLAGS: >-
+        -D warnings
+        -C target-feature=+crt-static
+      # Pinned once so the cache key, the probes and the install steps agree
+      # by construction.
+      WDK_VERSION: 10.0.22621
+      LLVM_VERSION: 17.0.6
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Installing the WDK + LLVM through winget costs ~8 minutes; cache the
+      # installed trees instead. On a hit the whole uninstall/install cycle is
+      # skipped: wdk-build gives `WDKContentRoot` and `Version_Number`
+      # environment variables priority over its registry discovery and its
+      # latest-SDK-version directory scan, so the preinstalled SDK kits on the
+      # runner image are ignored without uninstalling them first, and no
+      # winget/MSI registration is needed.
+      - name: Restore the cached toolchain
+        id: toolchain-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          key: driver-toolchain-v1-wdk-${{ env.WDK_VERSION }}-llvm-${{ env.LLVM_VERSION }}
+          path: |
+            C:\Program Files (x86)\Windows Kits\10
+            C:\Program Files\llvm
+
+      # Verify the restored files actually match the pinned versions before
+      # trusting them; a stale or partial cache falls back to the install.
+      - name: Probe the restored toolchain
+        id: toolchain-probe
+        shell: pwsh
+        run: |
+          $kitInclude = Test-Path 'C:\Program Files (x86)\Windows Kits\10\Include\${{ env.WDK_VERSION }}.0\km\fltkernel.h'
+          $kitLib = Test-Path 'C:\Program Files (x86)\Windows Kits\10\Lib\${{ env.WDK_VERSION }}.0\km\x64\ntoskrnl.lib'
+          $llvmOk = $false
+          if (Test-Path 'C:\Program Files\llvm\bin\clang.exe') {
+            $llvmVersion = (& 'C:\Program Files\llvm\bin\clang.exe' --version) -join ' '
+            $llvmOk = $llvmVersion -like '*${{ env.LLVM_VERSION }}*'
+          }
+          $ready = if ($kitInclude -and $kitLib -and $llvmOk) { 'true' } else { 'false' }
+          Write-Host "kit-include=$kitInclude kit-lib=$kitLib llvm=$llvmOk ready=$ready"
+          "ready=$ready" >> $env:GITHUB_OUTPUT
+
+      # Pin the kit versions the way the NuGet path of install-wdk does:
+      # wdk-build resolves them from these variables before falling back to
+      # registry discovery and a latest-version directory scan. This makes the
+      # cache hit independent of whatever SDK ships with the runner image.
+      - name: Pin the toolchain for wdk-build
+        shell: pwsh
+        run: |
+          Write-Output "WDKContentRoot=C:\Program Files (x86)\Windows Kits\10" >> $env:GITHUB_ENV
+          Write-Output "Version_Number=${{ env.WDK_VERSION }}.0" >> $env:GITHUB_ENV
+          Write-Output "LIBCLANG_PATH=C:\Program Files\llvm\bin" >> $env:GITHUB_ENV
+          Write-Output "C:\Program Files\llvm\bin" >> $env:GITHUB_PATH
+
+      # Installed with winget rather than through an action: a workflow must not
+      # write into `.github/` and then execute what it wrote, and the winget
+      # packages are the same ones the local dev VM uses.
+      - name: Install LLVM ${{ env.LLVM_VERSION }}
+        if: steps.toolchain-probe.outputs.ready != 'true'
+        shell: pwsh
+        run: |
+          # `--force`: the runner image ships a newer LLVM, and winget refuses
+          # to install a pinned older one without it.
+          winget install --id LLVM.LLVM --version ${{ env.LLVM_VERSION }} `
+            --force --silent --accept-package-agreements --accept-source-agreements `
+            --disable-interactivity
+          if ($LASTEXITCODE -ne 0) { throw "winget LLVM failed: $LASTEXITCODE" }
+
+      - name: Install WDK ${{ env.WDK_VERSION }}
+        if: steps.toolchain-probe.outputs.ready != 'true'
+        shell: pwsh
+        run: |
+          winget install --id Microsoft.WindowsWDK.${{ env.WDK_VERSION }} `
+            --force --silent --accept-package-agreements --accept-source-agreements `
+            --disable-interactivity
+          if ($LASTEXITCODE -ne 0) { throw "winget WDK failed: $LASTEXITCODE" }
+
+      # Only a run that actually installed the toolchain pays for the save;
+      # the key is version-pinned so every branch shares the same entry.
+      - name: Save the toolchain cache
+        if: steps.toolchain-probe.outputs.ready != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          key: driver-toolchain-v1-wdk-${{ env.WDK_VERSION }}-llvm-${{ env.LLVM_VERSION }}
+          path: |
+            C:\Program Files (x86)\Windows Kits\10
+            C:\Program Files\llvm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      # The driver crate builds outside the root workspace; cache its target
+      # directory plus the cargo registry so the wdk-sys bindgen step comes
+      # from cache on consecutive runs.
+      - name: Cache the cargo build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: sigmacatch/driver
+
+      - name: Build
+        run: >
+          cargo build
+          --manifest-path sigmacatch/driver/Cargo.toml
+          --release
+          --target x86_64-pc-windows-msvc
+
+      - name: Upload the driver image
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: sigmacatch-driver
+          path: sigmacatch/driver/target/x86_64-pc-windows-msvc/release/sigmacatch_driver.dll
+          if-no-files-found: error
+          overwrite: true
+
+      # Stage the authoritative fltkernel.h: wdk-sys does not bind fltmgr, so
+      # the minifilter FFI is transcribed from the WDK header we build against.
+      - name: Stage the WDK fltkernel header
+        shell: pwsh
+        run: |
+          $header = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include\${{ env.WDK_VERSION }}.0\km\fltkernel.h" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $header) { throw "fltkernel.h not found" }
+          Copy-Item $header.FullName -Destination sigmacatch/driver/fltkernel.h
+          Write-Host "staged $($header.FullName)"
+
+      - name: Upload the fltkernel header
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: fltkernel-header
+          path: sigmacatch/driver/fltkernel.h
+          if-no-files-found: error
+          overwrite: true

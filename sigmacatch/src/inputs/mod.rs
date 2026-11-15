@@ -15,6 +15,41 @@
 pub mod channels;
 #[cfg(feature = "winevt")]
 pub mod winevt;
+// Windows orchestrator: Event Log channels + kernel sensor or ETW.
+#[cfg(all(target_os = "windows", feature = "winevt"))]
+pub mod windows;
+// Native ETW collector (feature `etw`): no Sysmon, no driver. The session
+// layer and the TDH decoder are only meaningful on Windows.
+#[cfg(all(target_os = "windows", feature = "etw"))]
+pub mod etw;
+#[cfg(all(target_os = "windows", feature = "etw"))]
+pub mod etw_event;
+#[cfg(all(target_os = "windows", feature = "etw"))]
+pub mod etw_process;
+#[cfg(all(target_os = "windows", feature = "etw"))]
+pub mod etw_registry;
+// Included by path, like `windows/driver_protocol.rs`: the `src/windows/`
+// directory holds files shared with the driver crate, not a module tree.
+#[cfg(all(target_os = "windows", feature = "etw"))]
+pub mod etw_sysmon;
+#[cfg(all(target_os = "windows", feature = "etw"))]
+#[path = "../windows/nt_file.rs"]
+pub mod nt_file;
+#[cfg(any(feature = "etw", test))]
+pub mod pe_format;
+#[cfg(any(feature = "etw", test))]
+pub mod registry_format;
+#[cfg(all(target_os = "windows", feature = "etw"))]
+#[path = "../windows/signature.rs"]
+pub mod signature;
+#[cfg(all(target_os = "windows", feature = "etw"))]
+#[path = "../windows/version_info.rs"]
+pub mod version_info;
+#[cfg(any(feature = "etw", test))]
+pub mod wmi_format;
+// Kernel-sensor client (feature `driver`, implies `etw`).
+#[cfg(all(target_os = "windows", feature = "driver"))]
+pub mod etw_driver;
 
 // One-shot EVTX cross-platform input. Not `target_os`-gated: pure file
 // parsing, runs on Windows and Linux alike.

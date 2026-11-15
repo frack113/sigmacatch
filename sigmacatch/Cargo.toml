@@ -13,6 +13,12 @@ license.workspace = true
 [lib]
 doctest = false
 
+# `md-5` is only reachable from the Windows `etw` path (`inputs/windows/nt_file.rs`)
+# and its crate name (`md5`) does not match the package name, which is what the
+# unused-dependency scan looks for.
+[package.metadata.cargo-machete]
+ignored = ["md-5"]
+
 # Inputs are selected with cargo features:
 #   Windows: winevt (live Event Log), evtx (one-shot EVTX files)
 #   Linux:   auditd, builtin (system syslog), sysmon (Sysmon-for-Linux tail), ebpf (native probes)
@@ -26,6 +32,8 @@ doctest = false
 default = ["winevt"]
 winevt = []
 evtx = ["dep:walkdir"]
+etw = ["dep:md-5"]                            # native Windows ETW (no Sysmon)
+driver = ["etw"]                               # kernel sensor client (Windows)
 auditd = []
 builtin = ["dep:regex"]
 sysmon = ["builtin"]                          # Sysmon-for-Linux legacy tail
@@ -36,12 +44,23 @@ dunce = "1.0.5"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
+  "Wdk_System_Threading",
   "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Security_Cryptography",
+  "Win32_Security_Cryptography_Catalog",
+  "Win32_Security_WinTrust",
   "Win32_System_Console",
   "Win32_System_Com",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Diagnostics_Etw",
+  "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_EventLog",
+  "Win32_System_IO",
+  "Win32_System_Kernel",
   "Win32_System_Threading",
-  "Win32_Security",
+  "Win32_System_Time",
 ] }
 
 [dependencies]
@@ -67,6 +86,7 @@ rsigma-parser = "0.26.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 serde_yaml = { package = "yaml_serde", version = "0.10.7" }
+md-5 = { version = "0.10.6", optional = true }
 sha1 = "0.11.0"
 sha2 = "0.11.1"
 ssh-key = { version = "0.6.7", features = ["alloc", "ed25519"] }
@@ -86,6 +106,7 @@ uuid = { version = "1.29.1", features = ["v4", "serde"] }
 walkdir = { version = "2.5.0", optional = true }
 
 [dev-dependencies]
+md-5 = "0.10.6"
 rand_core = { version = "0.6.4", features = ["getrandom"] }
 tempfile = "3.27.0"
 
@@ -111,6 +132,16 @@ required-features = ["auditd", "builtin", "sysmon"]
 [[example]]
 name = "ebpf_parse_check"
 required-features = ["ebpf"]
+
+# ETW probe: starts the real sessions and dumps decoded provider events.
+[[example]]
+name = "etw_dump"
+required-features = ["etw"]
+
+# Kernel-sensor smoke test.
+[[example]]
+name = "etw_driver_probe"
+required-features = ["driver"]
 
 # Quality contract: inherit workspace lint tiers ([workspace.lints] in root Cargo.toml).
 [lints]
