@@ -255,8 +255,15 @@ impl Mapper {
             return None;
         }
         let image = self.file_image(event.pid);
+        let at = Self::event_time(event);
         let previous = filetime_to_utc(event.value_a as i64).map(sysmon_utc);
-        let created = filetime_to_utc(event.value_b as i64).map(sysmon_utc);
+        // A zero new value means the caller asked for "now" (`ChangeTime` set
+        // to -1), which the kernel does not echo back.
+        let created = if event.value_b == 0 {
+            Some(sysmon_utc(at))
+        } else {
+            filetime_to_utc(event.value_b as i64).map(sysmon_utc)
+        };
         let mut fields: Vec<(&str, &str)> = vec![("TargetFilename", &path)];
         if let Some(previous) = previous.as_deref() {
             fields.push(("PreviousCreationUtcTime", previous));
@@ -264,14 +271,7 @@ impl Mapper {
         if let Some(created) = created.as_deref() {
             fields.push(("CreationUtcTime", created));
         }
-        let xml = file_event_xml(
-            &self.computer,
-            2,
-            Self::event_time(event),
-            event.pid,
-            image.as_deref(),
-            &fields,
-        );
+        let xml = file_event_xml(&self.computer, 2, at, event.pid, image.as_deref(), &fields);
         Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
 

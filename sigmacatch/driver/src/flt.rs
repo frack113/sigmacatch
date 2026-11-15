@@ -284,6 +284,9 @@ unsafe extern "C" {
 
 /// `FLT_REGISTRATION_VERSION` (2.03 on Windows 10+).
 const FLT_REGISTRATION_VERSION: u16 = 0x0203;
+/// `FLTFL_REGISTRATION_SUPPORT_NPFS_MSFS`: fltmgr only attaches the filter to
+/// the named-pipe and mailslot volumes when this is set.
+const SUPPORT_NPFS_MSFS: u32 = 0x0004;
 /// `FLTFL_OPERATION_REGISTRATION_SKIP_PAGING_IO`.
 const SKIP_PAGING_IO: u32 = 0x0001;
 /// `FLTFL_OPERATION_REGISTRATION_SKIP_CACHED_IO`: a raw volume read never
@@ -297,6 +300,25 @@ const POSTOP_FINISHED: i32 = 0;
 const PREOP_SUCCESS_WITH_CALLBACK: i32 = 0;
 /// `FLT_PREOP_SUCCESS_NO_CALLBACK`: the post-op is not wanted.
 const PREOP_SUCCESS_NO_CALLBACK: i32 = 1;
+/// `\Device\Mailslot`: the MSFS volume device name.
+const MAILSLOT_DEVICE: &[u16] = &[
+    b'\\' as u16,
+    b'D' as u16,
+    b'e' as u16,
+    b'v' as u16,
+    b'i' as u16,
+    b'c' as u16,
+    b'e' as u16,
+    b'\\' as u16,
+    b'M' as u16,
+    b'a' as u16,
+    b'i' as u16,
+    b'l' as u16,
+    b's' as u16,
+    b'l' as u16,
+    b'o' as u16,
+    b't' as u16,
+];
 /// `\Device\NamedPipe`: the NPFS volume device name.
 const NAMED_PIPE_DEVICE: &[u16] = &[
     b'\\' as u16,
@@ -381,7 +403,7 @@ static OPERATIONS: [FltOperationRegistration; 5] = [
 static REGISTRATION: FltRegistration = FltRegistration {
     size: core::mem::size_of::<FltRegistration>() as u16,
     version: FLT_REGISTRATION_VERSION,
-    flags: 0,
+    flags: SUPPORT_NPFS_MSFS,
     context_registration: core::ptr::null(),
     operation_registration: OPERATIONS.as_ptr(),
     filter_unload_callback: Some(filter_unload),
@@ -482,17 +504,34 @@ fn wide_eq_ignore_ascii_case(left: &[u16], right: &[u16]) -> bool {
         })
 }
 
-/// True when the request targets the named-pipe (NPFS) volume.
-unsafe fn on_named_pipe_volume(flt_objects: *mut core::ffi::c_void) -> bool {
+/// Which kind of device a request targets.
+#[derive(Clone, Copy, PartialEq)]
+enum VolumeKind {
+    /// A real file system volume.
+    FileSystem,
+    /// `\Device\NamedPipe` (NPFS): named pipes, EID 17.
+    NamedPipe,
+    /// `\Device\Mailslot` (MSFS): no Sysmon equivalent, ignored.
+    Mailslot,
+}
+
+/// Classify the volume the request targets.
+unsafe fn volume_kind(flt_objects: *mut core::ffi::c_void) -> VolumeKind {
     // SAFETY: `flt_objects` is a live FLT_RELATED_OBJECTS for the call.
     let Some(objects) = (unsafe { (flt_objects as *mut FltRelatedObjects).as_ref() }) else {
-        return false;
+        return VolumeKind::FileSystem;
     };
     let mut buffer = [0u16; 128];
     let Some(units) = (unsafe { volume_device_name(objects.volume, &mut buffer) }) else {
-        return false;
+        return VolumeKind::FileSystem;
     };
-    wide_eq_ignore_ascii_case(&buffer[..units], NAMED_PIPE_DEVICE)
+    if wide_eq_ignore_ascii_case(&buffer[..units], NAMED_PIPE_DEVICE) {
+        VolumeKind::NamedPipe
+    } else if wide_eq_ignore_ascii_case(&buffer[..units], MAILSLOT_DEVICE) {
+        VolumeKind::Mailslot
+    } else {
+        VolumeKind::FileSystem
+    }
 }
 
 /// `IRP_MJ_READ` pre-op: raw volume reads (EID 9).
@@ -506,6 +545,9 @@ unsafe extern "C" fn pre_read(
     flt_objects: *mut core::ffi::c_void,
     _completion_context: *mut *mut core::ffi::c_void,
 ) -> i32 {
+    if unsafe { volume_kind(flt_objects) } != VolumeKind::FileSystem {
+        return PREOP_SUCCESS_NO_CALLBACK;
+    }
     // SAFETY: `flt_objects` is a live FLT_RELATED_OBJECTS for the call.
     let Some(objects) = (unsafe { (flt_objects as *mut FltRelatedObjects).as_ref() }) else {
         return PREOP_SUCCESS_NO_CALLBACK;
@@ -554,9 +596,13 @@ unsafe extern "C" fn pre_create(
 /// post-op runs.
 unsafe extern "C" fn pre_set_information(
     data: *mut FltCallbackData,
-    _flt_objects: *mut core::ffi::c_void,
+    flt_objects: *mut core::ffi::c_void,
     _completion_context: *mut *mut core::ffi::c_void,
 ) -> i32 {
+    // Only file systems carry the information classes handled here.
+    if unsafe { volume_kind(flt_objects) } != VolumeKind::FileSystem {
+        return PREOP_SUCCESS_WITH_CALLBACK;
+    }
     // SAFETY: `data` is valid for the callback's duration.
     let Some(callback) = (unsafe { data.as_ref() }) else {
         return PREOP_SUCCESS_WITH_CALLBACK;
@@ -751,10 +797,13 @@ unsafe fn push_named_values(
 /// post-op only runs for the classes that survive the pre-op.
 unsafe extern "C" fn post_set_information(
     data: *mut FltCallbackData,
-    _flt_objects: *mut core::ffi::c_void,
+    flt_objects: *mut core::ffi::c_void,
     _context: *mut core::ffi::c_void,
     _flags: u32,
 ) -> i32 {
+    if unsafe { volume_kind(flt_objects) } != VolumeKind::FileSystem {
+        return POSTOP_FINISHED;
+    }
     // SAFETY: `data` is valid for the callback's duration.
     let Some(callback) = (unsafe { data.as_ref() }) else {
         return POSTOP_FINISHED;
@@ -787,10 +836,13 @@ unsafe extern "C" fn post_set_information(
 /// `IRP_MJ_SET_SECURITY` post-op: DACL change (504) and owner change (505).
 unsafe extern "C" fn post_set_security(
     data: *mut FltCallbackData,
-    _flt_objects: *mut core::ffi::c_void,
+    flt_objects: *mut core::ffi::c_void,
     _context: *mut core::ffi::c_void,
     _flags: u32,
 ) -> i32 {
+    if unsafe { volume_kind(flt_objects) } != VolumeKind::FileSystem {
+        return POSTOP_FINISHED;
+    }
     // SAFETY: `data` is valid for the callback's duration.
     let Some(callback) = (unsafe { data.as_ref() }) else {
         return POSTOP_FINISHED;
@@ -833,12 +885,16 @@ unsafe extern "C" fn post_create(
         return POSTOP_FINISHED;
     }
 
-    // A named pipe is created on the NPFS volume, which the filter also
-    // attaches to: report EID 17 with the pipe's relative name instead of a
-    // file creation.
-    if unsafe { on_named_pipe_volume(flt_objects) } {
-        unsafe { push_pipe_create(data, flt_objects) };
-        return POSTOP_FINISHED;
+    // Named pipes and mailslots live on their own volumes. A pipe creation
+    // is EID 17 with the pipe's relative name; a mailslot has no Sysmon
+    // equivalent and is dropped.
+    match unsafe { volume_kind(flt_objects) } {
+        VolumeKind::NamedPipe => {
+            unsafe { push_pipe_create(data, flt_objects) };
+            return POSTOP_FINISHED;
+        }
+        VolumeKind::Mailslot => return POSTOP_FINISHED,
+        VolumeKind::FileSystem => {}
     }
 
     let mut information: *mut FltFileNameInformation = core::ptr::null_mut();
