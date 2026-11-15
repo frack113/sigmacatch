@@ -1028,4 +1028,15 @@ been cleared for every commercial, promotional, or redistributive use.</metadata
             <text x="350" y="484" class="t-muted" font-size="10" font-weight="500">data flow</text>
           </g>
         </g>
-      </svg>
+      <style id="sigmacatch-motion">
+@media (prefers-reduced-motion: no-preference) {
+  [data-animate="edge"] {
+    stroke-dasharray: 6 6;
+    animation: sigmacatch-flow 1.2s linear infinite;
+  }
+  @keyframes sigmacatch-flow {
+    to { stroke-dashoffset: -24; }
+  }
+}
+</style>
+</svg>

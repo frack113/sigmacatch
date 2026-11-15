@@ -56,6 +56,4 @@ payload is `Arc`-shared: the per-event path pays for one parse and no deep
 clone of the transformed tree. Measured on a constant-volume live stream:
 −47 % working set on Windows (247→130 MB) and −19 % RSS on Linux
 (~204→164 MB). Diagram:
-[event-pipeline.webm](../media/event-pipeline.webm) (animation)
-and [event-pipeline-dark.svg](../media/event-pipeline-dark.svg)
-(static, dark theme).
+[event-pipeline-dark.svg](../media/event-pipeline-dark.svg) (dark theme).
