@@ -154,12 +154,27 @@ pub const DNS_CLIENT: ProviderSpec = ProviderSpec {
     keywords: 0,
 };
 
-/// Providers on the low-latency process session.
+/// `Microsoft-Windows-WMI-Activity`: WMI provider operations and permanent
+/// subscriptions (Sysmon EID 19/20/21).
+pub const WMI_ACTIVITY: ProviderSpec = ProviderSpec {
+    name: "Microsoft-Windows-WMI-Activity",
+    guid: GUID::from_u128(0x1418_ef04_b0b4_4623_bf7e_d74ab47bbdaa),
+    level: 4,
+    // Operational channel: 5857-5861 carry the subscription traffic.
+    keywords: 0x4000_0000_0000_0000,
+};
+
+/// Classic kernel logger flags used for command lines and SIDs.
 pub const PROCESS_SESSION_PROVIDERS: &[ProviderSpec] = &[KERNEL_PROCESS];
 
 /// Providers on the burst-tolerant main session.
-pub const MAIN_SESSION_PROVIDERS: &[ProviderSpec] =
-    &[KERNEL_NETWORK, KERNEL_FILE, KERNEL_REGISTRY, DNS_CLIENT];
+pub const MAIN_SESSION_PROVIDERS: &[ProviderSpec] = &[
+    KERNEL_NETWORK,
+    KERNEL_FILE,
+    KERNEL_REGISTRY,
+    DNS_CLIENT,
+    WMI_ACTIVITY,
+];
 
 /// Classic kernel logger flags used for command lines and SIDs.
 ///
@@ -761,6 +776,10 @@ const KERNEL_NETWORK_NAME: &str = "Microsoft-Windows-Kernel-Network";
 const DNS_CLIENT_NAME: &str = "Microsoft-Windows-DNS-Client";
 /// Provider name `decode` reports for the kernel registry provider.
 const KERNEL_REGISTRY_NAME: &str = "Microsoft-Windows-Kernel-Registry";
+/// Provider name `decode` reports for the WMI activity provider.
+const WMI_ACTIVITY_NAME: &str = "Microsoft-Windows-WMI-Activity";
+/// `WmiProviderOperation`: carries the `Operation` string of a WMI call.
+const WMI_PROVIDER_OPERATION: u16 = 5858;
 
 // `Microsoft-Windows-Kernel-Network` event ids. The provider publishes one id
 // per operation and its opcode repeats the id; these four were measured with
@@ -828,6 +847,7 @@ impl MainRouter {
             (KERNEL_NETWORK_NAME, NET_TCP_ACCEPT) => self.listen(&decoded, at),
             (DNS_CLIENT_NAME, DNS_QUERY_COMPLETED) => self.dns(&decoded, at),
             (KERNEL_REGISTRY_NAME, _) => self.registry_event(&decoded, at),
+            (WMI_ACTIVITY_NAME, WMI_PROVIDER_OPERATION) => self.wmi(&decoded, at),
             _ => None,
         }
     }
@@ -981,6 +1001,48 @@ impl MainRouter {
         let xml = crate::inputs::etw_sysmon::event_xml(
             &self.computer,
             event.event_id,
+            at,
+            pid,
+            image.as_deref(),
+            &fields,
+        );
+        crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+    }
+
+    /// `Microsoft-Windows-WMI-Activity` 5858 → EID 19/20/21.
+    fn wmi(
+        &self,
+        decoded: &crate::inputs::etw_event::DecodedEvent,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Option<crate::types::Event> {
+        let parsed = crate::inputs::wmi_format::parse_operation(decoded.str("Operation")?)?;
+        let (event_id, event_type) = parsed.classification()?;
+        let pid = decoded.uint("ClientProcessId").unwrap_or(0) as u32;
+        let image = self.image_of(pid);
+        let mut fields: Vec<(&str, &str)> = vec![
+            ("EventType", event_type),
+            ("Operation", &parsed.method),
+            ("EventNamespace", &parsed.namespace),
+        ];
+        // Sysmon keys a binding on the two objects it links, spelled the way
+        // the WMI object path spells them.
+        let (consumer, filter) = crate::inputs::wmi_format::binding_parts(&parsed.target);
+        if event_id == 21 {
+            if let Some(consumer) = consumer.as_deref() {
+                fields.push(("Consumer", consumer));
+            }
+            if let Some(filter) = filter.as_deref() {
+                fields.push(("Filter", filter));
+            }
+        } else if let Some(name) = parsed.name.as_deref() {
+            fields.push(("Name", name));
+        }
+        if let Some(user) = decoded.str("User") {
+            fields.push(("User", user));
+        }
+        let xml = crate::inputs::etw_sysmon::event_xml(
+            &self.computer,
+            event_id,
             at,
             pid,
             image.as_deref(),

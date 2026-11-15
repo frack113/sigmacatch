@@ -17,7 +17,8 @@
 
 use wdk_sys::ntddk::PsGetCurrentProcessId;
 use wdk_sys::{
-    DRIVER_OBJECT, FILE_CREATED, HANDLE, IO_STATUS_BLOCK, NTSTATUS, STATUS_SUCCESS, UNICODE_STRING,
+    DRIVER_OBJECT, FILE_CREATED, FILE_OPENED, HANDLE, IO_STATUS_BLOCK, NTSTATUS, STATUS_SUCCESS,
+    UNICODE_STRING,
 };
 
 use crate::{SIGMACATCH_PROTOCOL_VERSION, SensorEvent, kind, ring_push};
@@ -899,20 +900,24 @@ unsafe extern "C" fn post_create(
     if status < 0 {
         return POSTOP_FINISHED;
     }
-    if callback.io_status.Information != u64::from(FILE_CREATED) {
-        return POSTOP_FINISHED;
-    }
 
-    // Named pipes and mailslots live on their own volumes. A pipe creation
-    // is EID 17 with the pipe's relative name; a mailslot has no Sysmon
-    // equivalent and is dropped.
+    // Named pipes and mailslots live on their own volumes. A pipe *creation*
+    // arrives as `IRP_MJ_CREATE_NAMED_PIPE` (EID 17); a create on NPFS is a
+    // client connecting to an existing pipe, which is EID 18. A mailslot has
+    // no Sysmon equivalent and is dropped.
     match unsafe { volume_kind(flt_objects) } {
-        // A pipe *creation* arrives as `IRP_MJ_CREATE_NAMED_PIPE`; a create
-        // on NPFS is a client connecting to an existing pipe (EID 18, which
-        // is not produced).
-        VolumeKind::NamedPipe => return POSTOP_FINISHED,
+        VolumeKind::NamedPipe => {
+            if callback.io_status.Information == u64::from(FILE_OPENED) {
+                unsafe { push_pipe_create(data, flt_objects, kind::PIPE_CONNECT) };
+            }
+            return POSTOP_FINISHED;
+        }
         VolumeKind::Mailslot => return POSTOP_FINISHED,
         VolumeKind::FileSystem => {}
+    }
+
+    if callback.io_status.Information != u64::from(FILE_CREATED) {
+        return POSTOP_FINISHED;
     }
 
     let mut information: *mut FltFileNameInformation = core::ptr::null_mut();
@@ -927,7 +932,16 @@ unsafe extern "C" fn post_create(
             let pid = FltGetRequestorProcessId(data) as usize as u32;
             let mut event = SensorEvent::empty();
             event.version = SIGMACATCH_PROTOCOL_VERSION;
-            event.kind = kind::FILE_CREATE;
+            // An alternate data stream is a create whose name carries a
+            // `:stream` component: Sysmon reports those as EID 15, with the
+            // stream in `TargetFilename`. The name is already complete —
+            // `FltParseFileNameInformation` leaves `stream` empty for a
+            // normalized name — so the check reads the path itself.
+            event.kind = if has_stream(&name_info.name) {
+                kind::FILE_STREAM
+            } else {
+                kind::FILE_CREATE
+            };
             event.pid = if pid != 0 {
                 pid
             } else {
@@ -963,12 +977,17 @@ unsafe extern "C" fn post_create_pipe(
     if unsafe { volume_kind(flt_objects) } != VolumeKind::NamedPipe {
         return POSTOP_FINISHED;
     }
-    unsafe { push_pipe_create(data, flt_objects) };
+    unsafe { push_pipe_create(data, flt_objects, kind::PIPE_CREATE) };
     POSTOP_FINISHED
 }
 
-/// Report a named pipe creation (EID 17) with its relative name.
-unsafe fn push_pipe_create(data: *mut FltCallbackData, flt_objects: *mut core::ffi::c_void) {
+/// Report a named pipe creation (EID 17) or connection (EID 18) with its
+/// relative name.
+unsafe fn push_pipe_create(
+    data: *mut FltCallbackData,
+    flt_objects: *mut core::ffi::c_void,
+    kind: u32,
+) {
     // SAFETY: `flt_objects` is a live FLT_RELATED_OBJECTS for the call.
     let Some(objects) = (unsafe { (flt_objects as *mut FltRelatedObjects).as_ref() }) else {
         return;
@@ -979,7 +998,7 @@ unsafe fn push_pipe_create(data: *mut FltCallbackData, flt_objects: *mut core::f
     };
     let mut event = SensorEvent::empty();
     event.version = SIGMACATCH_PROTOCOL_VERSION;
-    event.kind = kind::PIPE_CREATE;
+    event.kind = kind;
     event.pid = unsafe { FltGetRequestorProcessId(data) } as usize as u32;
     // SAFETY: the name lives as long as the file object we hold.
     unsafe {
@@ -990,6 +1009,26 @@ unsafe fn push_pipe_create(data: *mut FltCallbackData, flt_objects: *mut core::f
         );
         ring_push(&event);
     }
+}
+
+/// True when `name` carries an alternate data stream, i.e. a `:` after the
+/// last path separator (`...\file.txt:hidden:$DATA`).
+///
+/// Device paths (`\Device\HarddiskVolume3\...`) hold no drive-letter colon,
+/// so any colon after the last separator is a stream.
+fn has_stream(name: &UNICODE_STRING) -> bool {
+    if name.Buffer.is_null() || name.Length < 2 {
+        return false;
+    }
+    let units = unsafe { core::slice::from_raw_parts(name.Buffer, (name.Length as usize) / 2) };
+    for unit in units.iter().rev() {
+        match *unit {
+            u if u == u16::from(b'\\') => return false,
+            u if u == u16::from(b':') => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Copy a counted wide string into a fixed record field.

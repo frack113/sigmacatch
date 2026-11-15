@@ -125,6 +125,7 @@ mod probe {
             Arc::new(etw::MainRouter::new(
                 std::env::var("COMPUTERNAME").unwrap_or_default(),
                 tracker,
+                sigmacatch::inputs::etw_process::ImageCache::new(),
             ))
         });
         if let Err(error) = ensure_privileges() {

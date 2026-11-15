@@ -32,6 +32,8 @@ pub mod etw_registry;
 pub mod etw_sysmon;
 #[cfg(any(feature = "etw", test))]
 pub mod registry_format;
+#[cfg(any(feature = "etw", test))]
+pub mod wmi_format;
 // Kernel-sensor client (feature `driver`, implies `etw`).
 #[cfg(all(target_os = "windows", feature = "driver"))]
 pub mod etw_driver;

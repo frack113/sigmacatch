@@ -56,8 +56,13 @@ Blocked / remaining:
   because the post-op may run at DPC), and EID 17 from
   `IRP_MJ_CREATE_NAMED_PIPE` (`0x01`) on the NPFS volume, which fltmgr only
   attaches with `FLTFL_REGISTRATION_SUPPORT_NPFS_MSFS` (`0x2`).
-- **EID 18 (pipe connect)**: not produced; a client create on NPFS is
-  dropped instead of being reported with the wrong event id.
+- **D2d — pipes, streams, remote threads** (done): EID 18 from a client create
+  on the NPFS volume, EID 15 from a create whose name carries a `:stream` (the
+  parsed `stream` member is empty for normalized names, so the driver scans the
+  path), and EID 8 from `PsSetCreateThreadNotifyRoutine` with a creator/target
+  mismatch, minus the first thread of a fresh process (initial threads are
+  created from the parent's context, which made every process start look like
+  an injection).
 
 The ring record is kind-tagged (`sigmacatch/src/windows/driver_protocol.rs`,
 shared with the user-mode client via `#[path]`), so adding a kind does not

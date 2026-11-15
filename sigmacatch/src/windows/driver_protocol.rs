@@ -63,6 +63,14 @@ pub mod kind {
     pub const RAW_READ: u32 = 12;
     /// Named pipe created (EID 17): `primary` = pipe name.
     pub const PIPE_CREATE: u32 = 13;
+    /// Named pipe connected (EID 18): `primary` = pipe name.
+    pub const PIPE_CONNECT: u32 = 14;
+    /// Alternate data stream created (EID 15): `primary` = path with the
+    /// stream.
+    pub const FILE_STREAM: u32 = 15;
+    /// Remote thread created (EID 8): `pid` = source process, `parent_pid` =
+    /// target process, `detail` = new thread id.
+    pub const PROCESS_REMOTE_THREAD: u32 = 16;
 }
 
 /// One event record, as the driver observed it.

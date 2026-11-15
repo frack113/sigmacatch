@@ -60,8 +60,8 @@ field mappings in
 | 2 | FileCreateTime | — | ❌ not covered |
 | 6 | DriverLoad | (partial) | ⚠️ verify |
 | 10 | ProcessAccess | — | ❌ needs `ObRegisterCallbacks` |
-| 15 | FileCreateStreamHash | — | ❌ needs driver |
-| 17/18 | PipeCreate/Connect | — | ❌ needs driver |
+| 15 | FileCreateStreamHash | — | ⚠️ driver: `TargetFilename` only, no `Hash` |
+| 17/18 | PipeCreate/Connect | — | ✅ driver (`IRP_MJ_CREATE_NAMED_PIPE` / NPFS create) |
 | 25 | ProcessTampering | — | ❌ protected-process-light only, even Sysmon fakes it |
 | 26 | FileDeleteDetected | — | ❌ needs driver |
 
@@ -614,8 +614,56 @@ already exited when the record is delivered (a one-shot `reg.exe`) leaves it
 absent. The fix is a pid → image cache shared with the driver, which learns the
 path at process start; until then the field is missing rather than wrong.
 
-Remaining gaps: EID 18 (pipe connect) is deliberately not produced, EID 508
-has no distinct Windows source (3008 is already EID 22, and its `QueryStatus`
-is a Win32 error where the Linux extension carries the DNS RCODE), EID 14
-(rename key) needs `RenameKeyInformation`, and EID 8/15/19-21/24-29 are still
-missing — WMI (19-21) is the next ETW provider to wire.
+## WMI subscriptions (EID 19/20/21)
+
+`Microsoft-Windows-WMI-Activity` publishes the subscription traffic under the
+Operational keyword (`0x4000_0000_0000_0000`). Its `5858` record carries one
+free-form string:
+
+```text
+Start IWbemServices::PutInstance - root\subscription : __EventFilter.Name="probe"
+```
+
+`inputs/wmi_format.rs` parses it (method, namespace, class, `Name="…"`) and
+classifies like Sysmon: `__EventFilter` → 19, any `*EventConsumer` → 20,
+`__FilterToConsumerBinding` → 21, with `Created`/`Deleted` event types. A
+binding exposes the `Consumer="…"` and `Filter="…"` members the WMI object path
+spells. The query text and the consumer command line are **not** in the record;
+they stay absent rather than being reconstructed.
+
+Measured: creating a filter + `CommandLineEventConsumer` + binding produced 19,
+20 and 21 with `Name`, `EventNamespace`, `User`, `Image` and `ProcessId`.
+
+## Pipe connect, ADS and remote threads (driver)
+
+Three more ids the kernel sensor now reports:
+
+- **EID 18** — a client connecting to a named pipe is an `IRP_MJ_CREATE` on the
+  NPFS volume (`FILE_OPENED`); the server's creation stays EID 17
+  (`IRP_MJ_CREATE_NAMED_PIPE`).
+- **EID 15** — a create whose normalized name carries a `:stream` component.
+  `FltParseFileNameInformation` leaves `FLT_FILE_NAME_INFORMATION.stream`
+  **empty** for a normalized name, so the driver scans the path for a `:` after
+  the last separator instead. `TargetFilename` keeps the stream
+  (`…\file.txt:hidden`); `Hash` stays absent (the driver does not read it).
+- **EID 8** — `PsSetCreateThreadNotifyRoutine`: the routine runs in the creator's
+  context, so `current pid != new thread's pid` is a thread injected into
+  another process. Two filters keep the noise out: the first thread of a new
+  process has `ThreadId == ProcessId`, and `CreateProcess` creates that thread
+  from the parent's context, so a target younger than 2 s
+  (`PsGetProcessCreateTimeQuadPart` vs `KeQuerySystemTimePrecise`) is skipped.
+  Without them every process start was reported as an injection (17 false
+  positives in 8 s). `StartAddress`/`StartModule` are not reachable from this
+  callback and stay absent.
+
+Measured: `CreateRemoteThread` from PowerShell into a `cmd.exe` that had been up
+for 5 s produced exactly one EID 8 (`SourceImage` powershell, `TargetImage`
+cmd.exe, `NewThreadId`).
+
+Remaining gaps: EID 14 (rename key) needs the kernel registry callback
+(`RegNtRenameKey`) — the ETW provider has no rename record; EID 25 (process
+tampering) needs per-process main-image tracking and would be noisy without it;
+EID 24 (clipboard) has no public provider; EID 508 has no distinct Windows
+source (3008 is already EID 22, and its `QueryStatus` is a Win32 error where the
+Linux extension carries the DNS RCODE); EID 26-29 are Sysmon's own blocking
+features and have no equivalent.

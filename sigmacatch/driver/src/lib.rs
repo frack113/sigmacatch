@@ -26,18 +26,20 @@ extern crate wdk_panic;
 use wdk::println;
 use wdk_sys::_OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS;
 use wdk_sys::ntddk::{
-    ObRegisterCallbacks, ObUnRegisterCallbacks, PsGetCurrentProcessId, PsGetProcessId,
-    PsRemoveLoadImageNotifyRoutine, PsSetCreateProcessNotifyRoutineEx, PsSetLoadImageNotifyRoutine,
+    ObRegisterCallbacks, ObUnRegisterCallbacks, PsGetCurrentProcessId,
+    PsGetProcessCreateTimeQuadPart, PsGetProcessId, PsLookupProcessByProcessId,
+    PsRemoveCreateThreadNotifyRoutine, PsRemoveLoadImageNotifyRoutine,
+    PsSetCreateProcessNotifyRoutineEx, PsSetCreateThreadNotifyRoutine, PsSetLoadImageNotifyRoutine,
 };
 use wdk_sys::{
-    _WDF_DEVICE_IO_TYPE, _WDF_IO_QUEUE_DISPATCH_TYPE, HANDLE, NTSTATUS, OB_CALLBACK_REGISTRATION,
-    OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE,
-    OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS, PCUNICODE_STRING, PDRIVER_OBJECT,
-    PEPROCESS, PIMAGE_INFO, POB_POST_OPERATION_INFORMATION, POB_PRE_OPERATION_INFORMATION,
-    POBJECT_TYPE, PPS_CREATE_NOTIFY_INFO, PUNICODE_STRING, PVOID, PWDFDEVICE_INIT,
-    STATUS_INVALID_DEVICE_REQUEST, STATUS_SUCCESS, UNICODE_STRING, WDF_DRIVER_CONFIG,
-    WDF_IO_QUEUE_CONFIG, WDF_NO_OBJECT_ATTRIBUTES, WDFDEVICE, WDFDRIVER, WDFQUEUE, WDFREQUEST,
-    WDFSPINLOCK, call_unsafe_wdf_function_binding,
+    _WDF_DEVICE_IO_TYPE, _WDF_IO_QUEUE_DISPATCH_TYPE, BOOLEAN, HANDLE, NTSTATUS,
+    OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE,
+    OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS,
+    PCUNICODE_STRING, PDRIVER_OBJECT, PEPROCESS, PIMAGE_INFO, POB_POST_OPERATION_INFORMATION,
+    POB_PRE_OPERATION_INFORMATION, POBJECT_TYPE, PPS_CREATE_NOTIFY_INFO, PUNICODE_STRING, PVOID,
+    PWDFDEVICE_INIT, STATUS_INVALID_DEVICE_REQUEST, STATUS_SUCCESS, UNICODE_STRING,
+    WDF_DRIVER_CONFIG, WDF_IO_QUEUE_CONFIG, WDF_NO_OBJECT_ATTRIBUTES, WDFDEVICE, WDFDRIVER,
+    WDFQUEUE, WDFREQUEST, WDFSPINLOCK, call_unsafe_wdf_function_binding,
 };
 
 // `PsProcessType` is not bound by wdk-sys; it is an exported kernel variable.
@@ -360,6 +362,65 @@ unsafe extern "C" fn image_notify(
     }
 }
 
+/// Guard so the thread notify routine is registered once.
+static mut THREAD_NOTIFY_REGISTERED: bool = false;
+
+/// Age below which a thread in `pid` is the process's own initial thread.
+///
+/// `CreateProcess` creates the first thread of the new process from the
+/// parent's context, so the thread callback sees "creator != target" for every
+/// process start. The window is generous because thread creation happens
+/// microseconds after the process object exists.
+const INITIAL_THREAD_WINDOW: i64 = 20_000_000; // 2 s in 100 ns units
+
+/// True when `pid` was created less than [`INITIAL_THREAD_WINDOW`] ago.
+unsafe fn is_fresh_process(pid: u32) -> bool {
+    let mut process: PEPROCESS = core::ptr::null_mut();
+    // SAFETY: the caller holds no reference; the object is dereferenced below.
+    if unsafe { PsLookupProcessByProcessId(pid as HANDLE, &raw mut process) } != STATUS_SUCCESS {
+        return false;
+    }
+    let created = unsafe { PsGetProcessCreateTimeQuadPart(process) };
+    let mut now = wdk_sys::LARGE_INTEGER::default();
+    unsafe { wdk_sys::ntddk::KeQuerySystemTimePrecise(&raw mut now) };
+    // SAFETY: the reference taken by `PsLookupProcessByProcessId` is released
+    // exactly once.
+    unsafe { wdk_sys::ntddk::ObfDereferenceObject(process.cast()) };
+    let age = unsafe { now.QuadPart } - created;
+    (0..INITIAL_THREAD_WINDOW).contains(&age)
+}
+
+/// `PsSetCreateThreadNotifyRoutine` callback: remote thread creation (EID 8).
+///
+/// The routine runs in the context of the thread that created the new one, so
+/// a mismatch between the current process and the new thread's process is a
+/// thread injected into another process. `StartAddress` is not available
+/// through this callback, so those Sysmon fields stay absent.
+unsafe extern "C" fn thread_notify(process_id: HANDLE, thread_id: HANDLE, create: BOOLEAN) {
+    if create == 0 {
+        return;
+    }
+    let target = process_id as usize as u32;
+    let source = unsafe { PsGetCurrentProcessId() } as usize as u32;
+    let thread = thread_id as usize as u32;
+    if target <= 4 || source <= 4 || target == source || thread == target {
+        return;
+    }
+    // A thread created in a process that has just come up is that process's
+    // own first thread, created from the parent's context by `CreateProcess`.
+    if unsafe { is_fresh_process(target) } {
+        return;
+    }
+    let mut event = SensorEvent::empty();
+    event.version = SIGMACATCH_PROTOCOL_VERSION;
+    event.kind = kind::PROCESS_REMOTE_THREAD;
+    event.pid = source;
+    event.parent_pid = target;
+    event.detail = thread_id as usize as u32;
+    // SAFETY: the ring lock exists by the time this callback can fire.
+    unsafe { ring_push(&event) };
+}
+
 /// Register the process-access object callbacks.
 fn register_ob_callbacks() -> NTSTATUS {
     let mut operation = OB_OPERATION_REGISTRATION {
@@ -453,6 +514,10 @@ unsafe extern "C" fn evt_driver_unload(_driver: WDFDRIVER) {
         if NOTIFY_REGISTERED {
             let _ = PsSetCreateProcessNotifyRoutineEx(Some(process_notify), 1);
             NOTIFY_REGISTERED = false;
+        }
+        if THREAD_NOTIFY_REGISTERED {
+            let _ = PsRemoveCreateThreadNotifyRoutine(Some(thread_notify));
+            THREAD_NOTIFY_REGISTERED = false;
         }
         if OB_REGISTERED {
             ObUnRegisterCallbacks(OB_REGISTRATION_HANDLE);
@@ -557,6 +622,15 @@ fn create_device(mut device_init: PWDFDEVICE_INIT) -> NTSTATUS {
                 return result;
             }
             NOTIFY_REGISTERED = true;
+        }
+
+        if !THREAD_NOTIFY_REGISTERED {
+            let status = PsSetCreateThreadNotifyRoutine(Some(thread_notify));
+            if status != STATUS_SUCCESS {
+                println!("sigmacatch: PsSetCreateThreadNotifyRoutine failed {status:#010X}");
+            } else {
+                THREAD_NOTIFY_REGISTERED = true;
+            }
         }
 
         // Start filtering only now: the first create callback needs the ring

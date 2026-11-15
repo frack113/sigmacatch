@@ -184,7 +184,10 @@ impl Mapper {
             kind::FILE_SET_SECURITY => self.map_file_security(event),
             kind::FILE_CREATION_TIME => self.map_file_creation_time(event),
             kind::RAW_READ => self.map_raw_read(event),
-            kind::PIPE_CREATE => self.map_pipe_create(event),
+            kind::PIPE_CREATE => self.map_pipe(event, 17, None),
+            kind::PIPE_CONNECT => self.map_pipe(event, 18, Some("connect")),
+            kind::FILE_STREAM => self.map_file_stream(event),
+            kind::PROCESS_REMOTE_THREAD => self.map_remote_thread(event),
             _ => None,
         }
     }
@@ -301,9 +304,15 @@ impl Mapper {
         Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
 
-    /// EID 17: a named pipe was created. Sysmon prefixes the relative name
-    /// NPFS reports with a single backslash.
-    fn map_pipe_create(&mut self, event: &SensorEvent) -> Option<Event> {
+    /// EID 17 (pipe created) and EID 18 (pipe connected). Sysmon prefixes the
+    /// relative name NPFS reports with a single backslash, and EID 18 also
+    /// carries `EventType`.
+    fn map_pipe(
+        &mut self,
+        event: &SensorEvent,
+        id: u16,
+        event_type: Option<&str>,
+    ) -> Option<Event> {
         let mut pipe = wide(&event.primary, event.primary_length);
         if pipe.is_empty() {
             return None;
@@ -312,13 +321,66 @@ impl Mapper {
             pipe.insert(0, '\\');
         }
         let image = self.file_image(event.pid);
+        let mut fields: Vec<(&str, &str)> = Vec::new();
+        if let Some(event_type) = event_type {
+            fields.push(("EventType", event_type));
+        }
+        fields.push(("PipeName", &pipe));
         let xml = event_xml(
             &self.computer,
-            17,
+            id,
             Self::event_time(event),
             event.pid,
             image.as_deref(),
-            &[("PipeName", &pipe)],
+            &fields,
+        );
+        Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+    }
+
+    /// EID 8: a thread was created in another process. `StartAddress` is not
+    /// reachable from the thread notify callback, so those fields are absent.
+    fn map_remote_thread(&mut self, event: &SensorEvent) -> Option<Event> {
+        let source_image = self.file_image(event.pid);
+        let target_image = self.file_image(event.parent_pid);
+        let source_id = event.pid.to_string();
+        let target_id = event.parent_pid.to_string();
+        let thread_id = event.detail.to_string();
+        let unknown = "-";
+        let source = source_image.as_deref().unwrap_or(unknown);
+        let target = target_image.as_deref().unwrap_or(unknown);
+        let xml = event_xml(
+            &self.computer,
+            8,
+            Self::event_time(event),
+            event.pid,
+            None,
+            &[
+                ("SourceProcessId", &source_id),
+                ("SourceImage", source),
+                ("TargetProcessId", &target_id),
+                ("TargetImage", target),
+                ("NewThreadId", &thread_id),
+            ],
+        );
+        Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+    }
+
+    /// EID 15: an alternate data stream was created. `TargetFilename` carries
+    /// the stream (`file.txt:stream:$DATA`); `Hash` is absent because the
+    /// kernel does not read the stream.
+    fn map_file_stream(&mut self, event: &SensorEvent) -> Option<Event> {
+        let path = wide(&event.primary, event.primary_length);
+        if path.is_empty() {
+            return None;
+        }
+        let image = self.file_image(event.pid);
+        let xml = event_xml(
+            &self.computer,
+            15,
+            Self::event_time(event),
+            event.pid,
+            image.as_deref(),
+            &[("TargetFilename", &path)],
         );
         Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
