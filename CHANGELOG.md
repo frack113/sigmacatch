@@ -5,10 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-11-15
 
 ### Added
 
+- Windows without Sysmon: the native ETW collector (`etw`, two realtime sessions + live-process facts) and the `sigmacatch` kernel driver (`driver`: process, file, registry rename, image, pipe and thread callbacks + minifilter) emit Sysmon-schema events (EID 1-29 and 500-511 where a source exists) under the `sigmacatch` provider / `sigmacatch/Operational` channel, mapped to `service: sysmon`. The Windows orchestrator runs the Event Log channels next to exactly one process source (driver when loaded, ETW otherwise).
+- Windows: image and driver load events carry SHA1/SHA256/MD5/IMPHASH hashes, PE version fields and Authenticode status (embedded signature and security catalogs).
+- Docs: new "Windows without Sysmon", "Sysmon vs sigmacatch" and "Windows dev VM" pages; the documentation tree is English-only, one topic per page (`user/`, `dev/`, `regression_data/`).
 - eBPF input: `execveat` is now captured for process creation (EID 1) alongside `execve`.
 - eBPF input: fork/clone lineage is tracked so parent process resolution has a lineage fallback.
 - eBPF input: credential and capability changes are captured as sigmacatch extensions EID 501 (`credential_change`: setuid/setgid/setgroups family) and EID 502 (`capability_change`: `capset`, `prctl`).
