@@ -196,7 +196,6 @@ unsafe extern "C" {
     fn FltReleaseFileNameInformation(information: *mut FltFileNameInformation);
     fn FltGetRequestorProcessId(data: *mut FltCallbackData) -> HANDLE;
     fn FltGetDestinationFileNameInformation(
-        data: *mut FltCallbackData,
         instance: *mut core::ffi::c_void,
         file_object: *mut core::ffi::c_void,
         root_directory: HANDLE,
@@ -244,7 +243,7 @@ static OPERATIONS: [FltOperationRegistration; 4] = [
     FltOperationRegistration {
         major_function: IRP_MJ_SET_INFORMATION,
         flags: SKIP_PAGING_IO,
-        pre_operation: Some(pre_pass),
+        pre_operation: Some(pre_set_information),
         post_operation: Some(post_set_information),
         reserved1: core::ptr::null_mut(),
     },
@@ -349,6 +348,84 @@ unsafe extern "C" fn pre_create(
     PREOP_SUCCESS_WITH_CALLBACK
 }
 
+/// `IRP_MJ_SET_INFORMATION` pre-op: report renames (EID 503).
+///
+/// A rename has to be reported here rather than in the post-op: the buffered
+/// destination name (`FILE_RENAME_INFORMATION`) is consumed by the file
+/// system, and the file object already carries the new name once the rename
+/// completed.
+unsafe extern "C" fn pre_set_information(
+    data: *mut FltCallbackData,
+    _flt_objects: *mut core::ffi::c_void,
+    _completion_context: *mut *mut core::ffi::c_void,
+) -> i32 {
+    // SAFETY: `data` is valid for the callback's duration.
+    let Some(callback) = (unsafe { data.as_ref() }) else {
+        return PREOP_SUCCESS_WITH_CALLBACK;
+    };
+    // SAFETY: `iopb` points to the live parameter block.
+    let Some(iopb) = (unsafe { callback.iopb.as_ref() }) else {
+        return PREOP_SUCCESS_WITH_CALLBACK;
+    };
+    // SAFETY: the SetFileInformation member is the active union member here.
+    let parameters = unsafe { &iopb.parameters.set_file_information };
+    if parameters.file_information_class != FILE_RENAME_INFORMATION_CLASS {
+        return PREOP_SUCCESS_WITH_CALLBACK;
+    }
+    // SAFETY: the buffer holds a FILE_RENAME_INFORMATION for this class.
+    let rename = parameters.info_buffer.cast::<FileRenameInformation>();
+    if rename.is_null() {
+        return PREOP_SUCCESS_WITH_CALLBACK;
+    }
+    let rename = unsafe { &*rename };
+
+    let mut old = core::ptr::null_mut();
+    if unsafe { FltGetFileNameInformation(data, NAME_FLAGS, &mut old) } != STATUS_SUCCESS {
+        return PREOP_SUCCESS_WITH_CALLBACK;
+    }
+    let mut new = core::ptr::null_mut();
+    let status = unsafe {
+        FltGetDestinationFileNameInformation(
+            iopb.target_instance,
+            iopb.target_file_object,
+            rename.root_directory,
+            rename.file_name.as_ptr().cast_mut(),
+            rename.file_name_length,
+            NAME_FLAGS,
+            &mut new,
+        )
+    };
+    // SAFETY: both name informations are live until released below.
+    unsafe {
+        let _ = FltParseFileNameInformation(old);
+        if status == STATUS_SUCCESS {
+            let _ = FltParseFileNameInformation(new);
+            let mut event = SensorEvent::empty();
+            event.version = SIGMACATCH_PROTOCOL_VERSION;
+            event.kind = kind::FILE_RENAME;
+            event.pid = FltGetRequestorProcessId(data) as usize as u32;
+            if let Some(old_info) = old.as_ref() {
+                copy_wide(
+                    &old_info.name,
+                    &mut event.primary,
+                    &mut event.primary_length,
+                );
+            }
+            if let Some(new_info) = new.as_ref() {
+                copy_wide(
+                    &new_info.name,
+                    &mut event.secondary,
+                    &mut event.secondary_length,
+                );
+            }
+            ring_push(&event);
+            FltReleaseFileNameInformation(new);
+        }
+        FltReleaseFileNameInformation(old);
+    }
+    PREOP_SUCCESS_WITH_CALLBACK
+}
+
 /// Pre-op for every operation that only needs the post-op.
 unsafe extern "C" fn pre_pass(
     _data: *mut FltCallbackData,
@@ -385,7 +462,8 @@ unsafe fn push_named(data: *mut FltCallbackData, kind: u32, detail: u32) {
     }
 }
 
-/// `IRP_MJ_SET_INFORMATION` post-op: rename (503), truncate (506), delete (23).
+/// `IRP_MJ_SET_INFORMATION` post-op: truncate (506) and delete (23).
+/// Renames are reported from the pre-op, see [`pre_set_information`].
 unsafe extern "C" fn post_set_information(
     data: *mut FltCallbackData,
     _flt_objects: *mut core::ffi::c_void,
@@ -407,58 +485,6 @@ unsafe extern "C" fn post_set_information(
     // this major function.
     let parameters = unsafe { &iopb.parameters.set_file_information };
     match parameters.file_information_class {
-        FILE_RENAME_INFORMATION_CLASS => {
-            // SAFETY: the buffer holds a FILE_RENAME_INFORMATION for this class.
-            let rename = parameters.info_buffer.cast::<FileRenameInformation>();
-            if rename.is_null() {
-                return POSTOP_FINISHED;
-            }
-            let rename = unsafe { &*rename };
-            let mut old = core::ptr::null_mut();
-            if unsafe { FltGetFileNameInformation(data, NAME_FLAGS, &mut old) } != STATUS_SUCCESS {
-                return POSTOP_FINISHED;
-            }
-            let mut new = core::ptr::null_mut();
-            let status = unsafe {
-                FltGetDestinationFileNameInformation(
-                    data,
-                    iopb.target_instance,
-                    iopb.target_file_object,
-                    rename.root_directory,
-                    rename.file_name.as_ptr().cast_mut(),
-                    rename.file_name_length,
-                    NAME_FLAGS,
-                    &mut new,
-                )
-            };
-            unsafe {
-                let _ = FltParseFileNameInformation(old);
-                if status == STATUS_SUCCESS {
-                    let _ = FltParseFileNameInformation(new);
-                    let mut event = SensorEvent::empty();
-                    event.version = SIGMACATCH_PROTOCOL_VERSION;
-                    event.kind = kind::FILE_RENAME;
-                    event.pid = FltGetRequestorProcessId(data) as usize as u32;
-                    if let Some(old_info) = old.as_ref() {
-                        copy_wide(
-                            &old_info.name,
-                            &mut event.primary,
-                            &mut event.primary_length,
-                        );
-                    }
-                    if let Some(new_info) = new.as_ref() {
-                        copy_wide(
-                            &new_info.name,
-                            &mut event.secondary,
-                            &mut event.secondary_length,
-                        );
-                    }
-                    ring_push(&event);
-                    FltReleaseFileNameInformation(new);
-                }
-                FltReleaseFileNameInformation(old);
-            }
-        }
         FILE_END_OF_FILE_INFORMATION_CLASS => {
             // SAFETY: the buffer holds a FILE_END_OF_FILE_INFORMATION.
             let truncate = parameters.info_buffer.cast::<FileEndOfFileInformation>();
