@@ -40,4 +40,6 @@ Report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT. Version history in [CHANGELOG.md](CHANGELOG.md).
+MIT.
+
+Version history in [CHANGELOG.md](CHANGELOG.md).
