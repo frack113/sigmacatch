@@ -345,6 +345,9 @@ const IRP_MJ_OPERATION_END: u8 = 0x80;
 const IRP_MJ_CREATE: u8 = 0;
 /// `IRP_MJ_READ`.
 const IRP_MJ_READ: u8 = 3;
+/// `IRP_MJ_CREATE_NAMED_PIPE`: the *server* side of `CreateNamedPipe`.
+/// `0x01` — `0x11` is `IRP_MJ_LOCK_CONTROL`.
+const IRP_MJ_CREATE_NAMED_PIPE: u8 = 0x01;
 /// `IRP_MJ_SET_INFORMATION`.
 const IRP_MJ_SET_INFORMATION: u8 = 6;
 /// `IRP_MJ_SET_SECURITY`.
@@ -362,7 +365,7 @@ const FILE_DISPOSITION_DELETE: u32 = 0x1;
 const OWNER_SECURITY_INFORMATION: u32 = 0x1;
 const DACL_SECURITY_INFORMATION: u32 = 0x4;
 
-static OPERATIONS: [FltOperationRegistration; 5] = [
+static OPERATIONS: [FltOperationRegistration; 6] = [
     FltOperationRegistration {
         major_function: IRP_MJ_CREATE,
         flags: SKIP_PAGING_IO,
@@ -389,6 +392,13 @@ static OPERATIONS: [FltOperationRegistration; 5] = [
         flags: SKIP_PAGING_IO | SKIP_CACHED_IO,
         pre_operation: Some(pre_read),
         post_operation: None,
+        reserved1: core::ptr::null_mut(),
+    },
+    FltOperationRegistration {
+        major_function: IRP_MJ_CREATE_NAMED_PIPE,
+        flags: SKIP_PAGING_IO,
+        pre_operation: Some(pre_pass),
+        post_operation: Some(post_create_pipe),
         reserved1: core::ptr::null_mut(),
     },
     FltOperationRegistration {
@@ -625,9 +635,12 @@ unsafe extern "C" fn pre_set_information(
             if basic.is_null() {
                 return PREOP_SUCCESS_WITH_CALLBACK;
             }
-            // A basic-information set carries the new creation time in
-            // `ChangeTime`; zero means "leave it alone".
-            let new_creation = unsafe { (*basic).change_time };
+            // `SetFileTime` fills the homonymous `CreationTime`; zero means
+            // "leave it alone". `ChangeTime` is the metadata-change stamp and
+            // is written on its own (as `-1`, "now") by kernel components
+            // touching hundreds of files at boot — reading it here turned
+            // every one of those into a false EID 2.
+            let new_creation = unsafe { (*basic).creation_time };
             if new_creation == 0 {
                 return PREOP_SUCCESS_WITH_CALLBACK;
             }
@@ -894,10 +907,10 @@ unsafe extern "C" fn post_create(
     // is EID 17 with the pipe's relative name; a mailslot has no Sysmon
     // equivalent and is dropped.
     match unsafe { volume_kind(flt_objects) } {
-        VolumeKind::NamedPipe => {
-            unsafe { push_pipe_create(data, flt_objects) };
-            return POSTOP_FINISHED;
-        }
+        // A pipe *creation* arrives as `IRP_MJ_CREATE_NAMED_PIPE`; a create
+        // on NPFS is a client connecting to an existing pipe (EID 18, which
+        // is not produced).
+        VolumeKind::NamedPipe => return POSTOP_FINISHED,
         VolumeKind::Mailslot => return POSTOP_FINISHED,
         VolumeKind::FileSystem => {}
     }
@@ -930,6 +943,27 @@ unsafe extern "C" fn post_create(
         }
         FltReleaseFileNameInformation(information);
     }
+    POSTOP_FINISHED
+}
+
+/// `IRP_MJ_CREATE_NAMED_PIPE` post-op: a pipe server was created (EID 17).
+unsafe extern "C" fn post_create_pipe(
+    data: *mut FltCallbackData,
+    flt_objects: *mut core::ffi::c_void,
+    _context: *mut core::ffi::c_void,
+    _flags: u32,
+) -> i32 {
+    // SAFETY: `data` is valid for the callback's duration.
+    let Some(callback) = (unsafe { data.as_ref() }) else {
+        return POSTOP_FINISHED;
+    };
+    if unsafe { callback.io_status.__bindgen_anon_1.Status } < 0 {
+        return POSTOP_FINISHED;
+    }
+    if unsafe { volume_kind(flt_objects) } != VolumeKind::NamedPipe {
+        return POSTOP_FINISHED;
+    }
+    unsafe { push_pipe_create(data, flt_objects) };
     POSTOP_FINISHED
 }
 

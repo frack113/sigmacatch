@@ -49,8 +49,15 @@ Blocked / remaining:
   truncate from the post-op, and the security changes from
   `IRP_MJ_SET_SECURITY`. Validated in the VM against `Move-Item`,
   `Remove-Item`, `icacls /deny`, `takeown /f` and `File.SetLength`.
-- **EID 9 (raw access), 17/18 (pipes)**: no public user-mode or documented
-  kernel hook; documented as gaps.
+- **D2c — creation time, raw reads, pipes** (done): EID 2 from
+  `FileBasicInformation` (creation stamp only — `ChangeTime` is the metadata
+  stamp and would report the boot-time `-1` rewrite as a false creation),
+  EID 9 from an `IRP_MJ_READ` on an unnamed file object (volume handle, pre-op
+  because the post-op may run at DPC), and EID 17 from
+  `IRP_MJ_CREATE_NAMED_PIPE` (`0x01`) on the NPFS volume, which fltmgr only
+  attaches with `FLTFL_REGISTRATION_SUPPORT_NPFS_MSFS` (`0x2`).
+- **EID 18 (pipe connect)**: not produced; a client create on NPFS is
+  dropped instead of being reported with the wrong event id.
 
 The ring record is kind-tagged (`sigmacatch/src/windows/driver_protocol.rs`,
 shared with the user-mode client via `#[path]`), so adding a kind does not

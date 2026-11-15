@@ -504,5 +504,42 @@ image (`Image`). Category mapping already covers 23/503/504/505/506, so
 `file_delete`, `file_rename`, `file_chmod`, `file_chown` and `file_truncate`
 rules are selected for them.
 
-Next: EID 2 (file create time) needs `IRP_MJ_SET_INFORMATION` with
-`FileBasicInformation` (4), and EID 9/17 have no public hook.
+**D2c — creation time, raw reads and named pipes (EID 2/9/17)** is validated
+too. Three hooks that the first pass had written off as unreachable:
+
+- **EID 2** comes from `IRP_MJ_SET_INFORMATION` with `FileBasicInformation`
+  (4). The new stamp is `CreationTime` in the buffer; the previous one is
+  queried with `FltQueryInformationFile` on the same file object in the
+  pre-op. `ChangeTime` must **not** be read: it is the metadata-change stamp,
+  and at boot kernel components write it as `-1` ("now") across hundreds of
+  files — reading it produced 358 false EID 2 in eight seconds. Protocol v6
+  carries both stamps in `value_a`/`value_b`; a `-1` ("now") set has
+  `value_b == 0` and the mapper fills the event time in.
+- **EID 9** is an `IRP_MJ_READ` whose file object has **no name and no
+  parent** — a handle opened on the volume itself (`\\.\C:`). The operation
+  is registered with `SKIP_PAGING_IO | SKIP_CACHED_IO` and reported from the
+  **pre-op**, because the post-op can run at DPC level where
+  `FltGetVolumeName` (which supplies `Device`) is not allowed.
+- **EID 17** is `IRP_MJ_CREATE_NAMED_PIPE` — major function **`0x01`**, not
+  `0x11` (`0x11` is `IRP_MJ_LOCK_CONTROL`, which silently produced file
+  paths). fltmgr only attaches a filter to the pipe and mailslot volumes when
+  `FLT_REGISTRATION.Flags` sets `FLTFL_REGISTRATION_SUPPORT_NPFS_MSFS`
+  (**`0x2`**; `0x4` is `SUPPORT_DAX_VOLUME`). The pipe name is the file
+  object's relative `FileName` (`\sigmacatch-test`), the volume is compared
+  with `FltGetVolumeName` (both sides ASCII-folded — folding one side only
+  made `\Device\NamedPipe` never match), and a client connecting to an
+  existing pipe (`IRP_MJ_CREATE` on NPFS) is dropped: that is EID 18, which
+  is not produced.
+
+Measured with the same probe, one PowerShell script per run:
+
+| Operation | EID | EventData |
+| --- | --- | --- |
+| `(Get-Item f).CreationTimeUtc = …` | 2 | `TargetFilename`, `CreationUtcTime`, `PreviousCreationUtcTime` |
+| `[IO.File]::Open('\\.\C:').Read(…)` | 9 | `Device`, `Image` |
+| `New-Object IO.Pipes.NamedPipeServerStream('x')` | 17 | `PipeName`, `Image` |
+| `.LastWriteTimeUtc = …` (control) | — | correctly **not** reported |
+
+Remaining gaps: EID 18 (pipe connect) is deliberately not produced, and the
+Windows collector still has no EID 8/19-22/24-29 network/WMI/clipboard
+sources — those need ETW providers rather than kernel hooks.
