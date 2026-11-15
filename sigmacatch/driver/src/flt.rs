@@ -111,8 +111,8 @@ struct FltOperationRegistration {
     >,
     post_operation: Option<
         unsafe extern "C" fn(
-            *mut core::ffi::c_void,
             *mut FltCallbackData,
+            *mut core::ffi::c_void,
             *mut core::ffi::c_void,
             u32,
         ) -> i32,
