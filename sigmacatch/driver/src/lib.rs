@@ -348,7 +348,9 @@ unsafe extern "C" fn image_notify(
             &mut event.primary,
             &mut event.primary_length,
         );
-        // `SystemModeImage` (bit 8 of Properties) marks a kernel image.
+        // `SystemModeImage` (bit 8 of Properties) marks a kernel image. This
+        // callback only fires on load; unloads come from `Kernel-Process`
+        // (EID 507), see `inputs::etw`.
         let properties = if image_info.is_null() {
             0
         } else {

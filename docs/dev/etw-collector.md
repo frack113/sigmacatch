@@ -555,6 +555,7 @@ Measured with `etw_dump --map` in the VM:
 | 3 | `Kernel-Network` 12 (TCP connect), 42 (UDP send) | `saddr`/`sport` → source, `daddr`/`dport` → destination, `Protocol` from the id |
 | 22 | `DNS-Client` 3008 | `QueryName`, `QueryStatus`, `QueryResults` |
 | 500 | `Kernel-Network` 15 (accept) | `saddr`/`sport` as the listening endpoint, `Initiated=false` |
+| 507 | `Kernel-Process` 6 (`ImageUnload`) | `ImageName` → `ModuleName` |
 
 Two findings worth keeping:
 
@@ -569,8 +570,14 @@ Two findings worth keeping:
   its own cache. `Image` comes from the shared `ProcessTracker`, enriched on
   demand (`image_of`) so a pid first seen by a network event still resolves.
 
-`Kernel-File` and `Kernel-Registry` stay subscribed but unrouted: the driver
-covers files, and registry needs the key-path cache described below.
+`Kernel-File` stays subscribed but unrouted: the driver covers files. Routing
+happens **before** TDH decoding — the session carries dense providers
+(Kernel-File, `ImageLoad`) whose records are dropped, and decoding each of them
+was pure cost.
+
+The image notify routine the driver registers only fires on **load**, so EID
+507 comes from `Kernel-Process` `ImageUnload` (event 6, keyword `0x40`) instead;
+that provider is enabled a second time on the main session for it alone.
 
 ## Registry (EID 12/13/14)
 

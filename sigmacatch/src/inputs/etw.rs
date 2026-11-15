@@ -174,7 +174,19 @@ pub const MAIN_SESSION_PROVIDERS: &[ProviderSpec] = &[
     KERNEL_REGISTRY,
     DNS_CLIENT,
     WMI_ACTIVITY,
+    KERNEL_PROCESS_UNLOAD,
 ];
+
+/// `Microsoft-Windows-Kernel-Process`, image unload only: the driver covers
+/// loads (EID 6/7) but its notify routine never reports an unload, and
+/// `ImageUnload` (event 6) is the only source for EID 507.
+pub const KERNEL_PROCESS_UNLOAD: ProviderSpec = ProviderSpec {
+    name: "Microsoft-Windows-Kernel-Process",
+    guid: GUID::from_u128(0x22fb2cd6_0e7b_422b_a0c7_2fad1fd0e716),
+    level: 4,
+    // IMAGE (0x40)
+    keywords: 0x0040,
+};
 
 /// Classic kernel logger flags used for command lines and SIDs.
 ///
@@ -780,6 +792,17 @@ const KERNEL_REGISTRY_NAME: &str = "Microsoft-Windows-Kernel-Registry";
 const WMI_ACTIVITY_NAME: &str = "Microsoft-Windows-WMI-Activity";
 /// `WmiProviderOperation`: carries the `Operation` string of a WMI call.
 const WMI_PROVIDER_OPERATION: u16 = 5858;
+/// Provider name `decode` reports for the kernel process provider.
+const KERNEL_PROCESS_NAME: &str = "Microsoft-Windows-Kernel-Process";
+/// `ImageUnload`: an image was unmapped from a process (EID 507).
+const IMAGE_UNLOAD: u16 = 6;
+// `Kernel-Registry` ids the router accepts (see `inputs::etw_registry`).
+const CREATE_KEY_ID: u16 = 1;
+const OPEN_KEY_ID: u16 = 2;
+const DELETE_KEY_ID: u16 = 3;
+const SET_VALUE_ID: u16 = 5;
+const DELETE_VALUE_ID: u16 = 6;
+const CLOSE_KEY_ID: u16 = 13;
 
 // `Microsoft-Windows-Kernel-Network` event ids. The provider publishes one id
 // per operation and its opcode repeats the id; these four were measured with
@@ -834,11 +857,42 @@ impl MainRouter {
         }
     }
 
+    /// True when this record is one the router maps.
+    ///
+    /// Checked before decoding: the main session is subscribed to dense
+    /// providers (Kernel-File, ImageLoad) whose records are dropped, and a TDH
+    /// decode per dropped record is a measurable cost.
+    fn wants(record: &EVENT_RECORD) -> bool {
+        let id = record.EventHeader.EventDescriptor.Id;
+        let provider = record.EventHeader.ProviderId;
+        let has = |spec: &ProviderSpec, ids: &[u16]| provider == spec.guid && ids.contains(&id);
+        has(
+            &KERNEL_NETWORK,
+            &[NET_TCP_CONNECT, NET_TCP_ACCEPT, NET_UDP_SEND],
+        ) || has(&DNS_CLIENT, &[DNS_QUERY_COMPLETED])
+            || has(
+                &KERNEL_REGISTRY,
+                &[
+                    CREATE_KEY_ID,
+                    OPEN_KEY_ID,
+                    DELETE_KEY_ID,
+                    SET_VALUE_ID,
+                    DELETE_VALUE_ID,
+                    CLOSE_KEY_ID,
+                ],
+            )
+            || has(&WMI_ACTIVITY, &[WMI_PROVIDER_OPERATION])
+            || has(&KERNEL_PROCESS_UNLOAD, &[IMAGE_UNLOAD])
+    }
+
     /// Map one record, or `None` when this provider/id is not routed.
     ///
     /// Unknown providers and ids are dropped silently: the main session is
     /// deliberately subscribed to more than it maps.
     pub fn map(&self, record: &EVENT_RECORD) -> Option<crate::types::Event> {
+        if !Self::wants(record) {
+            return None;
+        }
         let decoded = crate::inputs::etw_event::decode(record)?;
         let at = decoded.utc().unwrap_or_else(chrono::Utc::now);
         match (decoded.provider.as_str(), decoded.event_id) {
@@ -848,6 +902,7 @@ impl MainRouter {
             (DNS_CLIENT_NAME, DNS_QUERY_COMPLETED) => self.dns(&decoded, at),
             (KERNEL_REGISTRY_NAME, _) => self.registry_event(&decoded, at),
             (WMI_ACTIVITY_NAME, WMI_PROVIDER_OPERATION) => self.wmi(&decoded, at),
+            (KERNEL_PROCESS_NAME, IMAGE_UNLOAD) => self.module_unload(&decoded, at),
             _ => None,
         }
     }
@@ -1047,6 +1102,31 @@ impl MainRouter {
             pid,
             image.as_deref(),
             &fields,
+        );
+        crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+    }
+
+    /// `Kernel-Process` `ImageUnload` → EID 507 (`module_unload` extension).
+    fn module_unload(
+        &self,
+        decoded: &crate::inputs::etw_event::DecodedEvent,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Option<crate::types::Event> {
+        let module = decoded.str("ImageName")?;
+        if module.is_empty() {
+            return None;
+        }
+        let pid = decoded
+            .uint("ProcessID")
+            .map_or(decoded.process_id, |pid| pid as u32);
+        let image = self.image_of(pid);
+        let xml = crate::inputs::etw_sysmon::event_xml(
+            &self.computer,
+            507,
+            at,
+            pid,
+            image.as_deref(),
+            &[("ModuleName", module)],
         );
         crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
