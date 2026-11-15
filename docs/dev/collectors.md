@@ -4,6 +4,49 @@ The per-input behaviour of every collector and the shared machinery they
 build on. The input table and the module map are in
 [Architecture](architecture.md#collectors).
 
+## The Windows collector: channels + one process source
+
+Windows always collects the **Event Log channels** resolved from the loaded
+rules (`inputs/channels.rs`, feature `winevt`). Everything richer comes from
+exactly one *process source*, so an activity is never reported twice:
+
+- **Kernel driver (`driver`, implies `etw`)** — preferred when the
+  `sigmacatch` service is loaded and answers the current wire-protocol version
+  on `\\.\sigmacatch`. It owns process, file, registry-rename, image, pipe and
+  thread events (`PsSetCreateProcessNotifyRoutineEx`,
+  `PsSetLoadImageNotifyRoutine`, `PsSetCreateThreadNotifyRoutine`,
+  `ObRegisterCallbacks`, a minifilter and `CmRegisterCallbackEx`), with exact
+  creation-time command lines and race-free file paths.
+- **Native ETW (`etw`)** — the fallback with no driver: two realtime sessions
+  (`Kernel-Process` with small buffers for process latency, the burst-tolerant
+  main session for network, registry, file and DNS). Process creation is rebuilt
+  from the live process (Toolhelp snapshot + per-pid facts) because
+  `ProcessStart` is not delivered in realtime; EID 5 is not produced on this
+  path.
+- **Channels only (`winevt` alone)** — the default build: no Sysmon-schema
+  process telemetry, only what the Event Log already contains.
+
+When the driver is loaded, the ETW main session still runs
+(`EventCollector::main_only`) because network connections, DNS, WMI, registry
+create/set and image/driver unload are only observable in user mode; it no
+longer starts the process session.
+
+The rendered events are Sysmon-**schema** — same EventIDs and field names — but
+published under the `sigmacatch` provider and the `sigmacatch/Operational`
+channel, which `types.rs` maps to `service: sysmon`, so the stock Sysmon rules
+match unchanged. They carry no `EventRecordID`, which is what makes the EVTX
+format take the pure-Rust writer instead of `EvtExportLog` (the channel does not
+exist in the Event Log). Feature and platform gates live in `inputs/mod.rs`;
+the orchestrator is `inputs/windows.rs` (`mode` is
+`windows winevt+etw` or `windows winevt+driver+etw`).
+
+The ETW path needs an **elevated token** (`SeSystemProfilePrivilege`); without
+it the source fails with a warning and the channels keep running. The driver
+path only needs the device to be openable — when it is not, the collector
+quietly falls back to ETW. The full coverage comparison is
+[Sysmon vs sigmacatch](sysmon-vs-sigmacatch.md), the design and measurements are
+[Windows without Sysmon](etw-collector.md).
+
 ## Windows logsource and PowerShell categories
 
 Windows rules are constrained by the `1_win_logsource.yml` pipeline (`add_condition` on
@@ -57,12 +100,16 @@ The `sysmon` and `ebpf` features add a dedicated collector:
 
 Each input defines its own `CollectorKind`
 (`name()`/`mode()`/`channels()`/`build()`/`regression_format()`/`live_capture()`); the Linux
-inputs share a single `LinuxCollector` defined in `linux.rs`. The regression format comes
-from `regression_format()`: `DataFormat::Evtx` for the winevt/evtx inputs,
-`DataFormat::Log` for Linux auditd/syslog/Sysmon-tail data, and `DataFormat::Json` for the
+inputs share a single `LinuxCollector` defined in `linux.rs`, the Windows inputs a single
+`WindowsCollector` in `windows.rs`. The regression format comes
+from `regression_format()`: `DataFormat::Evtx` for the winevt/evtx inputs — and for the ETW
+and driver events, which are rendered as Sysmon-schema Windows events — `DataFormat::Log`
+for Linux auditd/syslog/Sysmon-tail data, and `DataFormat::Json` for the
 eBPF collector. The runner refines the format per alert, so auditd events keep `.log` even
 when eBPF is active in the same binary. JSON data is a single pretty document (`type: json`)
-or NDJSON for several records (`type: ndjson`). `name()` is `sigmacatch` for every input.
+or NDJSON for several records (`type: ndjson`). `name()` is `sigmacatch` for every input,
+`mode()` describes the live sources (`windows winevt+driver+etw`,
+`linux auditd+syslog+sysmon(ebpf)`).
 
 `live_capture()` is an intrinsic property of the collector, not a CLI flag: it defaults to
 `true` and is overridden only by the `evtx` input (`false`). Continuous collectors run an

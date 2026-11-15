@@ -52,6 +52,36 @@ otherwise. A build with both `ebpf` and `sysmon` falls back to the
 Sysmon-for-Linux syslog tail when the probe fails to load; a build without
 `sysmon` then runs auditd/syslog with no sysmon source.
 
+## Windows: the kernel driver is not used
+
+**Symptom:** a build with the `driver` feature behaves like `etw` alone.
+
+**Cause:** the driver is opened at startup on `\\.\sigmacatch`. When that fails
+or the version does not match, the collector logs it and falls back — the
+warnings are explicit:
+
+- `kernel sensor not loaded — driver path disabled` (info): the device is absent,
+  the `sigmacatch` service is not running;
+- `kernel sensor protocol mismatch (driver <version>, collector <version>) —
+  driver path disabled` (warn): driver and collector come from different
+  builds.
+
+**Fix:** load (or restart) the driver service, and rebuild driver + collector
+together — the wire protocol is versioned, never mixed.
+
+## Windows: only Event Log events, no ETW telemetry
+
+**Symptom:** the Sysmon-schema events (EID 1/3/11/…) never appear, the channels
+keep working.
+
+**Cause:** the ETW sessions need an **elevated** token; a filtered UAC token is
+refused with a clear message. A second `sigmacatch` process also owns the
+session names (`sigmacatch-process`, `sigmacatch-main`) — only one instance can
+run at a time.
+
+**Fix:** start from an elevated prompt (`SeSystemProfilePrivilege`); stop the
+other instance before starting a new one.
+
 ## Slow first run
 
 **Cause:** the initial clone.

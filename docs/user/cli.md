@@ -3,9 +3,10 @@
 Two binaries share the `config.yaml` in the working directory (no
 `--config` flag) and the common flags below:
 
-- **`sigmacatch`** — the collector: continuous capture (Windows live
-  Winevt, or every compiled Linux input in parallel), or a one-shot EVTX
-  pass with `--evtx`.
+- **`sigmacatch`** — the collector: continuous capture (on Windows the Event
+  Log channels next to one process source — the kernel driver when loaded,
+  native ETW otherwise — or every compiled Linux input in parallel), or a
+  one-shot EVTX pass with `--evtx`.
 - **`regressiondata-check`** — standalone regression validation, no
   collector, cross-platform.
 
@@ -66,6 +67,31 @@ The sigma repository and the regression output come from the config
 (`git.sigma_repo_path`, relative paths resolved against the config file's
 directory); regression data is written under
 `<sigma_repo_path>/regression_data`.
+
+## Windows: which sources run
+
+There is no flag for this — the build and the machine decide:
+
+| Build | Sources |
+|---|---|
+| `winevt` (default) | Event Log channels only |
+| `winevt,etw` | Event Log channels + native ETW, no Sysmon needed |
+| `winevt,etw,driver` | Event Log channels + the kernel driver when it is loaded, else native ETW |
+
+The kernel driver (`sigmacatch/driver`, a separate test-signed build) is
+detected at startup by opening `\\.\sigmacatch`, and only one process source
+runs at a time so nothing is reported twice. The driver owns process, file,
+image, pipe, thread and registry-rename events; the ETW main session still
+supplies what only user mode can observe (network connections, DNS, WMI,
+registry create/set/delete, image/driver unload).
+
+ETW needs an **elevated token** (`SeSystemProfilePrivilege`): without it the
+ETW sessions fail, the failure is logged as a warning and the Event Log
+channels keep running. The Sysmon-schema events are published under the
+`sigmacatch` provider / `sigmacatch/Operational` channel, so stock Sysmon
+rules (`service: sysmon`) match unchanged — the coverage comparison is
+[Sysmon vs sigmacatch](../dev/sysmon-vs-sigmacatch.md), the implementation
+notes are [Windows without Sysmon](../dev/etw-collector.md).
 
 ## Diagnostic subcommands of the collector binary
 

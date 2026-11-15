@@ -47,9 +47,12 @@ nav:
   - Dev:
     - Architecture: dev/architecture.md
     - Collectors: dev/collectors.md
+    - Windows without Sysmon: dev/etw-collector.md
+    - Sysmon vs sigmacatch: dev/sysmon-vs-sigmacatch.md
     - Pipeline: dev/pipeline.md
     - Design Notes: dev/design-notes.md
     - Build: dev/build.md
+    - Windows dev VM: dev/windows-vm.md
     - SigmaHQ Workflow: dev/git.md
 
 plugins:

@@ -1,11 +1,19 @@
-# Windows "sans Sysmon" collector — ETW + kernel driver
+# Windows collector without Sysmon: ETW + kernel driver
 
 A native Windows telemetry collector that replaces Sysmon on hosts that do not
 have it, mirroring the Linux eBPF collector (`feature ebpf`). It emits the same
 taxonomy on both platforms — the Sysmon-schema ids plus the sigmacatch 5xx
 extensions. User-mode ETW (`feature etw`) covers what kernel providers expose;
 the `sigmacatch` kernel driver (`sigmacatch/driver/`, `feature driver`) is the
-source of everything ETW cannot reach, and is the active work item.
+source of everything ETW cannot reach.
+
+The per-id result — what sigmacatch produces today, with the fields that stay
+absent — is the settled [Sysmon vs sigmacatch](sysmon-vs-sigmacatch.md) table.
+This page keeps the decisions, the provider quirks and the measurements behind
+it. The code lives in `inputs/etw*.rs` and `inputs/windows.rs` (orchestrator:
+channels + exactly one process source); the
+[driver README](https://github.com/frack113/sigmacatch/blob/main/sigmacatch/driver/README.md)
+covers building and loading the kernel sensor.
 
 ## Scope and decisions
 
@@ -108,16 +116,20 @@ sigmacatch/src/inputs/
 │                   #   analogue of ebpf.rs (loader + ring-buffer dispatch)
 ├── etw_event.rs    # TDH property → typed fields, the analogue of ebpf_event.rs
 ├── etw_process.rs  # live-process facts (CommandLine, User, parent, creation)
-├── etw_sysmon.rs   # Sysmon-schema rendering (EID 1/5/6/7/10 today)
+├── etw_registry.rs # Kernel-Registry handle → path cache
+├── etw_sysmon.rs   # Sysmon-schema rendering (provider/channel `sigmacatch`)
 ├── etw_driver.rs   # feature `driver` (implies `etw`): client for the kernel
 │                   #   sensor — opens `\\.\sigmacatch`, drains the ring, maps
 │                   #   kind → Sysmon-schema event
-└── windows.rs      # Windows orchestrator: MultiCollector (winevt channels + etw),
-                    #   the analogue of linux.rs (does not exist yet — today winevt.rs
-                    #   is a single-source CollectorKind)
+└── windows.rs      # Windows orchestrator: MultiCollector (winevt channels + one
+                    #   process source), the analogue of linux.rs
 
+sigmacatch/src/windows/ # files shared with the driver crate via #[path]:
+                    #   driver_protocol.rs (wire record + IOCTLs, one source of
+                    #   truth), nt_file.rs, signature.rs, version_info.rs
 sigmacatch/driver/  # kernel sensor, excluded from the workspace like ebpf:
-                    #   control device + process/image/access callbacks into a ring
+                    #   control device + process/image/thread/registry callbacks
+                    #   and the minifilter (flt.rs) into a ring
 ```
 
 - **Feature `etw`**, `target_os = "windows"` only; entry in the `mod.rs` gate
@@ -128,17 +140,20 @@ sigmacatch/driver/  # kernel sensor, excluded from the workspace like ebpf:
   built around winevt XML.
 - **Regression format**: `DataFormat::Evtx` (these are Windows events), reusing
   the pure-Rust EVTX writer — not `Json` as eBPF uses.
-- **Dispatch**: `main.rs` gains a Windows arm that runs the orchestrator.
-- **Privileges**: `has_required_privileges()` — admin token / `SeDebugPrivilege`
-  to enable kernel providers; bail at startup otherwise (mirror `ebpf_planned`).
+- **Dispatch**: `main.rs` sends Windows to `inputs::windows`, which runs the
+  orchestrator (channels + exactly one process source).
+- **Privileges**: requires an elevated token (`ensure_privileges`, mirroring
+  `ebpf_planned`); without it the ETW source fails with a clear message and the
+  channels keep running.
 
 ## Session design
 
 From Rustinel's findings (each a numbered regression in their repo), adapted to
 our mission:
 
-- **Two sessions**: a low-latency Kernel-Process session (32 KB buffers) and a
-  burst-tolerant main session (256 KB buffers, explicit min/max pool). The split
+- **Two sessions**: a low-latency Kernel-Process session and a burst-tolerant
+  main session (both 256 KiB buffers with an explicit pool: 128/256 and 40/160 in
+  `SessionConfig::PROCESS` / `MAIN`). The split
   exists because a large buffer delays delivery past a short-lived process's
   exit (#349); for regression data the same race costs us *complete* command
   lines, not just real-time alerts.
@@ -175,16 +190,21 @@ Each is a bug Rustinel fixed the hard way; our `etw.rs` encodes it as a test:
   `EnableTraceEx2`/`OpenTraceW`/`ProcessTrace` callback loop, the two-session
   split, clean shutdown. **Done** (`etw.rs` + `etw_event.rs` + the
   `examples/etw_dump.rs` probe).
-- **M2 — builder** (`etw_event.rs`): TDH decode + field mapping (provider table
-  from `providers.rs`, field maps from `field_maps.rs`) → Sysmon-shaped data →
-  `from_xml_injected`. Start with EID 1/3/5/22.
-- **M3 — orchestrator** (`windows.rs`): MultiCollector (winevt + etw), feature
-  wiring, `mod.rs` gate, `main.rs` dispatch, docs.
+- **M2 — builder** (`etw_event.rs`): TDH decode + field mapping → Sysmon-shaped
+  data → `from_xml_injected`. **Done for the main session**: EID 3, 12/13
+  (registry; 14 comes from the driver), 19/20/21 (WMI), 22, 25, 500, 507, 511,
+  plus EID 1 from the live-process trigger. EID 5 is not produced on the ETW
+  path.
+- **M3 — orchestrator** (`windows.rs`): MultiCollector (channels + exactly one
+  process source), feature wiring, `mod.rs` gate, `main.rs` dispatch. **Done.**
 - **M4 — regression** (`DataFormat::Evtx` + `regressiondata-check`): generate
   and validate on the VM; apply the fidelity rule (exclude ambiguous paths).
-- **M5 — extend coverage**: image load, file (path-complete only, rename via
-  events 20/27 + the `FileKey` path cache), registry, PowerShell/WMI/
-  TaskScheduler; update the coverage matrix and taxonomy table above.
+  **Done** — an end-to-end cycle wrote and validated EVTX sets under
+  `provider: sigmacatch`.
+- **M5 — extend coverage**: image load, process access, files, registry,
+  pipes, WMI. **Done, mostly through the driver**: it took over the ids user
+  mode cannot reach, while WMI and the unloads stayed in the ETW main session
+  (see [Sysmon vs sigmacatch](sysmon-vs-sigmacatch.md)).
 
 ## M0 results (win11 VM, 2026-11-14)
 
@@ -265,10 +285,10 @@ approximated.
 
 ## Decision: the driver replaces Sysmon
 
-Recorded on 2026-11-14, after M0/M1 showed what user mode cannot reach; this
-is now the active work item, not a future option. The driver is what delivers
-the sigmacatch taxonomy — the Sysmon-schema ids plus the 5xx extensions — in
-place of Sysmon.
+Recorded on 2026-11-14, after M0/M1 showed what user mode cannot reach. The
+driver is what delivers the sigmacatch taxonomy — the Sysmon-schema ids plus the
+5xx extensions — in place of Sysmon; D0-D2 are implemented and validated on the
+VM (see [VM validation](#vm-validation-2026-11-14)).
 
 The project exists **to produce Sysmon-schema telemetry on hosts that do not
 have Sysmon**. "Hosts without Sysmon" is therefore the target environment, not
@@ -277,15 +297,19 @@ defeat the purpose.
 
 Two layers, same output:
 
-- **User-mode path (M0–M5, done for EID 1)** — no driver, no signature, works
-  on any elevated Windows host: ETW kernel providers + live-process facts.
-  Covers EID 1, 3, 5, 7, 11/23, 12/13/14, 22, rename (20/27 + `FileKey`
-  cache), DNS, network. This stays as the portable fallback and as the
-  reference the driver output is compared against.
-- **Driver path (D0–D2)** — a `sigmacatch` kernel component that closes what
-  user mode cannot: EID 2/15/26 (creation time, alternate data streams,
-  detected deletes), EID 10 `GrantedAccess` (`ObRegisterCallbacks`), EID 17/18
-  named pipes, and race-free file paths (`FLT_FILE_NAME_INFORMATION`).
+- **User-mode path (`etw`)** — no driver, no signature, works on any elevated
+  Windows host: ETW kernel providers + live-process facts. It produces EID 1
+  (live process), 3, 12/13, 19/20/21, 22, 25, 500, 507 and 511. This stays the
+  portable fallback and the reference the driver output is compared against.
+- **Driver path (`driver`)** — a `sigmacatch` kernel component that closes what
+  user mode cannot: EID 1/5 (process), 2 (creation time), 6/7 (image and driver
+  load), 8 (remote thread), 9 (raw read), 10 (`GrantedAccess`), 11/15/17/18/
+  23/26 (files, streams, pipes, deletes), 14 (key rename), 29 (PE written),
+  503-506 (rename/chmod/chown/truncate) and 509/510 (open for write, write).
+  With the driver loaded, the ETW **main** session alone still runs (network,
+  DNS, WMI, registry 12/13, image/driver unload): `inputs/windows.rs` starts one
+  process source, the two producers share the pid→image cache, and nothing is
+  reported twice.
 
 Constraints accepted up front, unchanged from the original driver note:
 
@@ -296,42 +320,13 @@ Constraints accepted up front, unchanged from the original driver note:
   (`bcdedit /set testsigning on`, Secure Boot off, self-signed cert), and a
   distributable build needs an EV certificate;
 - a kernel bug is a BSOD, so the driver never becomes a hard dependency: the
-  user-mode path must keep working when the driver is absent, refused by HVCI,
-  or not loaded.
+  user-mode path keeps working when the driver is absent, refused by HVCI, or
+  not loaded.
 
 The crate is `sigmacatch/driver/` (excluded from the workspace, built by
 `.github/workflows/driver.yml` on a `windows-latest` runner with the WDK and
-LLVM). D0/D1/D2a — the channel, process create/exit and process access — are
-implemented and validated in the VM; see [VM validation](#vm-validation-2026-11-14).
-
-One taxonomy, both platforms. The Linux eBPF collector emits Sysmon-schema
-events plus a set of sigmacatch extensions in the 5xx range (500-508); the
-Windows side must emit the same event ids so one rule set runs on both. The
-driver is the source of the ids user-mode ETW cannot produce; the rest stay in
-user mode, and two are Linux-only.
-
-| id | meaning | Windows source |
-|---|---|---|
-| 1, 5 | process create / exit | driver — D1, `PsSetCreateProcessNotifyRoutineEx` |
-| 2, 11, 23 | file create / change / delete | driver — D2, minifilter |
-| 3, 22 | network connect / DNS query | user-mode ETW (Kernel-Network / DNS-Client) |
-| 6 | image (driver) load | driver — D1, `PsSetLoadImageNotifyRoutine` |
-| 7 | image load | user-mode ETW (Kernel-Process `ImageLoad`) |
-| 9 | raw access | driver — D2 (no clean public hook) |
-| 10 | process access | driver — D2a, `ObRegisterCallbacks` |
-| 17 | pipe create | driver — D2 (no public callback, hardest gap) |
-| 25 | process tampering | driver — D2, `ObRegisterCallbacks` post-op heuristic |
-| 500 | network listen | user-mode ETW (Kernel-Network accept) |
-| 501 | credential change | Linux-only (`setuid`) — no Windows equivalent |
-| 502 | capability change | Linux-only (capabilities) — no Windows equivalent |
-| 503 | file rename | driver — D2, minifilter `FileRenameInformation` |
-| 504 | file chmod (ACL) | driver — D2, minifilter `IRP_MJ_SET_SECURITY` |
-| 505 | file chown (owner) | driver — D2, minifilter `IRP_MJ_SET_SECURITY` |
-| 506 | file truncate | driver — D2, minifilter `FileEndOfFileInformation` |
-| 507 | module unload | user-mode ETW (Kernel-Process `ImageUnload`) |
-| 508 | DNS response | user-mode ETW (DNS-Client 3008/3010/3020) |
-
-Milestones:
+LLVM). The per-id result is [Sysmon vs sigmacatch](sysmon-vs-sigmacatch.md);
+this section only records the milestones:
 
 - **D0 — channel** (done): control device `\Device\sigmacatch`, version
   IOCTL; compiles in CI.
@@ -342,15 +337,13 @@ Milestones:
   the VM.
 - **D2b.1 — image/driver load** (done): `PsSetLoadImageNotifyRoutine` → EID
   6/7, validated in the VM.
-- **D2b.2 — file system**: minifilter for 2/11/23/503/504/505/506 with complete
-  `FLT_FILE_NAME_INFORMATION` paths (needs a hand-written `fltmgr` FFI), and
-  9/17 where a public hook exists.
-- **D3 — parity**: the Windows collector emits the same event-id set as the
-  Linux collector; 501/502 documented as Linux-only.
-
-The user-mode collector keeps its own process trigger (snapshot + ETW) so the
-same event is never lost, and the two paths are deduplicated by `(pid,
-creation time)`.
+- **D2b.2 — file system** (done): the hand-written `fltmgr` FFI landed; the
+  minifilter covers 2/11/23/503/504/505/506 with complete
+  `FLT_FILE_NAME_INFORMATION` paths, plus 9/15/17/18/26 and 509/510 (see the
+  sections below).
+- **D3 — parity** (documented): the Windows set differs by design — 501/502
+  are Linux-only, and 508 is not emitted because 3008 is already reported as
+  EID 22. The comparison table is the contract.
 
 ## VM validation (2026-11-14)
 
@@ -415,7 +408,8 @@ carries 0) — a few milliseconds late, acceptable for EID 5/10.
 
 Paths are the NT paths the callback carries (exact), not DOS-mapped.
 
-**D2b.2 — the minifilter is blocked on bindings.** `wdk-sys` does **not** bind
+**D2b.2 — the minifilter is blocked on bindings** (resolved: the hand-written
+FFI landed, see D2b.2a/2b/2c below). `wdk-sys` does **not** bind
 `fltmgr` (`FltRegisterFilter`, `FLT_REGISTRATION`, `FLT_CALLBACK_DATA`,
 `FltGetFileNameInformation`, ...), and no maintained Rust binding exists
 (`fsfilter-rs` is a 2023 user-mode loader pinned to `windows` 0.44). File
@@ -532,9 +526,9 @@ too. Three hooks that the first pass had written off as unreachable:
   (**`0x2`**; `0x4` is `SUPPORT_DAX_VOLUME`). The pipe name is the file
   object's relative `FileName` (`\sigmacatch-test`), the volume is compared
   with `FltGetVolumeName` (both sides ASCII-folded — folding one side only
-  made `\Device\NamedPipe` never match), and a client connecting to an
-  existing pipe (`IRP_MJ_CREATE` on NPFS) is dropped: that is EID 18, which
-  is not produced.
+  made `\Device\NamedPipe` never match). A client connecting to an
+  existing pipe (`IRP_MJ_CREATE` on NPFS) is the other kind — EID 18, see
+  [Pipe connect](#pipe-connect-ads-and-remote-threads-driver).
 
 Measured with the same probe, one PowerShell script per run:
 
@@ -743,9 +737,11 @@ second (a 256-slot cache keyed by the file object), plus a 32-events-per-second
 budget. Measured with `robocopy /J` (unbuffered) of a 50 MB file: exactly one
 EID 510 for the destination, where a per-chunk report would have produced fifty.
 
-Remaining gaps: EID 25 (process tampering) needs per-process main-image
-tracking and would be noisy without it;
-EID 24 (clipboard) has no public provider; EID 508 has no distinct Windows
+Remaining gaps, all deliberate: EID 24 (clipboard) has no public provider;
+EID 27/28 are Sysmon's own blocking features; EID 508 has no distinct Windows
 source (3008 is already EID 22, and its `QueryStatus` is a Win32 error where the
-Linux extension carries the DNS RCODE); EID 26-29 are Sysmon's own blocking
-features and have no equivalent.
+Linux extension carries the DNS RCODE); EID 4/16/255 describe Sysmon itself. EID
+25 only ever reports `Type=ImageUnloaded` (protected-process light — even Sysmon
+fakes the rest), and 509/510 are best effort by design (per-second budgets, see
+their sections). The field-level omissions (`ProcessGuid`, `Hashes` on 23,
+catalog `Signature`) are listed in [Sysmon vs sigmacatch](sysmon-vs-sigmacatch.md).

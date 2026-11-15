@@ -35,7 +35,10 @@ The full set format is specified in
 The collector excludes non-existent channels once on
 `ERROR_EVT_CHANNEL_NOT_FOUND` (single `error!`); each live channel logs "initial query OK"
 then a "still alive" heartbeat (60s); `warn!` when events are fetched but dropped at
-render/parse. The Linux collectors detect tail-file rotation (inode change) and re-open
+render/parse. On Windows the driver is probed once at startup: `info!` when it is absent
+(`kernel sensor not loaded — driver path disabled`), `warn!` on a protocol mismatch, and a
+failed ETW session degrades to the remaining sources with a `warn!` (never a hard exit).
+The Linux collectors detect tail-file rotation (inode change) and re-open
 the file; the builtin syslog collector excludes lines tagged `sysmon` to avoid double
 capture (handled by the dedicated Sysmon-for-Linux collector).
 

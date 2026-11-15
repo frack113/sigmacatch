@@ -39,6 +39,12 @@ events, by the pure Rust EVTX writer (`evtx_writer` module of
 out between collection and export) is an error: the pipeline skips the rule
 for that cycle (no commit) and re-captures it later.
 
+The ETW and kernel-driver events (Sysmon-schema, provider `sigmacatch`) always
+take the pure-Rust writer: they are produced in-process under the
+`sigmacatch/Operational` channel, which `EvtExportLog` cannot re-query because
+it does not exist in the Event Log. Their `info.yml` therefore carries
+`provider: sigmacatch`.
+
 ### eBPF JSON / NDJSON (Linux)
 
 The eBPF collector writes `<rule_id>.json` as its **primary data file**:

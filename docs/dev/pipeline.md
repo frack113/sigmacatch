@@ -32,7 +32,9 @@ generation off it.
 10. collector = kind.build(&cycle_channels) → tokio::spawn(collector.run(tx, stop))
     ├── sigmacatch --evtx (one-shot) → EvtxCollector.run(tx, stop): enumerate files, send every parsed event,
     │                                  returns when exhausted → sender dropped
-    ├── sigmacatch (winevt, Windows)  → EventCollector::new(cycle_channels).run(tx, stop)
+    ├── sigmacatch (Windows)          → MultiCollector (WindowsCollector): the channel collector plus exactly
+    │                                  one process source — the kernel driver when loaded (`etw_driver`),
+    │                                  native ETW otherwise (`etw`); ETW main session alongside the driver
     └── sigmacatch (Linux)            → MultiCollector (every compiled, available tail in parallel, rotation detected)
 11. Loop: tokio::select!
     ├── shutdown_rx (Ctrl+C, or stop file / --max-runs reached when live_capture()) → break

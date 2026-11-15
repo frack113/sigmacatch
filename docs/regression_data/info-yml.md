@@ -42,7 +42,7 @@ the rule across the entire system. It is used for:
 regression_tests_info:
     - name: Positive Detection Test
       type: evtx                  # raw for cisco; log for auditd/syslog/sysmon tail; json/ndjson for eBPF
-      provider: <ProviderName>    # dynamically extracted from event's XML ProviderName (e.g., Microsoft-Windows-Sysmon, or "auditd")
+      provider: <ProviderName>    # dynamically extracted from event's XML ProviderName (e.g., Microsoft-Windows-Sysmon, sigmacatch, or "auditd")
       match_count: <int>          # Number of matches found
       path: regression_data/.../<rule_id>.evtx  # Relative path to the data file
 ```
