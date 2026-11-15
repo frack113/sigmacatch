@@ -490,18 +490,23 @@ unsafe fn volume_device_name(volume: *mut core::ffi::c_void, buffer: &mut [u16])
     (status == STATUS_SUCCESS).then_some(name.Length as usize / 2)
 }
 
+/// ASCII lowercase of one UTF-16 code unit.
+fn ascii_lower(unit: u16) -> u16 {
+    if unit >= u16::from(b'A') && unit <= u16::from(b'Z') {
+        unit + 32
+    } else {
+        unit
+    }
+}
+
 /// ASCII-case-insensitive comparison of two wide strings (no `alloc`, and the
 /// core slice helper does not exist for `u16`).
 fn wide_eq_ignore_ascii_case(left: &[u16], right: &[u16]) -> bool {
     left.len() == right.len()
-        && left.iter().zip(right).all(|(left, right)| {
-            let left = if *left >= u16::from(b'A') && *left <= u16::from(b'Z') {
-                *left + 32
-            } else {
-                *left
-            };
-            left == *right
-        })
+        && left
+            .iter()
+            .zip(right)
+            .all(|(left, right)| ascii_lower(*left) == ascii_lower(*right))
 }
 
 /// Which kind of device a request targets.
