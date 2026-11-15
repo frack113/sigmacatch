@@ -18,7 +18,7 @@ capture, and check what was produced.
     channels; the other channels work without. Sysmon is **not** required: the
     `etw` feature captures the same telemetry natively, and the `driver`
     feature adds the `sigmacatch` kernel driver for the ids ETW cannot reach
-    (see [Windows without Sysmon](dev/etw-collector.md)).
+    (see [Windows without Sysmon](dev/windows/index.md)).
   - **Linux** — an auditd log at `/var/log/audit/audit.log` and/or the
     standard syslog files. No root needed.
 
@@ -104,4 +104,4 @@ pass/fail summary (exit 1 on any failure). Full reference:
 - [Configuration](user/config.md) — every `config.yaml` key
 - [Troubleshooting](user/troubleshooting.md) — when the run refuses to go
 - [regressiondata-check](user/regressiondata-check.md) — validate what was produced
-- [Windows without Sysmon](dev/etw-collector.md) — ETW and kernel-driver telemetry
+- [Windows without Sysmon](dev/windows/index.md) — ETW and kernel-driver telemetry

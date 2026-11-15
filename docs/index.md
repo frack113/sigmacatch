@@ -71,12 +71,14 @@ A built version of this documentation is published to GitHub Pages:
   - [Windows collector](dev/collectors/windows.md)
   - [Linux collectors](dev/collectors/linux.md)
   - [EVTX input](dev/collectors/evtx.md)
-  - [Windows without Sysmon](dev/etw-collector.md)
-  - [Sysmon vs sigmacatch](dev/sysmon-vs-sigmacatch.md)
+  - [Windows telemetry](dev/windows/index.md)
+  - [ETW](dev/windows/etw.md)
+  - [Kernel driver](dev/windows/driver.md)
+  - [Sysmon coverage](dev/windows/coverage.md)
   - [Pipeline](dev/pipeline.md)
   - [Design notes](dev/design-notes.md)
   - [Build](dev/build.md)
-  - [Windows dev VM](dev/windows-vm.md)
+  - [Windows dev VM](dev/windows/vm.md)
   - [SigmaHQ workflow](dev/git.md)
 
 ## License

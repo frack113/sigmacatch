@@ -78,7 +78,7 @@ and requires admin rights for the `Security` and `System` channels. The
 required); **driver** prefers the `sigmacatch` kernel sensor when its service is
 loaded and falls back to ETW otherwise — the runtime split is in
 [cli.md](../user/cli.md#windows-which-sources-run) and the coverage in
-[sysmon-vs-sigmacatch.md](sysmon-vs-sigmacatch.md). The **evtx** input
+[Sysmon coverage](windows/coverage.md). The **evtx** input
 (`live_capture() = false`) needs no Windows API, so it also
 builds and runs on Linux (`--no-default-features --features evtx`); its
 semantics are documented in [cli.md](../user/cli.md#-evtx-one-shot-evtx-input-single-run).
@@ -99,7 +99,7 @@ The artifact is `sigmacatch_driver.dll`; rename it to `.sys` for the service
 (test-signing required, see the [driver README](https://github.com/frack113/sigmacatch/blob/main/sigmacatch/driver/README.md)).
 `.github/workflows/driver.yml` is the gate: it pins WDK 10.0.22621 and LLVM
 17.0.6, and the local dev VM
-([Windows dev VM](windows-vm.md), `scripts/dev_win_build.sh`) builds with the
+([Windows dev VM](windows/vm.md), `scripts/dev_win_build.sh`) builds with the
 same settings. Driver and collector share `src/windows/driver_protocol.rs`
 (wire record + IOCTLs, protocol version 6): a mismatched pair logs a warning and
 the collector runs on ETW alone.

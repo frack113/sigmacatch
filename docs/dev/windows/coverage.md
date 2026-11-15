@@ -149,5 +149,18 @@ etw_dump.exe --sessions main --map --seconds 12      # EID 2/3/12/13/14/19-22/50
 etw_driver_probe.exe                                 # EID 1/5-11/15/17/18/23/503-506
 ```
 
-`docs/dev/etw-collector.md` holds the per-milestone evidence, the provider
+[Measurements](evidence.md) holds the per-milestone evidence, the provider
 quirks and the measurements behind each row.
+
+## Known gaps
+
+Remaining gaps, all deliberate: EID 24 (clipboard) has no public provider;
+EID 27/28 are Sysmon's own blocking features; EID 508 has no distinct Windows
+source (3008 is already EID 22, and its `QueryStatus` is a Win32 error where the
+Linux extension carries the DNS RCODE); EID 4/16/255 describe Sysmon itself. EID
+25 only ever reports `Type=ImageUnloaded` (protected-process light — even Sysmon
+fakes the rest), and 509/510 are best effort by design (per-second budgets,
+[509](driver-events.md#file-open-for-write-eid-509) and
+[510](driver-events.md#file-write-eid-510)). The field-level
+omissions (`ProcessGuid`, `Hashes` on 23, catalog `Signature`) are listed in
+[Fields that are absent everywhere](#fields-that-are-absent-everywhere).

@@ -52,8 +52,8 @@ Which collector runs:
 | auditd / syslog / Sysmon tail / eBPF | `inputs/linux.rs` | `auditd`, `builtin`, `sysmon`, `ebpf` |
 | One-shot EVTX | `inputs/evtx.rs` | `evtx` |
 
-The Windows side has its own pages: [Windows telemetry](etw-collector.md)
-(driver and ETW internals) and [Sysmon coverage](sysmon-vs-sigmacatch.md).
+The Windows side has its own pages: [Windows telemetry](windows/index.md)
+(driver and ETW internals) and [Sysmon coverage](windows/coverage.md).
 
 ## The other binary
 

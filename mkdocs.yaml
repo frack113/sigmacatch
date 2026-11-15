@@ -58,12 +58,18 @@ nav:
       - Windows: dev/collectors/windows.md
       - Linux: dev/collectors/linux.md
       - EVTX: dev/collectors/evtx.md
-    - Windows without Sysmon: dev/etw-collector.md
-    - Sysmon vs sigmacatch: dev/sysmon-vs-sigmacatch.md
+    - Windows telemetry:
+      - Overview: dev/windows/index.md
+      - ETW: dev/windows/etw.md
+      - ETW events: dev/windows/etw-events.md
+      - Kernel driver: dev/windows/driver.md
+      - Driver events: dev/windows/driver-events.md
+      - Sysmon coverage: dev/windows/coverage.md
+      - Measurements: dev/windows/evidence.md
+      - Dev VM: dev/windows/vm.md
     - Pipeline: dev/pipeline.md
     - Design Notes: dev/design-notes.md
     - Build: dev/build.md
-    - Windows dev VM: dev/windows-vm.md
     - SigmaHQ Workflow: dev/git.md
 
 plugins:

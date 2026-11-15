@@ -92,5 +92,5 @@ ETW sessions fail, the failure is logged as a warning and the Event Log
 channels keep running. The Sysmon-schema events are published under the
 `sigmacatch` provider / `sigmacatch/Operational` channel, so stock Sysmon
 rules (`service: sysmon`) match unchanged — the coverage comparison is
-[Sysmon vs sigmacatch](../dev/sysmon-vs-sigmacatch.md), the implementation
-notes are [Windows without Sysmon](../dev/etw-collector.md).
+[Sysmon vs sigmacatch](../dev/windows/coverage.md), the implementation
+notes are [Windows without Sysmon](../dev/windows/index.md).

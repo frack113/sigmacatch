@@ -39,7 +39,7 @@ it the source fails with a warning and the channels keep running. The driver
 path only needs the device to be openable — when it is not, the collector
 quietly falls back to ETW.
 
-Internals: [Windows telemetry](../etw-collector.md) (driver, ETW, coverage).
+Internals: [Windows telemetry](../windows/index.md) (driver, ETW, coverage).
 
 ## Windows logsource and PowerShell categories
 
