@@ -181,6 +181,34 @@ pub fn network_xml(
     )
 }
 
+/// Authenticode facts, as the image renderers need them.
+pub struct SignatureFields<'a> {
+    /// `Signed`.
+    pub signed: bool,
+    /// `Signature`: the signer display name.
+    pub name: Option<&'a str>,
+    /// `SignatureStatus`: `Valid`, `Unavailable` or `Errored`.
+    pub status: &'a str,
+}
+
+/// Append `Hashes` and the three Authenticode fields, in Sysmon's order.
+fn image_facts(data: &mut String, hashes: Option<&str>, signature: Option<&SignatureFields<'_>>) {
+    if let Some(hashes) = hashes {
+        field(data, "Hashes", hashes);
+    }
+    if let Some(signature) = signature {
+        field(
+            data,
+            "Signed",
+            if signature.signed { "true" } else { "false" },
+        );
+        if let Some(name) = signature.name {
+            field(data, "Signature", name);
+        }
+        field(data, "SignatureStatus", signature.status);
+    }
+}
+
 /// Render a Sysmon **EID 7 (ImageLoad)** event.
 pub fn image_load_xml(
     computer: &str,
@@ -188,6 +216,8 @@ pub fn image_load_xml(
     process_id: u32,
     process_image: Option<&str>,
     image_loaded: &str,
+    hashes: Option<&str>,
+    signature: Option<&SignatureFields<'_>>,
 ) -> String {
     let mut data = String::new();
     field(&mut data, "RuleName", "");
@@ -197,6 +227,7 @@ pub fn image_load_xml(
         field(&mut data, "Image", image);
     }
     field(&mut data, "ImageLoaded", image_loaded);
+    image_facts(&mut data, hashes, signature);
     format!(
         "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
          <System>\
@@ -221,11 +252,14 @@ pub fn driver_load_xml(
     computer: &str,
     at: chrono::DateTime<chrono::Utc>,
     image_loaded: &str,
+    hashes: Option<&str>,
+    signature: Option<&SignatureFields<'_>>,
 ) -> String {
     let mut data = String::new();
     field(&mut data, "RuleName", "");
     field(&mut data, "UtcTime", &sysmon_utc(at));
     field(&mut data, "ImageLoaded", image_loaded);
+    image_facts(&mut data, hashes, signature);
     format!(
         "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
          <System>\

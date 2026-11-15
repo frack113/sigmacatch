@@ -12,7 +12,7 @@ use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_GENERIC_READ, FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
     FILE_SHARE_READ, FILE_SHARE_WRITE, GETFINALPATHNAMEBYHANDLE_FLAGS, GetFinalPathNameByHandleW,
-    OPEN_EXISTING, ReadFile, VOLUME_NAME_NT,
+    OPEN_EXISTING, ReadFile, VOLUME_NAME_DOS, VOLUME_NAME_NT,
 };
 use windows::core::PCWSTR;
 
@@ -169,7 +169,55 @@ pub fn hashes_of(path: &str) -> Option<String> {
             out.push_str(&format!("{byte:02x}"));
         }
     }
+    if let Some(imphash) = crate::inputs::pe_format::imphash(&bytes) {
+        out.push_str(",IMPHASH=");
+        out.push_str(&imphash);
+    }
     Some(out)
+}
+
+/// DOS form (`C:\Windows\…`) of an NT device path.
+///
+/// The signature APIs take a path they open themselves, so the kernel name has
+/// to be translated first; `GetFinalPathNameByHandleW` with `VOLUME_NAME_DOS`
+/// is the reliable direction (enumerating drives by hand is not).
+pub fn dos_path_of_nt(nt_path: &str) -> Option<String> {
+    if !nt_path.starts_with('\\') {
+        return Some(nt_path.to_string());
+    }
+    let wide: Vec<u16> = format!("{GLOBALROOT}{nt_path}")
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: `wide` is NUL-terminated and valid for the call.
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            FILE_READ_ATTRIBUTES.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            Default::default(),
+            None,
+        )
+    }
+    .ok()?;
+    let mut buffer = vec![0u16; 32768];
+    // SAFETY: the handle comes from `CreateFileW`; `buffer` describes itself.
+    let len = unsafe {
+        GetFinalPathNameByHandleW(
+            handle,
+            &mut buffer,
+            GETFINALPATHNAMEBYHANDLE_FLAGS(FILE_NAME_NORMALIZED.0 | VOLUME_NAME_DOS.0),
+        )
+    } as usize;
+    // SAFETY: the handle came from `CreateFileW` exactly once.
+    let _ = unsafe { CloseHandle(handle) };
+    if len == 0 || len > buffer.len() {
+        return None;
+    }
+    let path = String::from_utf16_lossy(&buffer[..len]);
+    Some(path.strip_prefix(r"\\?\").unwrap_or(&path).to_string())
 }
 
 /// Compare an NT image path with the DOS image path of a live process,

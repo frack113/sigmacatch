@@ -27,8 +27,8 @@ detector for the field predicates (`match_count: 1`).
 | 3 | NetworkConnect | `network_connection` | ETW `Kernel-Network` 12 / 42 | ✅ | `ProcessGuid`, `User`; `DestinationHostname` is filled from the session's own DNS answers |
 | 4 | SysmonServiceStateChanged | `sysmon_status` | — | ❌ | nothing to report: it describes Sysmon itself |
 | 5 | ProcessTerminate | `process_termination` | driver process notify (exit path) | ✅ | `ProcessGuid` |
-| 6 | DriverLoad | `driver_load` | driver `PsSetLoadImageNotifyRoutine` (`SystemModeImage`) | ✅ | `Hashes`, `Signed`, `Signature`, `SignatureStatus` |
-| 7 | ImageLoad | `image_load` | driver `PsSetLoadImageNotifyRoutine` | ✅ | `ProcessGuid`, `Hashes`, `Signed`, `Signature`, `SignatureStatus`, version/company fields |
+| 6 | DriverLoad | `driver_load` | driver `PsSetLoadImageNotifyRoutine` (`SystemModeImage`) | ✅ | `Signature` (name) is absent for catalog-signed binaries — see below |
+| 7 | ImageLoad | `image_load` | driver `PsSetLoadImageNotifyRoutine` | ✅ | `ProcessGuid`, version/company fields, `User`; `Signature` absent for catalog-signed binaries |
 | 8 | CreateRemoteThread | `create_remote_thread` | driver `PsSetCreateThreadNotifyRoutine` | ✅ | `SourceProcessGuid`/`TargetProcessGuid`, `StartAddress`, `StartModule`, `StartFunction` (not reachable from the callback) |
 | 9 | RawAccessRead | `raw_access_thread` | driver `IRP_MJ_READ` on an unnamed file object | ✅ | `ProcessGuid` |
 | 10 | ProcessAccess | `process_access` | driver `ObRegisterCallbacks` | ✅ | `SourceProcessGuid`/`TargetProcessGuid`, `SourceThreadId`, `CallTrace` |
@@ -78,10 +78,16 @@ match on a sigmacatch host:
 - **`ProcessGuid`** — every event carries `ProcessId` and `Image`, never a
   per-process GUID. Pivoting on `ProcessGuid` is impossible; `ProcessId` +
   `Image` + `UtcTime` is the equivalent.
-- **`Hashes`** — present on 1, 15 and 29 (SHA1/SHA256/MD5 computed in user mode
-  from the file on disk, first 16 MiB only); absent on 6, 7 and 23, whose events
-  would need a hash of every loaded image or of a deleted file.
-- **Authenticode** (`Signed`, `Signature`, `SignatureStatus`) — affects 6, 7.
+- **`Hashes`** — present on 1, 6, 7, 15 and 29 (SHA1/SHA256/MD5/IMPHASH computed
+  in user mode from the file on disk, first 16 MiB); absent on 23, which would
+  need the deleted file's content. On 6/7 it is computed once per image path
+  and cached.
+- **Authenticode** — `Signed` and `SignatureStatus` on 6/7 come from
+  `WinVerifyTrust`, with a second pass through the security catalogs (most
+  Windows binaries are catalog-signed, and reporting them as unsigned would be
+  exactly what the "unsigned binary" rules look for). `Signature` (the signer
+  display name) is read from the *embedded* signature, so it is present for
+  embedded-signed images and absent for catalog-signed ones.
 - **`User` / `LogonId` / `IntegrityLevel`** — present on 1 and 5 only, absent
   from the file/network/registry events.
 

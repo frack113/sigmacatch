@@ -25,9 +25,10 @@ use windows::core::PCWSTR;
 use crate::inputs::etw_event::filetime_to_utc;
 use crate::inputs::etw_process::{ImageCache, ProcessFacts, enrich};
 use crate::inputs::etw_sysmon::{
-    driver_load_xml, event_xml, file_create_xml, image_load_xml, process_access_xml,
-    process_start_xml, process_terminate_xml, sysmon_utc,
+    SignatureFields, driver_load_xml, event_xml, file_create_xml, image_load_xml,
+    process_access_xml, process_start_xml, process_terminate_xml, sysmon_utc,
 };
+use crate::inputs::signature::Signature;
 use crate::types::Event;
 
 // The protocol lives next to the driver crate and is included verbatim, so
@@ -175,6 +176,13 @@ pub struct Mapper {
     cache: HashMap<u32, ProcessFacts>,
     /// Image paths shared with the other producers (see [`ImageCache`]).
     images: ImageCache,
+    /// `Hashes` per image path: hashing every DLL load again would cost more
+    /// than the events are worth.
+    hashes: HashMap<String, Option<String>>,
+    /// Authenticode facts per image path, for the same reason.
+    signatures: HashMap<String, Option<Signature>>,
+    /// Upper bound on both caches before they are cleared.
+    cache_limit: usize,
 }
 
 impl Default for Mapper {
@@ -196,6 +204,9 @@ impl Mapper {
             computer,
             cache: HashMap::new(),
             images,
+            hashes: HashMap::new(),
+            signatures: HashMap::new(),
+            cache_limit: 512,
         }
     }
 
@@ -229,6 +240,33 @@ impl Mapper {
     /// Event time from the kernel record, falling back to "now".
     fn event_time(event: &SensorEvent) -> chrono::DateTime<chrono::Utc> {
         filetime_to_utc(event.timestamp as i64).unwrap_or_else(chrono::Utc::now)
+    }
+
+    /// `Hashes` of an image path, computed once per path.
+    fn image_hashes(&mut self, image: &str) -> Option<String> {
+        if let Some(cached) = self.hashes.get(image) {
+            return cached.clone();
+        }
+        let computed = crate::inputs::nt_file::hashes_of(image);
+        if self.hashes.len() >= self.cache_limit {
+            self.hashes.clear();
+        }
+        self.hashes.insert(image.to_string(), computed.clone());
+        computed
+    }
+
+    /// Authenticode facts of an image path, computed once per path.
+    fn image_signature(&mut self, image: &str) -> Option<Signature> {
+        if let Some(cached) = self.signatures.get(image) {
+            return cached.clone();
+        }
+        let computed = crate::inputs::nt_file::dos_path_of_nt(image)
+            .and_then(|dos| crate::inputs::signature::of_file(&dos));
+        if self.signatures.len() >= self.cache_limit {
+            self.signatures.clear();
+        }
+        self.signatures.insert(image.to_string(), computed.clone());
+        computed
     }
 
     /// Image of the process that issued a file/registry event: the cached
@@ -524,13 +562,42 @@ impl Mapper {
         let image_loaded = wide(&event.primary, event.primary_length);
         let at = Self::event_time(event);
         let xml = if driver {
-            driver_load_xml(&self.computer, at, &image_loaded)
+            let hashes = self.image_hashes(&image_loaded);
+            let signature = self.image_signature(&image_loaded);
+            let fields = signature.as_ref().map(|signature| SignatureFields {
+                signed: signature.signed,
+                name: signature.name.as_deref(),
+                status: signature.status,
+            });
+            driver_load_xml(
+                &self.computer,
+                at,
+                &image_loaded,
+                hashes.as_deref(),
+                fields.as_ref(),
+            )
         } else {
+            // Cloned before the two `&mut self` calls below.
             let process_image = self
                 .cache
                 .get(&event.pid)
-                .and_then(|facts| facts.image.as_deref());
-            image_load_xml(&self.computer, at, event.pid, process_image, &image_loaded)
+                .and_then(|facts| facts.image.clone());
+            let hashes = self.image_hashes(&image_loaded);
+            let signature = self.image_signature(&image_loaded);
+            let fields = signature.as_ref().map(|signature| SignatureFields {
+                signed: signature.signed,
+                name: signature.name.as_deref(),
+                status: signature.status,
+            });
+            image_load_xml(
+                &self.computer,
+                at,
+                event.pid,
+                process_image.as_deref(),
+                &image_loaded,
+                hashes.as_deref(),
+                fields.as_ref(),
+            )
         };
         Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }

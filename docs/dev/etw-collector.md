@@ -696,6 +696,27 @@ is only the new **leaf**, and the mapper joins it onto the old parent before
 abbreviating. Measured with `ntdll!NtRenameKey` (the only way to trigger it):
 `HKU\…\Software\sigmacatch-ren-src` → `HKU\…\Software\sigmacatch-ren-dst`.
 
+## Hashes and Authenticode on the image events
+
+`Hashes` on 1/6/7/15/29 is `SHA1=…,SHA256=…,MD5=…,IMPHASH=…`, computed in user
+mode: the kernel never reads file content. The IMPHASH follows FireEye's
+`pefile` algorithm (lowercased DLL name without `.dll`/`.ocx`/`.sys`, then each
+imported function, joined and MD5'd) — `inputs/pe_format.rs` implements it as a
+pure, bounds-checked reader, and it was cross-checked against an independent
+Python implementation on `cmd.exe`: 287 import pairs, same digest
+(`010b165e4c37f484601d3dbd700c9423`). Ordinals of `ws2_32.dll`/`oleaut32.dll`
+are hashed as `ord<NN>` where `pefile` resolves a name, the only divergence.
+
+`Signed`/`SignatureStatus` on 6/7 come from `WinVerifyTrust`. **A single call is
+not enough**: most Windows binaries carry no embedded signature and are signed
+through a security catalog, so `cmd.exe` came back "unsigned" — measured: 41
+false negatives out of 247 image loads. The catalog pass
+(`CryptCATAdminCalcHashFromFileHandle2` → `CryptCATAdminEnumCatalogFromHash` →
+`WTD_CHOICE_CATALOG`) fixed it: 527 valid, 16 unsigned, and the 16 are the
+`.ni.dll` native images .NET generates locally. `Signature` (the signer name)
+still comes from the embedded certificate only, so it is absent for
+catalog-signed images.
+
 ## File open for write (EID 509)
 
 The EDR comparison matrix has a "File Opened" category Sysmon does not cover.

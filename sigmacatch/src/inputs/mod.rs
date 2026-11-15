@@ -36,7 +36,12 @@ pub mod etw_sysmon;
 #[path = "../windows/nt_file.rs"]
 pub mod nt_file;
 #[cfg(any(feature = "etw", test))]
+pub mod pe_format;
+#[cfg(any(feature = "etw", test))]
 pub mod registry_format;
+#[cfg(all(target_os = "windows", feature = "etw"))]
+#[path = "../windows/signature.rs"]
+pub mod signature;
 #[cfg(any(feature = "etw", test))]
 pub mod wmi_format;
 // Kernel-sensor client (feature `driver`, implies `etw`).
