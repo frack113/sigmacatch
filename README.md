@@ -42,4 +42,6 @@ Report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
 
 MIT.
 
-Version history in [CHANGELOG.md](CHANGELOG.md).
+## Version history
+
+See [CHANGELOG.md](CHANGELOG.md).
