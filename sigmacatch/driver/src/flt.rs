@@ -286,7 +286,7 @@ unsafe extern "C" {
 const FLT_REGISTRATION_VERSION: u16 = 0x0203;
 /// `FLTFL_REGISTRATION_SUPPORT_NPFS_MSFS`: fltmgr only attaches the filter to
 /// the named-pipe and mailslot volumes when this is set.
-const SUPPORT_NPFS_MSFS: u32 = 0x0004;
+const SUPPORT_NPFS_MSFS: u32 = 0x0002;
 /// `FLTFL_OPERATION_REGISTRATION_SKIP_PAGING_IO`.
 const SKIP_PAGING_IO: u32 = 0x0001;
 /// `FLTFL_OPERATION_REGISTRATION_SKIP_CACHED_IO`: a raw volume read never
