@@ -43,9 +43,12 @@ Blocked / remaining:
   bind it), `IRP_MJ_CREATE` post-op → EID 11 with the normalized NT path.
   Installed with `sc create` plus the `Instances`/`DefaultInstance` registry
   keys (altitude 380000).
-- **D2b.2b — the other file kinds** (next): rename (503), truncate (506),
-  delete (23), chmod/chown (504/505), reusing the same registration and the
-  `FLT_PARAMETERS` members already declared.
+- **D2b.2b — the other file kinds** (done): rename (503), delete (23),
+  truncate (506), ACL (504) and owner (505). Renames and deletes are reported
+  from the `IRP_MJ_SET_INFORMATION` pre-op (the name is only reliable there),
+  truncate from the post-op, and the security changes from
+  `IRP_MJ_SET_SECURITY`. Validated in the VM against `Move-Item`,
+  `Remove-Item`, `icacls /deny`, `takeown /f` and `File.SetLength`.
 - **EID 9 (raw access), 17/18 (pipes)**: no public user-mode or documented
   kernel hook; documented as gaps.
 

@@ -460,8 +460,49 @@ path, e.g.
 `TargetFilename=\Device\HarddiskVolume3\Users\...\probe11k.out`, the
 requestor pid, and the image from the pid cache.
 
-Remaining kinds (rename/truncate/delete/security) reuse the same registration
-and the `FLT_PARAMETERS.SetFileInformation`/`SetSecurity` members already
-declared in the FFI.
+**D2b.2b — rename, delete, truncate, ACL and owner (EID 503/23/506/504/505)**
+is validated. The same registration grows `IRP_MJ_SET_INFORMATION` and
+`IRP_MJ_SET_SECURITY`; the parameter block is the `SetFileInformation` /
+`SetSecurity` member of the `FLT_PARAMETERS` union.
 
-Next: the remaining file kinds (2/23/503/504/505/506).
+Two more bugs, both found in the VM:
+
+- **`FileInformationClass` is declared `POINTER_ALIGNMENT`** in
+  `fltkernel.h` (8-byte aligned on x64), so the field sits at offset 8 with
+  four bytes of padding in front of it. Transcribing the struct field by field
+  put it at offset 4 and every `IRP_MJ_SET_INFORMATION` read the padding:
+  class 0, no event. The struct now carries the explicit padding.
+- **`FltGetDestinationFileNameInformation` takes seven parameters starting
+  with `PFLT_INSTANCE`.** The FFI declared eight with `Data` first, so the
+  call faulted with `0x3B` / `0xC0000005`.
+
+Renames and deletes are reported from the **pre-op**, not the post-op: the
+destination name (`FILE_RENAME_INFORMATION`) is consumed by the file system
+and the file object already carries the new name afterwards, while a
+disposition marks the file for deletion before the post-op runs. The pre-op
+handles `FileRenameInformation` (10) and `FileRenameInformationEx` (65),
+`FileDispositionInformation` (13) and `FileDispositionInformationEx` (64); the
+post-op keeps `FileEndOfFileInformation` (20) and is the only place that
+reports successful truncation. ACL and owner changes come from
+`IRP_MJ_SET_SECURITY`, whose `SECURITY_INFORMATION` is a plain `ULONG` at
+offset 0 — no `POINTER_ALIGNMENT` — which is why 504/505 worked before the
+`SetFileInformation` fix.
+
+Measured in the VM (8-second probe, one script):
+
+| Operation | EID | EventData |
+| --- | --- | --- |
+| `Set-Content b2h1.txt` | 11 | `TargetFilename` = NT path |
+| `Remove-Item b2h1.txt` | 23 | `TargetFilename` = NT path |
+| `Move-Item b2h2.txt b2h3.txt` | 503 | `SourceFilename` → `TargetFilename` |
+| `icacls /deny` | 504 | `TargetFilename` |
+| `takeown /f` | 505 | `TargetFilename` |
+| `File.Open().SetLength(1)` | 506 | `TargetFilename`, `Size` |
+
+Each event carries the requestor pid and, from the pid cache, the requesting
+image (`Image`). Category mapping already covers 23/503/504/505/506, so
+`file_delete`, `file_rename`, `file_chmod`, `file_chown` and `file_truncate`
+rules are selected for them.
+
+Next: EID 2 (file create time) needs `IRP_MJ_SET_INFORMATION` with
+`FileBasicInformation` (4), and EID 9/17 have no public hook.
