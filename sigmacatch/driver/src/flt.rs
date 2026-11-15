@@ -65,7 +65,11 @@ union FltParameters {
 #[allow(dead_code)]
 struct FltSetInformationParameters {
     length: u32,
+    /// `FileInformationClass` is declared `POINTER_ALIGNMENT` in
+    /// `fltkernel.h`: 8-byte aligned, so it sits at offset 8 on x64.
+    _alignment: u32,
     file_information_class: u32,
+    _padding: u32,
     parent_of_target: *mut core::ffi::c_void,
     /// Overlaps `ReplaceIfExists`/`ClusterCount`/`DeleteHandle`.
     replace: [u8; 8],
@@ -359,11 +363,6 @@ unsafe fn push_named(data: *mut FltCallbackData, kind: u32, detail: u32) {
     let mut information: *mut FltFileNameInformation = core::ptr::null_mut();
     // SAFETY: fltmgr allocates the name information; released below.
     if unsafe { FltGetFileNameInformation(data, NAME_FLAGS, &mut information) } != STATUS_SUCCESS {
-        let mut event = SensorEvent::empty();
-        event.version = SIGMACATCH_PROTOCOL_VERSION;
-        event.kind = kind::FILE_CREATE;
-        event.detail = 0x3000 | (kind & 0x0FFF);
-        unsafe { ring_push(&event) };
         return;
     }
     // SAFETY: `information` is live until the release below.
@@ -407,17 +406,6 @@ unsafe extern "C" fn post_set_information(
     // SAFETY: the SetFileInformation member is the active union member for
     // this major function.
     let parameters = unsafe { &iopb.parameters.set_file_information };
-    {
-        // Diagnostic: prove the post-op runs and see which class arrives.
-        let mut event = SensorEvent::empty();
-        event.version = SIGMACATCH_PROTOCOL_VERSION;
-        event.kind = kind::FILE_CREATE;
-        event.detail = 0x1000 | (parameters.file_information_class & 0x0FFF);
-        if unsafe { callback.io_status.__bindgen_anon_1.Status } < 0 {
-            event.detail |= 0x2000;
-        }
-        unsafe { ring_push(&event) };
-    }
     match parameters.file_information_class {
         FILE_RENAME_INFORMATION_CLASS => {
             // SAFETY: the buffer holds a FILE_RENAME_INFORMATION for this class.
