@@ -592,7 +592,7 @@ and only costs `Details`.
 
 Measured in the VM (`reg add` SZ/DWORD/BINARY, `reg delete /v`, `reg delete /f`):
 
-```
+```text
 12 CreateKey    HKU\S-1-5-…\Software\sigmacatch-probe
 13 SetValue     …\sigmacatch-probe\test   Details: hello world
 13 SetValue     …\sigmacatch-probe\num    Details: DWORD (0x0000002A)
