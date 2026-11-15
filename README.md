@@ -30,7 +30,14 @@ rules, and writes regression data ready for SigmaHQ pull requests.
   behind the Windows coverage comparison.
 - [Archify](https://github.com/tt-a1i/archify) — the interactive diagrams.
 
-## Contributing, security and license
+## Contributing
 
-[CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md) · MIT ·
-version history in [CHANGELOG.md](CHANGELOG.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Security
+
+Report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
+
+## License
+
+MIT. Version history in [CHANGELOG.md](CHANGELOG.md).
