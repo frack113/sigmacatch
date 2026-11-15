@@ -116,6 +116,12 @@ struct FileEndOfFileInformation {
     end_of_file: i64,
 }
 
+/// `FILE_DISPOSITION_INFORMATION_EX`.
+#[repr(C)]
+struct FileDispositionInformationEx {
+    flags: u32,
+}
+
 /// `FILE_DISPOSITION_INFORMATION`.
 #[repr(C)]
 struct FileDispositionInformation {
@@ -228,6 +234,10 @@ const IRP_MJ_SET_SECURITY: u8 = 21;
 const FILE_RENAME_INFORMATION_CLASS: u32 = 10;
 const FILE_DISPOSITION_INFORMATION_CLASS: u32 = 13;
 const FILE_END_OF_FILE_INFORMATION_CLASS: u32 = 20;
+const FILE_DISPOSITION_INFORMATION_EX_CLASS: u32 = 64;
+const FILE_RENAME_INFORMATION_EX_CLASS: u32 = 65;
+/// `FILE_DISPOSITION_INFORMATION_EX.Flags` bit that requests the delete.
+const FILE_DISPOSITION_DELETE: u32 = 0x1;
 /// `SECURITY_INFORMATION` bits.
 const OWNER_SECURITY_INFORMATION: u32 = 0x1;
 const DACL_SECURITY_INFORMATION: u32 = 0x4;
@@ -348,12 +358,14 @@ unsafe extern "C" fn pre_create(
     PREOP_SUCCESS_WITH_CALLBACK
 }
 
-/// `IRP_MJ_SET_INFORMATION` pre-op: report renames (EID 503).
+/// `IRP_MJ_SET_INFORMATION` pre-op: report renames (EID 503) and deletes
+/// (EID 23).
 ///
-/// A rename has to be reported here rather than in the post-op: the buffered
+/// Both have to be reported here rather than in the post-op: the buffered
 /// destination name (`FILE_RENAME_INFORMATION`) is consumed by the file
-/// system, and the file object already carries the new name once the rename
-/// completed.
+/// system, the file object already carries the new name once the rename
+/// completed, and a disposition marks the file for deletion before the
+/// post-op runs.
 unsafe extern "C" fn pre_set_information(
     data: *mut FltCallbackData,
     _flt_objects: *mut core::ffi::c_void,
@@ -369,10 +381,31 @@ unsafe extern "C" fn pre_set_information(
     };
     // SAFETY: the SetFileInformation member is the active union member here.
     let parameters = unsafe { &iopb.parameters.set_file_information };
-    if parameters.file_information_class != FILE_RENAME_INFORMATION_CLASS {
-        return PREOP_SUCCESS_WITH_CALLBACK;
+    match parameters.file_information_class {
+        FILE_DISPOSITION_INFORMATION_CLASS => {
+            // SAFETY: the buffer holds a FILE_DISPOSITION_INFORMATION.
+            let disposition = parameters.info_buffer.cast::<FileDispositionInformation>();
+            if !disposition.is_null() && unsafe { (*disposition).delete_file } != 0 {
+                unsafe { push_named(data, kind::FILE_DELETE, 0) };
+            }
+            return PREOP_SUCCESS_WITH_CALLBACK;
+        }
+        FILE_DISPOSITION_INFORMATION_EX_CLASS => {
+            // SAFETY: the buffer holds a FILE_DISPOSITION_INFORMATION_EX.
+            let disposition = parameters
+                .info_buffer
+                .cast::<FileDispositionInformationEx>();
+            if !disposition.is_null()
+                && unsafe { (*disposition).flags } & FILE_DISPOSITION_DELETE != 0
+            {
+                unsafe { push_named(data, kind::FILE_DELETE, 0) };
+            }
+            return PREOP_SUCCESS_WITH_CALLBACK;
+        }
+        FILE_RENAME_INFORMATION_CLASS | FILE_RENAME_INFORMATION_EX_CLASS => {}
+        _ => return PREOP_SUCCESS_WITH_CALLBACK,
     }
-    // SAFETY: the buffer holds a FILE_RENAME_INFORMATION for this class.
+    // SAFETY: the buffer holds a FILE_RENAME_INFORMATION for these classes.
     let rename = parameters.info_buffer.cast::<FileRenameInformation>();
     if rename.is_null() {
         return PREOP_SUCCESS_WITH_CALLBACK;
@@ -462,8 +495,11 @@ unsafe fn push_named(data: *mut FltCallbackData, kind: u32, detail: u32) {
     }
 }
 
-/// `IRP_MJ_SET_INFORMATION` post-op: truncate (506) and delete (23).
-/// Renames are reported from the pre-op, see [`pre_set_information`].
+/// `IRP_MJ_SET_INFORMATION` post-op: truncate (506).
+///
+/// Renames and deletes are reported from the pre-op, see
+/// [`pre_set_information`]: there the file object still carries the name. This
+/// post-op only runs for the classes that survive the pre-op.
 unsafe extern "C" fn post_set_information(
     data: *mut FltCallbackData,
     _flt_objects: *mut core::ffi::c_void,
@@ -493,14 +529,6 @@ unsafe extern "C" fn post_set_information(
             }
             let size = unsafe { (*truncate).end_of_file };
             unsafe { push_named(data, kind::FILE_TRUNCATE, size as u32) };
-        }
-        FILE_DISPOSITION_INFORMATION_CLASS => {
-            // SAFETY: the buffer holds a FILE_DISPOSITION_INFORMATION.
-            let disposition = parameters.info_buffer.cast::<FileDispositionInformation>();
-            if disposition.is_null() || unsafe { (*disposition).delete_file } == 0 {
-                return POSTOP_FINISHED;
-            }
-            unsafe { push_named(data, kind::FILE_DELETE, 0) };
         }
         _ => {}
     }
