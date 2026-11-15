@@ -328,6 +328,43 @@ fn integrity_name(sid: &str) -> Option<String> {
     )
 }
 
+/// Process id → image path, shared by the producers running at the same time.
+///
+/// The kernel sensor learns a path at process *start* — before the process can
+/// write a registry value or open a connection — while the ETW mappers only
+/// have a pid in the record. Sharing the map keeps `Image` present on those
+/// events for short-lived writers (a one-shot `reg.exe` has already exited by
+/// the time its registry record is delivered).
+#[derive(Clone, Default)]
+pub struct ImageCache(std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u32, String>>>);
+
+impl ImageCache {
+    /// Create an empty cache.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record the image of `pid`.
+    pub fn insert(&self, pid: u32, image: &str) {
+        if pid <= 4 || image.is_empty() {
+            return;
+        }
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(pid, image.to_string());
+    }
+
+    /// Image last recorded for `pid`.
+    pub fn get(&self, pid: u32) -> Option<String> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&pid)
+            .cloned()
+    }
+}
+
 /// Tracks the processes seen during a capture.
 ///
 /// A process is reported once, the first time its pid appears *and* its

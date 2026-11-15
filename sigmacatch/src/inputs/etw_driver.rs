@@ -23,7 +23,7 @@ use windows::Win32::System::IO::DeviceIoControl;
 use windows::core::PCWSTR;
 
 use crate::inputs::etw_event::filetime_to_utc;
-use crate::inputs::etw_process::{ProcessFacts, enrich};
+use crate::inputs::etw_process::{ImageCache, ProcessFacts, enrich};
 use crate::inputs::etw_sysmon::{
     driver_load_xml, event_xml, file_create_xml, image_load_xml, process_access_xml,
     process_start_xml, process_terminate_xml, sysmon_utc,
@@ -143,6 +143,8 @@ impl Drop for Device {
 pub struct Mapper {
     computer: String,
     cache: HashMap<u32, ProcessFacts>,
+    /// Image paths shared with the other producers (see [`ImageCache`]).
+    images: ImageCache,
 }
 
 impl Default for Mapper {
@@ -154,10 +156,16 @@ impl Default for Mapper {
 impl Mapper {
     /// Create a mapper that reports for this host.
     pub fn new() -> Self {
+        Self::with_images(ImageCache::new())
+    }
+
+    /// Create a mapper that publishes its pid → image map to `images`.
+    pub fn with_images(images: ImageCache) -> Self {
         let computer = std::env::var("COMPUTERNAME").unwrap_or_default();
         Self {
             computer,
             cache: HashMap::new(),
+            images,
         }
     }
 
@@ -394,6 +402,9 @@ impl Mapper {
             .created
             .or_else(|| filetime_to_utc(event.timestamp as i64));
         let parent = self.cache.get(&facts.parent_pid).cloned();
+        if let Some(image) = facts.image.as_deref() {
+            self.images.insert(event.pid, image);
+        }
         self.cache.insert(event.pid, facts.clone());
         let xml = process_start_xml(&self.computer, &facts, parent.as_ref());
         Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
@@ -441,18 +452,21 @@ pub fn is_available() -> bool {
 }
 
 /// Async producer draining the kernel sensor into detection events.
-pub struct EventCollector;
+pub struct EventCollector {
+    /// Image paths published to the other producers (see [`ImageCache`]).
+    images: ImageCache,
+}
 
 impl EventCollector {
-    /// Create the producer.
-    pub fn new() -> Self {
-        Self
+    /// Create the producer, sharing `images` with the ETW mappers.
+    pub fn new(images: ImageCache) -> Self {
+        Self { images }
     }
 }
 
 impl Default for EventCollector {
     fn default() -> Self {
-        Self::new()
+        Self::new(ImageCache::new())
     }
 }
 
@@ -476,7 +490,7 @@ impl crate::types::EventProducer for EventCollector {
             return Ok(());
         }
 
-        let mut mapper = Mapper::new();
+        let mut mapper = Mapper::with_images(self.images.clone());
         let mut events = Vec::new();
         loop {
             if *stop.borrow() {

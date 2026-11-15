@@ -92,14 +92,20 @@ impl EventProducer for MultiCollector {
             });
         }
 
+        // One pid → image map for the whole run: the kernel sensor fills it at
+        // process start, the ETW mappers read it for the events that only
+        // carry a pid.
+        #[cfg(feature = "etw")]
+        let images = crate::inputs::etw_process::ImageCache::new();
         let use_driver = driver_available();
         if use_driver {
             #[cfg(feature = "driver")]
             {
                 let tx = tx.clone();
                 let stop = stop.clone();
+                let images = images.clone();
                 tasks.spawn(async move {
-                    Box::new(crate::inputs::etw_driver::EventCollector::new())
+                    Box::new(crate::inputs::etw_driver::EventCollector::new(images))
                         .run(tx, stop)
                         .await
                 });
@@ -110,8 +116,9 @@ impl EventProducer for MultiCollector {
             {
                 let tx = tx.clone();
                 let stop = stop.clone();
+                let images = images.clone();
                 tasks.spawn(async move {
-                    Box::new(crate::inputs::etw::EventCollector::main_only())
+                    Box::new(crate::inputs::etw::EventCollector::main_only(images))
                         .run(tx, stop)
                         .await
                 });
@@ -121,8 +128,9 @@ impl EventProducer for MultiCollector {
             {
                 let tx = tx.clone();
                 let stop = stop.clone();
+                let images = images.clone();
                 tasks.spawn(async move {
-                    Box::new(crate::inputs::etw::EventCollector::new())
+                    Box::new(crate::inputs::etw::EventCollector::new(images))
                         .run(tx, stop)
                         .await
                 });

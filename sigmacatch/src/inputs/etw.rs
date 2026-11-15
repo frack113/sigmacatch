@@ -794,6 +794,8 @@ pub struct MainRouter {
     dns: std::sync::Mutex<std::collections::HashMap<(u32, String), String>>,
     /// Key-handle → path cache for the registry events.
     registry: std::sync::Mutex<crate::inputs::etw_registry::RegistryMapper>,
+    /// Image paths the kernel sensor published at process start.
+    images: crate::inputs::etw_process::ImageCache,
 }
 
 impl MainRouter {
@@ -802,12 +804,14 @@ impl MainRouter {
     pub fn new(
         computer: String,
         tracker: std::sync::Arc<std::sync::Mutex<crate::inputs::etw_process::ProcessTracker>>,
+        images: crate::inputs::etw_process::ImageCache,
     ) -> Self {
         Self {
             computer,
             tracker,
             dns: std::sync::Mutex::new(std::collections::HashMap::new()),
             registry: std::sync::Mutex::new(crate::inputs::etw_registry::RegistryMapper::new()),
+            images,
         }
     }
 
@@ -835,12 +839,22 @@ impl MainRouter {
         }
     }
 
-    /// Image path for a pid, enriching it once when it is not cached.
+    /// Image path for a pid.
+    ///
+    /// The kernel sensor's map wins: it learned the path at process start, so
+    /// it still answers for a process that has already exited. Otherwise the
+    /// live process is enriched once and the answer published to the cache.
     fn image_of(&self, pid: u32) -> Option<String> {
-        self.tracker
+        if let Some(image) = self.images.get(pid) {
+            return Some(image);
+        }
+        let image = self
+            .tracker
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .image_of(pid)
+            .image_of(pid)?;
+        self.images.insert(pid, &image);
+        Some(image)
     }
 
     /// `Microsoft-Windows-Kernel-Network` connect/send → EID 3.
@@ -1026,26 +1040,34 @@ pub struct EventCollector {
     /// Whether this instance also runs the process session (the fallback when
     /// the kernel sensor is absent).
     process: bool,
+    /// Image paths shared with the kernel sensor.
+    images: crate::inputs::etw_process::ImageCache,
 }
 
 impl EventCollector {
     /// Create the producer that owns both sessions.
-    pub fn new() -> Self {
-        Self { process: true }
+    pub fn new(images: crate::inputs::etw_process::ImageCache) -> Self {
+        Self {
+            process: true,
+            images,
+        }
     }
 
     /// Create the producer for the main session only.
     ///
     /// The driver owns process telemetry when it is loaded, so starting the
     /// process session too would report every process twice.
-    pub fn main_only() -> Self {
-        Self { process: false }
+    pub fn main_only(images: crate::inputs::etw_process::ImageCache) -> Self {
+        Self {
+            process: false,
+            images,
+        }
     }
 }
 
 impl Default for EventCollector {
     fn default() -> Self {
-        Self::new()
+        Self::new(crate::inputs::etw_process::ImageCache::new())
     }
 }
 
@@ -1086,7 +1108,11 @@ impl crate::types::EventProducer for EventCollector {
         let computer = std::env::var("COMPUTERNAME").unwrap_or_default();
         let halt = Arc::new(AtomicBool::new(false));
 
-        let router = std::sync::Arc::new(MainRouter::new(computer.clone(), Arc::clone(&tracker)));
+        let router = std::sync::Arc::new(MainRouter::new(
+            computer.clone(),
+            Arc::clone(&tracker),
+            self.images.clone(),
+        ));
 
         let sink: Sink = {
             let tx = tx.clone();
