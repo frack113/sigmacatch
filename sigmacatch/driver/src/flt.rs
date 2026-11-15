@@ -295,6 +295,13 @@ unsafe extern "C" fn post_create(
     _context: *mut core::ffi::c_void,
     _flags: u32,
 ) -> i32 {
+    {
+        let mut event = SensorEvent::empty();
+        event.version = SIGMACATCH_PROTOCOL_VERSION;
+        event.kind = kind::FILE_CREATE;
+        event.detail = 0xCAFE;
+        unsafe { ring_push(&event) };
+    }
     // SAFETY: `data` is valid for the callback's duration.
     let Some(callback) = (unsafe { data.as_ref() }) else {
         return POSTOP_FINISHED;
@@ -305,12 +312,22 @@ unsafe extern "C" fn post_create(
         return POSTOP_FINISHED;
     }
     if callback.io_status.Information != u64::from(FILE_CREATED) {
+        let mut event = SensorEvent::empty();
+        event.version = SIGMACATCH_PROTOCOL_VERSION;
+        event.kind = kind::FILE_CREATE;
+        event.detail = 0xF00D + callback.io_status.Information as u32;
+        unsafe { ring_push(&event) };
         return POSTOP_FINISHED;
     }
 
     let mut information: *mut FltFileNameInformation = core::ptr::null_mut();
     // SAFETY: fltmgr allocates the name information; released below.
     if unsafe { FltGetFileNameInformation(data, NAME_FLAGS, &mut information) } != STATUS_SUCCESS {
+        let mut event = SensorEvent::empty();
+        event.version = SIGMACATCH_PROTOCOL_VERSION;
+        event.kind = kind::FILE_CREATE;
+        event.detail = 0xDEAD;
+        unsafe { ring_push(&event) };
         return POSTOP_FINISHED;
     }
     // SAFETY: `information` is live until the release below.
