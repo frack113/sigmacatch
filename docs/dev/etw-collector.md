@@ -660,9 +660,16 @@ Measured: `CreateRemoteThread` from PowerShell into a `cmd.exe` that had been up
 for 5 s produced exactly one EID 8 (`SourceImage` powershell, `TargetImage`
 cmd.exe, `NewThreadId`).
 
-Remaining gaps: EID 14 (rename key) needs the kernel registry callback
-(`RegNtRenameKey`) — the ETW provider has no rename record; EID 25 (process
-tampering) needs per-process main-image tracking and would be noisy without it;
+**EID 14 (rename key)** has no ETW source at all: `Kernel-Registry` publishes no
+rename record, and Windows exposes no user-mode rename API. It comes from the
+driver's `CmRegisterCallbackEx` (`RegNtPreRenameKey`): the old path is the full
+name returned by `CmCallbackGetKeyObjectIDEx`, `REG_RENAME_KEY_INFORMATION.NewName`
+is only the new **leaf**, and the mapper joins it onto the old parent before
+abbreviating. Measured with `ntdll!NtRenameKey` (the only way to trigger it):
+`HKU\…\Software\sigmacatch-ren-src` → `HKU\…\Software\sigmacatch-ren-dst`.
+
+Remaining gaps: EID 25 (process tampering) needs per-process main-image
+tracking and would be noisy without it;
 EID 24 (clipboard) has no public provider; EID 508 has no distinct Windows
 source (3008 is already EID 22, and its `QueryStatus` is a Win32 error where the
 Linux extension carries the DNS RCODE); EID 26-29 are Sysmon's own blocking

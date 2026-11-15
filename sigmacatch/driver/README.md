@@ -56,6 +56,9 @@ Blocked / remaining:
   because the post-op may run at DPC), and EID 17 from
   `IRP_MJ_CREATE_NAMED_PIPE` (`0x01`) on the NPFS volume, which fltmgr only
   attaches with `FLTFL_REGISTRATION_SUPPORT_NPFS_MSFS` (`0x2`).
+- **D2e — registry rename** (done): EID 14 from `CmRegisterCallbackEx`
+  (`RegNtPreRenameKey`); the old path comes from
+  `CmCallbackGetKeyObjectIDEx`, the new name is the leaf the callback carries.
 - **D2d — pipes, streams, remote threads** (done): EID 18 from a client create
   on the NPFS volume, EID 15 from a create whose name carries a `:stream` (the
   parsed `stream` member is empty for normalized names, so the driver scans the

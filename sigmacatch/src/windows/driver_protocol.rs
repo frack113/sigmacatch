@@ -71,6 +71,9 @@ pub mod kind {
     /// Remote thread created (EID 8): `pid` = source process, `parent_pid` =
     /// target process, `detail` = new thread id.
     pub const PROCESS_REMOTE_THREAD: u32 = 16;
+    /// Registry key renamed (EID 14): `primary` = old path, `secondary` = the
+    /// new leaf name.
+    pub const REGISTRY_RENAME: u32 = 17;
 }
 
 /// One event record, as the driver observed it.

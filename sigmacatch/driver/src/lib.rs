@@ -26,7 +26,8 @@ extern crate wdk_panic;
 use wdk::println;
 use wdk_sys::_OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS;
 use wdk_sys::ntddk::{
-    ObRegisterCallbacks, ObUnRegisterCallbacks, PsGetCurrentProcessId,
+    CmCallbackGetKeyObjectIDEx, CmCallbackReleaseKeyObjectIDEx, CmRegisterCallbackEx,
+    CmUnRegisterCallback, ObRegisterCallbacks, ObUnRegisterCallbacks, PsGetCurrentProcessId,
     PsGetProcessCreateTimeQuadPart, PsGetProcessId, PsLookupProcessByProcessId,
     PsRemoveCreateThreadNotifyRoutine, PsRemoveLoadImageNotifyRoutine,
     PsSetCreateProcessNotifyRoutineEx, PsSetCreateThreadNotifyRoutine, PsSetLoadImageNotifyRoutine,
@@ -421,6 +422,80 @@ unsafe extern "C" fn thread_notify(process_id: HANDLE, thread_id: HANDLE, create
     unsafe { ring_push(&event) };
 }
 
+/// The WDM driver object, kept for `CmRegisterCallbackEx` (which runs from the
+/// device-add callback, where `DriverEntry`'s argument is out of scope).
+static mut WDM_DRIVER: *mut wdk_sys::DRIVER_OBJECT = core::ptr::null_mut();
+
+/// `CmRegisterCallbackEx` cookie, released on unload.
+static mut REGISTRY_COOKIE: wdk_sys::LARGE_INTEGER = wdk_sys::LARGE_INTEGER { QuadPart: 0 };
+/// Guard so the registry callback is registered once.
+static mut REGISTRY_REGISTERED: bool = false;
+
+/// Registry altitude, between the file-system filters and the WDK samples.
+const REGISTRY_ALTITUDE: &[u16] = &[
+    b'3' as u16,
+    b'8' as u16,
+    b'5' as u16,
+    b'2' as u16,
+    b'0' as u16,
+    b'0' as u16,
+];
+
+/// `CmRegisterCallbackEx` callback: registry key renames (EID 14).
+///
+/// The ETW provider has no rename record, so this is the only source. The old
+/// path comes from `CmCallbackGetKeyObjectIDEx`, which returns the full key
+/// name; `REG_RENAME_KEY_INFORMATION.NewName` is the new *leaf*, which the
+/// mapper joins back onto the old parent.
+unsafe extern "C" fn registry_notify(
+    _context: PVOID,
+    argument1: PVOID,
+    argument2: PVOID,
+) -> NTSTATUS {
+    // `RegNtPreRenameKey` — the only class this callback acts on.
+    if argument1 as usize as i32 != 4 || argument2.is_null() {
+        return STATUS_SUCCESS;
+    }
+    // SAFETY: `argument2` is a REG_RENAME_KEY_INFORMATION for this class.
+    let Some(info) =
+        (unsafe { (argument2 as *const wdk_sys::_REG_RENAME_KEY_INFORMATION).as_ref() })
+    else {
+        return STATUS_SUCCESS;
+    };
+    let mut object_id: u64 = 0;
+    let mut name: PCUNICODE_STRING = core::ptr::null();
+    // SAFETY: the cookie is ours and `info.Object` is the key being renamed.
+    let status = unsafe {
+        CmCallbackGetKeyObjectIDEx(
+            &raw mut REGISTRY_COOKIE,
+            info.Object,
+            &raw mut object_id,
+            &raw mut name,
+            0,
+        )
+    };
+    if status != STATUS_SUCCESS || name.is_null() {
+        return STATUS_SUCCESS;
+    }
+    // SAFETY: `name` was filled by the call above and released below.
+    unsafe {
+        if let Some(old) = name.as_ref() {
+            let mut event = SensorEvent::empty();
+            event.version = SIGMACATCH_PROTOCOL_VERSION;
+            event.kind = kind::REGISTRY_RENAME;
+            event.pid = PsGetCurrentProcessId() as usize as u32;
+            copy_wide(old, &mut event.primary, &mut event.primary_length);
+            // `NewName` is a pointer in the callback's structure.
+            if let Some(new_name) = info.NewName.as_ref() {
+                copy_wide(new_name, &mut event.secondary, &mut event.secondary_length);
+            }
+            ring_push(&event);
+        }
+        CmCallbackReleaseKeyObjectIDEx(name);
+    }
+    STATUS_SUCCESS
+}
+
 /// Register the process-access object callbacks.
 fn register_ob_callbacks() -> NTSTATUS {
     let mut operation = OB_OPERATION_REGISTRATION {
@@ -455,6 +530,8 @@ extern "system" fn driver_entry(
     driver: &mut wdk_sys::DRIVER_OBJECT,
     registry_path: PCUNICODE_STRING,
 ) -> NTSTATUS {
+    // SAFETY: written once, before the device-add callback can read it.
+    unsafe { WDM_DRIVER = driver as *mut wdk_sys::DRIVER_OBJECT };
     let mut config = WDF_DRIVER_CONFIG {
         Size: core::mem::size_of::<WDF_DRIVER_CONFIG>() as u32,
         EvtDriverUnload: Some(evt_driver_unload),
@@ -518,6 +595,10 @@ unsafe extern "C" fn evt_driver_unload(_driver: WDFDRIVER) {
         if THREAD_NOTIFY_REGISTERED {
             let _ = PsRemoveCreateThreadNotifyRoutine(Some(thread_notify));
             THREAD_NOTIFY_REGISTERED = false;
+        }
+        if REGISTRY_REGISTERED {
+            let _ = CmUnRegisterCallback(REGISTRY_COOKIE);
+            REGISTRY_REGISTERED = false;
         }
         if OB_REGISTERED {
             ObUnRegisterCallbacks(OB_REGISTRATION_HANDLE);
@@ -622,6 +703,27 @@ fn create_device(mut device_init: PWDFDEVICE_INIT) -> NTSTATUS {
                 return result;
             }
             NOTIFY_REGISTERED = true;
+        }
+
+        if !REGISTRY_REGISTERED {
+            let altitude = UNICODE_STRING {
+                Length: (REGISTRY_ALTITUDE.len() * 2) as u16,
+                MaximumLength: (REGISTRY_ALTITUDE.len() * 2) as u16,
+                Buffer: REGISTRY_ALTITUDE.as_ptr().cast_mut(),
+            };
+            let status = CmRegisterCallbackEx(
+                Some(registry_notify),
+                &raw const altitude,
+                WDM_DRIVER as *mut core::ffi::c_void,
+                core::ptr::null_mut(),
+                &raw mut REGISTRY_COOKIE,
+                core::ptr::null_mut(),
+            );
+            if status != STATUS_SUCCESS {
+                println!("sigmacatch: CmRegisterCallbackEx failed {status:#010X}");
+            } else {
+                REGISTRY_REGISTERED = true;
+            }
         }
 
         if !THREAD_NOTIFY_REGISTERED {

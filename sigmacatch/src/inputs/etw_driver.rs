@@ -188,6 +188,7 @@ impl Mapper {
             kind::PIPE_CONNECT => self.map_pipe(event, 18, Some("connect")),
             kind::FILE_STREAM => self.map_file_stream(event),
             kind::PROCESS_REMOTE_THREAD => self.map_remote_thread(event),
+            kind::REGISTRY_RENAME => self.map_registry_rename(event),
             _ => None,
         }
     }
@@ -333,6 +334,36 @@ impl Mapper {
             event.pid,
             image.as_deref(),
             &fields,
+        );
+        Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+    }
+
+    /// EID 14: a registry key was renamed. The driver reports the old full
+    /// path and the new leaf, which is joined onto the old parent here.
+    fn map_registry_rename(&mut self, event: &SensorEvent) -> Option<Event> {
+        let old = wide(&event.primary, event.primary_length);
+        let leaf = wide(&event.secondary, event.secondary_length);
+        if old.is_empty() || leaf.is_empty() {
+            return None;
+        }
+        let parent = old
+            .rsplit_once('\\')
+            .map_or(old.as_str(), |(parent, _)| parent);
+        let new = format!("{parent}\\{leaf}");
+        let image = self.file_image(event.pid);
+        let old_object = crate::inputs::registry_format::abbreviate(&old);
+        let new_name = crate::inputs::registry_format::abbreviate(&new);
+        let xml = event_xml(
+            &self.computer,
+            14,
+            Self::event_time(event),
+            event.pid,
+            image.as_deref(),
+            &[
+                ("EventType", "RenameKey"),
+                ("TargetObject", &old_object),
+                ("NewName", &new_name),
+            ],
         );
         Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
