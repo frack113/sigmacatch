@@ -958,6 +958,17 @@ impl MainRouter {
         }
     }
 
+    /// Token user of a pid: the tracker's facts, then the live process.
+    fn user_of(&self, pid: u32) -> Option<String> {
+        let cached = self
+            .tracker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(pid)
+            .and_then(|facts| facts.user.clone());
+        cached.or_else(|| crate::inputs::etw_process::enrich(pid).and_then(|facts| facts.user))
+    }
+
     /// Image path for a pid.
     ///
     /// The kernel sensor's map wins: it learned the path at process start, so
@@ -990,6 +1001,7 @@ impl MainRouter {
         let (source_ip, destination_ip) = (decoded.ip("saddr")?, decoded.ip("daddr")?);
         let (source_port, destination_port) = (decoded.uint("sport")?, decoded.uint("dport")?);
         let image = self.image_of(pid);
+        let user = self.user_of(pid);
         let hostname = self.lookup_hostname(pid, destination_ip);
         let fields = crate::inputs::etw_sysmon::NetworkFields {
             protocol,
@@ -999,6 +1011,7 @@ impl MainRouter {
             destination_ip,
             destination_port: destination_port as u16,
             destination_hostname: hostname.as_deref(),
+            user: user.as_deref(),
         };
         let xml = crate::inputs::etw_sysmon::network_xml(
             &self.computer,
@@ -1020,6 +1033,7 @@ impl MainRouter {
         let pid = decoded.uint("PID")? as u32;
         let (source_ip, source_port) = (decoded.ip("saddr")?, decoded.uint("sport")?);
         let image = self.image_of(pid);
+        let user = self.user_of(pid);
         let zero = if source_ip.contains(':') {
             "::"
         } else {
@@ -1033,6 +1047,7 @@ impl MainRouter {
             destination_ip: zero,
             destination_port: 0,
             destination_hostname: None,
+            user: user.as_deref(),
         };
         let xml = crate::inputs::etw_sysmon::network_xml(
             &self.computer,

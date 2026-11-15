@@ -143,6 +143,13 @@ impl Drop for Device {
 /// from the start only.
 pub const HASH_LIMIT: usize = crate::inputs::nt_file::HASH_LIMIT;
 
+/// Creation time of the file at an NT path, in Sysmon's `UtcTime` spelling.
+fn creation_time(path: &str) -> Option<String> {
+    let ticks = crate::inputs::nt_file::creation_ticks(path)?;
+    let at = crate::inputs::etw_event::filetime_to_utc(ticks)?;
+    Some(sysmon_utc(at))
+}
+
 /// SHA1 of the first [`HASH_LIMIT`] bytes of the file at an NT path, the way
 /// Sysmon spells it (`SHA1=…`), or `None` when it cannot be read.
 fn sha1_of_nt_path(path: &str) -> Option<String> {
@@ -181,6 +188,8 @@ pub struct Mapper {
     hashes: HashMap<String, Option<String>>,
     /// Authenticode facts per image path, for the same reason.
     signatures: HashMap<String, Option<Signature>>,
+    /// Version resource per image path.
+    versions: HashMap<String, Option<crate::inputs::version_info::VersionInfo>>,
     /// Upper bound on both caches before they are cleared.
     cache_limit: usize,
 }
@@ -206,6 +215,7 @@ impl Mapper {
             images,
             hashes: HashMap::new(),
             signatures: HashMap::new(),
+            versions: HashMap::new(),
             cache_limit: 512,
         }
     }
@@ -269,6 +279,29 @@ impl Mapper {
         computed
     }
 
+    /// Version resource of an image path, read once per path.
+    fn image_version(&mut self, image: &str) -> Option<crate::inputs::version_info::VersionInfo> {
+        if let Some(cached) = self.versions.get(image) {
+            return cached.clone();
+        }
+        let computed = crate::inputs::nt_file::dos_path_of_nt(image)
+            .and_then(|dos| crate::inputs::version_info::of_file(&dos));
+        if self.versions.len() >= self.cache_limit {
+            self.versions.clear();
+        }
+        self.versions.insert(image.to_string(), computed.clone());
+        computed
+    }
+
+    /// Token user of a process: cached creation-time facts first, then the
+    /// live process.
+    fn process_user(&self, pid: u32) -> Option<String> {
+        self.cache
+            .get(&pid)
+            .and_then(|facts| facts.user.clone())
+            .or_else(|| enrich(pid).and_then(|facts| facts.user))
+    }
+
     /// Image of the process that issued a file/registry event: the cached
     /// creation-time facts first, then the map the other producers publish,
     /// then the live process. A long-lived shell that predates the capture has
@@ -307,9 +340,18 @@ impl Mapper {
         }
         let image = self.file_image(event.pid);
         let size = event.detail.to_string();
+        // Sysmon reports the hashes of a deleted file; the content is often
+        // still there when the disposition is reported, so this is best
+        // effort — an unreadable file simply leaves the field out.
+        let hashes = (id == 23 || id == 26)
+            .then(|| self.image_hashes(&path))
+            .flatten();
         let mut fields: Vec<(&str, &str)> = vec![("TargetFilename", &path)];
         if with_size {
             fields.push(("Size", &size));
+        }
+        if let Some(hashes) = hashes.as_deref() {
+            fields.push(("Hashes", hashes));
         }
         let xml = event_xml(
             &self.computer,
@@ -523,7 +565,11 @@ impl Mapper {
             return None;
         }
         let image = self.file_image(event.pid);
+        let created = creation_time(&path);
         let mut fields: Vec<(&str, &str)> = vec![("TargetFilename", &path)];
+        if let Some(created) = created.as_deref() {
+            fields.push(("CreationUtcTime", created));
+        }
         let hash = sha1_of_nt_path(&path);
         if let Some(hash) = hash.as_deref() {
             fields.push(("Hash", hash));
@@ -544,16 +590,15 @@ impl Mapper {
         if target.is_empty() {
             return None;
         }
-        let image = self
-            .cache
-            .get(&event.pid)
-            .and_then(|facts| facts.image.as_deref());
+        let image = self.file_image(event.pid);
+        let created = creation_time(&target);
         let xml = file_create_xml(
             &self.computer,
             Self::event_time(event),
             event.pid,
-            image,
+            image.as_deref(),
             &target,
+            created.as_deref(),
         );
         Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
@@ -589,6 +634,8 @@ impl Mapper {
                 name: signature.name.as_deref(),
                 status: signature.status,
             });
+            let version = self.image_version(&image_loaded);
+            let user = self.process_user(event.pid);
             image_load_xml(
                 &self.computer,
                 at,
@@ -597,6 +644,8 @@ impl Mapper {
                 &image_loaded,
                 hashes.as_deref(),
                 fields.as_ref(),
+                version.as_ref(),
+                user.as_deref(),
             )
         };
         Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()

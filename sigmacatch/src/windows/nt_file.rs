@@ -126,6 +126,37 @@ fn read_dos_prefix(dos_path: &str, len: usize) -> Option<Vec<u8>> {
     read_wide(&wide, len)
 }
 
+/// Creation time of the file at an NT path, as FILETIME ticks.
+pub fn creation_ticks(nt_path: &str) -> Option<i64> {
+    let wide: Vec<u16> = format!("{GLOBALROOT}{nt_path}")
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: `wide` is NUL-terminated and valid for the call.
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            FILE_GENERIC_READ.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            Default::default(),
+            None,
+        )
+    }
+    .ok()?;
+    let mut created = windows::Win32::Foundation::FILETIME::default();
+    // SAFETY: `created` is a valid out-pointer for the handle.
+    let read = unsafe {
+        windows::Win32::Storage::FileSystem::GetFileTime(handle, Some(&raw mut created), None, None)
+    };
+    // SAFETY: the handle came from `CreateFileW` exactly once.
+    let _ = unsafe { CloseHandle(handle) };
+    read.ok()?;
+    let ticks = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+    i64::try_from(ticks).ok().filter(|ticks| *ticks > 0)
+}
+
 /// Hash a file the way Sysmon spells `Hashes` (`SHA1=…,SHA256=…,MD5=…`), from
 /// the first bytes only — see `HASH_LIMIT`. `None` when the file cannot be
 /// read, which a caller must treat as "no information", not as an answer.

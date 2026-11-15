@@ -24,19 +24,19 @@ detector for the field predicates (`match_count: 1`).
 |---|---|---|---|---|---|
 | 1 | ProcessCreate | `process_creation` | driver `PsSetCreateProcessNotifyRoutineEx` | ✅ | `ProcessGuid`, `ParentProcessGuid`, version/company fields, `LogonGuid`/`LogonId`, `TerminalSessionId`; `Hashes` is SHA1+SHA256+MD5 of the image |
 | 2 | FileCreateTime | `file_change` | driver `IRP_MJ_SET_INFORMATION`/`FileBasicInformation` | ✅ | `ProcessGuid` |
-| 3 | NetworkConnect | `network_connection` | ETW `Kernel-Network` 12 / 42 | ✅ | `ProcessGuid`, `User`; `DestinationHostname` is filled from the session's own DNS answers |
+| 3 | NetworkConnect | `network_connection` | ETW `Kernel-Network` 12 / 42 | ✅ | `ProcessGuid`; `DestinationHostname` is filled from the session's own DNS answers |
 | 4 | SysmonServiceStateChanged | `sysmon_status` | — | ❌ | nothing to report: it describes Sysmon itself |
 | 5 | ProcessTerminate | `process_termination` | driver process notify (exit path) | ✅ | `ProcessGuid` |
 | 6 | DriverLoad | `driver_load` | driver `PsSetLoadImageNotifyRoutine` (`SystemModeImage`) | ✅ | `Signature` (name) is absent for catalog-signed binaries — see below |
-| 7 | ImageLoad | `image_load` | driver `PsSetLoadImageNotifyRoutine` | ✅ | `ProcessGuid`, version/company fields, `User`; `Signature` absent for catalog-signed binaries |
+| 7 | ImageLoad | `image_load` | driver `PsSetLoadImageNotifyRoutine` | ✅ | `ProcessGuid`; `Signature` absent for catalog-signed binaries |
 | 8 | CreateRemoteThread | `create_remote_thread` | driver `PsSetCreateThreadNotifyRoutine` | ✅ | `SourceProcessGuid`/`TargetProcessGuid`, `StartAddress`, `StartModule`, `StartFunction` (not reachable from the callback) |
 | 9 | RawAccessRead | `raw_access_thread` | driver `IRP_MJ_READ` on an unnamed file object | ✅ | `ProcessGuid` |
 | 10 | ProcessAccess | `process_access` | driver `ObRegisterCallbacks` | ✅ | `SourceProcessGuid`/`TargetProcessGuid`, `SourceThreadId`, `CallTrace` |
-| 11 | FileCreate | `file_event` | driver minifilter `IRP_MJ_CREATE` | ✅ | `ProcessGuid`, `CreationUtcTime` |
+| 11 | FileCreate | `file_event` | driver minifilter `IRP_MJ_CREATE` | ✅ | `ProcessGuid` |
 | 12 | CreateKey / DeleteKey | `registry_event` (`registry_add`) | ETW `Kernel-Registry` 1/2/3 | ✅ | `ProcessGuid` |
 | 13 | SetValue / DeleteValue | `registry_event` (`registry_set`) | ETW `Kernel-Registry` 5/6 | ✅ | `ProcessGuid`; `Details` is the value data (needs the undocumented `CapturedData` request) |
 | 14 | RenameKey | `registry_event` (`registry_rename`) | driver `CmRegisterCallbackEx`/`RegNtPreRenameKey` | ✅ | `ProcessGuid` |
-| 15 | FileCreateStreamHash | `create_stream_hash` | driver minifilter (name carries `:stream`) | ✅ | `CreationUtcTime`, `ProcessGuid`; `Hash` is SHA1 of the first 16 MiB |
+| 15 | FileCreateStreamHash | `create_stream_hash` | driver minifilter (name carries `:stream`) | ✅ | `ProcessGuid`; `Hash` is SHA1 of the first 16 MiB |
 | 16 | ServiceConfigurationChange | `sysmon_status` | — | ❌ | nothing to report: it is Sysmon's own config change |
 | 17 | PipeCreated | `pipe_created` | driver `IRP_MJ_CREATE_NAMED_PIPE` | ✅ | `ProcessGuid` |
 | 18 | PipeConnected | `pipe_created` | driver minifilter create on the NPFS volume | ✅ | `ProcessGuid` |
@@ -77,7 +77,8 @@ match on a sigmacatch host:
 
 - **`ProcessGuid`** — every event carries `ProcessId` and `Image`, never a
   per-process GUID. Pivoting on `ProcessGuid` is impossible; `ProcessId` +
-  `Image` + `UtcTime` is the equivalent.
+  `Image` + `UtcTime` is the equivalent. No rule of the 3807 in SigmaHQ reads
+  the field, so nothing in the corpus depends on it.
 - **`Hashes`** — present on 1, 6, 7, 15 and 29 (SHA1/SHA256/MD5/IMPHASH computed
   in user mode from the file on disk, first 16 MiB); absent on 23, which would
   need the deleted file's content. On 6/7 it is computed once per image path
@@ -88,8 +89,13 @@ match on a sigmacatch host:
   exactly what the "unsigned binary" rules look for). `Signature` (the signer
   display name) is read from the *embedded* signature, so it is present for
   embedded-signed images and absent for catalog-signed ones.
-- **`User` / `LogonId` / `IntegrityLevel`** — present on 1 and 5 only, absent
-  from the file/network/registry events.
+- **`User` / `LogonId` / `IntegrityLevel`** — `User` is present on 1, 3, 5, 7
+  and 500; `LogonId`/`LogonGuid` and `IntegrityLevel` outside EID 1 are absent.
+- **`Hashes` on EID 23** — the file is already delete-pending when the
+  disposition is reported, so it cannot be read; Sysmon hashes from its driver.
+- **Version fields** (`FileVersion`, `Description`, `Product`, `Company`,
+  `OriginalFileName`) come from the PE version resource and are present on
+  EID 7.
 
 ## EDR-Telemetry categories
 

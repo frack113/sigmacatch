@@ -69,6 +69,7 @@ pub fn file_create_xml(
     process_id: u32,
     process_image: Option<&str>,
     target_filename: &str,
+    creation_utc: Option<&str>,
 ) -> String {
     let mut data = String::new();
     field(&mut data, "RuleName", "");
@@ -78,6 +79,9 @@ pub fn file_create_xml(
         field(&mut data, "Image", image);
     }
     field(&mut data, "TargetFilename", target_filename);
+    if let Some(creation) = creation_utc {
+        field(&mut data, "CreationUtcTime", creation);
+    }
     format!(
         "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
          <System>\
@@ -114,6 +118,8 @@ pub struct NetworkFields<'a> {
     pub destination_port: u16,
     /// Resolved name for `DestinationIp`, when a DNS answer was seen for it.
     pub destination_hostname: Option<&'a str>,
+    /// `User` of the process that opened the socket, when it could be read.
+    pub user: Option<&'a str>,
 }
 
 /// Render a Sysmon **EID 3 (NetworkConnect)** or **EID 500 (network
@@ -162,6 +168,9 @@ pub fn network_xml(
         &fields.destination_port.to_string(),
     );
     field(&mut data, "DestinationPortName", "-");
+    if let Some(user) = fields.user {
+        field(&mut data, "User", user);
+    }
     format!(
         "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
          <System>\
@@ -191,6 +200,28 @@ pub struct SignatureFields<'a> {
     pub status: &'a str,
 }
 
+/// Append the version-resource fields, in Sysmon's order.
+fn version_facts(data: &mut String, version: Option<&crate::inputs::version_info::VersionInfo>) {
+    let Some(version) = version else {
+        return;
+    };
+    if let Some(value) = &version.file_version {
+        field(data, "FileVersion", value);
+    }
+    if let Some(value) = &version.description {
+        field(data, "Description", value);
+    }
+    if let Some(value) = &version.product {
+        field(data, "Product", value);
+    }
+    if let Some(value) = &version.company {
+        field(data, "Company", value);
+    }
+    if let Some(value) = &version.original_filename {
+        field(data, "OriginalFileName", value);
+    }
+}
+
 /// Append `Hashes` and the three Authenticode fields, in Sysmon's order.
 fn image_facts(data: &mut String, hashes: Option<&str>, signature: Option<&SignatureFields<'_>>) {
     if let Some(hashes) = hashes {
@@ -218,6 +249,8 @@ pub fn image_load_xml(
     image_loaded: &str,
     hashes: Option<&str>,
     signature: Option<&SignatureFields<'_>>,
+    version: Option<&crate::inputs::version_info::VersionInfo>,
+    user: Option<&str>,
 ) -> String {
     let mut data = String::new();
     field(&mut data, "RuleName", "");
@@ -227,7 +260,11 @@ pub fn image_load_xml(
         field(&mut data, "Image", image);
     }
     field(&mut data, "ImageLoaded", image_loaded);
+    version_facts(&mut data, version);
     image_facts(&mut data, hashes, signature);
+    if let Some(user) = user {
+        field(&mut data, "User", user);
+    }
     format!(
         "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
          <System>\

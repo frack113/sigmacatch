@@ -42,6 +42,9 @@ pub mod registry_format;
 #[cfg(all(target_os = "windows", feature = "etw"))]
 #[path = "../windows/signature.rs"]
 pub mod signature;
+#[cfg(all(target_os = "windows", feature = "etw"))]
+#[path = "../windows/version_info.rs"]
+pub mod version_info;
 #[cfg(any(feature = "etw", test))]
 pub mod wmi_format;
 // Kernel-sensor client (feature `driver`, implies `etw`).
