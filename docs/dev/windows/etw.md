@@ -60,7 +60,7 @@ Each is a bug Rustinel fixed the hard way; our `etw.rs` encodes it as a test:
 ## Provider behaviour
 
 Measured on the test VM (full measurements in
-[Measurements](evidence.md#m0-results-win11-vm-2026-11-14)). Four findings
+[Measurements](evidence.md#etw-provider-measurements-2026-11-14)). Four findings
 shape the code:
 
 - **Registry paths are not NT paths.** `RelativeName` is a full NT path only

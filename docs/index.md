@@ -48,38 +48,27 @@ edited before the next run — the end-to-end setup is in
 
 ## Documentation
 
+<!-- markdownlint-disable MD033 -->
+<iframe src="media/interactive/docs-map-user.html?embed=1" loading="lazy" title="User documentation map, interactive (Flow + Live)"
+        style="display:block;width:100%;aspect-ratio:1212/690;border:0;margin:0 auto"></iframe>
+<!-- markdownlint-enable MD033 -->
+
+*Use, configure and fix: the everyday pages.*
+
+<!-- markdownlint-disable MD033 -->
+<iframe src="media/interactive/docs-map-dev.html?embed=1" loading="lazy" title="Developer documentation map, interactive (Flow + Live)"
+        style="display:block;width:100%;aspect-ratio:1185/1122;border:0;margin:0 auto"></iframe>
+<!-- markdownlint-enable MD033 -->
+
+*Architecture, collectors and Windows telemetry, with the reference pages kept
+apart.*
+
+One question per page, 32 pages in five groups. The
+[complete map](media/interactive/docs-map.html) puts both halves in one
+diagram; drag to pan, scroll to zoom, and the Flow animation starts on its own.
+
 A built version of this documentation is published to GitHub Pages:
 **https://frack113.github.io/sigmacatch/**
-
-- **Getting started**
-  - [First run](getting-started.md)
-- **User**
-  - [CLI](user/cli.md)
-  - [Diagnostic subcommands](user/diagnostics.md)
-  - [regressiondata-check](user/regressiondata-check.md)
-  - [Configuration](user/config.md)
-  - [Troubleshooting](user/troubleshooting.md)
-- **Regression data**
-  - [Overview](regression_data/index.md)
-  - [info.yml](regression_data/info-yml.md)
-  - [Data files](regression_data/data-files.md)
-  - [Validation](regression_data/validation.md)
-- **Dev**
-  - [Architecture](dev/architecture.md)
-  - [Layout](dev/layout.md)
-  - [Collectors](dev/collectors/index.md)
-  - [Windows collector](dev/collectors/windows.md)
-  - [Linux collectors](dev/collectors/linux.md)
-  - [EVTX input](dev/collectors/evtx.md)
-  - [Windows telemetry](dev/windows/index.md)
-  - [ETW](dev/windows/etw.md)
-  - [Kernel driver](dev/windows/driver.md)
-  - [Sysmon coverage](dev/windows/coverage.md)
-  - [Pipeline](dev/pipeline.md)
-  - [Design notes](dev/design-notes.md)
-  - [Build](dev/build.md)
-  - [Windows dev VM](dev/windows/vm.md)
-  - [SigmaHQ workflow](dev/git.md)
 
 ## License
 

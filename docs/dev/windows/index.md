@@ -5,12 +5,14 @@ mirroring the Linux eBPF collector. It emits the Sysmon event ids plus the
 sigmacatch 5xx extensions, under the `sigmacatch` provider and the
 `sigmacatch/Operational` channel — the stock Sysmon rules match unchanged.
 
-Two sources, one per purpose:
+<!-- markdownlint-disable MD033 -->
+<iframe src="../../media/interactive/windows-telemetry.html?embed=1" loading="lazy" title="Windows telemetry path, interactive (Flow + Live)"
+        style="display:block;width:100%;aspect-ratio:1068/512;border:0;margin:0 auto"></iframe>
+<!-- markdownlint-enable MD033 -->
 
-- **User-mode ETW** (`feature etw`) — network, DNS, registry, WMI, unloads;
-  no driver, works on any elevated Windows host.
-- **Kernel driver** (`feature driver`, implies `etw`) — process, file, image,
-  pipe and thread events that ETW cannot reach.
+*User-mode ETW (`etw`) covers network, DNS, registry, WMI and unloads with no
+driver; the kernel driver (`driver`, implies `etw`) adds process, file, image,
+pipe and thread events that ETW cannot reach.*
 
 `inputs/windows.rs` runs the Event Log channels next to **exactly one** process
 source: the driver when its service is loaded and answers the current protocol
@@ -92,18 +94,18 @@ Concretely:
   full NT path when the base key is a root, so an event is committed only when
   the `BaseObject`/`KeyObject` chain resolves to a root.
 
-## Status
+## What works today
 
-The user-mode path is complete for its ids (M0-M5); the driver is implemented
-and validated on the VM (D0-D2). Current per-id state: [Sysmon coverage](coverage.md).
+- **Event Log channels** — always: they are in the default `winevt` build.
+- **`etw`** — adds Sysmon-schema process, network, registry, DNS, WMI and
+  unload events with no Sysmon and no driver: EID 1, 3, 12/13, 19/20/21, 22,
+  25, 500, 507 and 511. EID 5 is not produced on this path.
+- **`driver`** — when the `sigmacatch` service is loaded, the kernel sensor
+  owns process, file, image, pipe and thread events (1/2/5/6/7/8/9/10/11/14/
+  15/17/18/23/26/29/503-506/509/510) and ETW only keeps what user mode can
+  observe. Without the driver, the same build falls back to ETW.
 
-| Milestone | State |
-|---|---|
-| M0 — ETW/TDH spike on the VM | done, [measurements](evidence.md#m0-results-win11-vm-2026-11-14) |
-| M1 — session scaffold | done |
-| M2 — TDH builder (EID 1, 3, 12/13, 19-21, 22, 25, 500, 507, 511) | done |
-| M3 — Windows orchestrator | done |
-| M4 — regression path end to end | done |
-| M5 — extend coverage | done, mostly through the driver |
-| D0-D2 — kernel driver (channel, process, access, images, minifilter) | done, [validation](evidence.md#vm-validation-2026-11-14) |
-| D3 — parity | documented in [coverage](coverage.md) |
+The limits are deliberate: no `ProcessGuid`, no `Hashes` on deleted files, no
+signer name for catalog-signed images, and 509/510 are rate-limited. The
+event-by-event state is [Sysmon coverage](coverage.md); the measurements are
+[Measurements](evidence.md).

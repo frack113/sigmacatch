@@ -12,9 +12,9 @@ journal is [Measurements](evidence.md#vm-validation-2026-11-14).
 
 ## Decision: the driver replaces Sysmon
 
-Recorded on 2026-11-14, after M0/M1 showed what user mode cannot reach. The
-driver is what delivers the sigmacatch taxonomy — the Sysmon-schema ids plus the
-5xx extensions — in place of Sysmon; D0-D2 are implemented and validated on the
+Recorded on 2026-11-14, after the ETW spike showed what user mode cannot reach.
+The driver is what delivers the sigmacatch taxonomy — the Sysmon-schema ids plus
+the 5xx extensions — in place of Sysmon; it is implemented and validated on the
 VM.
 
 The project exists **to produce Sysmon-schema telemetry on hosts that do not
@@ -49,25 +49,6 @@ Constraints accepted up front:
 - a kernel bug is a BSOD, so the driver never becomes a hard dependency: the
   user-mode path keeps working when the driver is absent, refused by HVCI, or
   not loaded.
-
-## Milestones
-
-- **D0 — channel** (done): control device `\Device\sigmacatch`, version
-  IOCTL; compiles in CI.
-- **D1 — process creation** (done): `PsSetCreateProcessNotifyRoutineEx` (EID
-  1/5) and `PsSetLoadImageNotifyRoutine` (EID 6) into a ring, drained via
-  `IOCTL_READ_EVENTS`.
-- **D2a — process access** (done): `ObRegisterCallbacks` → EID 10, validated in
-  the VM.
-- **D2b.1 — image/driver load** (done): `PsSetLoadImageNotifyRoutine` → EID
-  6/7, validated in the VM.
-- **D2b.2 — file system** (done): the hand-written `fltmgr` FFI landed; the
-  minifilter covers 2/11/23/503/504/505/506 with complete
-  `FLT_FILE_NAME_INFORMATION` paths, plus 9/15/17/18/26 and 509/510 — see
-  [Driver events](driver-events.md).
-- **D3 — parity** (documented): the Windows set differs by design — 501/502
-  are Linux-only, and 508 is not emitted because 3008 is already reported as
-  EID 22. The comparison table is the contract.
 
 ## How the pieces fit
 

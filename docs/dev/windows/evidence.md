@@ -5,7 +5,7 @@ journal of the driver's validation on the Windows 11 test VM. Read
 [ETW](etw.md) and [Kernel driver](driver.md) first; the per-id result is
 [Sysmon coverage](coverage.md).
 
-## M0 results (win11 VM, 2026-11-14)
+## ETW provider measurements (2026-11-14)
 
 Measured with `logman`/`tracerpt` in file mode and with the Rust probe
 (`sigmacatch/examples/etw_dump.rs`, feature `etw`) in realtime mode.
@@ -118,7 +118,7 @@ produced, under provider `sigmacatch`:
 `User`/`IntegrityLevel`/`UtcTime` are enriched best-effort from the still-alive
 process, so fast-exiting processes may omit them (never approximated).
 
-**D2a — process access (EID 10)** is validated in the same run.
+**Process access (EID 10)** is validated in the same run.
 `ObRegisterCallbacks` registers pre/post callbacks for process-handle
 create/duplicate, filters on the injection-relevant rights
 (`PROCESS_VM_READ/WRITE/OPERATION`, `CREATE_THREAD`, `DUP_HANDLE`,
@@ -133,7 +133,7 @@ static (not bound), and `KeQuerySystemTime` is not in the WDK import lib, so
 the consumer timestamps records at read time (`Utc::now()` when the record
 carries 0) — a few milliseconds late, acceptable for EID 5/10.
 
-**D2b.1 — image and driver load (EID 6/7)** is validated too.
+**Image and driver load (EID 6/7)** is validated too.
 `PsSetLoadImageNotifyRoutine` reports every image mapped into memory; the
 `SystemModeImage` bit (0x100 of `IMAGE_INFO.Properties`) splits kernel images
 (EID 6) from user images (EID 7). Measured in the VM:
@@ -145,8 +145,7 @@ carries 0) — a few milliseconds late, acceptable for EID 5/10.
 
 Paths are the NT paths the callback carries (exact), not DOS-mapped.
 
-**D2b.2 — the minifilter is blocked on bindings** (resolved: the hand-written
-FFI landed, see D2b.2a/2b/2c below). `wdk-sys` does **not** bind
+**The minifilter needed a hand-written FFI.** `wdk-sys` does **not** bind
 `fltmgr` (`FltRegisterFilter`, `FLT_REGISTRATION`, `FLT_CALLBACK_DATA`,
 `FltGetFileNameInformation`, ...), and no maintained Rust binding exists
 (`fsfilter-rs` is a 2023 user-mode loader pinned to `windows` 0.44). File
@@ -172,7 +171,7 @@ signal `regression::evtx::write_evtx` uses to write the `.evtx` from the event
 XML with the pure-Rust writer, instead of `EvtExportLog` on
 `sigmacatch/Operational` (a channel that does not exist in the Event Log).
 
-**D2b.2a — file create (EID 11)** is validated. The minifilter is a
+**File create (EID 11).** The minifilter is a
 hand-written `fltmgr` FFI (wdk-sys does not bind it), transcribed from the WDK
 22621 `fltkernel.h`: `FLT_REGISTRATION` (2.03), the operation table, the
 `FLT_CALLBACK_DATA` and `FLT_IO_PARAMETER_BLOCK` prefixes, and
@@ -196,8 +195,8 @@ path, e.g.
 `TargetFilename=\Device\HarddiskVolume3\Users\...\probe11k.out`, the
 requestor pid, and the image from the pid cache.
 
-**D2b.2b — rename, delete, truncate, ACL and owner (EID 503/23/506/504/505)**
-is validated. The same registration grows `IRP_MJ_SET_INFORMATION` and
+**Rename, delete, truncate, ACL and owner (EID 503/23/506/504/505).** The
+same registration grows `IRP_MJ_SET_INFORMATION` and
 `IRP_MJ_SET_SECURITY`; the parameter block is the `SetFileInformation` /
 `SetSecurity` member of the `FLT_PARAMETERS` union.
 
@@ -240,8 +239,8 @@ image (`Image`). Category mapping already covers 23/503/504/505/506, so
 `file_delete`, `file_rename`, `file_chmod`, `file_chown` and `file_truncate`
 rules are selected for them.
 
-**D2c — creation time, raw reads and named pipes (EID 2/9/17)** is validated
-too. Three hooks that the first pass had written off as unreachable:
+**Creation time, raw reads and named pipes (EID 2/9/17).** Three hooks that
+the first pass had written off as unreachable:
 
 - **EID 2** comes from `IRP_MJ_SET_INFORMATION` with `FileBasicInformation`
   (4). The new stamp is `CreationTime` in the buffer; the previous one is

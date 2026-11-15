@@ -13,15 +13,13 @@ kernel driver (`sigmacatch/driver`). The exact tree and module graph are in
 
 ## An event's life
 
-```text
-collector            one adapter (channels, driver, ETW, tail, eBPF, EVTX)
-  ↓ Event            parsed event + injected logsource (product/service/category)
-runner               shared pipeline: mpsc → DetectionEngine
-  ↓ Alert            rule matched, with the original payload
-regression           one set per rule: info.yml + .evtx/.log/.json
-  ↓
-git                  one commit per rule, one push if contrib is on
-```
+<!-- markdownlint-disable MD033 -->
+<iframe src="../media/interactive/event-life.html?embed=1" loading="lazy" title="An event's life, interactive (Flow + Live)"
+        style="display:block;width:100%;aspect-ratio:1068/512;border:0;margin:0 auto"></iframe>
+<!-- markdownlint-enable MD033 -->
+
+*From any collector to a committed regression set; the per-stage detail is in
+[Pipeline](pipeline.md).*
 
 The collectors, the logsource injection and the regression formats are in
 [Collectors](collectors/index.md); the run loop and its timeouts are in
