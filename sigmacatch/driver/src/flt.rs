@@ -428,7 +428,7 @@ unsafe extern "C" fn pre_set_information(
             &mut new,
         )
     };
-    // SAFETY: both name informations are live until released below.
+    // SAFETY: both name information structures are live until released below.
     unsafe {
         let _ = FltParseFileNameInformation(old);
         if status == STATUS_SUCCESS {
