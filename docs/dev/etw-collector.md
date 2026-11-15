@@ -601,6 +601,14 @@ Measured in the VM (`reg add` SZ/DWORD/BINARY, `reg delete /v`, `reg delete /f`)
 12 DeleteKey    HKU\S-1-5-…\Software\sigmacatch-probe
 ```
 
+End-to-end in the VM, with the driver **and** the main session running
+(`mode: windows winevt+driver+etw`): three local probe rules — one on
+`registry_set` requiring both `TargetObject|contains: 'sigmacatch-e2e'` and
+`Details|contains: 'cmd.exe /c calc'`, one on `network_connection` port 80,
+one on `dns_query` for `www.github.com` — each matched (`match_count: 1`) and
+wrote its EVTX under `sigma/regression_data`. The `Details` predicate is what
+makes the registry case meaningful: a name-only field would not have matched.
+
 **Known gap:** `Image` is resolved from the live process, so a writer that has
 already exited when the record is delivered (a one-shot `reg.exe`) leaves it
 absent. The fix is a pid → image cache shared with the driver, which learns the
