@@ -91,8 +91,10 @@ jobs:
         if: steps.toolchain-probe.outputs.ready != 'true'
         shell: pwsh
         run: |
+          # `--force`: the runner image ships a newer LLVM, and winget refuses
+          # to install a pinned older one without it.
           winget install --id LLVM.LLVM --version ${{ env.LLVM_VERSION }} `
-            --silent --accept-package-agreements --accept-source-agreements `
+            --force --silent --accept-package-agreements --accept-source-agreements `
             --disable-interactivity
           if ($LASTEXITCODE -ne 0) { throw "winget LLVM failed: $LASTEXITCODE" }
 
@@ -101,7 +103,7 @@ jobs:
         shell: pwsh
         run: |
           winget install --id Microsoft.WindowsWDK.${{ env.WDK_VERSION }} `
-            --silent --accept-package-agreements --accept-source-agreements `
+            --force --silent --accept-package-agreements --accept-source-agreements `
             --disable-interactivity
           if ($LASTEXITCODE -ne 0) { throw "winget WDK failed: $LASTEXITCODE" }
 
