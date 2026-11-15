@@ -25,7 +25,7 @@ use windows::core::PCWSTR;
 use crate::inputs::etw_event::filetime_to_utc;
 use crate::inputs::etw_process::{ProcessFacts, enrich};
 use crate::inputs::etw_sysmon::{
-    driver_load_xml, file_create_xml, file_event_xml, image_load_xml, process_access_xml,
+    driver_load_xml, event_xml, file_create_xml, image_load_xml, process_access_xml,
     process_start_xml, process_terminate_xml, sysmon_utc,
 };
 use crate::types::Event;
@@ -197,7 +197,7 @@ impl Mapper {
             return None;
         }
         let image = self.file_image(event.pid);
-        let xml = file_event_xml(
+        let xml = event_xml(
             &self.computer,
             503,
             Self::event_time(event),
@@ -219,7 +219,7 @@ impl Mapper {
         if with_size {
             fields.push(("Size", &size));
         }
-        let xml = file_event_xml(
+        let xml = event_xml(
             &self.computer,
             id,
             Self::event_time(event),
@@ -237,7 +237,7 @@ impl Mapper {
         }
         let image = self.file_image(event.pid);
         let id = if event.detail == 0 { 504 } else { 505 };
-        let xml = file_event_xml(
+        let xml = event_xml(
             &self.computer,
             id,
             Self::event_time(event),
@@ -271,7 +271,7 @@ impl Mapper {
         if let Some(created) = created.as_deref() {
             fields.push(("CreationUtcTime", created));
         }
-        let xml = file_event_xml(&self.computer, 2, at, event.pid, image.as_deref(), &fields);
+        let xml = event_xml(&self.computer, 2, at, event.pid, image.as_deref(), &fields);
         Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
 
@@ -282,7 +282,7 @@ impl Mapper {
             return None;
         }
         let image = self.file_image(event.pid);
-        let xml = file_event_xml(
+        let xml = event_xml(
             &self.computer,
             9,
             Self::event_time(event),
@@ -304,7 +304,7 @@ impl Mapper {
             pipe.insert(0, '\\');
         }
         let image = self.file_image(event.pid);
-        let xml = file_event_xml(
+        let xml = event_xml(
             &self.computer,
             17,
             Self::event_time(event),

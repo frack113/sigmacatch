@@ -379,6 +379,26 @@ impl ProcessTracker {
     pub fn get(&self, pid: u32) -> Option<&ProcessFacts> {
         self.facts.get(&pid)
     }
+
+    /// Image path of `pid`, enriching it once when it is not cached yet.
+    ///
+    /// Used by the ETW mappers for the `Image` field of events that carry
+    /// only a pid (network connections, DNS queries). It never reports the
+    /// process as created: the driver owns EID 1 when it is loaded, and
+    /// [`observe`](Self::observe) is the only path that emits.
+    pub fn image_of(&mut self, pid: u32) -> Option<String> {
+        if let Some(facts) = self.facts.get(&pid) {
+            return facts.image.clone();
+        }
+        if pid <= 4 {
+            return None;
+        }
+        let facts = enrich(pid)?;
+        let image = facts.image.clone();
+        self.seen.insert(pid);
+        self.facts.insert(pid, facts);
+        image
+    }
 }
 
 #[cfg(test)]

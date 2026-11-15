@@ -41,6 +41,11 @@ impl CollectorKind for WindowsCollector {
         let mut sources = vec!["winevt"];
         if driver_available() {
             sources.push("driver");
+            // The driver owns processes and files; the ETW main session still
+            // supplies the events only user mode can produce (network, DNS).
+            if cfg!(feature = "etw") {
+                sources.push("etw");
+            }
         } else if cfg!(feature = "etw") {
             sources.push("etw");
         }
@@ -95,6 +100,18 @@ impl EventProducer for MultiCollector {
                 let stop = stop.clone();
                 tasks.spawn(async move {
                     Box::new(crate::inputs::etw_driver::EventCollector::new())
+                        .run(tx, stop)
+                        .await
+                });
+            }
+            // The main ETW session keeps supplying the events the kernel
+            // sensor cannot report (network connections, DNS queries).
+            #[cfg(feature = "etw")]
+            {
+                let tx = tx.clone();
+                let stop = stop.clone();
+                tasks.spawn(async move {
+                    Box::new(crate::inputs::etw::EventCollector::main_only())
                         .run(tx, stop)
                         .await
                 });

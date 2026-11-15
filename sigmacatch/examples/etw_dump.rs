@@ -72,6 +72,9 @@ mod probe {
         /// Synthesize Sysmon EID 1 for every process first seen during the
         /// capture, from the live process.
         eid1: bool,
+        /// Print the Sysmon-schema event the collector would emit, for the
+        /// records its main-session router maps (network, DNS).
+        map: bool,
     }
 
     /// Processes seen during the capture, for the EID 1 synthesis.
@@ -115,6 +118,15 @@ mod probe {
 
     pub fn main() -> Result<()> {
         let options = parse_args();
+        let router = options.map.then(|| {
+            let tracker = Arc::new(Mutex::new(
+                sigmacatch::inputs::etw_process::ProcessTracker::new(),
+            ));
+            Arc::new(etw::MainRouter::new(
+                std::env::var("COMPUTERNAME").unwrap_or_default(),
+                tracker,
+            ))
+        });
         if let Err(error) = ensure_privileges() {
             eprintln!("privileges: {error}");
             return Err(error);
@@ -170,6 +182,7 @@ mod probe {
                     PROCESS_SESSION_PROVIDERS,
                     stats.clone(),
                     tracker.clone(),
+                    router.clone(),
                     &options,
                     Duration::from_millis(5),
                 )?,
@@ -184,6 +197,7 @@ mod probe {
                     MAIN_SESSION_PROVIDERS,
                     stats.clone(),
                     tracker.clone(),
+                    router.clone(),
                     &options,
                     Duration::from_millis(20),
                 )?,
@@ -198,6 +212,7 @@ mod probe {
                     &[],
                     stats.clone(),
                     tracker.clone(),
+                    router.clone(),
                     &options,
                     Duration::from_millis(20),
                 )?,
@@ -254,6 +269,7 @@ mod probe {
             sessions: vec!["process".into(), "main".into(), "kernel".into()],
             file: None,
             eid1: false,
+            map: false,
         };
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -270,6 +286,7 @@ mod probe {
                 }
                 "--file" => options.file = args.next(),
                 "--eid1" => options.eid1 = true,
+                "--map" => options.map = true,
                 "--sessions" => {
                     if let Some(list) = args.next() {
                         options.sessions = list.split(',').map(str::to_string).collect();
@@ -287,6 +304,7 @@ mod probe {
         providers: &[ProviderSpec],
         stats: Arc<Mutex<Stats>>,
         tracker: Arc<Mutex<ProcessTracker>>,
+        router: Option<Arc<etw::MainRouter>>,
         options: &Options,
         flush_interval: Duration,
     ) -> Result<RunningSession> {
@@ -295,6 +313,14 @@ mod probe {
         let eid1 = options.eid1;
         let sink: etw::Sink = Box::new(move |record: &EVENT_RECORD| {
             collect(record, &stats, full, raw_opcode);
+            if let Some(router) = &router
+                && let Some(event) = router.map(record)
+            {
+                match serde_json::to_string(&*event.event_json_raw) {
+                    Ok(json) => println!("\nMAPPED {json}"),
+                    Err(error) => eprintln!("map: {error}"),
+                }
+            }
             if eid1 {
                 // A panic elsewhere must not turn into a poisoned-lock panic
                 // here: recover the guard and keep processing records.

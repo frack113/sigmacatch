@@ -696,6 +696,223 @@ impl Drop for RunningSession {
 }
 
 // ---------------------------------------------------------------------------
+// Main-session routing: the Sysmon events user-mode ETW can produce
+// ---------------------------------------------------------------------------
+
+/// Provider name `decode` reports for the kernel network provider.
+const KERNEL_NETWORK_NAME: &str = "Microsoft-Windows-Kernel-Network";
+/// Provider name `decode` reports for the DNS client provider.
+const DNS_CLIENT_NAME: &str = "Microsoft-Windows-DNS-Client";
+
+// `Microsoft-Windows-Kernel-Network` event ids. The provider publishes one id
+// per operation and its opcode repeats the id; these four were measured with
+// `etw_dump` on the test VM (a TCP connect to :80, a UDP DNS query, and the
+// matching reply).
+/// `TcpIp` connection attempt — Sysmon EID 3.
+const NET_TCP_CONNECT: u16 = 12;
+/// `TcpIp` accept — a listening socket became a connection (EID 500).
+const NET_TCP_ACCEPT: u16 = 15;
+/// `UdpIp` datagram sent — Sysmon EID 3 with `Protocol=udp`.
+const NET_UDP_SEND: u16 = 42;
+
+/// `Microsoft-Windows-DNS-Client` completion event: carries `QueryResults`
+/// and `QueryStatus` for the process that asked.
+const DNS_QUERY_COMPLETED: u16 = 3008;
+
+/// Upper bound on the pid/IP → hostname cache; the map is cleared when it is
+/// reached rather than growing without bound in a long capture.
+const DNS_CACHE_LIMIT: usize = 4096;
+
+/// Turns main-session ETW records into Sysmon-schema events.
+///
+/// Only the events the driver cannot produce are routed here: network
+/// connections (EID 3), listening sockets (EID 500) and DNS queries (EID 22).
+/// Everything else the main session carries (Kernel-File, Kernel-Registry) is
+/// either covered by the driver or not mapped yet.
+pub struct MainRouter {
+    computer: String,
+    tracker: std::sync::Arc<std::sync::Mutex<crate::inputs::etw_process::ProcessTracker>>,
+    /// `(pid, ip)` → queried name, filled from the DNS answers.
+    dns: std::sync::Mutex<std::collections::HashMap<(u32, String), String>>,
+}
+
+impl MainRouter {
+    /// Create a router reporting for `computer`, resolving `Image` through
+    /// `tracker`.
+    pub fn new(
+        computer: String,
+        tracker: std::sync::Arc<std::sync::Mutex<crate::inputs::etw_process::ProcessTracker>>,
+    ) -> Self {
+        Self {
+            computer,
+            tracker,
+            dns: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Map one record, or `None` when this provider/id is not routed.
+    ///
+    /// Unknown providers and ids are dropped silently: the main session is
+    /// deliberately subscribed to more than it maps.
+    pub fn map(&self, record: &EVENT_RECORD) -> Option<crate::types::Event> {
+        let decoded = crate::inputs::etw_event::decode(record)?;
+        let at = decoded.utc().unwrap_or_else(chrono::Utc::now);
+        match (decoded.provider.as_str(), decoded.event_id) {
+            (KERNEL_NETWORK_NAME, NET_TCP_CONNECT) => self.connection(&decoded, at, "tcp", true),
+            (KERNEL_NETWORK_NAME, NET_UDP_SEND) => self.connection(&decoded, at, "udp", true),
+            (KERNEL_NETWORK_NAME, NET_TCP_ACCEPT) => self.listen(&decoded, at),
+            (DNS_CLIENT_NAME, DNS_QUERY_COMPLETED) => self.dns(&decoded, at),
+            _ => None,
+        }
+    }
+
+    /// Map a record and send it on the producer channel.
+    fn route(&self, record: &EVENT_RECORD, tx: &tokio::sync::mpsc::Sender<crate::types::Event>) {
+        if let Some(event) = self.map(record) {
+            let _ = tx.blocking_send(event);
+        }
+    }
+
+    /// Image path for a pid, enriching it once when it is not cached.
+    fn image_of(&self, pid: u32) -> Option<String> {
+        self.tracker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .image_of(pid)
+    }
+
+    /// `Microsoft-Windows-Kernel-Network` connect/send → EID 3.
+    fn connection(
+        &self,
+        decoded: &crate::inputs::etw_event::DecodedEvent,
+        at: chrono::DateTime<chrono::Utc>,
+        protocol: &str,
+        initiated: bool,
+    ) -> Option<crate::types::Event> {
+        let pid = decoded.uint("PID")? as u32;
+        // Every field has to come from the provider: an invented address would
+        // poison the committed regression data.
+        let (source_ip, destination_ip) = (decoded.ip("saddr")?, decoded.ip("daddr")?);
+        let (source_port, destination_port) = (decoded.uint("sport")?, decoded.uint("dport")?);
+        let image = self.image_of(pid);
+        let hostname = self.lookup_hostname(pid, destination_ip);
+        let fields = crate::inputs::etw_sysmon::NetworkFields {
+            protocol,
+            initiated,
+            source_ip,
+            source_port: source_port as u16,
+            destination_ip,
+            destination_port: destination_port as u16,
+            destination_hostname: hostname.as_deref(),
+        };
+        let xml = crate::inputs::etw_sysmon::network_xml(
+            &self.computer,
+            3,
+            at,
+            pid,
+            image.as_deref(),
+            &fields,
+        );
+        crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+    }
+
+    /// `Microsoft-Windows-Kernel-Network` accept → EID 500 (`network_listen`).
+    fn listen(
+        &self,
+        decoded: &crate::inputs::etw_event::DecodedEvent,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Option<crate::types::Event> {
+        let pid = decoded.uint("PID")? as u32;
+        let (source_ip, source_port) = (decoded.ip("saddr")?, decoded.uint("sport")?);
+        let image = self.image_of(pid);
+        let zero = if source_ip.contains(':') {
+            "::"
+        } else {
+            "0.0.0.0"
+        };
+        let fields = crate::inputs::etw_sysmon::NetworkFields {
+            protocol: "tcp",
+            initiated: false,
+            source_ip,
+            source_port: source_port as u16,
+            destination_ip: zero,
+            destination_port: 0,
+            destination_hostname: None,
+        };
+        let xml = crate::inputs::etw_sysmon::network_xml(
+            &self.computer,
+            500,
+            at,
+            pid,
+            image.as_deref(),
+            &fields,
+        );
+        crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+    }
+
+    /// `Microsoft-Windows-DNS-Client` 3008 → EID 22, and feed the hostname
+    /// cache the network events consult.
+    fn dns(
+        &self,
+        decoded: &crate::inputs::etw_event::DecodedEvent,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Option<crate::types::Event> {
+        let pid = decoded.process_id;
+        let query_name = decoded.str("QueryName")?;
+        if query_name.is_empty() {
+            return None;
+        }
+        let status = decoded.uint("QueryStatus").unwrap_or(0).to_string();
+        let results = decoded.str("QueryResults").unwrap_or("-");
+        self.remember_hostnames(pid, query_name, results);
+
+        let image = self.image_of(pid);
+        let xml = crate::inputs::etw_sysmon::event_xml(
+            &self.computer,
+            22,
+            at,
+            pid,
+            image.as_deref(),
+            &[
+                ("QueryName", query_name),
+                ("QueryStatus", &status),
+                ("QueryResults", results),
+            ],
+        );
+        crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+    }
+
+    /// Record `name` for every address in a `QueryResults` answer list.
+    fn remember_hostnames(&self, pid: u32, name: &str, results: &str) {
+        let mut cache = self
+            .dns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if cache.len() >= DNS_CACHE_LIMIT {
+            cache.clear();
+        }
+        for entry in results.split(';') {
+            let address = entry.trim();
+            if address.is_empty() {
+                continue;
+            }
+            // Answers are IPv4-mapped; Sysmon reports the plain address.
+            let address = address.strip_prefix("::ffff:").unwrap_or(address);
+            cache.insert((pid, address.to_string()), name.to_string());
+        }
+    }
+
+    /// Name last resolved by `pid` for `address`, if any.
+    fn lookup_hostname(&self, pid: u32, address: &str) -> Option<String> {
+        self.dns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&(pid, address.to_string()))
+            .cloned()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Async producer: the ETW path as an `EventProducer`.
 // ---------------------------------------------------------------------------
 
@@ -706,15 +923,30 @@ const MAIN_SESSION_NAME: &str = "sigmacatch-main";
 /// Process-table poll interval, in milliseconds.
 const POLL_INTERVAL_MS: u64 = 50;
 
-/// Async producer running the ETW sessions (process creation via the live
-/// process, EID 1). The kernel sensor supersedes it when it is loaded; see
-/// [`crate::inputs::windows`].
-pub struct EventCollector;
+/// Async producer running the ETW sessions.
+///
+/// [`new`](Self::new) owns both the process source (EID 1) and the main
+/// session; the kernel sensor supersedes the former, while
+/// [`main_only`](Self::main_only) keeps the network/DNS events flowing next
+/// to it. See [`crate::inputs::windows`].
+pub struct EventCollector {
+    /// Whether this instance also runs the process session (the fallback when
+    /// the kernel sensor is absent).
+    process: bool,
+}
 
 impl EventCollector {
-    /// Create the producer.
+    /// Create the producer that owns both sessions.
     pub fn new() -> Self {
-        Self
+        Self { process: true }
+    }
+
+    /// Create the producer for the main session only.
+    ///
+    /// The driver owns process telemetry when it is loaded, so starting the
+    /// process session too would report every process twice.
+    pub fn main_only() -> Self {
+        Self { process: false }
     }
 }
 
@@ -761,6 +993,8 @@ impl crate::types::EventProducer for EventCollector {
         let computer = std::env::var("COMPUTERNAME").unwrap_or_default();
         let halt = Arc::new(AtomicBool::new(false));
 
+        let router = std::sync::Arc::new(MainRouter::new(computer.clone(), Arc::clone(&tracker)));
+
         let sink: Sink = {
             let tx = tx.clone();
             let tracker = Arc::clone(&tracker);
@@ -774,41 +1008,58 @@ impl crate::types::EventProducer for EventCollector {
             })
         };
 
-        let process =
-            TraceSession::start(PROCESS_SESSION_NAME, SessionConfig::PROCESS).map_err(|e| {
-                crate::types::ProducerError::Message(format!("ETW process session: {e:#}"))
-            })?;
-        let running = RunningSession::spawn_with_flush(
-            process,
-            PROCESS_SESSION_NAME,
-            PROCESS_SESSION_PROVIDERS,
-            sink,
-            Some(std::time::Duration::from_millis(5)),
-        )
-        .map_err(|e| {
-            crate::types::ProducerError::Message(format!("ETW process consumer: {e:#}"))
-        })?;
-
-        // The main session is optional: a failure there must not kill the
-        // process path.
-        let main = match TraceSession::start(MAIN_SESSION_NAME, SessionConfig::MAIN) {
-            Ok(session) => RunningSession::spawn_with_flush(
-                session,
-                MAIN_SESSION_NAME,
-                MAIN_SESSION_PROVIDERS,
-                Box::new(|_: &EVENT_RECORD| {}),
-                Some(std::time::Duration::from_millis(20)),
+        let running = if self.process {
+            let process = TraceSession::start(PROCESS_SESSION_NAME, SessionConfig::PROCESS)
+                .map_err(|e| {
+                    crate::types::ProducerError::Message(format!("ETW process session: {e:#}"))
+                })?;
+            Some(
+                RunningSession::spawn_with_flush(
+                    process,
+                    PROCESS_SESSION_NAME,
+                    PROCESS_SESSION_PROVIDERS,
+                    sink,
+                    Some(std::time::Duration::from_millis(5)),
+                )
+                .map_err(|e| {
+                    crate::types::ProducerError::Message(format!("ETW process consumer: {e:#}"))
+                })?,
             )
-            .ok(),
-            Err(error) => {
-                tracing::warn!("ETW main session unavailable: {error:#}");
-                None
+        } else {
+            None
+        };
+
+        // The main session routes the Sysmon events user-mode ETW can produce
+        // (network, DNS) and is optional: a failure there must not kill the
+        // process path.
+        let main = {
+            let router = std::sync::Arc::clone(&router);
+            let tx = tx.clone();
+            let halt = std::sync::Arc::clone(&halt);
+            match TraceSession::start(MAIN_SESSION_NAME, SessionConfig::MAIN) {
+                Ok(session) => RunningSession::spawn_with_flush(
+                    session,
+                    MAIN_SESSION_NAME,
+                    MAIN_SESSION_PROVIDERS,
+                    Box::new(move |record: &EVENT_RECORD| {
+                        if halt.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        router.route(record, &tx);
+                    }),
+                    Some(std::time::Duration::from_millis(20)),
+                )
+                .ok(),
+                Err(error) => {
+                    tracing::warn!("ETW main session unavailable: {error:#}");
+                    None
+                }
             }
         };
 
         // The poller catches processes whose events the session never
         // delivered (short-lived ones on this platform).
-        let poller = {
+        let poller = if self.process {
             let tracker = Arc::clone(&tracker);
             let computer = computer.clone();
             let tx = tx.clone();
@@ -824,6 +1075,8 @@ impl crate::types::EventProducer for EventCollector {
                     }
                 })
                 .ok()
+        } else {
+            None
         };
 
         loop {
@@ -833,7 +1086,9 @@ impl crate::types::EventProducer for EventCollector {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
         halt.store(true, Ordering::Relaxed);
-        let _ = running.stop();
+        if let Some(running) = running {
+            let _ = running.stop();
+        }
         if let Some(main) = main {
             let _ = main.stop();
         }

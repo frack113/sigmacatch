@@ -69,6 +69,14 @@ impl DecodedEvent {
         }
     }
 
+    /// Network address (IPv4/IPv6) of the named property, in textual form.
+    pub fn ip(&self, name: &str) -> Option<&str> {
+        match self.get(name).map(|p| &p.value) {
+            Some(PropertyValue::Ip(s)) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
     /// Numeric value of the named property.
     pub fn uint(&self, name: &str) -> Option<u64> {
         match self.get(name).map(|p| &p.value) {
@@ -287,11 +295,13 @@ fn format_value(bytes: &[u8], in_type: u16, out_type: u16) -> PropertyValue {
             PropertyValue::Int(i64::from(i32::from_le_bytes(quad(bytes))))
         }
         t if t == TDH_INTYPE_UINT32.0 as u16 => {
-            let raw = u32::from_le_bytes(quad(bytes));
             if out_type == TDH_OUTTYPE_IPV4.0 as u16 {
-                PropertyValue::Ip(Ipv4Addr::from(raw).to_string())
+                // The four bytes are already in network order; going through
+                // the little-endian u32 and treating it as big-endian reversed
+                // the octets (192.168.122.157 came out as 157.122.168.192).
+                PropertyValue::Ip(Ipv4Addr::from(quad(bytes)).to_string())
             } else {
-                PropertyValue::UInt(u64::from(raw))
+                PropertyValue::UInt(u64::from(u32::from_le_bytes(quad(bytes))))
             }
         }
         t if t == TDH_INTYPE_INT64.0 as u16 => PropertyValue::Int(i64::from_le_bytes(octet(bytes))),

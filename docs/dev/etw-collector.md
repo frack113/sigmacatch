@@ -540,6 +540,39 @@ Measured with the same probe, one PowerShell script per run:
 | `New-Object IO.Pipes.NamedPipeServerStream('x')` | 17 | `PipeName`, `Image` |
 | `.LastWriteTimeUtc = …` (control) | — | correctly **not** reported |
 
-Remaining gaps: EID 18 (pipe connect) is deliberately not produced, and the
-Windows collector still has no EID 8/19-22/24-29 network/WMI/clipboard
-sources — those need ETW providers rather than kernel hooks.
+## Main-session routing (EID 3, 22, 500)
+
+The main ETW session was subscribed to `Kernel-Network`, `Kernel-File`,
+`Kernel-Registry` and `DNS-Client` with a **no-op sink**: the providers were
+enabled and every record was dropped. It now routes what the driver cannot
+produce, and it runs **alongside** the driver (`EventCollector::main_only`),
+because the orchestrator otherwise starts exactly one producer.
+
+Measured with `etw_dump --map` in the VM:
+
+| Sysmon EID | ETW source | Mapping |
+| --- | --- | --- |
+| 3 | `Kernel-Network` 12 (TCP connect), 42 (UDP send) | `saddr`/`sport` → source, `daddr`/`dport` → destination, `Protocol` from the id |
+| 22 | `DNS-Client` 3008 | `QueryName`, `QueryStatus`, `QueryResults` |
+| 500 | `Kernel-Network` 15 (accept) | `saddr`/`sport` as the listening endpoint, `Initiated=false` |
+
+Two findings worth keeping:
+
+- **The IPv4 decoder reversed the octets.** TDH hands the four bytes over in
+  network order; the code read them as a little-endian `u32` and formatted
+  that as big-endian, so `192.168.122.157` came out as `157.122.168.192` and
+  `example.com`'s answer as `243.147.66.172`. Every address in the committed
+  data would have been wrong.
+- **`DestinationHostname` is filled from the DNS answers** the same session
+  already carries: 3008 results are cached per `(pid, address)` and looked up
+  when a connection to that address is seen, which is what Sysmon does with
+  its own cache. `Image` comes from the shared `ProcessTracker`, enriched on
+  demand (`image_of`) so a pid first seen by a network event still resolves.
+
+`Kernel-File` and `Kernel-Registry` stay subscribed but unrouted: the driver
+covers files, and registry needs the key-path cache described below.
+
+Remaining gaps: EID 18 (pipe connect) is deliberately not produced, EID 508
+has no distinct Windows source (3008 is already EID 22, and its `QueryStatus`
+is a Win32 error where the Linux extension carries the DNS RCODE), and
+EID 8/15/19-21/24-29 are still missing — registry and WMI come next.

@@ -19,13 +19,13 @@ use crate::inputs::etw_process::ProcessFacts;
 const SIGMACATCH_PROVIDER: &str = "{a3e1f6c2-4b5d-4e9f-9c1a-2d7b8e0f3a6c}";
 const SIGMACATCH_CHANNEL: &str = "sigmacatch/Operational";
 
-/// Render a file event with an arbitrary event id and extra fields.
+/// Render an event with an arbitrary event id and extra fields.
 ///
 /// Used for the Sysmon file/pipe events (2 creation time, 9 raw read, 17 pipe
-/// created, 23 delete) and the sigmacatch file extensions (503 rename, 504
-/// ACL, 505 owner, 506 truncate), which share the shape:
+/// created, 22 DNS query, 23 delete) and the sigmacatch file extensions (503
+/// rename, 504 ACL, 505 owner, 506 truncate), which share the shape:
 /// `UtcTime`, `ProcessId`, `Image`, then the kind-specific fields.
-pub fn file_event_xml(
+pub fn event_xml(
     computer: &str,
     event_id: u16,
     at: chrono::DateTime<chrono::Utc>,
@@ -83,6 +83,90 @@ pub fn file_create_xml(
          <System>\
          <Provider Name=\"sigmacatch\" Guid=\"{SIGMACATCH_PROVIDER}\"/>\
          <EventID>11</EventID><Version>5</Version><Level>4</Level><Task>11</Task><Opcode>0</Opcode>\
+         <Keywords>0x8000000000000000</Keywords>\
+         <TimeCreated SystemTime=\"{}\"/>\
+         <Correlation/>\
+         <Execution ProcessID=\"{process_id}\" ThreadID=\"0\"/>\
+         <Channel>{SIGMACATCH_CHANNEL}</Channel>\
+         <Computer>{}</Computer>\
+         </System>\
+         <EventData>{data}</EventData>\
+         </Event>",
+        escape(&at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)),
+        escape(computer)
+    )
+}
+
+/// The endpoints of a Sysmon **EID 3 (NetworkConnect)** / **EID 500
+/// (network listen)** event.
+pub struct NetworkFields<'a> {
+    /// `tcp` or `udp`.
+    pub protocol: &'a str,
+    /// True when the process opened the connection (client side).
+    pub initiated: bool,
+    /// Local address of the connection (the bound address when listening).
+    pub source_ip: &'a str,
+    /// Local port.
+    pub source_port: u16,
+    /// Peer address, or the all-zero address for a listening socket.
+    pub destination_ip: &'a str,
+    /// Peer port, or 0 for a listening socket.
+    pub destination_port: u16,
+    /// Resolved name for `DestinationIp`, when a DNS answer was seen for it.
+    pub destination_hostname: Option<&'a str>,
+}
+
+/// Render a Sysmon **EID 3 (NetworkConnect)** or **EID 500 (network
+/// listen)** event.
+///
+/// `listening` flips the two Sysmon-only fields that separate the extension
+/// (`Initiated=false`, all-zero destination) from a real connection.
+pub fn network_xml(
+    computer: &str,
+    event_id: u16,
+    at: chrono::DateTime<chrono::Utc>,
+    process_id: u32,
+    process_image: Option<&str>,
+    fields: &NetworkFields<'_>,
+) -> String {
+    let mut data = String::new();
+    field(&mut data, "RuleName", "");
+    field(&mut data, "UtcTime", &sysmon_utc(at));
+    field(&mut data, "ProcessId", &process_id.to_string());
+    if let Some(image) = process_image {
+        field(&mut data, "Image", image);
+    }
+    field(&mut data, "Protocol", fields.protocol);
+    field(
+        &mut data,
+        "Initiated",
+        if fields.initiated { "true" } else { "false" },
+    );
+    let source_v6 = fields.source_ip.contains(':');
+    field(&mut data, "SourceIsIpv6", &source_v6.to_string());
+    field(&mut data, "SourceIp", fields.source_ip);
+    field(&mut data, "SourceHostname", "-");
+    field(&mut data, "SourcePort", &fields.source_port.to_string());
+    field(&mut data, "SourcePortName", "-");
+    let destination_v6 = fields.destination_ip.contains(':');
+    field(&mut data, "DestinationIsIpv6", &destination_v6.to_string());
+    field(&mut data, "DestinationIp", fields.destination_ip);
+    field(
+        &mut data,
+        "DestinationHostname",
+        fields.destination_hostname.unwrap_or("-"),
+    );
+    field(
+        &mut data,
+        "DestinationPort",
+        &fields.destination_port.to_string(),
+    );
+    field(&mut data, "DestinationPortName", "-");
+    format!(
+        "<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">\
+         <System>\
+         <Provider Name=\"sigmacatch\" Guid=\"{SIGMACATCH_PROVIDER}\"/>\
+         <EventID>{event_id}</EventID><Version>5</Version><Level>4</Level><Task>{event_id}</Task><Opcode>0</Opcode>\
          <Keywords>0x8000000000000000</Keywords>\
          <TimeCreated SystemTime=\"{}\"/>\
          <Correlation/>\
