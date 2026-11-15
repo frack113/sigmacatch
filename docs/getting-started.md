@@ -95,11 +95,13 @@ cargo build --release -p sigmacatch --bin regressiondata-check
 
 It replays every stored event through the detection engine and prints a
 pass/fail summary (exit 1 on any failure). Full reference:
-[CLI — regressiondata-check](user/cli.md#regressiondata-check-regression-validation-cross-platform).
+[regressiondata-check](user/regressiondata-check.md).
 
 ## Next steps
 
-- [CLI](user/cli.md) — flags, `--evtx`, diagnostic subcommands
+- [CLI](user/cli.md) — flags and `--evtx`
+- [Diagnostic subcommands](user/diagnostics.md) — `check-filter`, `list-rules`
 - [Configuration](user/config.md) — every `config.yaml` key
 - [Troubleshooting](user/troubleshooting.md) — when the run refuses to go
+- [regressiondata-check](user/regressiondata-check.md) — validate what was produced
 - [Windows without Sysmon](dev/etw-collector.md) — ETW and kernel-driver telemetry

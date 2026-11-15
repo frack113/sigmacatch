@@ -4,7 +4,7 @@ sigmacatch produces regression data compatible with the
 [SigmaHQ](https://github.com/SigmaHQ/sigma) repository format, ready for PR
 submission. For every matched rule it writes a **set**: an `info.yml`
 (metadata) plus a **data file** that stores the captured event. The
-validation tool [`regressiondata-check`](../user/cli.md#regressiondata-check-regression-validation-cross-platform)
+validation tool [`regressiondata-check`](../user/regressiondata-check.md)
 replays the stored event through the detection engine and verifies the rule
 still matches, so a rule change that breaks a known detection is caught.
 

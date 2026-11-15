@@ -37,8 +37,14 @@ nav:
   - Getting Started: getting-started.md
   - User:
     - CLI: user/cli.md
+    - Diagnostics: user/diagnostics.md
+    - regressiondata-check: user/regressiondata-check.md
     - Configuration: user/config.md
-    - Troubleshooting: user/troubleshooting.md
+    - Troubleshooting:
+      - Overview: user/troubleshooting.md
+      - Run and git: user/troubleshooting/run.md
+      - Windows: user/troubleshooting/windows.md
+      - Linux: user/troubleshooting/linux.md
   - Regression Data:
     - Overview: regression_data/index.md
     - info.yml: regression_data/info-yml.md

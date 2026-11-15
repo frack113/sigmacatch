@@ -1,7 +1,7 @@
 # Validation
 
 What makes a set valid — and what
-[`regressiondata-check`](../user/cli.md#regressiondata-check-regression-validation-cross-platform)
+[`regressiondata-check`](../user/regressiondata-check.md)
 enforces when it replays every stored event through the detection engine.
 
 ## rule_id consistency

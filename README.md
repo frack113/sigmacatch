@@ -68,7 +68,7 @@ The full reference (every field, defaults, and validation) is in the
 
 Flags, the `check-filter`/`list-rules` diagnostics subcommands, and the standalone
 `regressiondata-check` validator (EVTX, log, JSON and NDJSON replay) are documented in
-[docs/user/cli.md](docs/user/cli.md).
+[`docs/user/cli.md`](docs/user/cli.md) and the dedicated [diagnostics](docs/user/diagnostics.md) and [`regressiondata-check`](docs/user/regressiondata-check.md) pages.
 
 ## Documentation
 

@@ -55,6 +55,8 @@ A built version of this documentation is published to GitHub Pages:
   - [First run](getting-started.md)
 - **User**
   - [CLI](user/cli.md)
+  - [Diagnostic subcommands](user/diagnostics.md)
+  - [regressiondata-check](user/regressiondata-check.md)
   - [Configuration](user/config.md)
   - [Troubleshooting](user/troubleshooting.md)
 - **Regression data**
