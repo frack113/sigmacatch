@@ -559,6 +559,13 @@ fn create_device(mut device_init: PWDFDEVICE_INIT) -> NTSTATUS {
             NOTIFY_REGISTERED = true;
         }
 
+        // Start filtering only now: the first create callback needs the ring
+        // lock (and the queue) to exist.
+        let flt = flt::start();
+        if flt != STATUS_SUCCESS {
+            println!("sigmacatch: FltStartFiltering failed {flt:#010X}");
+        }
+
         if !OB_REGISTERED {
             let result = register_ob_callbacks();
             if result != STATUS_SUCCESS {

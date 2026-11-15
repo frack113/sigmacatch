@@ -223,7 +223,9 @@ static REGISTRATION: FltRegistration = FltRegistration {
 /// Registered filter handle, released on unload.
 static mut FILTER: PfltFilter = core::ptr::null_mut();
 
-/// Register and start the minifilter. Returns `STATUS_SUCCESS` on success.
+/// Register the minifilter. Starting is separate (see [`start`]) because the
+/// first callback runs as soon as filtering starts, and it needs the ring
+/// spinlock to exist already.
 pub unsafe fn register(driver: *mut DRIVER_OBJECT) -> NTSTATUS {
     let mut filter: PfltFilter = core::ptr::null_mut();
     // SAFETY: the registration table is a static and outlives the filter.
@@ -231,16 +233,21 @@ pub unsafe fn register(driver: *mut DRIVER_OBJECT) -> NTSTATUS {
     if status != STATUS_SUCCESS {
         return status;
     }
-    // SAFETY: `filter` came from `FltRegisterFilter`.
-    let status = unsafe { FltStartFiltering(filter) };
-    if status != STATUS_SUCCESS {
-        // SAFETY: the filter registered but never started.
-        unsafe { FltUnregisterFilter(filter) };
-        return status;
-    }
     // SAFETY: written before any callback can use it.
     unsafe { FILTER = filter };
     STATUS_SUCCESS
+}
+
+/// Start filtering. Must be called once the ring lock exists: the filter
+/// manager may deliver create callbacks immediately.
+pub unsafe fn start() -> NTSTATUS {
+    // SAFETY: `FILTER` was set by `register`.
+    let filter = unsafe { FILTER };
+    if filter.is_null() {
+        return STATUS_SUCCESS;
+    }
+    // SAFETY: the handle came from `FltRegisterFilter`.
+    unsafe { FltStartFiltering(filter) }
 }
 
 /// Unregister the filter (called from the driver unload path).
@@ -276,12 +283,6 @@ unsafe extern "C" fn pre_create(
     _flt_objects: *mut core::ffi::c_void,
     _completion_context: *mut *mut core::ffi::c_void,
 ) -> i32 {
-    // Diagnostic: prove the pre-op is invoked.
-    let mut event = SensorEvent::empty();
-    event.version = SIGMACATCH_PROTOCOL_VERSION;
-    event.kind = kind::FILE_CREATE;
-    event.detail = 0xBEEF;
-    unsafe { ring_push(&event) };
     PREOP_SUCCESS_WITH_CALLBACK
 }
 
@@ -292,14 +293,6 @@ unsafe extern "C" fn post_create(
     _context: *mut core::ffi::c_void,
     _flags: u32,
 ) -> i32 {
-    // Diagnostic: prove the post-op is invoked at all.
-    {
-        let mut event = SensorEvent::empty();
-        event.version = SIGMACATCH_PROTOCOL_VERSION;
-        event.kind = kind::FILE_CREATE;
-        event.detail = 0xCAFE;
-        unsafe { ring_push(&event) };
-    }
     // SAFETY: `data` is valid for the callback's duration.
     let Some(callback) = (unsafe { data.as_ref() }) else {
         return POSTOP_FINISHED;
@@ -309,17 +302,13 @@ unsafe extern "C" fn post_create(
     if status < 0 {
         return POSTOP_FINISHED;
     }
-    let information_value = callback.io_status.Information;
+    if callback.io_status.Information != u64::from(FILE_CREATED) {
+        return POSTOP_FINISHED;
+    }
 
     let mut information: *mut FltFileNameInformation = core::ptr::null_mut();
     // SAFETY: fltmgr allocates the name information; released below.
     if unsafe { FltGetFileNameInformation(data, NAME_FLAGS, &mut information) } != STATUS_SUCCESS {
-        // Diagnostic: the callback ran but the name query failed.
-        let mut event = SensorEvent::empty();
-        event.version = SIGMACATCH_PROTOCOL_VERSION;
-        event.kind = kind::FILE_CREATE;
-        event.detail = 0xDEAD;
-        unsafe { ring_push(&event) };
         return POSTOP_FINISHED;
     }
     // SAFETY: `information` is live until the release below.
@@ -336,8 +325,6 @@ unsafe extern "C" fn post_create(
                 PsGetCurrentProcessId() as usize as u32
             };
             event.timestamp = 0;
-            // Diagnostic: raw create result (1 opened, 2 created, 3 overwritten).
-            event.detail = information_value as u32;
             copy_wide(
                 &name_info.name,
                 &mut event.primary,
