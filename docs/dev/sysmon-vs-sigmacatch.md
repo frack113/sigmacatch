@@ -66,6 +66,7 @@ detector for the field predicates (`match_count: 1`).
 | 506 | file truncate | driver `FileEndOfFileInformation` | ✅ includes `Size` |
 | 507 | module unload | ETW `Kernel-Process` 6 (`ImageUnload`) | ✅ `ModuleName` |
 | 508 | DNS response | — | ❌ 3008 is already EID 22; its `QueryStatus` is a Win32 error where this extension carries the DNS RCODE |
+| 509 | file open for write | driver minifilter create post-op, `FILE_OPENED` + `DesiredAccess` | ✅ best effort: write/append opens only, 64 events/s |
 
 ## Fields that are absent everywhere
 

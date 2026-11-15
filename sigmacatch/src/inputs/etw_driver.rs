@@ -218,6 +218,7 @@ impl Mapper {
             kind::PIPE_CREATE => self.map_pipe(event, 17, None),
             kind::PIPE_CONNECT => self.map_pipe(event, 18, Some("connect")),
             kind::FILE_STREAM => self.map_file_stream(event),
+            kind::FILE_OPEN => self.map_file_open(event),
             kind::PROCESS_REMOTE_THREAD => self.map_remote_thread(event),
             kind::REGISTRY_RENAME => self.map_registry_rename(event),
             _ => None,
@@ -229,8 +230,17 @@ impl Mapper {
         filetime_to_utc(event.timestamp as i64).unwrap_or_else(chrono::Utc::now)
     }
 
+    /// Image of the process that issued a file/registry event: the cached
+    /// creation-time facts first, then the map the other producers publish,
+    /// then the live process. A long-lived shell that predates the capture has
+    /// no creation event, and would otherwise leave `Image` empty on every
+    /// event it produces.
     fn file_image(&self, pid: u32) -> Option<String> {
-        self.cache.get(&pid).and_then(|f| f.image.clone())
+        self.cache
+            .get(&pid)
+            .and_then(|f| f.image.clone())
+            .or_else(|| self.images.get(pid))
+            .or_else(|| enrich(pid).and_then(|facts| facts.image))
     }
 
     fn map_file_rename(&mut self, event: &SensorEvent) -> Option<Event> {
@@ -423,6 +433,24 @@ impl Mapper {
                 ("TargetImage", target),
                 ("NewThreadId", &thread_id),
             ],
+        );
+        Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+    }
+
+    /// EID 509 (extension): an existing file was opened for writing.
+    fn map_file_open(&mut self, event: &SensorEvent) -> Option<Event> {
+        let path = wide(&event.primary, event.primary_length);
+        if path.is_empty() {
+            return None;
+        }
+        let image = self.file_image(event.pid);
+        let xml = event_xml(
+            &self.computer,
+            509,
+            Self::event_time(event),
+            event.pid,
+            image.as_deref(),
+            &[("TargetFilename", &path)],
         );
         Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }

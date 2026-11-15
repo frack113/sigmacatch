@@ -58,6 +58,7 @@ struct FltIoParameterBlock {
 #[repr(C)]
 #[allow(dead_code)]
 union FltParameters {
+    create: FltCreateParameters,
     set_file_information: FltSetInformationParameters,
     set_security: FltSetSecurityParameters,
 }
@@ -77,6 +78,35 @@ struct FltSetInformationParameters {
     /// Overlaps `ReplaceIfExists`/`ClusterCount`/`DeleteHandle`.
     replace: [u8; 8],
     info_buffer: *mut core::ffi::c_void,
+}
+
+/// `IO_SECURITY_CONTEXT`: only the requested access mask is read.
+#[repr(C)]
+#[allow(dead_code)]
+struct IoSecurityContext {
+    security_qos: *mut core::ffi::c_void,
+    access_state: *mut core::ffi::c_void,
+    desired_access: u32,
+    full_create_options: u32,
+}
+
+/// `FLT_PARAMETERS.Create`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+struct FltCreateParameters {
+    security_context: *mut IoSecurityContext,
+    options: u32,
+    _pad: u32,
+    /// `POINTER_ALIGNMENT` in the header: offset 16 on x64.
+    file_attributes: u16,
+    share_access: u16,
+    _pad2: u32,
+    /// `POINTER_ALIGNMENT` as well: offset 24.
+    ea_length: u32,
+    _pad3: u32,
+    ea_buffer: *mut core::ffi::c_void,
+    allocation_size: i64,
 }
 
 /// `FLT_PARAMETERS.SetSecurity`.
@@ -362,6 +392,21 @@ const FILE_DISPOSITION_INFORMATION_EX_CLASS: u32 = 64;
 const FILE_RENAME_INFORMATION_EX_CLASS: u32 = 65;
 /// `FILE_DISPOSITION_INFORMATION_EX.Flags` bit that requests the delete.
 const FILE_DISPOSITION_DELETE: u32 = 0x1;
+/// `ACCESS_MASK` bits that make an open interesting: the file is about to be
+/// written to. Read-only opens are left out, they are both far more numerous
+/// and far less useful.
+const FILE_WRITE_DATA: u32 = 0x0002;
+const FILE_APPEND_DATA: u32 = 0x0004;
+/// Events per second the best-effort kind (509) may add to the ring.
+///
+/// A burst — an installer touching thousands of files — must not turn into a
+/// ring overflow that costs the other kinds their events.
+const FILE_OPEN_BUDGET: u32 = 64;
+/// Second `BUDGET_COUNT` belongs to, in 100 ns units divided down.
+static BUDGET_SECOND: core::sync::atomic::AtomicI64 = core::sync::atomic::AtomicI64::new(0);
+/// Events admitted during `BUDGET_SECOND`.
+static BUDGET_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
 /// `SECURITY_INFORMATION` bits.
 const OWNER_SECURITY_INFORMATION: u32 = 0x1;
 const DACL_SECURITY_INFORMATION: u32 = 0x4;
@@ -925,6 +970,28 @@ unsafe extern "C" fn post_create(
         VolumeKind::FileSystem => {}
     }
 
+    if callback.io_status.Information == u64::from(FILE_OPENED) {
+        // EID 509: the process opened an existing file for writing. Best
+        // effort by design — the mask is read from the security context and
+        // the per-second budget bounds what a burst can add.
+        if callback.iopb.is_null() {
+            return POSTOP_FINISHED;
+        }
+        // SAFETY: `iopb` is live for the callback and the Create member is the
+        // active union member for a create.
+        let parameters = unsafe { &(*callback.iopb).parameters.create };
+        let desired = if parameters.security_context.is_null() {
+            0
+        } else {
+            // SAFETY: the buffer belongs to this create request.
+            unsafe { (*parameters.security_context).desired_access }
+        };
+        if desired & (FILE_WRITE_DATA | FILE_APPEND_DATA) != 0 && under_budget() {
+            unsafe { push_named(data, kind::FILE_OPEN, desired) };
+        }
+        return POSTOP_FINISHED;
+    }
+
     if callback.io_status.Information != u64::from(FILE_CREATED) {
         return POSTOP_FINISHED;
     }
@@ -1038,6 +1105,20 @@ fn has_stream(name: &UNICODE_STRING) -> bool {
         }
     }
     false
+}
+
+/// True while the per-second budget for the best-effort kinds is not spent.
+fn under_budget() -> bool {
+    use core::sync::atomic::Ordering;
+    let mut now = wdk_sys::LARGE_INTEGER::default();
+    // SAFETY: the call only reads the clock.
+    unsafe { wdk_sys::ntddk::KeQuerySystemTimePrecise(&raw mut now) };
+    // SAFETY: `LARGE_INTEGER` is a union; `KeQuerySystemTimePrecise` filled it.
+    let second = unsafe { now.QuadPart } / 10_000_000;
+    if BUDGET_SECOND.swap(second, Ordering::Relaxed) != second {
+        BUDGET_COUNT.store(0, Ordering::Relaxed);
+    }
+    BUDGET_COUNT.fetch_add(1, Ordering::Relaxed) < FILE_OPEN_BUDGET
 }
 
 /// Copy a counted wide string into a fixed record field.

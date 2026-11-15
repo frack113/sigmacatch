@@ -692,6 +692,21 @@ is only the new **leaf**, and the mapper joins it onto the old parent before
 abbreviating. Measured with `ntdll!NtRenameKey` (the only way to trigger it):
 `HKU\…\Software\sigmacatch-ren-src` → `HKU\…\Software\sigmacatch-ren-dst`.
 
+## File open for write (EID 509)
+
+The EDR comparison matrix has a "File Opened" category Sysmon does not cover.
+The minifilter's create post-op sees it: `IoStatus.Information == FILE_OPENED`
+plus the requested `DesiredAccess` from `FLT_PARAMETERS.Create` (via
+`IO_SECURITY_CONTEXT`, offset 16 on x64). Read-only opens are the overwhelming
+majority and carry little signal, so only `FILE_WRITE_DATA`/`FILE_APPEND_DATA`
+are reported.
+
+Best effort by design: the driver keeps a per-second budget (64 events, a
+`KeQuerySystemTimePrecise` second window and two atomics) and drops the rest,
+so an installer touching thousands of files cannot overflow the 1024-slot ring
+and starve the other kinds. Measured: a 200-write burst produced 93 EID 509 in
+the window — the budget held, and the other kinds kept their normal volume.
+
 Remaining gaps: EID 25 (process tampering) needs per-process main-image
 tracking and would be noisy without it;
 EID 24 (clipboard) has no public provider; EID 508 has no distinct Windows

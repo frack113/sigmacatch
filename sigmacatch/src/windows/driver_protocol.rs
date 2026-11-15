@@ -74,6 +74,9 @@ pub mod kind {
     /// Registry key renamed (EID 14): `primary` = old path, `secondary` = the
     /// new leaf name.
     pub const REGISTRY_RENAME: u32 = 17;
+    /// File opened for writing without being created (EID 509): `primary` =
+    /// path, `detail` = the requested access mask.
+    pub const FILE_OPEN: u32 = 20;
     /// File delete, the *detected* variant (EID 26): same shape as
     /// [`FILE_DELETE`]. Sysmon reports both ids for one delete — 23 is the
     /// archived delete, 26 the detection without a backup — and sigmacatch
