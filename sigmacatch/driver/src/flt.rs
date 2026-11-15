@@ -58,6 +58,7 @@ struct FltIoParameterBlock {
 #[repr(C)]
 #[allow(dead_code)]
 union FltParameters {
+    write: FltWriteParameters,
     create: FltCreateParameters,
     set_file_information: FltSetInformationParameters,
     set_security: FltSetSecurityParameters,
@@ -88,6 +89,21 @@ struct IoSecurityContext {
     access_state: *mut core::ffi::c_void,
     desired_access: u32,
     full_create_options: u32,
+}
+
+/// `FLT_PARAMETERS.Write`: only the length is read.
+#[repr(C)]
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+struct FltWriteParameters {
+    length: u32,
+    _pad: u32,
+    /// `POINTER_ALIGNMENT` in the header: offset 8.
+    key: u32,
+    _pad2: u32,
+    byte_offset: i64,
+    write_buffer: *mut core::ffi::c_void,
+    mdl_address: *mut core::ffi::c_void,
 }
 
 /// `FLT_PARAMETERS.Create`.
@@ -376,6 +392,8 @@ const IRP_MJ_OPERATION_END: u8 = 0x80;
 const IRP_MJ_CREATE: u8 = 0;
 /// `IRP_MJ_READ`.
 const IRP_MJ_READ: u8 = 3;
+/// `IRP_MJ_WRITE`.
+const IRP_MJ_WRITE: u8 = 4;
 /// `IRP_MJ_CREATE_NAMED_PIPE`: the *server* side of `CreateNamedPipe`.
 /// `0x01` — `0x11` is `IRP_MJ_LOCK_CONTROL`.
 const IRP_MJ_CREATE_NAMED_PIPE: u8 = 0x01;
@@ -397,21 +415,32 @@ const FILE_DISPOSITION_DELETE: u32 = 0x1;
 /// and far less useful.
 const FILE_WRITE_DATA: u32 = 0x0002;
 const FILE_APPEND_DATA: u32 = 0x0004;
-/// Events per second the best-effort kind (509) may add to the ring.
+/// Events per second the best-effort kinds may add to the ring.
 ///
-/// A burst — an installer touching thousands of files — must not turn into a
-/// ring overflow that costs the other kinds their events.
+/// A burst — an installer touching thousands of files, a file copy — must not
+/// turn into a ring overflow that costs the other kinds their events.
 const FILE_OPEN_BUDGET: u32 = 64;
-/// Second `BUDGET_COUNT` belongs to, in 100 ns units divided down.
+const FILE_WRITE_BUDGET: u32 = 32;
+/// Write cache size: one slot per recently reported file object.
+const WRITE_SLOTS: usize = 256;
+/// Second the budgets belong to, in 100 ns units divided down.
 static BUDGET_SECOND: core::sync::atomic::AtomicI64 = core::sync::atomic::AtomicI64::new(0);
-/// Events admitted during `BUDGET_SECOND`.
-static BUDGET_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+/// EID 509 events admitted during `BUDGET_SECOND`.
+static OPEN_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+/// EID 510 events admitted during `BUDGET_SECOND`.
+static WRITE_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+/// File object last reported by a write, one per slot.
+static WRITE_KEYS: [core::sync::atomic::AtomicUsize; WRITE_SLOTS] =
+    [const { core::sync::atomic::AtomicUsize::new(0) }; WRITE_SLOTS];
+/// Second that `WRITE_KEYS` slot was last reported in.
+static WRITE_SECONDS: [core::sync::atomic::AtomicI64; WRITE_SLOTS] =
+    [const { core::sync::atomic::AtomicI64::new(0) }; WRITE_SLOTS];
 
 /// `SECURITY_INFORMATION` bits.
 const OWNER_SECURITY_INFORMATION: u32 = 0x1;
 const DACL_SECURITY_INFORMATION: u32 = 0x4;
 
-static OPERATIONS: [FltOperationRegistration; 6] = [
+static OPERATIONS: [FltOperationRegistration; 7] = [
     FltOperationRegistration {
         major_function: IRP_MJ_CREATE,
         flags: SKIP_PAGING_IO,
@@ -438,6 +467,15 @@ static OPERATIONS: [FltOperationRegistration; 6] = [
         flags: SKIP_PAGING_IO | SKIP_CACHED_IO,
         pre_operation: Some(pre_read),
         post_operation: None,
+        reserved1: core::ptr::null_mut(),
+    },
+    FltOperationRegistration {
+        major_function: IRP_MJ_WRITE,
+        // Only the writes that reach the file system: paging and cached I/O
+        // are the bulk of the traffic and carry no signal.
+        flags: SKIP_PAGING_IO | SKIP_CACHED_IO,
+        pre_operation: Some(pre_pass),
+        post_operation: Some(post_write),
         reserved1: core::ptr::null_mut(),
     },
     FltOperationRegistration {
@@ -986,7 +1024,9 @@ unsafe extern "C" fn post_create(
             // SAFETY: the buffer belongs to this create request.
             unsafe { (*parameters.security_context).desired_access }
         };
-        if desired & (FILE_WRITE_DATA | FILE_APPEND_DATA) != 0 && under_budget() {
+        if desired & (FILE_WRITE_DATA | FILE_APPEND_DATA) != 0
+            && under_budget(&OPEN_COUNT, FILE_OPEN_BUDGET)
+        {
             unsafe { push_named(data, kind::FILE_OPEN, desired) };
         }
         return POSTOP_FINISHED;
@@ -1033,6 +1073,42 @@ unsafe extern "C" fn post_create(
         }
         FltReleaseFileNameInformation(information);
     }
+    POSTOP_FINISHED
+}
+
+/// `IRP_MJ_WRITE` post-op: an uncached write to a file (EID 510).
+///
+/// Best effort: one report per file object per second, under a per-second
+/// budget, so a copy cannot flood the ring with one event per chunk.
+unsafe extern "C" fn post_write(
+    data: *mut FltCallbackData,
+    flt_objects: *mut core::ffi::c_void,
+    _context: *mut core::ffi::c_void,
+    _flags: u32,
+) -> i32 {
+    // SAFETY: `data` is valid for the callback's duration.
+    let Some(callback) = (unsafe { data.as_ref() }) else {
+        return POSTOP_FINISHED;
+    };
+    if unsafe { callback.io_status.__bindgen_anon_1.Status } < 0 || callback.iopb.is_null() {
+        return POSTOP_FINISHED;
+    }
+    if unsafe { volume_kind(flt_objects) } != VolumeKind::FileSystem {
+        return POSTOP_FINISHED;
+    }
+    // SAFETY: `iopb` is live for the callback; the Write member is the active
+    // union member for this major function.
+    let iopb = unsafe { &*callback.iopb };
+    let length = unsafe { iopb.parameters.write.length };
+    // SAFETY: the target file object belongs to this request.
+    if !first_write_in_second(iopb.target_file_object) {
+        return POSTOP_FINISHED;
+    }
+    if !under_budget(&WRITE_COUNT, FILE_WRITE_BUDGET) {
+        return POSTOP_FINISHED;
+    }
+    // SAFETY: the name is queried for the request being reported.
+    unsafe { push_named(data, kind::FILE_WRITE, length) };
     POSTOP_FINISHED
 }
 
@@ -1107,18 +1183,47 @@ fn has_stream(name: &UNICODE_STRING) -> bool {
     false
 }
 
-/// True while the per-second budget for the best-effort kinds is not spent.
-fn under_budget() -> bool {
-    use core::sync::atomic::Ordering;
+/// Current time in whole seconds, or 0 when the clock cannot be read.
+fn current_second() -> i64 {
     let mut now = wdk_sys::LARGE_INTEGER::default();
     // SAFETY: the call only reads the clock.
     unsafe { wdk_sys::ntddk::KeQuerySystemTimePrecise(&raw mut now) };
     // SAFETY: `LARGE_INTEGER` is a union; `KeQuerySystemTimePrecise` filled it.
-    let second = unsafe { now.QuadPart } / 10_000_000;
+    let ticks = unsafe { now.QuadPart };
+    ticks / 10_000_000
+}
+
+/// True while `counter` has budget left for this second.
+fn under_budget(counter: &core::sync::atomic::AtomicU32, budget: u32) -> bool {
+    use core::sync::atomic::Ordering;
+    let second = current_second();
     if BUDGET_SECOND.swap(second, Ordering::Relaxed) != second {
-        BUDGET_COUNT.store(0, Ordering::Relaxed);
+        OPEN_COUNT.store(0, Ordering::Relaxed);
+        WRITE_COUNT.store(0, Ordering::Relaxed);
     }
-    BUDGET_COUNT.fetch_add(1, Ordering::Relaxed) < FILE_OPEN_BUDGET
+    counter.fetch_add(1, Ordering::Relaxed) < budget
+}
+
+/// True the first time a file object is reported in this second.
+///
+/// A file copy issues hundreds of non-cached writes; without this the same
+/// file would be reported once per chunk.
+fn first_write_in_second(file_object: *mut core::ffi::c_void) -> bool {
+    use core::sync::atomic::Ordering;
+    let key = file_object as usize;
+    if key == 0 {
+        return false;
+    }
+    let slot = (key >> 4) % WRITE_SLOTS;
+    let second = current_second();
+    let seen_object = WRITE_KEYS[slot].load(Ordering::Relaxed);
+    let seen_second = WRITE_SECONDS[slot].load(Ordering::Relaxed);
+    if seen_object == key && seen_second == second {
+        return false;
+    }
+    WRITE_KEYS[slot].store(key, Ordering::Relaxed);
+    WRITE_SECONDS[slot].store(second, Ordering::Relaxed);
+    true
 }
 
 /// Copy a counted wide string into a fixed record field.

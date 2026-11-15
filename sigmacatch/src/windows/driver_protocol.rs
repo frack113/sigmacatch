@@ -74,6 +74,9 @@ pub mod kind {
     /// Registry key renamed (EID 14): `primary` = old path, `secondary` = the
     /// new leaf name.
     pub const REGISTRY_RENAME: u32 = 17;
+    /// File written without being cached (EID 510): `primary` = path,
+    /// `detail` = the write length.
+    pub const FILE_WRITE: u32 = 21;
     /// File opened for writing without being created (EID 509): `primary` =
     /// path, `detail` = the requested access mask.
     pub const FILE_OPEN: u32 = 20;

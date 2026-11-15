@@ -219,6 +219,7 @@ impl Mapper {
             kind::PIPE_CONNECT => self.map_pipe(event, 18, Some("connect")),
             kind::FILE_STREAM => self.map_file_stream(event),
             kind::FILE_OPEN => self.map_file_open(event),
+            kind::FILE_WRITE => self.map_file_write(event),
             kind::PROCESS_REMOTE_THREAD => self.map_remote_thread(event),
             kind::REGISTRY_RENAME => self.map_registry_rename(event),
             _ => None,
@@ -433,6 +434,26 @@ impl Mapper {
                 ("TargetImage", target),
                 ("NewThreadId", &thread_id),
             ],
+        );
+        Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+    }
+
+    /// EID 510 (extension): an uncached write reached a file. `Size` carries
+    /// the write length, not the file size.
+    fn map_file_write(&mut self, event: &SensorEvent) -> Option<Event> {
+        let path = wide(&event.primary, event.primary_length);
+        if path.is_empty() {
+            return None;
+        }
+        let image = self.file_image(event.pid);
+        let size = event.detail.to_string();
+        let xml = event_xml(
+            &self.computer,
+            510,
+            Self::event_time(event),
+            event.pid,
+            image.as_deref(),
+            &[("TargetFilename", &path), ("Size", &size)],
         );
         Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }

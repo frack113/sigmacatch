@@ -707,6 +707,17 @@ so an installer touching thousands of files cannot overflow the 1024-slot ring
 and starve the other kinds. Measured: a 200-write burst produced 93 EID 509 in
 the window — the budget held, and the other kinds kept their normal volume.
 
+## File write (EID 510)
+
+"The EDR matrix also has a "File Modification" category. The minifilter's
+`IRP_MJ_WRITE` post-op sees the writes that matter and are cheap to spot:
+`SKIP_PAGING_IO | SKIP_CACHED_IO` keeps the cached traffic — the bulk — out, so
+only writes that reach the file system directly are reported, `Size` carrying
+the write length. Best effort by design: one report per file object and per
+second (a 256-slot cache keyed by the file object), plus a 32-events-per-second
+budget. Measured with `robocopy /J` (unbuffered) of a 50 MB file: exactly one
+EID 510 for the destination, where a per-chunk report would have produced fifty.
+
 Remaining gaps: EID 25 (process tampering) needs per-process main-image
 tracking and would be noisy without it;
 EID 24 (clipboard) has no public provider; EID 508 has no distinct Windows
