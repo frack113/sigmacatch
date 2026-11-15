@@ -592,6 +592,10 @@ pid must not be in the exit set *and* `GetExitCodeProcess` must still report
 exactly one EID 25 and zero false positives across 214 unloads; without the
 liveness check, four exiting processes were misreported.
 
+A kernel image unloads with **no process** behind it (`ProcessID=0`), which is
+what separates EID 511 (driver unload) from 507 (module unload); measured by
+unloading the `bindflt` minifilter. Sysmon has no id for a driver unload either.
+
 `Image` and path comparison use `GetFinalPathNameByHandleW(VOLUME_NAME_NT)`:
 mapping drive letters with `QueryDosDevice` by hand silently failed, which is
 what the first version did (0 detections).

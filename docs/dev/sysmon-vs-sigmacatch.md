@@ -68,6 +68,7 @@ detector for the field predicates (`match_count: 1`).
 | 508 | DNS response | — | ❌ 3008 is already EID 22; its `QueryStatus` is a Win32 error where this extension carries the DNS RCODE |
 | 509 | file open for write | driver minifilter create post-op, `FILE_OPENED` + `DesiredAccess` | ✅ best effort: write/append opens only, 64 events/s |
 | 510 | file write | driver minifilter `IRP_MJ_WRITE`, uncached only | ⚠️ best effort: one report per file per second, 32 events/s; cached writes are invisible |
+| 511 | driver unload | ETW `Kernel-Process` 6, record with `ProcessID=0` | ✅ `ModuleName` (measured on `bindflt.sys`) |
 
 ## Fields that are absent everywhere
 
@@ -83,6 +84,51 @@ match on a sigmacatch host:
 - **Authenticode** (`Signed`, `Signature`, `SignatureStatus`) — affects 6, 7.
 - **`User` / `LogonId` / `IntegrityLevel`** — present on 1 and 5 only, absent
   from the file/network/registry events.
+
+## EDR-Telemetry categories
+
+The [EDR Telemetry](https://www.edr-telemetry.com/telemetry-categories) project
+compares EDR agents on 57 Windows telemetry categories. What sigmacatch covers
+of that list, including the categories Sysmon itself does **not** produce:
+
+| Category (sub-category) | Sysmon | sigmacatch |
+|---|---|---|
+| Process creation / termination / access | ✅ | EID 1 / 5 / 10 |
+| Image/library loaded | ✅ | EID 7 |
+| Remote thread creation | ✅ | EID 8 |
+| Process tampering | ✅ | EID 25 (`Type=ImageUnloaded`) |
+| Win32 API telemetry | ❌ | ❌ — ETW-TI requires a PPL/ELAM producer |
+| Process call stacks | ✅ | ❌ — no kernel stack walking |
+| File creation / deletion | ✅ | EID 11 / 23 + 26 |
+| File renaming | ❌ | EID 503 |
+| File opened | ❌ | ⚠️ EID 509, write/append opens only |
+| File modification | ❌ | ⚠️ EID 510 (uncached writes) + 2 / 506 |
+| Registry key/value create, modify, delete | ✅ | EID 12 / 13 |
+| Registry key rename | ❌ | EID 14 |
+| TCP / UDP connection | ✅ | EID 3 |
+| DNS query | ✅ | EID 22 |
+| URL, file downloaded | ❌ | ❌ — browser/proxy telemetry, out of scope |
+| MD5, SHA | ✅ | EID 1 / 15 / 29 (`Hashes`, first 16 MiB) |
+| IMPHASH | ✅ | ❌ — needs PE import-table parsing |
+| JA3 / JA3s | ❌ | ❌ — TLS interception, out of scope |
+| Scheduled task create/modify/delete | ❌ | ✅ via the Event Log channels (Security 4698/4699/4702, TaskScheduler 106/140-142) |
+| Service create/modify/delete | ❌ | ✅ via the Event Log channels (System 7045/7046/7040) |
+| Driver loaded | ✅ | EID 6 |
+| Driver unloaded | ❌ | EID 511 |
+| Driver modification | ❌ | ❌ — no source |
+| Virtual disk mount, USB mount/unmount | ❌ | ❌ — PnP/System events exist but no rule needs them yet |
+| Group Policy modification | ❌ | ✅ via the Event Log channels (Security 5136) |
+| Volume shadow copy deletion | ❌ | ✅ indirectly, through the `process_creation` rules that invoke `vssadmin`/`wmic` |
+| Named pipe creation / connection | ✅ | EID 17 / 18 |
+| WMI filter / consumer / binding | ✅ | EID 19 / 20 / 21 (`Query`, `Type`, `Destination` absent: the provider never publishes them) |
+| BITS jobs | ❌ | ✅ via the Event Log channels (BITS-Client/Operational) when a rule asks for it |
+| PowerShell script block | ❌ | ✅ via the Event Log channel (4104) |
+| User account creation/modification/deletion, logon, logoff | ❌ | ✅ via the Event Log channels (Security 4720/4722/4724/4726, 4624/4634) |
+| Agent start/stop/install/uninstall/keep-alive/errors | — | without object: this is the agent describing itself (Sysmon 4/255) |
+
+"Via the Event Log channels" means the Winevt collector already feeds those
+events to the same rule engine: sigmacatch does not re-encode them under a
+Sysmon id, it reads the channel the rule names.
 
 ## Reproducing the table
 

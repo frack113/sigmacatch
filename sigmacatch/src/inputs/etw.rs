@@ -1166,6 +1166,23 @@ impl MainRouter {
         let pid = decoded
             .uint("ProcessID")
             .map_or(decoded.process_id, |pid| pid as u32);
+        // A kernel image unloads with no process behind it: this is the
+        // driver-unload extension, not a module unload (Sysmon has no id for
+        // it either).
+        if pid == 0 {
+            let xml = crate::inputs::etw_sysmon::event_xml(
+                &self.computer,
+                511,
+                at,
+                0,
+                None,
+                &[("ModuleName", module)],
+            );
+            return crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon"))
+                .ok()
+                .into_iter()
+                .collect();
+        }
         let image = self.image_of(pid);
         // Process tampering: the image a process was started from is unmapped
         // while the process keeps running (hollowing). A process that is
