@@ -22,8 +22,10 @@ ignored = ["md-5"]
 # Inputs are selected with cargo features:
 #   Windows: winevt (live Event Log), evtx (one-shot EVTX files)
 #   Linux:   auditd, builtin (system syslog), sysmon (Sysmon-for-Linux tail), ebpf (native probes)
+#   macOS:   macos (one-shot system.log reader)
 # At runtime, `--evtx <PATH>` selects the EVTX one-shot, `winevt` the live
-# collector (Windows), and the Linux inputs run in parallel.
+# collector (Windows), the Linux inputs run in parallel, and `macos` the
+# macOS system-log reader.
 #
 # Everything else (runner, detection, rules, repo, regression data generator)
 # is OS-independent and always compiled in. The `regressiondata-check` bin is
@@ -38,6 +40,7 @@ auditd = []
 builtin = ["dep:regex"]
 sysmon = ["builtin"]                          # Sysmon-for-Linux legacy tail
 ebpf = ["dep:aya", "dep:bytemuck", "dep:hex"]
+macos = []
 
 [target.'cfg(not(unix))'.dependencies]
 dunce = "1.0.5"
@@ -98,6 +101,8 @@ tokio = { version = "1.54.1", features = [
   "sync",
   "time",
   "signal",
+  "fs",
+  "io-util",
 ] }
 tracing.workspace = true
 tracing-appender = "0.2.5"

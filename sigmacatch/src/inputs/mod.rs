@@ -97,3 +97,7 @@ pub mod sysmon_parse;
     )
 ))]
 pub mod linux;
+
+// macOS orchestrator: single source reading system.log, one-shot.
+#[cfg(all(target_os = "macos", feature = "macos"))]
+pub mod macos;

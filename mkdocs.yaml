@@ -67,6 +67,7 @@ nav:
       - Sysmon coverage: dev/windows/coverage.md
       - Measurements: dev/windows/evidence.md
       - Dev VM: dev/windows/vm.md
+    - macOS: dev/macos/index.md
     - Pipeline: dev/pipeline.md
     - Design Notes: dev/design-notes.md
     - Build: dev/build.md

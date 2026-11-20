@@ -26,16 +26,39 @@ async fn main() -> Result<()> {
     if let Some(code) = sigmacatch::cli::dispatch() {
         std::process::exit(code);
     }
-    // Single argument parse for the whole run (help/unknown flags, --evtx…).
+    // Single argument parse for the whole run (help/unknown flags, --evtx…,
+    // --macos-path…).
     let cli = parse_args();
     if cli.evtx_path.is_some() {
         return run_evtx(cli.evtx_path).await;
+    }
+    if cli.macos_path.is_some() {
+        return run_macos(cli.macos_path).await;
     }
     dispatch_collector().await
 }
 
 /// One-shot EVTX input, cross-platform. `evtx_path` is unused when the `evtx`
 /// input isn't compiled in (the eager `--evtx` check still bails clearly).
+#[allow(unused_variables)]
+async fn run_macos(macos_path: Option<PathBuf>) -> Result<()> {
+    #[cfg(all(target_os = "macos", feature = "macos"))]
+    {
+        if let Some(path) = macos_path {
+            sigmacatch::inputs::macos::run_with_path(path).await
+        } else {
+            sigmacatch::inputs::macos::run().await
+        }
+    }
+    #[cfg(not(all(target_os = "macos", feature = "macos")))]
+    {
+        anyhow::bail!(
+            "--macos-path requested but the `macos` input is not compiled in; \
+             rebuild with `--features macos`"
+        )
+    }
+}
+
 #[allow(unused_variables)]
 async fn run_evtx(evtx_path: Option<PathBuf>) -> Result<()> {
     #[cfg(feature = "evtx")]
@@ -60,6 +83,10 @@ async fn dispatch_collector() -> Result<()> {
     {
         return sigmacatch::inputs::windows::run().await;
     }
+    #[cfg(all(target_os = "macos", feature = "macos"))]
+    {
+        return sigmacatch::inputs::macos::run().await;
+    }
     #[cfg(all(
         target_os = "linux",
         any(
@@ -76,6 +103,7 @@ async fn dispatch_collector() -> Result<()> {
         "no usable input compiled into this build — rebuild with one of:\n  \
          --features winevt           Windows, live Event Log (default)\n  \
          --features evtx             one-shot EVTX files, any platform\n  \
+         --features macos            macOS system.log, one-shot\n  \
          --no-default-features --features auditd,builtin   Linux inputs\n  \
          optionally append ,sysmon or ,ebpf to the Linux set"
     )
