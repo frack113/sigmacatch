@@ -5,17 +5,19 @@ the Linux host, a data-source survey to decide how regression data is
 produced, and a prototype collector.
 
 Status (2026-11-20): **Phases 1–2 done, Phase 3 committed + native build.
-Two-phase telemetry plan agreed: Plan A (user-mode os_log + system.log)
-then Plan B (kext kernel-mode telemetry, separate VM).** Commit
-`b7125eda4` lands the collector skeleton: `inputs/macos.rs`
-(`MacosCollector`, one-shot system.log reader, `CollectorKind` +
-`EventProducer` impls), `--macos-path` CLI flag, `main.rs` dispatch arm,
-`macos` cargo feature + tokio `fs`/`io-util`, module gate in `inputs/mod.rs`,
-`Product::Macos` reserved in `types.rs`. All lints green (fmt, clippy, 366
-tests, markdownlint, typos, zensical). Native in-VM build verified on
-macOS Tahoe 26.7.3 (rustup + Xcode CLI tools installed). The current
-collector reads `/var/log/system.log` (syslog format, plain text) but macOS
-Sigma rules expect structured os_log fields (`Image`, `CommandLine`, ...).
+Plan A complete — moving to Plan B (kext).** Commit `b7125eda4` lands the
+collector skeleton: `inputs/macos.rs` (`MacosCollector`, one-shot system.log
+reader, `CollectorKind` + `EventProducer` impls), `--macos-path` CLI flag,
+`main.rs` dispatch arm, `macos` cargo feature + tokio `fs`/`io-util`, module
+gate in `inputs/mod.rs`, `Product::Macos` reserved in `types.rs`. All lints
+green (fmt, clippy, 366 tests, markdownlint, typos, zensical). Native in-VM
+build verified on macOS Tahoe 26.7.3. The collector reads `/var/log/system.log`
+plus streams os_log (`log stream --style ndjson`) with field mapping
+(`processImagePath→Image`, `eventMessage→CommandLine`, `processID→ProcessId`).
+**Plan A tested:** 69 macOS rules loaded, 864+ events/cycle, **0 matches** —
+os_log stream floods with generic daemon events whose values don't match Sigma
+rule patterns. **Decision: move to Plan B (kext kernel-mode telemetry)** for
+structured process/file events.
 **Two-phase plan:**
 
 - **Plan A (user-mode):** collector reads os_log (`log show --style ndjson`)
