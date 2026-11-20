@@ -34,6 +34,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
 use tokio::sync::{mpsc, watch};
 use tracing::info;
 
@@ -105,24 +106,37 @@ fn parse_line(line: &[u8]) -> Option<Record> {
     })
 }
 
-/// MacOS collector: one-shot system-log reader.
+/// Parse a single ndjson line from `log stream --style ndjson`.
+fn parse_ndjson(line: &[u8]) -> Option<Map<String, Value>> {
+    serde_json::from_slice::<Value>(line)
+        .ok()
+        .and_then(|v| v.as_object().cloned())
+}
+
+/// MacOS collector: reads system logs (one-shot) plus `log stream --style ndjson` (live).
 #[derive(Debug, Clone, Default)]
 pub struct MacosCollector {
-    /// Log file path(s) to read.
+    /// Log file path(s) to read (system.log, secure.log, ...).
     pub files: Vec<PathBuf>,
+    /// Path to the `log stream` binary (os_log, live events).
+    pub log_stream_path: PathBuf,
 }
 
 impl MacosCollector {
-    /// Create a collector reading `DEFAULT_LOG_PATH`.
+    /// Create a collector reading default logs plus `log stream`.
     pub fn new() -> Self {
         Self {
             files: vec![PathBuf::from(DEFAULT_LOG_PATH)],
+            log_stream_path: PathBuf::from("/usr/bin/log"),
         }
     }
 
-    /// Create a collector reading a custom log path.
-    pub fn with_path(path: PathBuf) -> Self {
-        Self { files: vec![path] }
+    /// Create a collector reading custom log paths plus `log stream`.
+    pub fn with_paths(paths: Vec<PathBuf>) -> Self {
+        Self {
+            files: paths,
+            log_stream_path: PathBuf::from("/usr/bin/log"),
+        }
     }
 
     /// Parse and send all lines from a single file into `tx`, stopping when
@@ -193,6 +207,77 @@ impl MacosCollector {
         }
         Ok(())
     }
+
+    /// Stream from `log stream --style ndjson` and parse each line as ndjson.
+    /// Runs until `stop` is set or the channel closes.
+    async fn read_log_stream(
+        log_path: &Path,
+        tx: &mpsc::Sender<Event>,
+        stop: &watch::Receiver<bool>,
+    ) -> Result<(), ProducerError> {
+        let mut cmd = Command::new(log_path);
+        cmd.arg("stream").arg("--style").arg("ndjson");
+
+        let mut child = cmd
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| ProducerError::Message(format!("failed to spawn log stream: {}", e)))?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| ProducerError::Message("log stream has no stdout".to_string()))?;
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+
+        loop {
+            if *stop.borrow() {
+                child.kill().await.ok();
+                break;
+            }
+            let n = tokio::io::AsyncReadExt::read_line(&mut reader, &mut line).await;
+            match n {
+                Ok(0) => break, // EOF (process ended)
+                Ok(_) => {
+                    if let Some(trimmed) = line.trim().strip_prefix('{') {
+                        let line = format!("{{{trimmed}");
+                        if let Some(fields) = parse_ndjson(line.as_bytes()) {
+                            let mut event_json = fields;
+                            event_json
+                                .insert("source".to_string(), Value::String("os_log".to_string()));
+                            if event_json.get("message").is_none() {
+                                if let Some(msg) = event_json.get("eventMessage").cloned() {
+                                    event_json.insert("message".to_string(), msg);
+                                }
+                            }
+                            let event_json_raw = serde_json::json!({
+                                "data": serde_json::to_string(&event_json).unwrap_or_else(|_| "".to_string()),
+                            });
+                            let event = Event::new(
+                                event_json_raw,
+                                serde_json::Value::Object(event_json),
+                                line.as_bytes().to_vec(),
+                            );
+                            if tx.send(event).await.is_err() {
+                                child.kill().await.ok();
+                                break;
+                            }
+                        }
+                    }
+                    line.clear();
+                }
+                Err(e) => {
+                    child.kill().await.ok();
+                    return Err(ProducerError::Message(format!(
+                        "log stream read error: {}",
+                        e
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl CollectorKind for MacosCollector {
@@ -201,7 +286,7 @@ impl CollectorKind for MacosCollector {
     }
 
     fn mode(&self) -> String {
-        "macOS system.log (one-shot)".to_string()
+        "macOS system.log + log stream (live)".to_string()
     }
 
     fn channels(
@@ -218,7 +303,7 @@ impl CollectorKind for MacosCollector {
     }
 
     fn live_capture(&self) -> bool {
-        false
+        true
     }
 
     fn regression_format(&self) -> DataFormat {
@@ -238,13 +323,29 @@ impl EventProducer for MacosCollector {
         stop: watch::Receiver<bool>,
     ) -> Result<(), ProducerError> {
         let files: Vec<PathBuf> = self.files.clone();
-        let mut total: u64 = 0;
-        for path in files {
-            Self::read_file(&path, &tx, &stop).await?;
-            total += 1;
+        let log_stream_path = self.log_stream_path.clone();
+
+        // Read system logs to EOF (one-shot) in a background task.
+        let file_task = tokio::spawn(async move {
+            for path in files {
+                if let Err(e) = MacosCollector::read_file(&path, &tx, &stop).await {
+                    return Err(e);
+                }
+            }
+            Ok(())
+        });
+
+        // Stream from `log stream` in the current task.
+        let stream_result = MacosCollector::read_log_stream(&log_stream_path, &tx, &stop).await;
+
+        // Wait for the file task to finish.
+        match file_task.await {
+            Ok(Ok(())) => info!("macOS collector finished reading log files"),
+            Ok(Err(e)) => return Err(e),
+            Err(e) => return Err(ProducerError::Message(format!("file task panicked: {e}"))),
         }
-        info!(count = total, "macOS collector finished reading log files");
-        Ok(())
+
+        stream_result
     }
 }
 

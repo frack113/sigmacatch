@@ -279,11 +279,13 @@ fn count_ground_truth(
     let mut gt_loaded = 0u64;
 
     for rule in rules {
-        let product_match = rule
-            .logsource
-            .product
-            .as_deref()
-            .is_some_and(|p| p == filters.product);
+        // Empty filter product = no filter (keep all rules).
+        let product_match = filters.product.is_empty()
+            || rule
+                .logsource
+                .product
+                .as_deref()
+                .is_some_and(|p| p == filters.product);
         if !product_match {
             gt_product += 1;
             continue;
@@ -773,7 +775,8 @@ mod tests {
     #[test]
     fn test_filter_config_default() {
         let config = SigmaFilterConfig::new();
-        assert_eq!(config.product, "windows");
+        // Empty product = no filter; the runner applies the collector's product.
+        assert_eq!(config.product, "");
         assert!(config.min_status.is_none());
         assert!(config.min_level.is_none());
         assert!(config.author.is_none());
