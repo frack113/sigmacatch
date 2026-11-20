@@ -103,6 +103,7 @@ tokio = { version = "1.54.1", features = [
   "signal",
   "fs",
   "io-util",
+  "process",
 ] }
 tracing.workspace = true
 tracing-appender = "0.2.5"

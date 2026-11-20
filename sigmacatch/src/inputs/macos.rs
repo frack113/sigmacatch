@@ -106,6 +106,28 @@ fn parse_line(line: &[u8]) -> Option<Record> {
     })
 }
 
+/// Map os_log field names to Sigma field names.
+///
+/// os_log uses `processImagePath`, `eventMessage`, `processID`, etc.
+/// Sigma rules expect `Image`, `CommandLine`, `ProcessId`, etc.
+fn map_os_log_fields(mut fields: Map<String, Value>) -> Map<String, Value> {
+    // Rename os_log fields to Sigma field names.
+    if let Some(v) = fields.remove("processImagePath") {
+        fields.insert("Image".to_string(), v);
+    }
+    if let Some(v) = fields.remove("eventMessage") {
+        // Use eventMessage as CommandLine for process-related events.
+        fields.insert("CommandLine".to_string(), v.clone());
+    }
+    if let Some(v) = fields.remove("processID") {
+        fields.insert("ProcessId".to_string(), v);
+    }
+    if let Some(v) = fields.remove("parentActivityIdentifier") {
+        fields.insert("ParentProcessId".to_string(), v);
+    }
+    fields
+}
+
 /// Parse a single ndjson line from `log stream --style ndjson`.
 fn parse_ndjson(line: &[u8]) -> Option<Map<String, Value>> {
     serde_json::from_slice::<Value>(line)
@@ -236,14 +258,14 @@ impl MacosCollector {
                 child.kill().await.ok();
                 break;
             }
-            let n = tokio::io::AsyncReadExt::read_line(&mut reader, &mut line).await;
+            let n = reader.read_line(&mut line).await;
             match n {
                 Ok(0) => break, // EOF (process ended)
                 Ok(_) => {
                     if let Some(trimmed) = line.trim().strip_prefix('{') {
                         let line = format!("{{{trimmed}");
                         if let Some(fields) = parse_ndjson(line.as_bytes()) {
-                            let mut event_json = fields;
+                            let mut event_json = map_os_log_fields(fields);
                             event_json
                                 .insert("source".to_string(), Value::String("os_log".to_string()));
                             if event_json.get("message").is_none() {
@@ -324,11 +346,13 @@ impl EventProducer for MacosCollector {
     ) -> Result<(), ProducerError> {
         let files: Vec<PathBuf> = self.files.clone();
         let log_stream_path = self.log_stream_path.clone();
+        let tx2 = tx.clone();
+        let stop2 = stop.clone();
 
         // Read system logs to EOF (one-shot) in a background task.
         let file_task = tokio::spawn(async move {
             for path in files {
-                if let Err(e) = MacosCollector::read_file(&path, &tx, &stop).await {
+                if let Err(e) = MacosCollector::read_file(&path, &tx2, &stop2).await {
                     return Err(e);
                 }
             }
@@ -360,7 +384,7 @@ pub async fn run() -> Result<()> {
 /// Entry point accepting a custom log path (used by `main.rs` when the
 /// `--macos-path` flag is present).
 pub async fn run_with_path(path: PathBuf) -> Result<()> {
-    let collector = MacosCollector::with_path(path);
+    let collector = MacosCollector::with_paths(vec![path]);
     crate::runner::run(&collector).await
 }
 
