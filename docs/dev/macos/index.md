@@ -4,20 +4,26 @@ Progress on adding macOS as a third platform: a macOS VM under QEMU/KVM on
 the Linux host, a data-source survey to decide how regression data is
 produced, and a prototype collector.
 
-Status (2026-11-20): **Phases 1–2 done, Phase 3 committed + native build.**
-Commit `b7125eda4` lands the collector skeleton: `inputs/macos.rs`
+Status (2026-11-20): **Phases 1–2 done, Phase 3 committed + native build.
+Two-phase telemetry plan agreed: Plan A (user-mode os_log + system.log)
+then Plan B (kext kernel-mode telemetry, separate VM).** Commit
+`b7125eda4` lands the collector skeleton: `inputs/macos.rs`
 (`MacosCollector`, one-shot system.log reader, `CollectorKind` +
 `EventProducer` impls), `--macos-path` CLI flag, `main.rs` dispatch arm,
 `macos` cargo feature + tokio `fs`/`io-util`, module gate in `inputs/mod.rs`,
 `Product::Macos` reserved in `types.rs`. All lints green (fmt, clippy, 366
 tests, markdownlint, typos, zensical). Native in-VM build verified on
-macOS Tahoe 26.7.3 (rustup + Xcode CLI tools installed). The collector
-reads `/var/log/system.log` (392 events/run) but no rules match yet because
-syslog lines lack the structured fields (`Image`, `CommandLine`, ...) that
-macOS Sigma rules expect — next step is switching to os_log
-(`log show --style ndjson`) for structured events, or adding `product: macos`
-rules that match syslog-formatted events. Validate with
-`regressiondata-check` once events match.
+macOS Tahoe 26.7.3 (rustup + Xcode CLI tools installed). The current
+collector reads `/var/log/system.log` (syslog format, plain text) but macOS
+Sigma rules expect structured os_log fields (`Image`, `CommandLine`, ...).
+**Two-phase plan:**
+
+- **Plan A (user-mode):** collector reads os_log (`log show --style ndjson`)
+  plus system.log plus secure.log — structured events matching Sigma rules.
+  Validates in existing Tahoe VM.
+- **Plan B (kernel-mode):** kext captures kernel telemetry (process, file,
+  network, driver events) — the macOS equivalent of the Windows KMDF driver
+  / Sysmon. Requires a separate VM with SIP disabled or self-signed kext.
 
 ## Phase 1 — macOS VM under QEMU (done)
 
@@ -288,3 +294,45 @@ VM-captured ndjson.
   as the review requirement until that changes.
 - The macOS VM is not a libvirt domain (plain QEMU from the boot script);
   see the snapshot note above.
+
+## Two-phase telemetry plan (Plan A + Plan B)
+
+### Plan A — User-mode telemetry (existing Tahoe VM)
+
+The collector reads from os_log (structured JSON) plus plain-text system
+logs, producing events with fields that match macOS Sigma rules:
+
+| Source | Command / Path | Format | Purpose |
+|--------|----------------|--------|---------|
+| os_log | `/usr/bin/log show --style ndjson` | ndjson | Primary structured source (equivalent of auditd/ETW) |
+| system.log | `/var/log/system.log` | plain text | Syslog events |
+| secure.log | `/var/log/secure` | plain text | Authentication events |
+| airportd, etc. | `/var/log/` | plain text | Additional daemons |
+
+Implementation: add a second reader to `macos.rs` that streams ndjson from
+`log show` in the background, parses fields into `event_json`, and feeds
+them through the same `EventProducer` pipeline. No kernel code required.
+
+### Plan B — Kernel-mode telemetry (separate VM)
+
+A kernel extension (kext) captures kernel-level events — process creation,
+file access, network connections, driver loads — the macOS equivalent of
+the Windows KMDF driver / Sysmon. Requires:
+
+1. A separate VM with SIP disabled (or self-signed kext + kernel debugging)
+2. Kernel debugging enabled (`kdp_tcp` / `kextload` for development)
+3. A kext skeleton using `kern/` APIs (proc, fs, network hooks)
+4. Streaming captured events to user mode (pipe / socket / shared memory)
+5. Validation with a `product: macos` Sigma rule
+
+This is a much larger project — the kext needs kernel programming, self-
+signing, and careful handling of kernel panic safety. A second QEMU VM
+(same OSX-KVM setup, SIP disabled) is the cleanest test environment.
+
+### Test VM strategy
+
+- **VM 1 (Tahoe 26.7.3, SIP on):** Plan A validation. Already provisioned
+  (`frack113`/`azerty`, SSH key, clean-install snapshot).
+- **VM 2 (Tahoe 26.7.3, SIP off):** Plan B validation. Clone VM 1's disk,
+  boot into recovery, disable SIP (`csrutil disable`), re-enable kernel
+  debugging. Keeps the production VM untouched.
