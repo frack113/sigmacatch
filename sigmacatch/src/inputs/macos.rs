@@ -27,6 +27,7 @@ use crate::detection::DetectionEngine;
 use crate::regression::DataFormat;
 use crate::runner::CollectorKind;
 use crate::types::{Event, EventProducer, ProducerError};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -80,12 +81,15 @@ fn parse_line(line: &[u8]) -> Option<Record> {
         if field.is_empty() {
             continue;
         }
-        if let Some((key, value)) = field.split_once(|&b| b == b'=') {
-            let key_str = std::str::from_utf8(key).unwrap_or("").trim().to_string();
-            let value_str = std::str::from_utf8(value).unwrap_or("").to_string();
-            if !key_str.is_empty() {
-                fields.insert(key_str, Value::String(value_str));
-            }
+        let parts: Vec<&[u8]> = field.split(|&b| b == b'=').collect();
+        if parts.len() != 2 {
+            continue;
+        }
+        let (key, value) = (parts[0], parts[1]);
+        let key_str = std::str::from_utf8(key).unwrap_or("").trim().to_string();
+        let value_str = std::str::from_utf8(value).unwrap_or("").to_string();
+        if !key_str.is_empty() {
+            fields.insert(key_str, Value::String(value_str));
         }
     }
 
@@ -131,10 +135,11 @@ impl MacosCollector {
         let file = match File::open(path).await {
             Ok(f) => f,
             Err(e) => {
-                return Err(ProducerError::Io {
-                    path: path.to_path_buf(),
-                    source: e.into(),
-                });
+                return Err(ProducerError::Message(format!(
+                    "failed to open {}: {}",
+                    path.display(),
+                    e
+                )));
             }
         };
         let reader = BufReader::new(file);
@@ -145,10 +150,11 @@ impl MacosCollector {
                 Ok(Some(l)) => l,
                 Ok(None) => break, // EOF
                 Err(e) => {
-                    return Err(ProducerError::Io {
-                        path: path.to_path_buf(),
-                        source: e.into(),
-                    });
+                    return Err(ProducerError::Message(format!(
+                        "failed to read {}: {}",
+                        path.display(),
+                        e
+                    )));
                 }
             };
 
@@ -174,7 +180,11 @@ impl MacosCollector {
                 "data": String::from_utf8_lossy(&record.raw).trim(),
             });
 
-            let event = Event::new(event_json_raw, event_json, record.raw.clone());
+            let event = Event::new(
+                event_json_raw,
+                serde_json::Value::Object(event_json),
+                record.raw.clone(),
+            );
 
             if tx.send(event).await.is_err() {
                 // Receiver dropped — stop.
@@ -213,6 +223,10 @@ impl CollectorKind for MacosCollector {
 
     fn regression_format(&self) -> DataFormat {
         DataFormat::Log
+    }
+
+    fn rule_product(&self) -> &'static str {
+        "macos"
     }
 }
 

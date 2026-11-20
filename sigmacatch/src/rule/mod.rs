@@ -76,7 +76,11 @@ pub struct SigmaFilterConfig {
 impl Default for SigmaFilterConfig {
     fn default() -> Self {
         Self {
-            product: String::from("windows"),
+            // Empty = no product filter; the runner applies the collector's
+            // product via `apply_collector_product_default`. The old default
+            // ("windows") blocked platform-specific collectors from loading
+            // their rules.
+            product: String::new(),
             min_status: None,
             min_level: None,
             max_rule_size: 1024 * 1024,
@@ -272,11 +276,13 @@ impl SigmahqRules {
         let mut kept_ids: Vec<Uuid> = Vec::new();
 
         for rule in self.rules {
-            let product_ok = rule
-                .logsource
-                .product
-                .as_deref()
-                .is_some_and(|p| p == filters.product);
+            // Empty filter product = no filter (keep all rules).
+            let product_ok = filters.product.is_empty()
+                || rule
+                    .logsource
+                    .product
+                    .as_deref()
+                    .is_some_and(|p| p == filters.product);
             if !product_ok {
                 filtered_product += 1;
                 continue;

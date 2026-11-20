@@ -4,19 +4,20 @@ Progress on adding macOS as a third platform: a macOS VM under QEMU/KVM on
 the Linux host, a data-source survey to decide how regression data is
 produced, and a prototype collector.
 
-Status (2026-11-20): **Phases 1–2 done, Phase 3 implementation started.** VM
-runs a clean **macOS Tahoe 26.7.3** (fresh install, not an upgrade),
-snapshot `clean-install` taken; SSH key auth; auto-updates locked. The
-`KERN_PROC_ALL` + `KERN_PROCARGS2` access needed by the proc poller is
-verified on Tahoe. Phase 3: the collector skeleton is in place —
-`sigmacatch/src/inputs/macos.rs` (`MacosCollector`, one-shot system.log
-reader, `CollectorKind` + `EventProducer` impls), `--macos-path` CLI flag
-wired through `CliArgs`/`parse_args_from`, `main.rs` dispatch arm added,
-`macos` cargo feature + tokio `fs`/`io-util` in `Cargo.toml`, module gate in
-`inputs/mod.rs`, `Product::Macos` reserved in `types.rs`. Build passes on
-Linux (macOS module is cfg-gated); native in-VM build is the real gate.
-Next: native rustup build in the VM, run with a `product: macos` Sigma rule,
-validate with `regressiondata-check`.
+Status (2026-11-20): **Phases 1–2 done, Phase 3 committed + native build.**
+Commit `b7125eda4` lands the collector skeleton: `inputs/macos.rs`
+(`MacosCollector`, one-shot system.log reader, `CollectorKind` +
+`EventProducer` impls), `--macos-path` CLI flag, `main.rs` dispatch arm,
+`macos` cargo feature + tokio `fs`/`io-util`, module gate in `inputs/mod.rs`,
+`Product::Macos` reserved in `types.rs`. All lints green (fmt, clippy, 366
+tests, markdownlint, typos, zensical). Native in-VM build verified on
+macOS Tahoe 26.7.3 (rustup + Xcode CLI tools installed). The collector
+reads `/var/log/system.log` (392 events/run) but no rules match yet because
+syslog lines lack the structured fields (`Image`, `CommandLine`, ...) that
+macOS Sigma rules expect — next step is switching to os_log
+(`log show --style ndjson`) for structured events, or adding `product: macos`
+rules that match syslog-formatted events. Validate with
+`regressiondata-check` once events match.
 
 ## Phase 1 — macOS VM under QEMU (done)
 
