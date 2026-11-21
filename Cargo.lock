@@ -1037,9 +1037,9 @@ dependencies = [
 
 [[package]]
 name = "grit-lib"
-version = "0.5.31"
+version = "0.5.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0f069b1ab347dd75f3d5b558b10ed7159e05fc738e9b89bb60fb4f5d0128862"
+checksum = "6ba663668430bb4ac10577fb36844d94eb4c24add871e7ef6c64e0b6b30b33ca"
 dependencies = [
  "crc32fast",
  "encoding_rs",
