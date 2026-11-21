@@ -766,6 +766,56 @@ fn create_device(mut device_init: PWDFDEVICE_INIT) -> NTSTATUS {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unicode_string_finds_null_terminator() {
+        static BUF: [u16; 5] = [b'a' as u16, b'b' as u16, b'c' as u16, 0, b'x' as u16];
+        let us = unicode_string(&BUF);
+        assert_eq!(us.Length, 6); // 3 chars * 2
+        assert_eq!(us.MaximumLength, 10); // 5 units * 2
+    }
+
+    #[test]
+    fn unicode_string_without_null_uses_full_length() {
+        static BUF: [u16; 3] = [b'a' as u16, b'b' as u16, b'c' as u16];
+        let us = unicode_string(&BUF);
+        assert_eq!(us.Length, 6);
+        assert_eq!(us.MaximumLength, 6);
+    }
+
+    #[test]
+    fn copy_wide_copies_and_truncates() {
+        static SRC: [u16; 4] = [b'h' as u16, b'i' as u16, b'!' as u16, 0];
+        let src = UNICODE_STRING {
+            Length: 6, // "hi"
+            MaximumLength: 8,
+            Buffer: SRC.as_ptr().cast_mut(),
+        };
+        let mut dest = [0u16; 1]; // only room for 1 char
+        let mut copied = 0u16;
+        unsafe { copy_wide(&src, &mut dest, &mut copied) };
+        assert_eq!(copied, 1);
+        assert_eq!(dest[0], b'h' as u16);
+    }
+
+    #[test]
+    fn copy_wide_null_buffer_is_noop() {
+        let src = UNICODE_STRING {
+            Length: 0,
+            MaximumLength: 0,
+            Buffer: core::ptr::null_mut(),
+        };
+        let mut dest = [0u16; 4];
+        let mut copied = 99u16;
+        unsafe { copy_wide(&src, &mut dest, &mut copied) };
+        assert_eq!(copied, 0);
+        assert_eq!(dest, [0u16; 4]);
+    }
+}
+
 /// IOCTL dispatch.
 unsafe extern "C" fn evt_io_device_control(
     _queue: WDFQUEUE,

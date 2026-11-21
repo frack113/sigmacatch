@@ -1226,6 +1226,80 @@ fn first_write_in_second(file_object: *mut core::ffi::c_void) -> bool {
     true
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ascii_lower_converts_uppercase() {
+        assert_eq!(ascii_lower(b'A' as u16), b'a' as u16);
+        assert_eq!(ascii_lower(b'Z' as u16), b'z' as u16);
+    }
+
+    #[test]
+    fn ascii_lower_passes_lowercase_and_non_alpha() {
+        assert_eq!(ascii_lower(b'a' as u16), b'a' as u16);
+        assert_eq!(ascii_lower(b'0' as u16), b'0' as u16);
+        assert_eq!(ascii_lower(b' ' as u16), b' ' as u16);
+    }
+
+    #[test]
+    fn wide_eq_ignore_ascii_case_matches() {
+        assert!(wide_eq_ignore_ascii_case(&[b'\\' as u16, b'T' as u16], &[b'\\' as u16, b't' as u16]));
+    }
+
+    #[test]
+    fn wide_eq_ignore_ascii_case_rejects_different_lengths() {
+        assert!(!wide_eq_ignore_ascii_case(&[b'a' as u16], &[b'a' as u16, b'b' as u16]));
+    }
+
+    #[test]
+    fn wide_eq_ignore_ascii_case_rejects_different_content() {
+        assert!(!wide_eq_ignore_ascii_case(&[b'a' as u16], &[b'b' as u16]));
+    }
+
+    #[test]
+    fn has_stream_detects_colon_after_last_separator() {
+        // "...file.txt:hidden:$DATA"
+        static BUF: [u16; 8] = [
+            b'f' as u16, b'i' as u16, b'l' as u16, b'e' as u16,
+            b':' as u16, b'h' as u16, b'i' as u16, b'd' as u16,
+        ];
+        let us = UNICODE_STRING {
+            Length: (BUF.len() * 2) as u16,
+            MaximumLength: (BUF.len() * 2) as u16,
+            Buffer: BUF.as_ptr().cast_mut(),
+        };
+        assert!(has_stream(&us));
+    }
+
+    #[test]
+    fn has_stream_rejects_colon_before_last_separator() {
+        // "C:\\dir\\file" — the colon is before the last backslash
+        static BUF: [u16; 8] = [
+            b'C' as u16, b':' as u16, b'\\' as u16, b'd' as u16,
+            b'i' as u16, b'r' as u16, b'\\' as u16, b'f' as u16,
+        ];
+        let us = UNICODE_STRING {
+            Length: (BUF.len() * 2) as u16,
+            MaximumLength: (BUF.len() * 2) as u16,
+            Buffer: BUF.as_ptr().cast_mut(),
+        };
+        assert!(!has_stream(&us));
+    }
+
+    #[test]
+    fn has_stream_rejects_no_colon() {
+        static BUF: [u16; 3] = [b'a' as u16, b'b' as u16, b'c' as u16];
+        let us = UNICODE_STRING {
+            Length: 6,
+            MaximumLength: 6,
+            Buffer: BUF.as_ptr().cast_mut(),
+        };
+        assert!(!has_stream(&us));
+    }
+}
+
 /// Copy a counted wide string into a fixed record field.
 unsafe fn copy_wide(source: &UNICODE_STRING, destination: &mut [u16], copied: &mut u16) {
     if source.Buffer.is_null() || source.Length == 0 {

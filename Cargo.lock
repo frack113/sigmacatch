@@ -102,7 +102,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73cd58deff2140a0a8eae87e417bd01db68a33e148aa93d1e8cd837e55e312b6"
 dependencies = [
- "object",
+ "object 0.39.1",
 ]
 
 [[package]]
@@ -130,9 +130,9 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "aya"
-version = "0.14.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66e644424fada9fff4fdc63848db1732fb69b626e8328202ef55c03df1f4d939"
+checksum = "3c193744eaa31250fd29ceb101a85219ae3cc26ea595a2cdb848df5a866cf19e"
 dependencies = [
  "assert_matches",
  "aya-obj",
@@ -140,7 +140,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "libc",
  "log",
- "object",
+ "object 0.40.0",
  "once_cell",
  "scopeguard",
  "thiserror 2.0.21",
@@ -148,13 +148,13 @@ dependencies = [
 
 [[package]]
 name = "aya-obj"
-version = "0.3.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c76b9c75d9cdc155ff8f6a06d61e873f67bf47be8cfa92a3b5aaea43f4b4077"
+checksum = "66254e485eda05c8ab20b83fb55ea4bde22a8436981f435e35cffa5e6aa6196d"
 dependencies = [
  "bytes",
  "log",
- "object",
+ "object 0.40.0",
  "thiserror 2.0.21",
 ]
 
@@ -1037,9 +1037,9 @@ dependencies = [
 
 [[package]]
 name = "grit-lib"
-version = "0.5.31"
+version = "0.5.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0f069b1ab347dd75f3d5b558b10ed7159e05fc738e9b89bb60fb4f5d0128862"
+checksum = "6ba663668430bb4ac10577fb36844d94eb4c24add871e7ef6c64e0b6b30b33ca"
 dependencies = [
  "crc32fast",
  "encoding_rs",
@@ -1481,12 +1481,12 @@ dependencies = [
 
 [[package]]
 name = "md-5"
-version = "0.10.6"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
+checksum = "69b6441f590336821bb897fb28fc622898ccceb1d6cea3fde5ea86b090c4de98"
 dependencies = [
  "cfg-if",
- "digest 0.10.7",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -1688,6 +1688,15 @@ name = "object"
 version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "object"
+version = "0.40.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd229a0361b9d0d4396176e02d65897f487eebeab7caa6d443855ee152ca0b9c"
 dependencies = [
  "crc32fast",
  "hashbrown 0.17.1",
@@ -2181,9 +2190,9 @@ dependencies = [
 
 [[package]]
 name = "rsigma-eval"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "424720c1494689388408057dc3bfa86b21f3ecb06c5ba27a7c1e96a7be574308"
+checksum = "bb242d294625c9dd305a5accd2cc814dc625c734d2a1bfc8f4401e362b877e50"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -2206,9 +2215,9 @@ dependencies = [
 
 [[package]]
 name = "rsigma-ir"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f861de52817d6934abb88d3a234b6715406313040a800fc8a5f4fc458067475"
+checksum = "672b59eb31c5d99ba477a3bc2ac134d1e715340631863fbc77c7dfdcecf4a3db"
 dependencies = [
  "base64",
  "ciborium",
@@ -2221,9 +2230,9 @@ dependencies = [
 
 [[package]]
 name = "rsigma-parser"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6521f3931158b9180e58b1cef37c3df3ad5e41144b3248ee3715361e549fd642"
+checksum = "9f710ef27d9e50e46a276f242e81ff8483e668b90b48ac2d8d0a6c57f04e0711"
 dependencies = [
  "fancy-regex",
  "globset",
@@ -2235,6 +2244,8 @@ dependencies = [
  "serde_json",
  "stacker",
  "thiserror 2.0.21",
+ "tree-sitter",
+ "tree-sitter-yaml",
  "yaml_serde",
  "yamlpatch",
  "yamlpath",
@@ -3202,9 +3213,9 @@ checksum = "3a3b425286980a367278453f3b6d28cdcb134b574e5a35824a6ff5eebad50bb6"
 
 [[package]]
 name = "uuid"
-version = "1.29.1"
+version = "1.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a06f08a856b009bc7bbaf7d3e79808595d032dd19074c0c2ef26e49e03e6bdc"
+checksum = "3c14b15dffa2f4bd712103e857140aa04a4f2ff6e955c77d7eb8e53ee02a3b64"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
