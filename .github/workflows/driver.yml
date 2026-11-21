@@ -48,7 +48,7 @@ jobs:
       # winget/MSI registration is needed.
       - name: Restore the cached toolchain
         id: toolchain-cache
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           key: driver-toolchain-v1-wdk-${{ env.WDK_VERSION }}-llvm-${{ env.LLVM_VERSION }}
           path: |
@@ -111,7 +111,7 @@ jobs:
       # the key is version-pinned so every branch shares the same entry.
       - name: Save the toolchain cache
         if: steps.toolchain-probe.outputs.ready != 'true'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           key: driver-toolchain-v1-wdk-${{ env.WDK_VERSION }}-llvm-${{ env.LLVM_VERSION }}
           path: |
@@ -140,7 +140,7 @@ jobs:
           --target x86_64-pc-windows-msvc
 
       - name: Upload the driver image
-        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sigmacatch-driver
           path: sigmacatch/driver/target/x86_64-pc-windows-msvc/release/sigmacatch_driver.dll
@@ -158,7 +158,7 @@ jobs:
           Write-Host "staged $($header.FullName)"
 
       - name: Upload the fltkernel header
-        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fltkernel-header
           path: sigmacatch/driver/fltkernel.h
