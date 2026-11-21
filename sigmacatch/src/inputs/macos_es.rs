@@ -441,6 +441,17 @@ impl RawNotification {
         let raw_bytes = serde_json::to_vec(&raw).unwrap_or_default();
         Event::new_injected(raw, detection, raw_bytes, "macos", None)
     }
+
+    /// Resolve `User` from `UserId` when the source supplied no account name.
+    ///
+    /// Both backends carry the acting uid, but only the native one resolves it
+    /// on its own. Keeping the fallback here makes both paths agree and keeps
+    /// the behaviour testable without a macOS host.
+    pub fn fill_user_from_id(&mut self, resolve: impl Fn(u32) -> Option<String>) {
+        if self.user.is_none() {
+            self.user = self.user_id.and_then(resolve);
+        }
+    }
 }
 
 /// Resolve an eslogger `destination` object (existing file or new path).
@@ -825,9 +836,7 @@ mod es {
         if notification.image.is_none() {
             notification.image = process_image(&actor);
         }
-        if notification.user.is_none() {
-            notification.user = notification.user_id.and_then(user_name);
-        }
+        notification.fill_user_from_id(user_name);
         Some(notification)
     }
 
@@ -1037,7 +1046,7 @@ mod eslogger {
     use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio::process::Command;
     use tokio::sync::{mpsc, watch};
-    use tracing::{debug, info, warn};
+    use tracing::{debug, info};
 
     use super::RawNotification;
     use crate::types::{Event, ProducerError};
@@ -1045,18 +1054,33 @@ mod eslogger {
     /// Apple's first-party Endpoint Security client binary.
     const ESLOGGER: &str = "/usr/bin/eslogger";
 
-    /// Drain the child's stderr so entitlement/permission errors surface.
-    async fn drain_stderr(stderr: tokio::process::ChildStderr) {
+    /// Render the captured stderr for the error returned on an early exit.
+    fn stderr_detail(lines: &[String]) -> String {
+        if lines.is_empty() {
+            String::new()
+        } else {
+            format!("; eslogger stderr: {}", lines.join("; "))
+        }
+    }
+
+    /// Drain the child's stderr so entitlement/permission errors can be
+    /// reported when `eslogger` exits before the capture is stopped.
+    async fn drain_stderr(stderr: tokio::process::ChildStderr) -> Vec<String> {
         let mut lines = BufReader::new(stderr).lines();
+        let mut captured = Vec::new();
         while let Ok(Some(line)) = lines.next_line().await {
             debug!("eslogger: {line}");
+            captured.push(line);
         }
+        captured
     }
 
     /// Parse one `eslogger` NDJSON line into a sigmacatch [`Event`].
     fn parse_line(line: &str) -> Option<Event> {
         let doc: serde_json::Value = serde_json::from_str(line).ok()?;
-        RawNotification::from_eslogger_json(&doc).map(|n| n.to_event())
+        let mut notification = RawNotification::from_eslogger_json(&doc)?;
+        notification.fill_user_from_id(super::user_name);
+        Some(notification.to_event())
     }
 
     /// Spawn `eslogger` for the requested kinds and forward its NDJSON to
@@ -1085,7 +1109,7 @@ mod eslogger {
             .map_err(|e| ProducerError::Message(format!("failed to spawn {ESLOGGER}: {e}")))?;
 
         let stderr = child.stderr.take().expect("stderr is piped");
-        tokio::spawn(drain_stderr(stderr));
+        let stderr_task = tokio::spawn(drain_stderr(stderr));
 
         let stdout = child.stdout.take().expect("stdout is piped");
         let mut lines = BufReader::new(stdout).lines();
@@ -1095,14 +1119,12 @@ mod eslogger {
             "Endpoint Security eslogger fallback started"
         );
 
-        loop {
+        // An EOF before `stop` means eslogger died. Remember why so a dead
+        // source surfaces as a producer error instead of an empty capture.
+        let mut early_exit = None;
+        while !*stop.borrow() {
             tokio::select! {
-                changed = stop.changed() => {
-                    if changed.is_err() {
-                        break;
-                    }
-                    break;
-                }
+                _ = stop.changed() => break,
                 line = lines.next_line() => {
                     match line {
                         Ok(Some(line)) => {
@@ -1112,9 +1134,12 @@ mod eslogger {
                                 break; // receiver dropped
                             }
                         }
-                        Ok(None) => break, // EOF: eslogger exited
+                        Ok(None) => {
+                            early_exit = Some("eslogger closed its stdout before the capture was stopped".to_string());
+                            break;
+                        }
                         Err(e) => {
-                            warn!("eslogger stdout read error: {e}");
+                            early_exit = Some(format!("eslogger stdout read error: {e}"));
                             break;
                         }
                     }
@@ -1123,8 +1148,33 @@ mod eslogger {
         }
 
         let _ = child.start_kill();
-        let _ = child.wait().await;
+        let status = child.wait().await;
+        let stderr_lines = stderr_task.await.unwrap_or_default();
+
+        if let Some(reason) = early_exit {
+            let status = status
+                .map(|status| status.to_string())
+                .unwrap_or_else(|e| format!("unknown ({e})"));
+            return Err(ProducerError::Message(format!(
+                "{reason} (status: {status}){}",
+                stderr_detail(&stderr_lines)
+            )));
+        }
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::stderr_detail;
+
+        #[test]
+        fn stderr_detail_reports_captured_lines() {
+            assert_eq!(stderr_detail(&[]), "");
+            assert_eq!(
+                stderr_detail(&["bad event".to_string(), "second line".to_string()]),
+                "; eslogger stderr: bad event; second line"
+            );
+        }
     }
 }
 
@@ -1455,5 +1505,17 @@ mod tests {
         assert_eq!(Kind::Sudo.eslogger_name(), Some("sudo"));
         assert_eq!(Kind::KextLoad.eslogger_name(), Some("kextload"));
         assert_eq!(Kind::Login.eslogger_name(), Some("login_login"));
+    }
+
+    #[test]
+    fn user_resolves_from_id_only_when_absent() {
+        let mut raw = RawNotification::from_eslogger_json(&eslogger_exec()).expect("exec parses");
+        raw.fill_user_from_id(|uid| Some(format!("user-{uid}")));
+        assert_eq!(raw.user.as_deref(), Some("user-501"));
+        assert_eq!(raw.to_event().event_json["User"], "user-501");
+
+        raw.user = Some("explicit".to_string());
+        raw.fill_user_from_id(|_| Some("overwritten".to_string()));
+        assert_eq!(raw.user.as_deref(), Some("explicit"));
     }
 }
