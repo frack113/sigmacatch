@@ -6,6 +6,8 @@
   declare a `rust-version` field)
 - For Windows cross-compilation from Linux: `cargo install cargo-xwin`
   (auto-downloads Windows SDK)
+- For the macOS executable: a **macOS host** — the Linux cross-linker has no
+  macOS SDK, so only `cargo check`/`cargo clippy` can cross-compile that target
 - For the kernel driver only: a **Windows host** with WDK 10.0.22621, LLVM
   17.0.6 and the Visual Studio C++ workload (never `cargo xwin`)
 - Platform inputs: see [Requirements](https://github.com/frack113/sigmacatch#requirements) in the README
@@ -25,6 +27,7 @@ validator); the **cargo features** select which inputs are compiled in:
 | `builtin` | builtin syslog (central, authpriv, cron) | Linux | no |
 | `sysmon` | Sysmon-for-Linux XML tail (depends on `builtin`) | Linux | no |
 | `ebpf` | native eBPF probes (process/network/file/DNS) | Linux | no |
+| `macos` | Endpoint Security (native client + `eslogger` fallback) | macOS | no |
 
 At runtime `--evtx <PATH>` selects the one-shot EVTX input; on Windows the
 collector runs the Event Log channels next to exactly one process source (the
@@ -107,6 +110,34 @@ the collector runs on ETW alone.
 > The `etw` feature has no dedicated CI job — the Windows CI job builds
 > `winevt` and `winevt+evtx`. Cross-build it before a PR:
 > `cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch --features winevt,etw`.
+
+## macOS
+
+```bash
+cargo build --release -p sigmacatch --no-default-features --features macos
+cargo test -p sigmacatch --no-default-features --features macos
+```
+
+`Backend::Auto` tries the native `endpoint-sec` client and falls back to
+Apple's `eslogger` when the binary is not entitled. On a stock machine with SIP
+enabled only the `eslogger` path works; see [macOS support](macos/index.md) for
+the AMFI findings and the live-VM results.
+
+The event model and the `eslogger` NDJSON parser are platform-independent and
+also run on Linux with the same feature. The ES client and the process-spawning
+code are compiled and tested only on macOS.
+
+The macOS executable cannot be linked from Linux: the `x86_64-apple-darwin`
+linker needs the macOS SDK and its frameworks. A compile-only cross-check is
+still useful before a PR:
+
+```bash
+CRATE_CC_NO_DEFAULTS=1 CC_x86_64_apple_darwin=cc AR_x86_64_apple_darwin=ar \
+  cargo clippy --target x86_64-apple-darwin --all-targets -p sigmacatch \
+  --no-default-features --features macos
+```
+
+CI builds and tests the binary on a `macos-15-intel` runner.
 
 ## Windows cross-compilation (from Linux)
 

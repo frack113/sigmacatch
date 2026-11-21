@@ -5,21 +5,19 @@ the Linux host, a data-source survey to decide how regression data is
 produced, and a prototype collector.
 
 Status (2026-11-21): **Phases 1–3 done. Endpoint Security is the sole macOS
-input.** Commit `4c4107404` landed the ES collector `inputs/macos_es.rs`
-(`MacosEsCollector`, implementing
-`CollectorKind` and `EventProducer`) is built on two backends: the native
+input.** The ES collector `inputs/macos_es.rs` (`MacosEsCollector`, implementing
+`CollectorKind` and `EventProducer`) has two backends: the native
 `endpoint-sec` client, and Apple's first-party `eslogger`
-(`/usr/bin/eslogger`) as an
-automatic fallback. The native client is **killed by AMFI at launch** when
-the binary carries the `com.apple.developer.endpoint-security.client`
-entitlement without Apple's signature (see "AMFI findings" below), so the
-`eslogger` fallback is the path that works on a stock machine with SIP
-enabled; it is verified live in the VM (exec/create/rename/unlink
-notifications with args, cwd, target path, ppid, audit tokens).
-**Plan A (os_log/system.log), tested then removed:** 69 macOS rules loaded,
-864+ events/cycle, **0 matches** —
-os_log stream floods with generic daemon events whose values don't match
-Sigma rule patterns. **Plan B decision (2026-11-20):** the kext path is
+(`/usr/bin/eslogger`) as an automatic fallback. The native client is **killed
+by AMFI at launch** when the binary carries the
+`com.apple.developer.endpoint-security.client` entitlement without Apple's
+signature (see "AMFI findings" below), so the `eslogger` fallback is the path
+that works on a stock machine with SIP enabled; it is verified live in the VM
+(exec/create/rename/unlink notifications with args, target path, ppid, audit
+tokens). Plan A (os_log/system.log) was tested and **removed**: 69 macOS rules
+loaded, 864+ events/cycle, **0 matches** — the os_log stream floods with
+generic daemon events whose values do not match Sigma rule patterns.
+**Plan B decision (2026-11-20):** the kext path is
 blocked (SIP cannot be disabled on this OVMF VM — see "SIP findings" below)
 and DTrace's kernel probes are SIP-gated. Research on how real macOS EDRs
 capture telemetry (Fleet, Santa, Crescendo, mac-monitor, NuwaStone,
