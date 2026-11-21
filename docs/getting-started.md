@@ -21,6 +21,10 @@ capture, and check what was produced.
     (see [Windows without Sysmon](dev/windows/index.md)).
   - **Linux** — an auditd log at `/var/log/audit/audit.log` and/or the
     standard syslog files. No root needed.
+  - **macOS** — a macOS host (the executable cannot be linked from Linux).
+    The Endpoint Security collector runs as root and uses Apple's `eslogger`
+    on a stock machine — no entitlement needed. See
+    [macOS support](dev/macos/index.md).
 
 ## 1. Build
 

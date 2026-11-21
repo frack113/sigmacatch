@@ -80,6 +80,10 @@ There is no flag for this — the build and the machine decide:
 | `winevt,etw` | Event Log channels + native ETW, no Sysmon needed |
 | `winevt,etw,driver` | Event Log channels + the kernel driver when it is loaded, else native ETW |
 
+On macOS the `macos` feature selects the single Endpoint Security collector
+(`macos-es`): the native `endpoint-sec` client when the binary is entitled,
+Apple's `eslogger` otherwise — see [macOS collector](../dev/collectors/macos.md).
+
 The kernel driver (`sigmacatch/driver`, a separate test-signed build) is
 detected at startup by opening `\\.\sigmacatch`, and only one process source
 runs at a time so nothing is reported twice. The driver owns process, file,

@@ -10,7 +10,7 @@
   macOS SDK, so only `cargo check`/`cargo clippy` can cross-compile that target
 - For the kernel driver only: a **Windows host** with WDK 10.0.22621, LLVM
   17.0.6 and the Visual Studio C++ workload (never `cargo xwin`)
-- Platform inputs: see [Requirements](https://github.com/frack113/sigmacatch#requirements) in the README
+- Platform inputs: see [What you need](../getting-started.md#what-you-need)
 
 ## Cargo features
 

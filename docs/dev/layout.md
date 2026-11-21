@@ -7,7 +7,7 @@ Reference page: the directory tree and the module dependency graph. Read
 
 <!-- markdownlint-disable MD033 -->
 <iframe src="../media/interactive/repository-layout.html?embed=1" loading="lazy" title="Repository layout, interactive (Flow + Live)"
-        style="display:block;width:100%;aspect-ratio:1449/1285;border:0;margin:0 auto"></iframe>
+        style="display:block;width:100%;aspect-ratio:1449/1120;border:0;margin:0 auto"></iframe>
 <!-- markdownlint-enable MD033 -->
 
 *One workspace package, two crates built outside it: the eBPF probes and the
