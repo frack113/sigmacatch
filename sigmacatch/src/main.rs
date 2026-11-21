@@ -5,7 +5,8 @@
 //! - `--evtx <PATH>` → one-shot EVTX collector (feature `evtx`);
 //! - otherwise the Winevt live collector (feature `winevt`, Windows);
 //! - otherwise the Linux collectors (features `auditd`, `builtin`, `sysmon`,
-//!   `ebpf`).
+//!   `ebpf`);
+//! - otherwise the macOS Endpoint Security collector (feature `macos`).
 //!
 //! Cargo features select which inputs are compiled in; requesting an unbuilt
 //! input is a clear startup error.
@@ -34,8 +35,6 @@ async fn main() -> Result<()> {
     dispatch_collector().await
 }
 
-/// One-shot EVTX input, cross-platform. `evtx_path` is unused when the `evtx`
-/// input isn't compiled in (the eager `--evtx` check still bails clearly).
 #[allow(unused_variables)]
 async fn run_evtx(evtx_path: Option<PathBuf>) -> Result<()> {
     #[cfg(feature = "evtx")]
@@ -60,6 +59,10 @@ async fn dispatch_collector() -> Result<()> {
     {
         return sigmacatch::inputs::windows::run().await;
     }
+    #[cfg(all(target_os = "macos", feature = "macos"))]
+    {
+        return sigmacatch::inputs::macos_es::run().await;
+    }
     #[cfg(all(
         target_os = "linux",
         any(
@@ -76,6 +79,7 @@ async fn dispatch_collector() -> Result<()> {
         "no usable input compiled into this build — rebuild with one of:\n  \
          --features winevt           Windows, live Event Log (default)\n  \
          --features evtx             one-shot EVTX files, any platform\n  \
+         --features macos            macOS Endpoint Security\n  \
          --no-default-features --features auditd,builtin   Linux inputs\n  \
          optionally append ,sysmon or ,ebpf to the Linux set"
     )

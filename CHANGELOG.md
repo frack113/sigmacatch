@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- macOS: Endpoint Security collector (`macos` feature, `MacosEsCollector`) — the sole macOS input. Two backends: the native `endpoint-sec` client, and Apple's first-party `eslogger` (`/usr/bin/eslogger`) as an automatic fallback. On a stock machine with SIP enabled the native client is killed by AMFI (the `com.apple.developer.endpoint-security.client` entitlement is not Apple-signed), so the `eslogger` path is the one that works. Runs with SIP enabled — no kernel extension, no DTrace.
+- macOS: the `User` account name is resolved on both backends — from the ES notification's `to_username` / `username` fields, falling back to `getpwuid_r` on `UserId` when the source carries no account name.
+
+### Changed
+
+- CI and releases: macOS is covered by the build, test, lint (clippy) and release workflows on a `macos-15-intel` runner; releases now ship a `sigmacatch-macos-x86_64.tar.gz` archive with its `SHA256SUMS.macos`.
+- Security audit: `RUSTSEC-2026-0543` (chrono v0.4.45, unmaintained but required by rsigma-eval v0.26.0) is ignored in `deny.toml`.
+
+### Fixed
+
+- macOS: when `eslogger` exits before the capture is stopped, the backend now reports it as an error carrying the exit status and its stderr (entitlement/permission messages) instead of blocking on the closed stream.
+
 ## [0.7.0] - 2026-11-15
 
 ### Added

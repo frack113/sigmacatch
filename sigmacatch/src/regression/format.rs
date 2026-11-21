@@ -48,10 +48,14 @@ impl DataFormat {
             return self;
         }
         if alert.event_json.get("Event").is_some() {
-            Self::Json
-        } else {
-            Self::Log
+            return Self::Json;
         }
+        // macOS Endpoint Security events are JSON-native without the Windows
+        // `Event`/`EventData` wrapper the eBPF path synthesizes.
+        if alert.event_json.get("product").and_then(|v| v.as_str()) == Some("macos") {
+            return Self::Json;
+        }
+        Self::Log
     }
 
     /// File extension of the regression data file for this format.

@@ -97,3 +97,9 @@ pub mod sysmon_parse;
     )
 ))]
 pub mod linux;
+
+// macOS Endpoint Security collector. The platform-independent event model
+// is always compiled with the feature so its field mapping can be tested on
+// Linux; the ES client itself is `#[cfg(target_os = "macos")]` inside.
+#[cfg(feature = "macos")]
+pub mod macos_es;

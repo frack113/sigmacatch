@@ -58,6 +58,7 @@ nav:
       - Windows: dev/collectors/windows.md
       - Linux: dev/collectors/linux.md
       - EVTX: dev/collectors/evtx.md
+      - macOS: dev/collectors/macos.md
     - Windows telemetry:
       - Overview: dev/windows/index.md
       - ETW: dev/windows/etw.md
@@ -67,6 +68,9 @@ nav:
       - Sysmon coverage: dev/windows/coverage.md
       - Measurements: dev/windows/evidence.md
       - Dev VM: dev/windows/vm.md
+    - macOS:
+      - Overview: dev/macos/index.md
+      - Dev VM: dev/macos/vm.md
     - Pipeline: dev/pipeline.md
     - Design Notes: dev/design-notes.md
     - Build: dev/build.md

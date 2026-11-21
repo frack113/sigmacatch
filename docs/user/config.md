@@ -73,7 +73,7 @@ All filters are optional; unset means no filtering.
 
 | Key | Default | Description |
 |---|---|---|
-| `product` | collector product | SigmaHQ product to keep: `windows`, `linux`, or `macos` (reserved, no collector today). An explicit value always wins; when the key is absent, the collector chooses `windows` or `linux`. Empty = no product filter. |
+| `product` | collector product | SigmaHQ product to keep: `windows`, `linux`, or `macos`. An explicit value always wins; when the key is absent, the collector applies its own product (`windows`, `linux`, or `macos`). Empty = no product filter. |
 | `min_status` | *(unset)* | Keep only rules whose status ranks at or above this: `unsupported` < `deprecated` < `experimental` < `test` < `stable`. |
 | `min_level` | *(unset)* | Keep only rules whose level ranks at or above this: `informational` < `low` < `medium` < `high` < `critical`. |
 | `author` | *(unset)* | Keep only rules authored by this author (normalized). |

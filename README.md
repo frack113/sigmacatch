@@ -1,13 +1,42 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2026 sigmacatch contributors -->
+<!-- markdownlint-disable MD033 MD041 -->
+<p align="center">
+  <img src="docs/media/logo.svg" alt="sigmacatch logo" width="240" height="118">
+</p>
 
-# Sigmacatch
+<h1 align="center">sigmacatch</h1>
 
-> ⚠️ **WIP** — under active development. APIs, config and output formats may change without notice. Not production-ready.
+<p align="center">
+  <a href=".github/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/frack113/sigmacatch/build.yml?label=CI" alt="CI"></a>
+  <a href=".github/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/frack113/sigmacatch/release.yml?label=release" alt="release"></a>
+  <a href="https://frack113.github.io/sigmacatch/"><img src="https://img.shields.io/github/actions/workflow/status/frack113/sigmacatch/documentation.yml?label=docs" alt="docs"></a>
+  <a href="https://github.com/frack113/sigmacatch/releases"><img src="https://img.shields.io/github/v/release/frack113/sigmacatch?label=latest" alt="latest release"></a>
+  <img src="https://img.shields.io/badge/rust-1.96%2B-6551af?logo=rust&logoColor=white" alt="Rust 1.96+">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/frack113/sigmacatch" alt="License"></a>
+</p>
+<!-- markdownlint-enable MD033 MD041 -->
+
+> ⚠️ **WIP** — under active development. APIs, config and output formats may
+> change without notice. Not production-ready.
 
 Real-time Sigma matcher: it captures Windows (Event Log, native ETW, kernel
-driver) and Linux (auditd, syslog, Sysmon, eBPF) events, evaluates SigmaHQ
-rules, and writes regression data ready for SigmaHQ pull requests.
+driver), Linux (auditd, syslog, Sysmon, eBPF) and macOS (Endpoint Security)
+events, evaluates SigmaHQ rules, and writes regression data ready for
+SigmaHQ pull requests.
+
+## Quick start
+
+```bash
+git clone https://github.com/frack113/sigmacatch.git
+cd sigmacatch
+cargo build --release -p sigmacatch   # default features: Windows live Event Log
+./target/release/sigmacatch           # first run writes config.yaml, then stops
+```
+
+The first run writes a `config.yaml` with placeholder values and exits; fill
+it in and run again. The full path — every input feature, offline mode, fork
+setup — is in [Getting started](docs/getting-started.md).
 
 ## Documentation
 
@@ -21,6 +50,7 @@ rules, and writes regression data ready for SigmaHQ pull requests.
 - [Architecture](docs/dev/architecture.md),
   [Windows telemetry without Sysmon](docs/dev/windows/index.md),
   [Sysmon coverage](docs/dev/windows/coverage.md),
+  [macOS support](docs/dev/macos/index.md),
   [Build](docs/dev/build.md)
 
 ## Credits

@@ -2,10 +2,11 @@
 
 Headless tool that captures real OS events: on Windows the **Windows Event Log
 API** (`winevt`), **native ETW** (`etw`) and the **`sigmacatch` kernel driver**
-(`driver`) — no Sysmon required; **EVTX files** one-shot (cross-platform); and
-on Linux **auditd**, **builtin syslog** (central, authpriv and cron files),
-**Sysmon-for-Linux** (XML tail) and **native eBPF probes**. It matches them
-against [SigmaHQ](https://github.com/SigmaHQ/sigma) rules and outputs structured
+(`driver`) — no Sysmon required; **EVTX files** one-shot (cross-platform); on
+Linux **auditd**, **builtin syslog** (central, authpriv and cron files),
+**Sysmon-for-Linux** (XML tail) and **native eBPF probes**; and on macOS the
+**Endpoint Security framework** (`macos`). It matches them against
+[SigmaHQ](https://github.com/SigmaHQ/sigma) rules and outputs structured
 regression data ready for SigmaHQ PRs.
 
 One binary named `sigmacatch`: the inputs are selected at compile time by cargo
@@ -50,20 +51,20 @@ edited before the next run — the end-to-end setup is in
 
 <!-- markdownlint-disable MD033 -->
 <iframe src="media/interactive/docs-map-user.html?embed=1" loading="lazy" title="User documentation map, interactive (Flow + Live)"
-        style="display:block;width:100%;aspect-ratio:1212/690;border:0;margin:0 auto"></iframe>
+        style="display:block;width:100%;aspect-ratio:1212/582;border:0;margin:0 auto"></iframe>
 <!-- markdownlint-enable MD033 -->
 
 *Use, configure and fix: the everyday pages.*
 
 <!-- markdownlint-disable MD033 -->
 <iframe src="media/interactive/docs-map-dev.html?embed=1" loading="lazy" title="Developer documentation map, interactive (Flow + Live)"
-        style="display:block;width:100%;aspect-ratio:1185/1122;border:0;margin:0 auto"></iframe>
+        style="display:block;width:100%;aspect-ratio:1185/942;border:0;margin:0 auto"></iframe>
 <!-- markdownlint-enable MD033 -->
 
 *Architecture, collectors and Windows telemetry, with the reference pages kept
 apart.*
 
-One question per page, 32 pages in five groups. The
+One question per page, 35 pages in five groups. The
 [complete map](media/interactive/docs-map.html) puts both halves in one
 diagram; drag to pan, scroll to zoom, and the Flow animation starts on its own.
 

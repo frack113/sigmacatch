@@ -1,15 +1,16 @@
 # Contributing
 
 Thanks for your interest in sigmacatch. This project captures real Windows events via the Windows
-Event Log API (winevt), matches them against SigmaHQ rules, and outputs structured regression data
-compatible with the SigmaHQ format.
+Event Log API (winevt) and macOS events via Endpoint Security, matches them against SigmaHQ rules,
+and outputs structured regression data compatible with the SigmaHQ format.
 
 ## Development setup
 
 Prerequisites:
 
-- Rust (stable, edition 2024 — 1.85+), `cargo`, `rustfmt`, `clippy`
+- Rust (stable, edition 2024 — 1.96+), `cargo`, `rustfmt`, `clippy`
 - For Windows builds from Linux: `cargo xwin build --release --target x86_64-pc-windows-msvc`
+- For macOS builds: a macOS host; the Linux cross-linker has no macOS SDK
 - `pipx` (linting scripts only: `typos`, `zizmor`)
 - `node` + `npx` (markdownlint only)
 
@@ -19,12 +20,18 @@ Required checks before opening a PR:
 cargo fmt --check
 cargo clippy --all-targets -- -W warnings
 cargo test --locked
+cargo clippy --all-targets --no-default-features --features macos -- -W warnings
+cargo test --locked -p sigmacatch --no-default-features --features macos
 cargo xwin build --release --target x86_64-pc-windows-msvc
 ```
 
 The Windows cross-build is required after any code change: `.cargo/config.toml` forces
 `+crt-static`, and the resulting standalone `.exe` must stay free of a Visual C++ Redistributable
 dependency.
+
+The macOS binary cannot be linked from Linux; CI builds and tests it on a macOS runner. Before a
+PR touching the collector, also compile-check the darwin target from Linux (see
+[Build](docs/dev/build.md#macos) for the exact command).
 
 ## Lint checks
 
