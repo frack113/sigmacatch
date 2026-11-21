@@ -159,3 +159,26 @@ jobs:
         run: |
           cargo build --locked --target x86_64-pc-windows-msvc -p sigmacatch --all-targets
           cargo build --locked --target x86_64-pc-windows-msvc -p sigmacatch --features winevt,evtx
+
+  # The macOS binary cannot be linked from Linux (no macOS SDK), so the ES
+  # flavour must be built on a macOS runner. The intel runner matches the
+  # x86_64 artefacts produced for the other platforms.
+  macos:
+    name: macOS (Endpoint Security)
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+        with:
+          toolchain: stable
+          targets: x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: macos-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build (Endpoint Security, --all-targets)
+        run: >
+          cargo build --locked --target x86_64-apple-darwin -p sigmacatch
+          --no-default-features --features macos --all-targets

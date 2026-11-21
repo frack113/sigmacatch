@@ -46,6 +46,8 @@ jobs:
         run: cargo test --locked -p sigmacatch --no-default-features --features auditd,builtin,sysmon
       - name: Test (evtx)
         run: cargo test --locked -p sigmacatch --no-default-features --features evtx
+      - name: Test (macOS event model, on Linux)
+        run: cargo test --locked -p sigmacatch --no-default-features --features macos
 
   # ebpf needs nightly + rust-src + bpf-linker (build.rs) or the leg would
   # silently embed an empty placeholder object (false green). Separate job,
@@ -88,6 +90,26 @@ jobs:
           key: test-ebpf-${{ hashFiles('**/Cargo.lock') }}
       - name: Test (auditd+builtin+ebpf)
         run: cargo +nightly test --locked -p sigmacatch --no-default-features --features auditd,builtin,ebpf
+
+  # The ES client and eslogger modules are compiled only on macOS; the
+  # platform-independent field mapping also runs in the Linux matrix above.
+  macos:
+    name: Test (macOS Endpoint Security)
+    runs-on: macos-15-intel
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+        with:
+          toolchain: stable
+          targets: x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: test-macos-${{ hashFiles('**/Cargo.lock') }}
+      - name: Test (macOS Endpoint Security)
+        run: cargo test --locked -p sigmacatch --no-default-features --features macos
 
   # The coverage gates live in their own workflow (coverage.yml): the
   # instrumented build is a full workspace recompile, and it only needs to
