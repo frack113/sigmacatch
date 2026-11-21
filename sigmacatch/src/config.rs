@@ -755,9 +755,6 @@ pub struct CliArgs {
     /// `--evtx <PATH>`: directory of EVTX files to process
     /// (one-shot `evtx` input; ignored otherwise).
     pub evtx_path: Option<PathBuf>,
-    /// `--macos-path <PATH>`: macOS system.log path to process
-    /// (one-shot `macos` input; ignored otherwise).
-    pub macos_path: Option<PathBuf>,
     /// `--branch <NAME>`: override the working branch name for this run
     /// (empty → fall back to the default `sigmacatch/<YYYYMMDD>`).
     pub branch: Option<String>,
@@ -785,7 +782,6 @@ FLAGS:
 OPTIONS:
     --author <NAME>           Override GitHub username from config.yaml
     --evtx <PATH>             Directory of EVTX files to process (one-shot evtx input)
-    --macos-path <PATH>       macOS system.log path to process (one-shot macos input)
     --branch <NAME>           Working branch name (empty = sigmacatch/<today's date>)
     --hir-cache <PATH>        Persistent HIR cache file (warm-start: skip rule
                               recompilation on next run; None = compile every run)
@@ -813,7 +809,6 @@ fn parse_args_from(args: &[String]) -> CliArgs {
     let mut max_runs: Option<u32> = None;
     let mut dry_run = false;
     let mut evtx_path: Option<PathBuf> = None;
-    let mut macos_path: Option<PathBuf> = None;
     let mut branch = None;
     let mut hir_cache: Option<PathBuf> = None;
     let mut i = 1;
@@ -861,16 +856,6 @@ fn parse_args_from(args: &[String]) -> CliArgs {
                     }
                 }
             }
-            "--macos-path" => {
-                i += 1;
-                match args.get(i) {
-                    Some(v) if !v.starts_with('-') => macos_path = Some(PathBuf::from(v)),
-                    _ => {
-                        eprintln!("Error: --macos-path requires a value");
-                        std::process::exit(1);
-                    }
-                }
-            }
             "--branch" => {
                 i += 1;
                 match args.get(i) {
@@ -907,7 +892,6 @@ fn parse_args_from(args: &[String]) -> CliArgs {
         max_runs,
         dry_run,
         evtx_path,
-        macos_path,
         branch,
         hir_cache,
     }
@@ -975,21 +959,6 @@ mod cli_tests {
     fn test_parse_evtx_absent_is_none() {
         let parsed = parse_args_from(&args(&["--verbose"]));
         assert_eq!(parsed.evtx_path, None);
-    }
-
-    #[test]
-    fn test_parse_macos_path() {
-        let parsed = parse_args_from(&args(&["--macos-path", "/data/logs"]));
-        assert_eq!(
-            parsed.macos_path.as_deref(),
-            Some(std::path::Path::new("/data/logs"))
-        );
-    }
-
-    #[test]
-    fn test_parse_macos_absent_is_none() {
-        let parsed = parse_args_from(&args(&["--verbose"]));
-        assert_eq!(parsed.macos_path, None);
     }
 
     #[test]

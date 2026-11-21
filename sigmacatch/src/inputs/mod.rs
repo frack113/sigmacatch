@@ -98,6 +98,8 @@ pub mod sysmon_parse;
 ))]
 pub mod linux;
 
-// macOS orchestrator: single source reading system.log, one-shot.
-#[cfg(all(target_os = "macos", feature = "macos"))]
-pub mod macos;
+// macOS Endpoint Security collector. The platform-independent event model
+// is always compiled with the feature so its field mapping can be tested on
+// Linux; the ES client itself is `#[cfg(target_os = "macos")]` inside.
+#[cfg(feature = "macos")]
+pub mod macos_es;

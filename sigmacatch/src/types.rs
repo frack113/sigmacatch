@@ -1234,13 +1234,23 @@ impl Alert {
 
     /// Provider name from the event System section (empty when absent).
     pub fn provider(&self) -> &str {
-        self.event_json
+        if let Some(provider) = self
+            .event_json
             .get("Event")
             .and_then(|v| v.get("System"))
             .and_then(|v| v.get("Provider"))
             .and_then(|v| v.get("#attributes"))
             .and_then(|v| v.get("Name"))
             .and_then(|v| v.as_str())
+        {
+            return provider;
+        }
+        // Non-Windows collectors carry the provider as a flat field (macOS
+        // Endpoint Security uses `Provider`, auditd uses `provider`).
+        self.event_json
+            .get("Provider")
+            .and_then(|v| v.as_str())
+            .or_else(|| self.event_json.get("provider").and_then(|v| v.as_str()))
             .unwrap_or("")
     }
 

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Required by es_new_client(3). Restricted entitlement: it is honoured
+	     for a locally signed binary only when the code signature carries it
+	     and the client is approved in System Settings > Privacy & Security. -->
+	<key>com.apple.developer.endpoint-security.client</key>
+	<true/>
+</dict>
+</plist>

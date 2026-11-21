@@ -22,10 +22,10 @@ ignored = ["md-5"]
 # Inputs are selected with cargo features:
 #   Windows: winevt (live Event Log), evtx (one-shot EVTX files)
 #   Linux:   auditd, builtin (system syslog), sysmon (Sysmon-for-Linux tail), ebpf (native probes)
-#   macOS:   macos (one-shot system.log reader)
+#   macOS:   macos (Endpoint Security client)
 # At runtime, `--evtx <PATH>` selects the EVTX one-shot, `winevt` the live
 # collector (Windows), the Linux inputs run in parallel, and `macos` the
-# macOS system-log reader.
+# macOS Endpoint Security collector.
 #
 # Everything else (runner, detection, rules, repo, regression data generator)
 # is OS-independent and always compiled in. The `regressiondata-check` bin is
@@ -40,10 +40,21 @@ auditd = []
 builtin = ["dep:regex"]
 sysmon = ["builtin"]                          # Sysmon-for-Linux legacy tail
 ebpf = ["dep:aya", "dep:bytemuck", "dep:hex"]
-macos = []
+# Plan A (system.log/os_log) needs no extra dependency; Plan B (Endpoint
+# Security) pulls the macOS-only bindings, so they are optional and only
+# activated with this feature.
+macos = ["dep:endpoint-sec", "dep:libc"]
 
 [target.'cfg(not(unix))'.dependencies]
 dunce = "1.0.5"
+
+# Endpoint Security is a macOS-only framework: the bindings are declared in a
+# target table so a Linux/Windows build never tries to link them. `max`
+# compiles every ES event type up to macOS 15.4; the collector still filters
+# subscriptions by the runtime macOS version.
+[target.'cfg(target_os = "macos")'.dependencies]
+endpoint-sec = { version = "0.6.2", features = ["max"], optional = true }
+libc = { version = "0.2.188", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
