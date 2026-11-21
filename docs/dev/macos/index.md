@@ -4,28 +4,39 @@ Progress on adding macOS as a third platform: a macOS VM under QEMU/KVM on
 the Linux host, a data-source survey to decide how regression data is
 produced, and a prototype collector.
 
-Status (2026-11-20): **Phases 1–2 done, Phase 3 committed + native build.
-Plan A complete — moving to Plan B (kext).** Commit `b7125eda4` lands the
-collector skeleton: `inputs/macos.rs` (`MacosCollector`, one-shot system.log
-reader, `CollectorKind` + `EventProducer` impls), `--macos-path` CLI flag,
-`main.rs` dispatch arm, `macos` cargo feature + tokio `fs`/`io-util`, module
-gate in `inputs/mod.rs`, `Product::Macos` reserved in `types.rs`. All lints
-green (fmt, clippy, 366 tests, markdownlint, typos, zensical). Native in-VM
-build verified on macOS Tahoe 26.7.3. The collector reads `/var/log/system.log`
-plus streams os_log (`log stream --style ndjson`) with field mapping
-(`processImagePath→Image`, `eventMessage→CommandLine`, `processID→ProcessId`).
+Status (2026-11-21): **Phases 1–3 done. Plan A complete (0 matches —
+accepted as limited). Plan B implemented on the Endpoint Security
+framework, not a kext.** Commit `b7125eda4` landed the collector skeleton
+(`inputs/macos.rs`, `--macos-path`, dispatch arm, `macos` cargo feature).
+The ES collector `inputs/macos_es.rs` (`MacosEsCollector`, implementing
+`CollectorKind` and `EventProducer`) is built on two backends: the native
+`endpoint-sec` client, and Apple's first-party `eslogger`
+(`/usr/bin/eslogger`) as an
+automatic fallback. The native client is **killed by AMFI at launch** when
+the binary carries the `com.apple.developer.endpoint-security.client`
+entitlement without Apple's signature (see "AMFI findings" below), so the
+`eslogger` fallback is the path that works on a stock machine with SIP
+enabled; it is verified live in the VM (exec/create/rename/unlink
+notifications with args, cwd, target path, ppid, audit tokens).
 **Plan A tested:** 69 macOS rules loaded, 864+ events/cycle, **0 matches** —
-os_log stream floods with generic daemon events whose values don't match Sigma
-rule patterns. **Decision: move to Plan B (kext kernel-mode telemetry)** for
-structured process/file events.
-**Two-phase plan:**
+os_log stream floods with generic daemon events whose values don't match
+Sigma rule patterns. **Plan B decision (2026-11-20):** the kext path is
+blocked (SIP cannot be disabled on this OVMF VM — see "SIP findings" below)
+and DTrace's kernel probes are SIP-gated. Research on how real macOS EDRs
+capture telemetry (Fleet, Santa, Crescendo, mac-monitor, NuwaStone,
+santamon) shows they all use Apple's **Endpoint Security framework**
+(`ESClient`), which works with **SIP enabled** and has Rust bindings (the
+`endpoint-sec` crate). **Plan B is re-scoped to the ES framework** — no
+kext, no SIP disable, no DTrace.
+**Plan:**
 
-- **Plan A (user-mode):** collector reads os_log (`log show --style ndjson`)
-  plus system.log plus secure.log — structured events matching Sigma rules.
-  Validates in existing Tahoe VM.
-- **Plan B (kernel-mode):** kext captures kernel telemetry (process, file,
-  network, driver events) — the macOS equivalent of the Windows KMDF driver
-  / Sysmon. Requires a separate VM with SIP disabled or self-signed kext.
+- **Plan A (user-mode, removed):** the os_log/system.log reader was validated
+  in the existing Tahoe VM (0 matches) and then deleted — the Endpoint
+  Security framework supersedes it as the sole macOS telemetry source.
+- **Plan B (Endpoint Security, the sole macOS mode):** ES framework captures
+  kernel telemetry (process, file, driver events) — the macOS equivalent of
+  the Windows KMDF driver / Sysmon. Works with SIP enabled; no separate VM
+  needed.
 
 ## Phase 1 — macOS VM under QEMU (done)
 
@@ -173,7 +184,11 @@ Hard fact found in `/etc/security/audit_control.example`:
 > API instead.
 
 EndpointSecurity requires an Apple-granted entitlement — a hard blocker
-for an open-source collector. Meanwhile audit(4) is re-enablable on
+for an *in-process* ES client (a locally signed binary carrying the
+entitlement is killed by AMFI, see "AMFI findings" below). The workaround
+found 2026-11-21: Apple ships its own entitled ES client,
+`/usr/bin/eslogger`, which runs as root with SIP on and emits NDJSON —
+that is Plan B's working backend. Meanwhile audit(4) is re-enablable on
 15.8.3, which was done on the VM:
 
 1. `cp /etc/security/audit_control.example /etc/security/audit_control`
@@ -199,51 +214,51 @@ since macOS 14, slated for removal). The audit(4) findings above stay as
 measured context, not as a plan component.
 
 - Process events (`process_creation` fields `Image`, `CommandLine`,
-  `User`, `ParentImage`): a **proc poller** using the public sysctl
-  interface — `KERN_PROC_ALL` snapshot diff for new PIDs, then
-  `proc_pidpath` (→ `Image`), `KERN_PROCARGS2` (→ `CommandLine`, root
-  only, the same data `ps` shows), parent-PID map (→ `ParentImage`),
-  uid (→ `User`). No audit(4), no EndpointSecurity entitlement, no SIP
-  changes. Caveat: processes shorter than the poll interval are missed —
-  acceptable for regression-data generation (scenarios are replayed).
-  Event-driven V2 option: `dtrace proc:::exec` with SIP disabled in the
-  controlled VM.
+  `User`, `ParentImage`): **superseded by Plan B** — the Endpoint Security
+  framework (eslogger backend) delivers real `exec` notifications with
+  args, cwd, target path, ppid and audit tokens, no polling gap. The proc
+  poller (`KERN_PROC_ALL` diff + `proc_pidpath` + `KERN_PROCARGS2`) stays
+  documented as the measured fallback only.
 - Everything else from os_log: store NDJSON captures as `ndjson`
   regression data directly (`/usr/bin/log` full path, root).
 - Upstream SigmaHQ has **no** `regression_data/rules/macos/` yet — our
   sets would create it (format machinery in `sigmacatch/src/regression/`
-  already supports `logtype: json|ndjson|log`).
+  supports `logtype: json|ndjson|log`; the ES collector emits
+  `json`).
 
-## Phase 3 — Collector prototype (next)
+## Phase 3 — Collector prototype (done)
+
+One live collector:
+
+- **`inputs/macos_es.rs`**: `MacosEsCollector`, live Endpoint Security
+  collector, `live_capture() = true`. Default backend `Auto`: try the native
+  `endpoint-sec` client first, fall back to Apple's `eslogger` when the
+  client is not entitled (the AMFI case).
 
 Wiring (all existing extension points):
 
-- New cargo feature, gated `target_os = "macos"` in `sigmacatch/src/inputs/mod.rs`.
-  The Linux features are gated `target_os = "linux"` and therefore silently
-  inert elsewhere — macOS gets its own gates, it cannot borrow them.
-- Orchestrator `sigmacatch/src/inputs/macos.rs` + an arm in
+- New cargo feature `macos`, gated `target_os = "macos"` in
+  `sigmacatch/src/inputs/mod.rs`. The Linux features are gated
+  `target_os = "linux"` and therefore silently inert elsewhere — macOS
+  gets its own gates, it cannot borrow them.
+- Orchestrator `inputs/macos_es.rs` and an arm in
   `main.rs::dispatch_collector()` (currently exactly one platform arm is
   live per build).
 - A `CollectorKind` returning `channels() -> None`,
-  `rule_product() -> "macos"`, and `regression_format()` per Phase 2;
-  an `EventProducer` (single async method pushing `Event`s, honouring the
-  `stop` watch, dropping the sender when done). Reference patterns:
-  `inputs/evtx.rs` (one-shot) and `inputs/linux.rs` (multi-source live).
-
-V1 is **one-shot**: replay stored captures (proc-poller JSON lines or
-os_log ndjson) through a file-based producer, `live_capture() = false`,
-like the evtx path. Live capture (`log stream --style ndjson` + the proc
-poller) is V2. The poller itself — `KERN_PROC_ALL` diff + `proc_pidpath` +
-`KERN_PROCARGS2` — runs as root, no audit(4), no entitlement, consistent
-with the project's self-capture principle (the Linux eBPF/builtin path,
-not the auditd one).
+  `rule_product() -> "macos"`, and `regression_format()` per Phase 2
+  (Plan B: `DataFormat::Json`); an `EventProducer` (single async method
+  pushing `Event`s, honouring the `stop` watch, dropping the sender when
+  done). Reference patterns: `inputs/evtx.rs` (one-shot) and
+  `inputs/linux.rs` (multi-source live).
 
 Toolchain constraint: cross-compiling Rust to darwin from Linux needs
-osxcross plus an Apple SDK (fragile and legally grey). Instead, compile
-natively in the dev-variant macOS VM (`rustup` stable, target
-`x86_64-apple-darwin` — the QEMU guest is x86_64 on this host). The host
-build gate (`cargo xwin build` for Windows) has no macOS equivalent in CI;
-for now the native in-VM build is the gate.
+osxcross plus an Apple SDK (fragile and legally grey). A **type-check-only
+darwin cross-check** works from the host with the musl/x86_64-apple-darwin
+cc (`CRATE_CC_NO_DEFAULTS=1 CC_x86_64_apple_darwin=cc … cargo check
+--target x86_64-apple-darwin`); the real gate is the native in-VM build
+(`rustup` stable, target `x86_64-apple-darwin` — the QEMU guest is x86_64
+on this host). The host build gate (`cargo xwin build` for Windows) has no
+macOS equivalent in CI; for now the native in-VM build is the gate.
 
 ## Phase 4 — Regression-data loop
 
@@ -269,8 +284,9 @@ VM-captured ndjson.
   (OSX-KVM PR #252), verbose boot-args kept as a diagnostic net.
 - Apple will remove audit(4) entirely (documented in the OS itself); the
   EndpointSecurity replacement needs an Apple entitlement. This no longer
-  matters for the plan — the collector does not depend on audit(4); the
-  audit(4) survey above is recorded as measured context only.
+  matters for the plan — the collector does not depend on audit(4), and
+  the in-process ES client is not the only ES path: Apple's own entitled
+  `eslogger` binary is the working fallback (see "AMFI findings").
 - macOS auto-update is fully disabled on this VM (system and user plists:
   check/download/install/critical all false — verified on disk). A Sequoia
   VM got force-upgraded to Tahoe on 2026-11-16 despite the locks; the clean
@@ -278,9 +294,12 @@ VM-captured ndjson.
   `clean-install`). Re-verify the locks after any update attempt.
 - Tahoe is now the baseline OS for macOS work. The Sequoia-era audit(4)
   survey was measured on the previous disk (kept as
-  `macos-old-sequoia.qcow2`); on the clean Tahoe VM the `KERN_PROC_ALL` +
-  `KERN_PROCARGS2` path (the actual Phase 3 mechanism) is verified: `ps`
-  exposes image paths and full argv, root sees everything.
+  `macos-old-sequoia.qcow2`); on the clean Tahoe VM `ps` exposes image
+  paths and full argv, root sees everything.
+- `eslogger` suppresses notifications from its own process tree (a
+  capture started from a shell reports nothing for that shell's children,
+  but reports unrelated processes fine) — irrelevant for sigmacatch,
+  which runs as a standalone root process.
 - The macOS VM is not a libvirt domain (plain QEMU from the boot script);
   no `virsh` snapshot/reset support. Clean-room rollback is the qcow2
   internal snapshot: stop QEMU, `qemu-img snapshot -a clean-install`. A
@@ -297,11 +316,66 @@ VM-captured ndjson.
 - The macOS VM is not a libvirt domain (plain QEMU from the boot script);
   see the snapshot note above.
 
-## Two-phase telemetry plan (Plan A + Plan B)
+## SIP findings (why the kext/DTrace paths were blocked, 2026-11-20)
 
-### Plan A — User-mode telemetry (existing Tahoe VM)
+The kext path requires SIP disabled. On this OVMF VM, SIP **cannot be
+disabled**:
 
-The collector reads from os_log (structured JSON) plus plain-text system
+- `csrutil disable` run in the BaseSystem installer Terminal does **not**
+  persist: after a clean shutdown, the OVMF varstore contains **no** `SIP`
+  NVRAM variable. The installer environment's `csrutil` cannot write the
+  `SIP` variable (SIP blocks the write).
+- The guest `nvram SIP` command reads "data was not found" and the write
+  `nvram SIP=2` is silent (blocked by SIP); `csrutil status` stays
+  "enabled".
+- The remaining option — writing the `SIP` NVRAM variable from the host into
+  `ovmf-vars-4m.fd` — is complex (the OVMF variable-store layout is non-
+  trivial) and the exact `SIP` byte value is not confirmable from a live
+  source. Abandoned in favour of the ES framework, which needs no SIP change.
+
+DTrace, the other kernel-telemetry candidate, is also SIP-gated: with SIP
+on, the kernel probes (`proc:::execve-success`, `syscall:::execve`,
+`begin`/`end`) are **not available** — only user-space/time probes (`tick`)
+work. So DTrace cannot provide system-wide kernel telemetry with SIP on
+either.
+
+**Conclusion:** both the kext and DTrace paths require SIP disabled, which
+cannot be done on this VM. The Endpoint Security framework is the correct
+Plan B: it provides the same kernel-level telemetry (process, file, network)
+with SIP enabled, and has Rust bindings.
+
+## AMFI findings (why the native ES client cannot run, 2026-11-21)
+
+The native `endpoint-sec` client requires the
+`com.apple.developer.endpoint-security.client` entitlement, which Apple
+documents as *"must be requested from Apple"* — it is a **restricted**
+entitlement. On this VM:
+
+- Ad-hoc `codesign` with `scripts/macos/endpoint-security.entitlements`
+  succeeds, but the kernel kills the binary **at launch**:
+  `AMFI: ... is adhoc signed`, `Adhoc signed app with restricted
+  entitlements detected`, `Code=-424 "The file is adhoc signed but
+  contains restricted entitlements"`, `ASP: Security policy would not
+  allow process` (exit 137).
+- Self-signed-certificate signing also fails headless:
+  `security add-trusted-cert` is denied
+  (`SecTrustSettingsSetTrustSettings: The authorization was denied since
+  no user interaction was possible`), `find-identity` lists 0 valid
+  identities, and `codesign` returns `errSecInternalComponent`.
+
+**Conclusion:** a generic, locally built sigmacatch binary cannot create
+its own ES client on a stock machine. The entitlement is only obtainable
+from Apple (as for Fleet, Santa, etc.). The working path is Apple's own
+entitled ES client, `/usr/bin/eslogger`, which runs as root with SIP on
+and emits one NDJSON object per notification — the `eslogger` backend in
+`inputs/macos_es.rs`. The native client path stays in the code for
+vendor builds that do hold the entitlement (`Backend::Native`).
+
+## Telemetry plan
+
+### Plan A — User-mode telemetry (removed 2026-11-21)
+
+The first approach read os_log (structured JSON) plus plain-text system
 logs, producing events with fields that match macOS Sigma rules:
 
 | Source | Command / Path | Format | Purpose |
@@ -311,30 +385,97 @@ logs, producing events with fields that match macOS Sigma rules:
 | secure.log | `/var/log/secure` | plain text | Authentication events |
 | airportd, etc. | `/var/log/` | plain text | Additional daemons |
 
-Implementation: add a second reader to `macos.rs` that streams ndjson from
-`log show` in the background, parses fields into `event_json`, and feeds
-them through the same `EventProducer` pipeline. No kernel code required.
+It was validated in the VM and produced **0 matches** against the 69 macOS
+Sigma rules — the os_log stream is flooded with generic daemon events whose
+values do not match rule patterns. It has been **removed** (2026-11-21): the
+Endpoint Security framework (Plan B) supersedes it as the sole macOS
+telemetry source, so `inputs/macos.rs` and the `--macos-path` /
+`--macos-source` CLI flags were deleted.
 
-### Plan B — Kernel-mode telemetry (separate VM)
+### Plan B — Endpoint Security framework (the sole macOS mode)
 
-A kernel extension (kext) captures kernel-level events — process creation,
-file access, network connections, driver loads — the macOS equivalent of
-the Windows KMDF driver / Sysmon. Requires:
+After the kext path was blocked by SIP (see "SIP findings" below) and DTrace's
+kernel probes proved SIP-gated, research on how real macOS EDRs capture
+telemetry (Fleet, Santa, Crescendo, mac-monitor, NuwaStone, santamon) shows
+they all use Apple's **Endpoint Security framework** (`ESClient`) — not a
+kext, not DTrace, and **without disabling SIP**. The ES framework is Apple's
+official API for security telemetry and is designed to run with SIP enabled.
 
-1. A separate VM with SIP disabled (or self-signed kext + kernel debugging)
-2. Kernel debugging enabled (`kdp_tcp` / `kextload` for development)
-3. A kext skeleton using `kern/` APIs (proc, fs, network hooks)
-4. Streaming captured events to user mode (pipe / socket / shared memory)
-5. Validation with a `product: macos` Sigma rule
+The `endpoint-sec` Rust crate (HarfangLab) provides safe bindings: a `Client`
+created with `Client::new(handler)`, subscribed via `Client::subscribe(&[...])`
+to the event types of interest. Each event is delivered to the handler as a
+`Message` carrying structured data:
 
-This is a much larger project — the kext needs kernel programming, self-
-signing, and careful handling of kernel panic safety. A second QEMU VM
-(same OSX-KVM setup, SIP disabled) is the cleanest test environment.
+- **`EventExec`** — process execution (pid, ppid, image path, args, env) —
+  the primary `process_creation` Sigma target.
+- **`EventFork`**, **`EventExit`** — process creation/termination.
+- **`EventOpen`**, **`EventCreate`**, **`EventWrite`**, **`EventUnlink`**,
+  **`EventRename`** — file operations.
+- **`EventSudo`**, **`EventSetuid`/`Seteuid`/`Setgid`** — privilege changes.
+- **`EventOpensshLogin`**, **`EventLoginLogin`** — logins.
+- **`EventKextLoad`/`EventKextUnload`**, **`EventTrace`** — kext loads,
+  process attach.
+- Network connect, authentication, and other events.
+
+Each event exposes `Process` (pid/ppid/path), `ExecArgs`, `ExecEnvs`, and
+`File` (path/stat) — everything needed to match `product: macos` Sigma rules
+(`Image`, `CommandLine`, `ParentImage`, `User`).
+
+**Requirements for an ES client:**
+
+1. The process holds the `com.apple.developer.endpoint-security.client`
+   entitlement — Apple-granted only (restricted; a locally signed binary
+   is killed by AMFI, see "AMFI findings").
+2. The user approves the client (a TCC dialog on first run).
+3. The process runs as root.
+
+Requirement 1 cannot be satisfied by a locally built binary, so Plan B
+uses **two backends** in `inputs/macos_es.rs`:
+
+1. **Native** (`Backend::Native`): sigmacatch's own `endpoint-sec` client.
+   For vendor builds that hold the entitlement. `Client::new` runs on a
+   dedicated `std` thread (the `Client` is `!Send`/`!Sync`); the handler
+   converts each `Message` into a `RawNotification` and pushes the
+   resulting `Event` into the runner channel via `try_send` (never blocks
+   the ES thread).
+2. **Eslogger** (`Backend::Eslogger`): Apple's first-party
+   `/usr/bin/eslogger`, already entitled, run as root. It emits one
+   NDJSON object per notification; the pure, cross-platform
+   `RawNotification::from_eslogger_json` maps it to the same
+   `RawNotification` (exec: `event.exec.target.executable.path` →
+   `Image`, joined `event.exec.args` → `CommandLine`,
+   `process.executable.path` → `ParentImage`, audit tokens →
+   `ProcessId`/`ParentProcessId`/`UserId`, `time` → `UtcTime`; create:
+   `event.create.destination` existing_file/new_path →
+   `TargetFilename`; rename: source + destination; unlink: target;
+   setuid/sudo: uid/username/command).
+3. **Auto** (`Backend::Auto`, default): try native first; on
+   `NewClientError::NotEntitled|NotPermitted|NotPrivileged` fall back to
+   eslogger with a warning. Any other native failure is fatal.
+
+Field mapping keeps the Sigma field names the `product: macos` rules use
+(`Image`, `CommandLine`, `ParentImage`, `TargetFilename`, `User`,
+`UserId`, `ProcessId`, `ParentProcessId`), injects `category` per kind
+(`process_creation`, `file_event`, `file_rename`, `driver_load`;
+setuid/sudo/login stay category-less so the engine fails open), and
+writes regression data as **JSON** (`DataFormat::Json`, provider
+`sigmacatch-endpoint-security`).
+
+**Plan B implementation (done 2026-11-21):**
+
+1. `endpoint-sec` crate v0.6.2 added (macOS-gated, optional, feature
+   `macos`).
+2. `inputs/macos_es.rs`: `MacosEsCollector` implementing `CollectorKind`
+   and `EventProducer`, with the two backends above and the pure
+   `RawNotification` model testable on any platform.
+3. Selected by the `macos` cargo feature; the backend defaults to `Auto`
+   (native client first, `eslogger` fallback).
+4. Verified live in the VM: eslogger NDJSON parsed, events pushed,
+   `product: macos` rules loaded.
 
 ### Test VM strategy
 
-- **VM 1 (Tahoe 26.7.3, SIP on):** Plan A validation. Already provisioned
-  (`frack113`/`azerty`, SSH key, clean-install snapshot).
-- **VM 2 (Tahoe 26.7.3, SIP off):** Plan B validation. Clone VM 1's disk,
-  boot into recovery, disable SIP (`csrutil disable`), re-enable kernel
-  debugging. Keeps the production VM untouched.
+- **VM 1 (Tahoe 26.7.3, SIP on):** both plans validated in one VM.
+  Already provisioned (`frack113`/`azerty`, SSH key, clean-install
+  snapshot). Plan B (Endpoint Security) works with SIP enabled, so the
+  second SIP-off VM is no longer needed.
