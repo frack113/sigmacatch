@@ -296,6 +296,8 @@ fn sid_string(sid: PSID) -> Option<String> {
     unsafe { ConvertSidToStringSidW(sid, &mut raw).ok()? };
     // Read the wide string by hand: `PWSTR`'s `Display` impl returns an error
     // on malformed UTF-16, and `to_string` would panic inside the callback.
+    // SAFETY: the successful conversion above left `raw` pointing to a live,
+    // NUL-terminated wide string.
     let text = unsafe { wide_string(raw.0) };
     // SAFETY: converted pointer came from the `LocalAlloc` inside the call.
     unsafe {
@@ -310,9 +312,13 @@ unsafe fn wide_string(pointer: *const u16) -> String {
         return String::new();
     }
     let mut length = 0usize;
+    // SAFETY: callers pass a NUL-terminated buffer; the loop reads at most 4096
+    // wide units before stopping, so no read runs past the terminator.
     while unsafe { *pointer.add(length) } != 0 && length < 4096 {
         length += 1;
     }
+    // SAFETY: `length` stops at the terminator, so the slice stays inside the
+    // caller's buffer.
     String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(pointer, length) })
 }
 

@@ -541,6 +541,8 @@ impl TraceSession {
         let properties_size = size_of::<EVENT_TRACE_PROPERTIES>();
         let total = properties_size + wide.len() * size_of::<u16>();
         let mut properties = vec![0u64; total.div_ceil(size_of::<u64>())];
+        // SAFETY: `properties` is a zeroed, 8-byte-aligned allocation of at least
+        // `total` bytes; the header and the name are written inside it below.
         unsafe {
             let header = properties.as_mut_ptr().cast::<EVENT_TRACE_PROPERTIES>();
             (*header).Wnode.BufferSize = total as u32;
@@ -610,6 +612,8 @@ impl Consumer {
         };
         if handle.Value == u64::MAX {
             // Reclaim the sink; the consumer was never created.
+            // SAFETY: `sink` came from `Box::into_raw` above and ownership was
+            // not transferred, because `OpenTraceW` failed.
             unsafe { drop(Box::from_raw(sink)) };
             bail!(
                 "OpenTraceW({session_name}) failed: {}",

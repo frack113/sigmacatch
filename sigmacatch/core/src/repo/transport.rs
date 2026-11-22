@@ -243,6 +243,8 @@ mod tests {
     #[test]
     fn test_build_ssh_shell_command_unix_is_program() {
         let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: the ENV_LOCK guard serializes every environment access in
+        // this test binary.
         unsafe {
             std::env::remove_var("GIT_SSH");
             std::env::remove_var("GIT_SSH_COMMAND");
@@ -257,6 +259,8 @@ mod tests {
     #[test]
     fn test_build_ssh_shell_command_git_ssh_override() {
         let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: the ENV_LOCK guard serializes every environment access in
+        // this test binary.
         unsafe {
             std::env::set_var("GIT_SSH", "/usr/bin/fake-ssh");
         }
@@ -266,6 +270,7 @@ mod tests {
                 assert_eq!(args, &vec![std::ffi::OsString::from("/usr/bin/fake-ssh")]);
             }
         }
+        // SAFETY: same ENV_LOCK-guarded test thread, before releasing the guard.
         unsafe { std::env::remove_var("GIT_SSH") };
     }
 
@@ -273,6 +278,8 @@ mod tests {
     fn test_ensure_ssh_host_config_writes_and_is_idempotent() {
         let _guard = ENV_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
+        // SAFETY: the ENV_LOCK guard serializes every environment access in
+        // this test binary; the tempdir outlives the calls that read HOME.
         unsafe {
             std::env::set_var("USERPROFILE", tmp.path());
             std::env::set_var("HOME", tmp.path());
@@ -317,6 +324,8 @@ mod tests {
     fn test_ensure_ssh_host_config_preserves_existing_content() {
         let _guard = ENV_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
+        // SAFETY: the ENV_LOCK guard serializes every environment access in
+        // this test binary; the tempdir outlives the calls that read HOME.
         unsafe {
             std::env::set_var("USERPROFILE", tmp.path());
             std::env::set_var("HOME", tmp.path());

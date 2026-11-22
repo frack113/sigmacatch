@@ -349,8 +349,11 @@ mod tests {
         let dest = tmp.path().join("sigma");
 
         // A nonexistent ssh binary fails immediately — no real process, no network.
+        // SAFETY: the ENV_LOCK guard above serializes every environment access
+        // in this test binary.
         unsafe { std::env::set_var("GIT_SSH", "/nonexistent/ssh") };
         let result = git_clone_shallow("git@github.com:u/r.git", &dest, None, true);
+        // SAFETY: same ENV_LOCK-guarded test thread, before releasing the guard.
         unsafe { std::env::remove_var("GIT_SSH") };
 
         let err = result.unwrap_err().to_string();

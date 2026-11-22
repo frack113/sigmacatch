@@ -213,6 +213,8 @@ unsafe fn event_info(record: &EVENT_RECORD) -> Option<Vec<u64>> {
     }
     let words = (size as usize).div_ceil(std::mem::size_of::<u64>());
     let mut buffer: Vec<u64> = vec![0; words];
+    // SAFETY: `buffer` is a zeroed, 8-byte-aligned allocation of at least `size`
+    // bytes, the size TDH itself reported for this same record.
     let status = unsafe {
         TdhGetEventInformation(
             record,
@@ -363,6 +365,8 @@ unsafe fn wide_at(base: *const u8, offset: u32) -> Option<String> {
     if offset == 0 {
         return None;
     }
+    // SAFETY: `base` points into the info blob kept alive for this decode and
+    // `offset` is a TDH-reported offset inside that blob.
     let start = unsafe { base.add(offset as usize) }.cast::<u16>();
     let mut len = 0usize;
     // SAFETY: TDH names are NUL-terminated inside the blob it just handed us.
@@ -372,6 +376,8 @@ unsafe fn wide_at(base: *const u8, offset: u32) -> Option<String> {
             return None;
         }
     }
+    // SAFETY: the loop found a NUL terminator before the 4096-unit cap, so all
+    // `len` wide characters are inside the same blob.
     let slice = unsafe { std::slice::from_raw_parts(start, len) };
     Some(String::from_utf16_lossy(slice))
 }
