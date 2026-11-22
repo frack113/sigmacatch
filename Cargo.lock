@@ -2543,7 +2543,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "sigma-regression",
- "sigmacatch-git-action",
+ "sigmacatch-repo",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -2553,28 +2553,6 @@ dependencies = [
  "uuid",
  "windows",
  "yaml_serde",
-]
-
-[[package]]
-name = "sigmacatch-git-action"
-version = "0.8.0"
-dependencies = [
- "anyhow",
- "chrono",
- "crc32fast",
- "flate2",
- "grit-lib",
- "rand_core",
- "rayon",
- "sha1",
- "sha2 0.11.1",
- "sigma-regression",
- "ssh-key",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -2752,6 +2730,28 @@ dependencies = [
  "sigmacatch-core",
  "sigmacatch-output-evtx",
  "tempfile",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "sigmacatch-repo"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "crc32fast",
+ "flate2",
+ "grit-lib",
+ "rand_core",
+ "rayon",
+ "sha1",
+ "sha2 0.11.1",
+ "sigma-regression",
+ "ssh-key",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
  "tracing",
  "uuid",
 ]

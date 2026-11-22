@@ -28,8 +28,8 @@ pub mod logging;
 pub mod regression;
 
 /// SigmaHQ repository layer (clone, branch, commit, transport), re-exported
-/// from `sigmacatch-git-action`.
-pub use sigmacatch_git_action as repo;
+/// from `sigmacatch-repo`.
+pub use sigmacatch_repo as repo;
 
 /// Sigma rule management.
 pub mod rule;

@@ -44,8 +44,8 @@ jobs:
         run: cargo test --locked -p sigmacatch
       - name: Test (sigma-regression)
         run: cargo test --locked -p sigma-regression
-      - name: Test (git-action)
-        run: cargo test --locked -p sigmacatch-git-action
+      - name: Test (repo)
+        run: cargo test --locked -p sigmacatch-repo
       - name: Test (output crates)
         run: cargo test --locked -p sigmacatch-output-evtx -p sigmacatch-output-regression
       - name: Test (ETW decoding helpers)

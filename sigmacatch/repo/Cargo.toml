@@ -2,10 +2,10 @@
 # SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 [package]
-name = "sigmacatch-git-action"
+name = "sigmacatch-repo"
 version.workspace = true
 edition.workspace = true
-description = "sigmacatch autonomous Git actions for the SigmaHQ repository"
+description = "sigmacatch SigmaHQ repository layer: clone, branch, commit, transport"
 license.workspace = true
 
 [lib]

@@ -13,7 +13,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use sigmacatch_git_action::SigmaRepo;
+//! use sigmacatch_repo::SigmaRepo;
 //! use std::path::Path;
 //!
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
