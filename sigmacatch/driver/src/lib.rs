@@ -309,6 +309,8 @@ unsafe extern "C" fn process_access_post_op(
     // SAFETY: `information` is valid for the duration of the callback.
     let info = unsafe { &*information };
     // `Object` is the target process (PEPROCESS) for handle-create/duplicate.
+    // SAFETY: `info` is live and `CreateHandleInformation` is the active
+    // member for a handle operation.
     let granted = unsafe { (*info.Parameters).CreateHandleInformation.GrantedAccess };
     if granted & INTERESTING_ACCESS == 0 {
         return;
@@ -385,10 +387,12 @@ unsafe fn is_fresh_process(pid: u32) -> bool {
     }
     let created = unsafe { PsGetProcessCreateTimeQuadPart(process) };
     let mut now = wdk_sys::LARGE_INTEGER::default();
+    // SAFETY: the call only writes into the local `now`.
     unsafe { wdk_sys::ntddk::KeQuerySystemTimePrecise(&raw mut now) };
     // SAFETY: the reference taken by `PsLookupProcessByProcessId` is released
     // exactly once.
     unsafe { wdk_sys::ntddk::ObfDereferenceObject(process.cast()) };
+    // SAFETY: `LARGE_INTEGER` is a union and the call above filled `QuadPart`.
     let age = unsafe { now.QuadPart } - created;
     (0..INITIAL_THREAD_WINDOW).contains(&age)
 }
@@ -404,6 +408,7 @@ unsafe extern "C" fn thread_notify(process_id: HANDLE, thread_id: HANDLE, create
         return;
     }
     let target = process_id as usize as u32;
+    // SAFETY: the callback runs in a thread context; the call only reads the current pid.
     let source = unsafe { PsGetCurrentProcessId() } as usize as u32;
     let thread = thread_id as usize as u32;
     if target <= 4 || source <= 4 || target == source || thread == target {
@@ -411,6 +416,7 @@ unsafe extern "C" fn thread_notify(process_id: HANDLE, thread_id: HANDLE, create
     }
     // A thread created in a process that has just come up is that process's
     // own first thread, created from the parent's context by `CreateProcess`.
+    // SAFETY: the callback runs at PASSIVE_LEVEL, where the callee's process lookup is legal.
     if unsafe { is_fresh_process(target) } {
         return;
     }
@@ -501,6 +507,7 @@ unsafe extern "C" fn registry_notify(
 /// Register the process-access object callbacks.
 fn register_ob_callbacks() -> NTSTATUS {
     let mut operation = OB_OPERATION_REGISTRATION {
+        // SAFETY: `PsProcessType` is a kernel global initialized before driver load.
         ObjectType: unsafe { PsProcessType } as *mut POBJECT_TYPE,
         Operations: OB_OPERATION_HANDLE_CREATE | OB_OPERATION_HANDLE_DUPLICATE,
         PreOperation: Some(process_access_pre_op),
@@ -796,6 +803,7 @@ mod tests {
         };
         let mut dest = [0u16; 1]; // only room for 1 char
         let mut copied = 0u16;
+        // SAFETY: `SRC` outlives the call and `dest` holds the single copied unit.
         unsafe { copy_wide(&src, &mut dest, &mut copied) };
         assert_eq!(copied, 1);
         assert_eq!(dest[0], b'h' as u16);
@@ -810,6 +818,7 @@ mod tests {
         };
         let mut dest = [0u16; 4];
         let mut copied = 99u16;
+        // SAFETY: `src.Buffer` is null with zero length, so no source bytes are read.
         unsafe { copy_wide(&src, &mut dest, &mut copied) };
         assert_eq!(copied, 0);
         assert_eq!(dest, [0u16; 4]);
