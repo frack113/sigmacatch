@@ -44,6 +44,8 @@ jobs:
         run: cargo test --locked -p sigmacatch
       - name: Test (ETW decoding helpers)
         run: cargo test --locked -p sigmacatch-input-etw-common
+      - name: Test (Linux input crates)
+        run: cargo test --locked -p sigmacatch-input-auditd -p sigmacatch-input-syslog -p sigmacatch-input-sysmon
       - name: Test (auditd+builtin+sysmon)
         run: cargo test --locked -p sigmacatch --no-default-features --features auditd,builtin,sysmon
       - name: Test (evtx)

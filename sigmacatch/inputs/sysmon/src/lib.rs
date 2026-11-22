@@ -6,13 +6,13 @@
 //! Sysmon for Linux writes each event as a single RFC3164 line tagged `sysmon`
 //! whose body is Windows-eventlog XML (`<Event><System>…</System>
 //! <EventData>…</EventData></Event>`). The collector tails the same central
-//! files as [`crate::inputs::syslog`], keeps only those lines and parses their XML via
+//! files as [`sigmacatch_input_syslog`], keeps only those lines and parses their XML via
 //! the shared winevt parser: the schema matches Sysmon on Windows, so events
 //! carry the full field set (`Image`, `CommandLine`, …) and the detection
 //! engine pipelines work unchanged. Logsource is injected from the event
 //! channel `Linux-Sysmon/Operational` → `product: linux` + `service: sysmon`.
 //!
-//! Lines tagged `sysmon` are excluded from [`crate::inputs::syslog`] — one line is
+//! Lines tagged `sysmon` are excluded from [`sigmacatch_input_syslog`] — one line is
 //! emitted exactly once, by this collector. Truncated XML (rsyslog size
 //! limits) is skipped with a warning; collection continues.
 //!
@@ -26,10 +26,15 @@
 //! watch or by dropping the receiver. Log rotation (inode change) is detected
 //! and the file re-opened. Non-Linux → silent stub.
 
-use crate::inputs::syslog;
-use crate::inputs::sysmon_parse::{parse_line, record_to_event};
-use crate::types::{Event, EventProducer, ProducerError};
+#![cfg(target_os = "linux")]
+
+/// Parsing of the Sysmon-for-Linux syslog wire format.
+pub mod sysmon_parse;
+
+use crate::sysmon_parse::{parse_line, record_to_event};
 use async_trait::async_trait;
+use sigmacatch_core::types::{Event, EventProducer, ProducerError};
+use sigmacatch_input_syslog as syslog;
 use tokio::sync::{mpsc, watch};
 
 /// Sysmon for Linux event collector (implements `EventProducer` directly).
@@ -38,7 +43,7 @@ pub struct EventCollector {
     #[cfg(target_os = "linux")]
     path: Option<String>,
     #[cfg(target_os = "linux")]
-    tail: crate::inputs::tail::TailOptions,
+    tail: sigmacatch_input_tail::TailOptions,
 }
 
 impl Default for EventCollector {
@@ -58,7 +63,7 @@ impl EventCollector {
             #[cfg(target_os = "linux")]
             path,
             #[cfg(target_os = "linux")]
-            tail: crate::inputs::tail::TailOptions::default(),
+            tail: sigmacatch_input_tail::TailOptions::default(),
         }
     }
 
@@ -72,13 +77,13 @@ impl EventCollector {
             #[cfg(target_os = "linux")]
             path,
             #[cfg(target_os = "linux")]
-            tail: crate::inputs::tail::TailOptions::default(),
+            tail: sigmacatch_input_tail::TailOptions::default(),
         }
     }
 
     /// Override the tail timing and READY barrier (tests). Production keeps
     /// the 100 ms default and no barrier when this is not called.
-    pub fn tail_options(mut self, options: crate::inputs::tail::TailOptions) -> Self {
+    pub fn tail_options(mut self, options: sigmacatch_input_tail::TailOptions) -> Self {
         #[cfg(target_os = "linux")]
         {
             self.tail = options;
@@ -134,13 +139,13 @@ async fn tail_loop(
     path: &str,
     tx: mpsc::Sender<Event>,
     stop: watch::Receiver<bool>,
-    options: crate::inputs::tail::TailOptions,
+    options: sigmacatch_input_tail::TailOptions,
 ) -> anyhow::Result<()> {
     tracing::info!("sysmon collector starting (tail {path})");
     let path = path.to_string();
 
     let task = tokio::task::spawn_blocking(move || {
-        crate::inputs::tail::run(&path, SysmonHandler, tx, stop, options)
+        sigmacatch_input_tail::run(&path, SysmonHandler, tx, stop, options)
     });
 
     task.await
@@ -154,7 +159,7 @@ async fn tail_loop(
 struct SysmonHandler;
 
 #[cfg(target_os = "linux")]
-impl crate::inputs::tail::LineHandler for SysmonHandler {
+impl sigmacatch_input_tail::LineHandler for SysmonHandler {
     fn on_line(&mut self, line: &[u8]) -> anyhow::Result<Vec<Event>> {
         let Some(record) = parse_line(line) else {
             return Ok(Vec::new());
@@ -245,7 +250,7 @@ mod tests {
     #[cfg(all(test, target_os = "linux"))]
     mod tail {
         use super::*;
-        use crate::inputs::tail::TailOptions;
+        use sigmacatch_input_tail::TailOptions;
         use std::io::Write;
         use tokio::sync::oneshot;
         use tokio::sync::{mpsc, watch};

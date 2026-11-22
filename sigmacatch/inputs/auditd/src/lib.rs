@@ -17,12 +17,14 @@
 //! receiver. Log rotation (inode change) is detected and the file re-opened.
 //! Non-Linux → silent stub.
 
+#![cfg(target_os = "linux")]
+
 use std::sync::Arc;
 
-use crate::types::{Event, EventProducer, ProducerError};
 use async_trait::async_trait;
 use linux_audit_parser::{Parser, Value as AuditValue};
 use serde_json::{Map, Value, Value as JsonValue};
+use sigmacatch_core::types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
 
 /// Default path of the audit log.
@@ -158,7 +160,7 @@ pub struct EventCollector {
     #[cfg(target_os = "linux")]
     path: String,
     #[cfg(target_os = "linux")]
-    tail: crate::inputs::tail::TailOptions,
+    tail: sigmacatch_input_tail::TailOptions,
 }
 
 impl Default for EventCollector {
@@ -183,13 +185,13 @@ impl EventCollector {
             #[cfg(target_os = "linux")]
             path,
             #[cfg(target_os = "linux")]
-            tail: crate::inputs::tail::TailOptions::default(),
+            tail: sigmacatch_input_tail::TailOptions::default(),
         }
     }
 
     /// Override the tail timing and READY barrier (tests). Production keeps
     /// the 100 ms default and no barrier when this is not called.
-    pub fn tail_options(mut self, options: crate::inputs::tail::TailOptions) -> Self {
+    pub fn tail_options(mut self, options: sigmacatch_input_tail::TailOptions) -> Self {
         #[cfg(target_os = "linux")]
         {
             self.tail = options;
@@ -229,7 +231,7 @@ async fn tail_loop(
     path: &str,
     tx: mpsc::Sender<Event>,
     stop: watch::Receiver<bool>,
-    options: crate::inputs::tail::TailOptions,
+    options: sigmacatch_input_tail::TailOptions,
 ) -> anyhow::Result<()> {
     use tracing::info;
 
@@ -237,7 +239,7 @@ async fn tail_loop(
     let path = path.to_string();
 
     let task = tokio::task::spawn_blocking(move || {
-        crate::inputs::tail::run(&path, AuditdHandler::new(), tx, stop, options)
+        sigmacatch_input_tail::run(&path, AuditdHandler::new(), tx, stop, options)
     });
 
     match task.await {
@@ -324,7 +326,7 @@ impl AuditdHandler {
 }
 
 #[cfg(target_os = "linux")]
-impl crate::inputs::tail::LineHandler for AuditdHandler {
+impl sigmacatch_input_tail::LineHandler for AuditdHandler {
     fn on_line(&mut self, line: &[u8]) -> anyhow::Result<Vec<Event>> {
         let Some(record) = parse_line(line) else {
             return Ok(Vec::new());

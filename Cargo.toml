@@ -9,6 +9,9 @@ members = [
   "sigmacatch/inputs/ebpf",
   "sigmacatch/inputs/tail",
   "sigmacatch/inputs/etw-common",
+  "sigmacatch/inputs/auditd",
+  "sigmacatch/inputs/syslog",
+  "sigmacatch/inputs/sysmon",
 ]
 
 # The ebpf probe (sigmacatch/ebpf) is excluded: built separately by build.rs.

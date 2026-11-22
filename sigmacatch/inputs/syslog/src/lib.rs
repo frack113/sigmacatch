@@ -21,10 +21,12 @@
 //! watch or by dropping the receiver. Log rotation (inode change) is detected
 //! and the file re-opened. Non-Linux → silent stub.
 
-use crate::types::{Event, EventProducer, ProducerError};
+#![cfg(target_os = "linux")]
+
 use async_trait::async_trait;
 use regex::Regex;
 use serde_json::{Map, Value as JsonValue};
+use sigmacatch_core::types::{Event, EventProducer, ProducerError};
 use std::sync::OnceLock;
 use tokio::sync::{mpsc, watch};
 
@@ -220,7 +222,7 @@ pub struct EventCollector {
     #[cfg(target_os = "linux")]
     path: Option<String>,
     #[cfg(target_os = "linux")]
-    tail: crate::inputs::tail::TailOptions,
+    tail: sigmacatch_input_tail::TailOptions,
 }
 
 impl Default for EventCollector {
@@ -240,7 +242,7 @@ impl EventCollector {
             #[cfg(target_os = "linux")]
             path,
             #[cfg(target_os = "linux")]
-            tail: crate::inputs::tail::TailOptions::default(),
+            tail: sigmacatch_input_tail::TailOptions::default(),
         }
     }
 
@@ -255,13 +257,13 @@ impl EventCollector {
             #[cfg(target_os = "linux")]
             path,
             #[cfg(target_os = "linux")]
-            tail: crate::inputs::tail::TailOptions::default(),
+            tail: sigmacatch_input_tail::TailOptions::default(),
         }
     }
 
     /// Override the tail timing and READY barrier (tests). Production keeps
     /// the 100 ms default and no barrier when this is not called.
-    pub fn tail_options(mut self, options: crate::inputs::tail::TailOptions) -> Self {
+    pub fn tail_options(mut self, options: sigmacatch_input_tail::TailOptions) -> Self {
         #[cfg(target_os = "linux")]
         {
             self.tail = options;
@@ -295,7 +297,7 @@ impl EventProducer for EventCollector {
             }
             // A READY barrier can only be fired once: give it to the first
             // source (tests pin a single path; production never arms it).
-            let crate::inputs::tail::TailOptions {
+            let sigmacatch_input_tail::TailOptions {
                 poll_interval,
                 ready,
             } = self.tail;
@@ -307,12 +309,12 @@ impl EventProducer for EventCollector {
                 let stop = stop.clone();
                 tasks.push(tokio::task::spawn_blocking(move || {
                     tracing::info!("builtin syslog collector starting (tail {path})");
-                    crate::inputs::tail::run(
+                    sigmacatch_input_tail::run(
                         &path,
                         SyslogHandler { kind },
                         tx,
                         stop,
-                        crate::inputs::tail::TailOptions {
+                        sigmacatch_input_tail::TailOptions {
                             poll_interval,
                             ready,
                         },
@@ -355,7 +357,7 @@ struct SyslogHandler {
 }
 
 #[cfg(target_os = "linux")]
-impl crate::inputs::tail::LineHandler for SyslogHandler {
+impl sigmacatch_input_tail::LineHandler for SyslogHandler {
     fn on_line(&mut self, line: &[u8]) -> anyhow::Result<Vec<Event>> {
         let Some(record) = parse_line(line) else {
             return Ok(Vec::new());

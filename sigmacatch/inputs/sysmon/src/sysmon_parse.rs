@@ -2,12 +2,11 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 //! Parsing of Sysmon-for-Linux syslog lines (RFC3164 tag `sysmon` + winevt
-//! XML body) into engine [`Event`]s. Always compiled: every binary may meet
-//! this wire format — legacy tail collector AND the synthetic raw lines of
-//! the eBPF input alike.
+//! XML body) into engine [`Event`]s. Owned by the `sysmon` input: only the
+//! legacy tail collector meets this wire format.
 
-use crate::inputs::syslog::{self, Record};
-use crate::types::Event;
+use sigmacatch_core::types::Event;
+use sigmacatch_input_syslog::{self as syslog, Record};
 
 /// Parse a single syslog line into a [`Record`] when it carries a Sysmon for
 /// Linux event: RFC3164 program tag `sysmon` and an `<Event>` XML body.
@@ -32,7 +31,7 @@ fn is_sysmon_record(record: &Record) -> bool {
 /// Returns `None` when the XML body cannot be parsed (truncated by the
 /// syslog daemon) — callers must skip the line.
 pub fn record_to_event(raw: &[u8], record: &Record) -> Option<Event> {
-    let (json_raw, json) = crate::types::parse_winevt_xml_both(&record.message).ok()?;
+    let (json_raw, json) = sigmacatch_core::types::parse_winevt_xml_both(&record.message).ok()?;
     Some(Event::new_injected(
         json_raw,
         json,

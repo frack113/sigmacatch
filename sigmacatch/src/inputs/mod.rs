@@ -39,27 +39,32 @@ pub mod etw_driver;
 #[cfg(feature = "evtx")]
 pub mod evtx;
 
-// Linux inputs.
+// Linux inputs. Crate aliases keep every `crate::inputs::<name>` call site
+// unchanged; each crate is empty off Linux.
 #[cfg(all(target_os = "linux", feature = "auditd"))]
-pub mod auditd;
+pub use sigmacatch_input_auditd as auditd;
 #[cfg(all(target_os = "linux", feature = "builtin"))]
-pub mod syslog;
+pub use sigmacatch_input_syslog as syslog;
 // Shared line-tail driver (Linux `MetadataExt`), compiled with any tail-based
 // input. The crate is empty off Linux; callers below are themselves gated.
-#[cfg(any(feature = "auditd", feature = "builtin", feature = "sysmon"))]
+#[cfg(all(
+    target_os = "linux",
+    any(feature = "auditd", feature = "builtin", feature = "sysmon")
+))]
 pub use sigmacatch_input_tail as tail;
 // Test hook, publicly reachable so integration tests can arm the injected
 // tail timing / READY barrier through the collector constructors.
-#[cfg(any(feature = "auditd", feature = "builtin", feature = "sysmon"))]
-pub use sigmacatch_input_tail::TailOptions;
-// Parsed by the `builtin` collector (not `sysmon`): the built-in syslog tail
-// must recognise Sysmon-for-Linux XML lines so it can hand them to `sysmon`.
 #[cfg(all(target_os = "linux", feature = "ebpf"))]
 pub use sigmacatch_input_ebpf::{ebpf, ebpf_event};
 #[cfg(all(target_os = "linux", feature = "sysmon"))]
-pub mod sysmon;
-#[cfg(all(target_os = "linux", feature = "builtin"))]
-pub mod sysmon_parse;
+pub use sigmacatch_input_sysmon as sysmon;
+#[cfg(all(target_os = "linux", feature = "sysmon"))]
+pub use sigmacatch_input_sysmon::sysmon_parse;
+#[cfg(all(
+    target_os = "linux",
+    any(feature = "auditd", feature = "builtin", feature = "sysmon")
+))]
+pub use sigmacatch_input_tail::TailOptions;
 // Linux orchestrator: selects every compiled, available source at runtime.
 #[cfg(all(
     target_os = "linux",

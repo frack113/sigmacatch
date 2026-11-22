@@ -2495,13 +2495,15 @@ dependencies = [
  "linux-audit-parser",
  "rand_core",
  "rayon",
- "regex",
  "serde",
  "serde_json",
  "sha1",
  "sigmacatch-core",
+ "sigmacatch-input-auditd",
  "sigmacatch-input-ebpf",
  "sigmacatch-input-etw-common",
+ "sigmacatch-input-syslog",
+ "sigmacatch-input-sysmon",
  "sigmacatch-input-tail",
  "tempfile",
  "tokio",
@@ -2547,6 +2549,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sigmacatch-input-auditd"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "linux-audit-parser",
+ "serde_json",
+ "sigmacatch-core",
+ "sigmacatch-input-tail",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "sigmacatch-input-ebpf"
 version = "0.7.0"
 dependencies = [
@@ -2574,6 +2590,34 @@ dependencies = [
  "sha1",
  "sha2 0.11.1",
  "windows",
+]
+
+[[package]]
+name = "sigmacatch-input-syslog"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "regex",
+ "serde_json",
+ "sigmacatch-core",
+ "sigmacatch-input-tail",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "sigmacatch-input-sysmon"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "sigmacatch-core",
+ "sigmacatch-input-syslog",
+ "sigmacatch-input-tail",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
