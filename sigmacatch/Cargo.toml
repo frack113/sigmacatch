@@ -17,8 +17,8 @@ doctest = false
 default = ["winevt"]
 winevt = ["dep:sigmacatch-input-winevt"]
 evtx = ["dep:sigmacatch-input-evtx"]
-etw = ["dep:sigmacatch-input-etw-common"]     # native Windows ETW (no Sysmon)
-driver = ["etw"]                               # kernel sensor client (Windows)
+etw = ["dep:sigmacatch-input-etw"]                  # native Windows ETW (no Sysmon)
+driver = ["etw", "dep:sigmacatch-input-etw-driver"]  # kernel sensor client (Windows)
 auditd = ["dep:sigmacatch-input-auditd", "dep:sigmacatch-input-tail"]
 builtin = ["dep:sigmacatch-input-syslog", "dep:sigmacatch-input-tail"]
 sysmon = ["builtin", "dep:sigmacatch-input-sysmon"] # Sysmon-for-Linux legacy tail
@@ -38,41 +38,24 @@ sigmacatch-input-syslog = { path = "inputs/syslog", optional = true }
 sigmacatch-input-sysmon = { path = "inputs/sysmon", optional = true }
 sigmacatch-input-tail = { path = "inputs/tail", optional = true }
 
+# The ETW inputs are empty shells off Windows, like the Linux input crates.
+# Target scoping keeps the dependency lint quiet when an ETW feature is enabled
+# on Linux (e.g. `cargo clippy --all-features`).
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62.2", features = [
-  "Wdk_System_Threading",
-  "Win32_Foundation",
-  "Win32_Security",
-  "Win32_Security_Authorization",
-  "Win32_Security_Cryptography",
-  "Win32_Security_Cryptography_Catalog",
-  "Win32_Security_WinTrust",
-  "Win32_System_Console",
-  "Win32_System_Com",
-  "Win32_Storage_FileSystem",
-  "Win32_System_Diagnostics_Etw",
-  "Win32_System_Diagnostics_ToolHelp",
-  "Win32_System_EventLog",
-  "Win32_System_IO",
-  "Win32_System_Kernel",
-  "Win32_System_Threading",
-  "Win32_System_Time",
-] }
+sigmacatch-input-etw = { path = "inputs/etw", optional = true }
+sigmacatch-input-etw-driver = { path = "inputs/etw-driver", optional = true }
 
 [dependencies]
 anyhow = "1.0.104"
 async-trait = "0.1.92"
-chrono = "0.4.45"
 linux-audit-parser = "0.2.8"
 rayon = "1.12.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sigmacatch-core = { path = "core" }
-sigmacatch-input-etw-common = { path = "inputs/etw-common", optional = true }
 sigmacatch-input-evtx = { path = "inputs/evtx", optional = true }
 sigmacatch-input-macos = { path = "inputs/macos", optional = true }
 sigmacatch-input-winevt = { path = "inputs/winevt", optional = true }
-sha1 = "0.11.0"
 tokio = { version = "1.54.1", features = [
   "rt",
   "rt-multi-thread",
@@ -107,14 +90,6 @@ required-features = ["auditd", "builtin"]
 [[test]]
 name = "sysmon_e2e"
 required-features = ["auditd", "builtin", "sysmon"]
-
-[[example]]
-name = "etw_dump"
-required-features = ["etw"]
-
-[[example]]
-name = "etw_driver_probe"
-required-features = ["driver"]
 
 [lints]
 workspace = true

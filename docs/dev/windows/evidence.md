@@ -7,8 +7,8 @@ journal of the driver's validation on the Windows 11 test VM. Read
 
 ## ETW provider measurements (2026-11-14)
 
-Measured with `logman`/`tracerpt` in file mode and with the Rust probe
-(`sigmacatch/examples/etw_dump.rs`, feature `etw`) in realtime mode.
+Measured with `logman`/`tracerpt` in file mode and with a Rust ETW probe
+(feature `etw`) in realtime mode.
 
 **Surface.** `windows` 0.62.2 exposes everything the design needs
 (`Win32_System_Diagnostics_Etw` + `Win32_System_Time`): `StartTraceW`,
@@ -107,8 +107,8 @@ The driver was loaded and exercised end to end on the QEMU test VM.
 - the queue is not the default unless `DefaultQueue` is set, so IOCTLs are not
   dispatched to `EvtIoDeviceControl`.
 
-**Result** — `sigmacatch/examples/etw_driver_probe.rs` drained the ring and
-produced, under provider `sigmacatch`:
+**Result** — a Rust kernel-sensor probe drained the ring and produced, under
+provider `sigmacatch`:
 
 - EID 1 with the creation-time `CommandLine` (exact), `Image`, `User`,
   `IntegrityLevel`, and the full `ParentImage`/`ParentCommandLine`/`ParentUser`

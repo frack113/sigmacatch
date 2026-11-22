@@ -10,6 +10,8 @@
 //! creation time are best-effort enriched from the still-alive process, which
 //! is safe because those fields do not change for the process lifetime.
 
+#![cfg(target_os = "windows")]
+
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::mem::size_of;
@@ -22,18 +24,18 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::IO::DeviceIoControl;
 use windows::core::PCWSTR;
 
-use crate::inputs::etw_event::filetime_to_utc;
-use crate::inputs::etw_process::{ImageCache, ProcessFacts, enrich};
-use crate::inputs::etw_sysmon::{
+use sigmacatch_core::types::Event;
+use sigmacatch_input_etw_common::etw_event::filetime_to_utc;
+use sigmacatch_input_etw_common::etw_process::{ImageCache, ProcessFacts, enrich};
+use sigmacatch_input_etw_common::etw_sysmon::{
     SignatureFields, driver_load_xml, event_xml, file_create_xml, image_load_xml,
     process_access_xml, process_start_xml, process_terminate_xml, sysmon_utc,
 };
-use crate::inputs::signature::Signature;
-use crate::types::Event;
+use sigmacatch_input_etw_common::signature::Signature;
 
 // The protocol lives next to the driver crate and is included verbatim, so
 // the two sides cannot drift.
-#[path = "../windows/driver_protocol.rs"]
+#[path = "../../../src/windows/driver_protocol.rs"]
 mod protocol;
 pub use protocol::{
     IOCTL_GET_VERSION, IOCTL_READ_EVENTS, RING_CAPACITY, SIGMACATCH_PROTOCOL_VERSION, SensorEvent,
@@ -141,19 +143,19 @@ impl Drop for Device {
 
 /// Upper bound on the bytes hashed for one file; larger content is hashed
 /// from the start only.
-pub const HASH_LIMIT: usize = crate::inputs::nt_file::HASH_LIMIT;
+pub const HASH_LIMIT: usize = sigmacatch_input_etw_common::nt_file::HASH_LIMIT;
 
 /// Creation time of the file at an NT path, in Sysmon's `UtcTime` spelling.
 fn creation_time(path: &str) -> Option<String> {
-    let ticks = crate::inputs::nt_file::creation_ticks(path)?;
-    let at = crate::inputs::etw_event::filetime_to_utc(ticks)?;
+    let ticks = sigmacatch_input_etw_common::nt_file::creation_ticks(path)?;
+    let at = sigmacatch_input_etw_common::etw_event::filetime_to_utc(ticks)?;
     Some(sysmon_utc(at))
 }
 
 /// SHA1 of the first [`HASH_LIMIT`] bytes of the file at an NT path, the way
 /// Sysmon spells it (`SHA1=…`), or `None` when it cannot be read.
 fn sha1_of_nt_path(path: &str) -> Option<String> {
-    let bytes = crate::inputs::nt_file::read_prefix(path, HASH_LIMIT)?;
+    let bytes = sigmacatch_input_etw_common::nt_file::read_prefix(path, HASH_LIMIT)?;
     use sha1::{Digest, Sha1};
     let mut hasher = Sha1::new();
     hasher.update(&bytes);
@@ -173,7 +175,7 @@ fn is_pe(bytes: &[u8]) -> bool {
 
 /// `Hashes` of a process image, whichever path shape it carries.
 fn image_hashes(image: &str) -> Option<String> {
-    crate::inputs::nt_file::hashes_of(image.strip_prefix(r"\??\").unwrap_or(image))
+    sigmacatch_input_etw_common::nt_file::hashes_of(image.strip_prefix(r"\??\").unwrap_or(image))
 }
 
 /// Turns a stream of [`SensorEvent`] records into [`Event`]s, keeping the
@@ -189,7 +191,7 @@ pub struct Mapper {
     /// Authenticode facts per image path, for the same reason.
     signatures: HashMap<String, Option<Signature>>,
     /// Version resource per image path.
-    versions: HashMap<String, Option<crate::inputs::version_info::VersionInfo>>,
+    versions: HashMap<String, Option<sigmacatch_input_etw_common::version_info::VersionInfo>>,
     /// Upper bound on both caches before they are cleared.
     cache_limit: usize,
 }
@@ -257,7 +259,7 @@ impl Mapper {
         if let Some(cached) = self.hashes.get(image) {
             return cached.clone();
         }
-        let computed = crate::inputs::nt_file::hashes_of(image);
+        let computed = sigmacatch_input_etw_common::nt_file::hashes_of(image);
         if self.hashes.len() >= self.cache_limit {
             self.hashes.clear();
         }
@@ -270,8 +272,8 @@ impl Mapper {
         if let Some(cached) = self.signatures.get(image) {
             return cached.clone();
         }
-        let computed = crate::inputs::nt_file::dos_path_of_nt(image)
-            .and_then(|dos| crate::inputs::signature::of_file(&dos));
+        let computed = sigmacatch_input_etw_common::nt_file::dos_path_of_nt(image)
+            .and_then(|dos| sigmacatch_input_etw_common::signature::of_file(&dos));
         if self.signatures.len() >= self.cache_limit {
             self.signatures.clear();
         }
@@ -280,12 +282,15 @@ impl Mapper {
     }
 
     /// Version resource of an image path, read once per path.
-    fn image_version(&mut self, image: &str) -> Option<crate::inputs::version_info::VersionInfo> {
+    fn image_version(
+        &mut self,
+        image: &str,
+    ) -> Option<sigmacatch_input_etw_common::version_info::VersionInfo> {
         if let Some(cached) = self.versions.get(image) {
             return cached.clone();
         }
-        let computed = crate::inputs::nt_file::dos_path_of_nt(image)
-            .and_then(|dos| crate::inputs::version_info::of_file(&dos));
+        let computed = sigmacatch_input_etw_common::nt_file::dos_path_of_nt(image)
+            .and_then(|dos| sigmacatch_input_etw_common::version_info::of_file(&dos));
         if self.versions.len() >= self.cache_limit {
             self.versions.clear();
         }
@@ -473,8 +478,8 @@ impl Mapper {
             .map_or(old.as_str(), |(parent, _)| parent);
         let new = format!("{parent}\\{leaf}");
         let image = self.file_image(event.pid);
-        let old_object = crate::inputs::registry_format::abbreviate(&old);
-        let new_name = crate::inputs::registry_format::abbreviate(&new);
+        let old_object = sigmacatch_input_etw_common::registry_format::abbreviate(&old);
+        let new_name = sigmacatch_input_etw_common::registry_format::abbreviate(&new);
         let xml = event_xml(
             &self.computer,
             14,
@@ -701,7 +706,7 @@ impl Mapper {
         }
         // Sysmon reports the hashes of the process image; the kernel does not
         // hash, so this is done here, from the image on disk.
-        let hashes = facts.image.as_deref().and_then(|image| image_hashes(image));
+        let hashes = facts.image.as_deref().and_then(image_hashes);
         facts.hashes = hashes;
         self.cache.insert(event.pid, facts.clone());
         let xml = process_start_xml(&self.computer, &facts, parent.as_ref());
@@ -769,12 +774,12 @@ impl Default for EventCollector {
 }
 
 #[async_trait::async_trait]
-impl crate::types::EventProducer for EventCollector {
+impl sigmacatch_core::types::EventProducer for EventCollector {
     async fn run(
         self: Box<Self>,
-        tx: tokio::sync::mpsc::Sender<crate::types::Event>,
+        tx: tokio::sync::mpsc::Sender<sigmacatch_core::types::Event>,
         mut stop: tokio::sync::watch::Receiver<bool>,
-    ) -> Result<(), crate::types::ProducerError> {
+    ) -> Result<(), sigmacatch_core::types::ProducerError> {
         let Some(device) = Device::open() else {
             tracing::info!("kernel sensor not loaded — driver path disabled");
             return Ok(());
@@ -804,7 +809,9 @@ impl crate::types::EventProducer for EventCollector {
                 .spawn(move || {
                     for (pid, path) in pe_rx {
                         std::thread::sleep(PE_CHECK_DELAY);
-                        let Some(header) = crate::inputs::nt_file::read_prefix(&path, 2) else {
+                        let Some(header) =
+                            sigmacatch_input_etw_common::nt_file::read_prefix(&path, 2)
+                        else {
                             continue;
                         };
                         if !is_pe(&header) {
@@ -824,9 +831,11 @@ impl crate::types::EventProducer for EventCollector {
                             image.as_deref(),
                             &fields,
                         );
-                        if let Ok(event) =
-                            crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon"))
-                            && tx.blocking_send(event).is_err()
+                        if let Ok(event) = sigmacatch_core::types::Event::from_xml_injected(
+                            &xml,
+                            "windows",
+                            Some("sysmon"),
+                        ) && tx.blocking_send(event).is_err()
                         {
                             break;
                         }

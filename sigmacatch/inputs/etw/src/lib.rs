@@ -3,8 +3,8 @@
 
 //! Native Windows ETW collector (feature `etw`, Windows only).
 //!
-//! The analogue of [`super::ebpf`] on Linux: a realtime trace session feeds
-//! kernel providers straight to [`super::etw_event::decode`], with no Sysmon
+//! The analogue of `sigmacatch-input-ebpf` on Linux: a realtime trace session feeds
+//! kernel providers straight to `sigmacatch_input_etw_common::etw_event::decode`, with no Sysmon
 //! installed and no kernel driver. Two sessions are used, on the reference
 //! implementation's findings (see `docs/dev/etw-collector.md`):
 //!
@@ -18,6 +18,11 @@
 //! Starting any of these needs an elevated token (`SeSystemProfilePrivilege`);
 //! [`ensure_privileges`] fails with a clear message otherwise, mirroring
 //! `ebpf::has_required_privileges`.
+
+#![cfg(target_os = "windows")]
+
+// The Windows orchestrator builds its process cache through this path.
+pub use sigmacatch_input_etw_common::etw_process;
 
 use std::ffi::c_void;
 use std::mem::size_of;
@@ -158,7 +163,7 @@ pub const DNS_CLIENT: ProviderSpec = ProviderSpec {
 /// subscriptions (Sysmon EID 19/20/21).
 pub const WMI_ACTIVITY: ProviderSpec = ProviderSpec {
     name: "Microsoft-Windows-WMI-Activity",
-    guid: GUID::from_u128(0x1418_ef04_b0b4_4623_bf7e_d74ab47bbdaa),
+    guid: GUID::from_u128(0x1418_ef04_b0b4_4623_bf7e_d74a_b47b_bdaa),
     level: 4,
     // Operational channel: 5857-5861 carry the subscription traffic.
     keywords: 0x4000_0000_0000_0000,
@@ -802,7 +807,7 @@ const IMAGE_UNLOAD: u16 = 6;
 const PROCESS_STOP: u16 = 2;
 /// Upper bound on the set of processes known to have exited.
 const EXITED_LIMIT: usize = 4096;
-// `Kernel-Registry` ids the router accepts (see `inputs::etw_registry`).
+// `Kernel-Registry` ids the router accepts (see `sigmacatch_input_etw_common::etw_registry`).
 const CREATE_KEY_ID: u16 = 1;
 const OPEN_KEY_ID: u16 = 2;
 const DELETE_KEY_ID: u16 = 3;
@@ -837,13 +842,14 @@ const DNS_CACHE_LIMIT: usize = 4096;
 /// either covered by the driver or not mapped yet.
 pub struct MainRouter {
     computer: String,
-    tracker: std::sync::Arc<std::sync::Mutex<crate::inputs::etw_process::ProcessTracker>>,
+    tracker:
+        std::sync::Arc<std::sync::Mutex<sigmacatch_input_etw_common::etw_process::ProcessTracker>>,
     /// `(pid, ip)` → queried name, filled from the DNS answers.
     dns: std::sync::Mutex<std::collections::HashMap<(u32, String), String>>,
     /// Key-handle → path cache for the registry events.
-    registry: std::sync::Mutex<crate::inputs::etw_registry::RegistryMapper>,
+    registry: std::sync::Mutex<sigmacatch_input_etw_common::etw_registry::RegistryMapper>,
     /// Image paths the kernel sensor published at process start.
-    images: crate::inputs::etw_process::ImageCache,
+    images: sigmacatch_input_etw_common::etw_process::ImageCache,
     /// Processes the same session saw exiting: their image unloads are
     /// teardown, not tampering.
     exited: std::sync::Mutex<std::collections::HashSet<u32>>,
@@ -854,14 +860,18 @@ impl MainRouter {
     /// `tracker`.
     pub fn new(
         computer: String,
-        tracker: std::sync::Arc<std::sync::Mutex<crate::inputs::etw_process::ProcessTracker>>,
-        images: crate::inputs::etw_process::ImageCache,
+        tracker: std::sync::Arc<
+            std::sync::Mutex<sigmacatch_input_etw_common::etw_process::ProcessTracker>,
+        >,
+        images: sigmacatch_input_etw_common::etw_process::ImageCache,
     ) -> Self {
         Self {
             computer,
             tracker,
             dns: std::sync::Mutex::new(std::collections::HashMap::new()),
-            registry: std::sync::Mutex::new(crate::inputs::etw_registry::RegistryMapper::new()),
+            registry: std::sync::Mutex::new(
+                sigmacatch_input_etw_common::etw_registry::RegistryMapper::new(),
+            ),
             images,
             exited: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
@@ -902,11 +912,11 @@ impl MainRouter {
     /// because one record can produce a pair — an image unloaded from a live
     /// process is both a module unload (EID 507) and process tampering
     /// (EID 25).
-    pub fn map(&self, record: &EVENT_RECORD) -> Vec<crate::types::Event> {
+    pub fn map(&self, record: &EVENT_RECORD) -> Vec<sigmacatch_core::types::Event> {
         if !Self::wants(record) {
             return Vec::new();
         }
-        let Some(decoded) = crate::inputs::etw_event::decode(record) else {
+        let Some(decoded) = sigmacatch_input_etw_common::etw_event::decode(record) else {
             return Vec::new();
         };
         let at = decoded.utc().unwrap_or_else(chrono::Utc::now);
@@ -914,27 +924,27 @@ impl MainRouter {
     }
 
     /// Wrap the single-event mappers for the `Vec`-returning dispatcher.
-    fn one(event: Option<crate::types::Event>) -> Vec<crate::types::Event> {
+    fn one(event: Option<sigmacatch_core::types::Event>) -> Vec<sigmacatch_core::types::Event> {
         event.into_iter().collect()
     }
 
     /// Dispatch one decoded record.
     fn decoded(
         &self,
-        decoded: &crate::inputs::etw_event::DecodedEvent,
+        decoded: &sigmacatch_input_etw_common::etw_event::DecodedEvent,
         at: chrono::DateTime<chrono::Utc>,
-    ) -> Vec<crate::types::Event> {
+    ) -> Vec<sigmacatch_core::types::Event> {
         match (decoded.provider.as_str(), decoded.event_id) {
             (KERNEL_NETWORK_NAME, NET_TCP_CONNECT) => {
-                Self::one(self.connection(&decoded, at, "tcp", true))
+                Self::one(self.connection(decoded, at, "tcp", true))
             }
             (KERNEL_NETWORK_NAME, NET_UDP_SEND) => {
-                Self::one(self.connection(&decoded, at, "udp", true))
+                Self::one(self.connection(decoded, at, "udp", true))
             }
-            (KERNEL_NETWORK_NAME, NET_TCP_ACCEPT) => Self::one(self.listen(&decoded, at)),
-            (DNS_CLIENT_NAME, DNS_QUERY_COMPLETED) => Self::one(self.dns(&decoded, at)),
-            (KERNEL_REGISTRY_NAME, _) => Self::one(self.registry_event(&decoded, at)),
-            (WMI_ACTIVITY_NAME, WMI_PROVIDER_OPERATION) => Self::one(self.wmi(&decoded, at)),
+            (KERNEL_NETWORK_NAME, NET_TCP_ACCEPT) => Self::one(self.listen(decoded, at)),
+            (DNS_CLIENT_NAME, DNS_QUERY_COMPLETED) => Self::one(self.dns(decoded, at)),
+            (KERNEL_REGISTRY_NAME, _) => Self::one(self.registry_event(decoded, at)),
+            (WMI_ACTIVITY_NAME, WMI_PROVIDER_OPERATION) => Self::one(self.wmi(decoded, at)),
             (KERNEL_PROCESS_NAME, PROCESS_STOP) => {
                 let mut exited = self
                     .exited
@@ -946,13 +956,17 @@ impl MainRouter {
                 exited.insert(decoded.process_id);
                 Vec::new()
             }
-            (KERNEL_PROCESS_NAME, IMAGE_UNLOAD) => self.module_unload(&decoded, at),
+            (KERNEL_PROCESS_NAME, IMAGE_UNLOAD) => self.module_unload(decoded, at),
             _ => Vec::new(),
         }
     }
 
     /// Map a record and send every resulting event on the producer channel.
-    fn route(&self, record: &EVENT_RECORD, tx: &tokio::sync::mpsc::Sender<crate::types::Event>) {
+    fn route(
+        &self,
+        record: &EVENT_RECORD,
+        tx: &tokio::sync::mpsc::Sender<sigmacatch_core::types::Event>,
+    ) {
         for event in self.map(record) {
             let _ = tx.blocking_send(event);
         }
@@ -966,7 +980,9 @@ impl MainRouter {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(pid)
             .and_then(|facts| facts.user.clone());
-        cached.or_else(|| crate::inputs::etw_process::enrich(pid).and_then(|facts| facts.user))
+        cached.or_else(|| {
+            sigmacatch_input_etw_common::etw_process::enrich(pid).and_then(|facts| facts.user)
+        })
     }
 
     /// Image path for a pid.
@@ -990,11 +1006,11 @@ impl MainRouter {
     /// `Microsoft-Windows-Kernel-Network` connect/send → EID 3.
     fn connection(
         &self,
-        decoded: &crate::inputs::etw_event::DecodedEvent,
+        decoded: &sigmacatch_input_etw_common::etw_event::DecodedEvent,
         at: chrono::DateTime<chrono::Utc>,
         protocol: &str,
         initiated: bool,
-    ) -> Option<crate::types::Event> {
+    ) -> Option<sigmacatch_core::types::Event> {
         let pid = decoded.uint("PID")? as u32;
         // Every field has to come from the provider: an invented address would
         // poison the committed regression data.
@@ -1003,7 +1019,7 @@ impl MainRouter {
         let image = self.image_of(pid);
         let user = self.user_of(pid);
         let hostname = self.lookup_hostname(pid, destination_ip);
-        let fields = crate::inputs::etw_sysmon::NetworkFields {
+        let fields = sigmacatch_input_etw_common::etw_sysmon::NetworkFields {
             protocol,
             initiated,
             source_ip,
@@ -1013,7 +1029,7 @@ impl MainRouter {
             destination_hostname: hostname.as_deref(),
             user: user.as_deref(),
         };
-        let xml = crate::inputs::etw_sysmon::network_xml(
+        let xml = sigmacatch_input_etw_common::etw_sysmon::network_xml(
             &self.computer,
             3,
             at,
@@ -1021,15 +1037,15 @@ impl MainRouter {
             image.as_deref(),
             &fields,
         );
-        crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+        sigmacatch_core::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
 
     /// `Microsoft-Windows-Kernel-Network` accept → EID 500 (`network_listen`).
     fn listen(
         &self,
-        decoded: &crate::inputs::etw_event::DecodedEvent,
+        decoded: &sigmacatch_input_etw_common::etw_event::DecodedEvent,
         at: chrono::DateTime<chrono::Utc>,
-    ) -> Option<crate::types::Event> {
+    ) -> Option<sigmacatch_core::types::Event> {
         let pid = decoded.uint("PID")? as u32;
         let (source_ip, source_port) = (decoded.ip("saddr")?, decoded.uint("sport")?);
         let image = self.image_of(pid);
@@ -1039,7 +1055,7 @@ impl MainRouter {
         } else {
             "0.0.0.0"
         };
-        let fields = crate::inputs::etw_sysmon::NetworkFields {
+        let fields = sigmacatch_input_etw_common::etw_sysmon::NetworkFields {
             protocol: "tcp",
             initiated: false,
             source_ip,
@@ -1049,7 +1065,7 @@ impl MainRouter {
             destination_hostname: None,
             user: user.as_deref(),
         };
-        let xml = crate::inputs::etw_sysmon::network_xml(
+        let xml = sigmacatch_input_etw_common::etw_sysmon::network_xml(
             &self.computer,
             500,
             at,
@@ -1057,16 +1073,16 @@ impl MainRouter {
             image.as_deref(),
             &fields,
         );
-        crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+        sigmacatch_core::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
 
     /// `Microsoft-Windows-DNS-Client` 3008 → EID 22, and feed the hostname
     /// cache the network events consult.
     fn dns(
         &self,
-        decoded: &crate::inputs::etw_event::DecodedEvent,
+        decoded: &sigmacatch_input_etw_common::etw_event::DecodedEvent,
         at: chrono::DateTime<chrono::Utc>,
-    ) -> Option<crate::types::Event> {
+    ) -> Option<sigmacatch_core::types::Event> {
         let pid = decoded.process_id;
         let query_name = decoded.str("QueryName")?;
         if query_name.is_empty() {
@@ -1077,7 +1093,7 @@ impl MainRouter {
         self.remember_hostnames(pid, query_name, results);
 
         let image = self.image_of(pid);
-        let xml = crate::inputs::etw_sysmon::event_xml(
+        let xml = sigmacatch_input_etw_common::etw_sysmon::event_xml(
             &self.computer,
             22,
             at,
@@ -1089,15 +1105,15 @@ impl MainRouter {
                 ("QueryResults", results),
             ],
         );
-        crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+        sigmacatch_core::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
 
     /// `Microsoft-Windows-Kernel-Registry` → EID 12/13/14.
     fn registry_event(
         &self,
-        decoded: &crate::inputs::etw_event::DecodedEvent,
+        decoded: &sigmacatch_input_etw_common::etw_event::DecodedEvent,
         at: chrono::DateTime<chrono::Utc>,
-    ) -> Option<crate::types::Event> {
+    ) -> Option<sigmacatch_core::types::Event> {
         let event = self
             .registry
             .lock()
@@ -1112,7 +1128,7 @@ impl MainRouter {
         if let Some(details) = event.details.as_deref() {
             fields.push(("Details", details));
         }
-        let xml = crate::inputs::etw_sysmon::event_xml(
+        let xml = sigmacatch_input_etw_common::etw_sysmon::event_xml(
             &self.computer,
             event.event_id,
             at,
@@ -1120,16 +1136,17 @@ impl MainRouter {
             image.as_deref(),
             &fields,
         );
-        crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+        sigmacatch_core::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
 
     /// `Microsoft-Windows-WMI-Activity` 5858 → EID 19/20/21.
     fn wmi(
         &self,
-        decoded: &crate::inputs::etw_event::DecodedEvent,
+        decoded: &sigmacatch_input_etw_common::etw_event::DecodedEvent,
         at: chrono::DateTime<chrono::Utc>,
-    ) -> Option<crate::types::Event> {
-        let parsed = crate::inputs::wmi_format::parse_operation(decoded.str("Operation")?)?;
+    ) -> Option<sigmacatch_core::types::Event> {
+        let parsed =
+            sigmacatch_input_etw_common::wmi_format::parse_operation(decoded.str("Operation")?)?;
         let (event_id, event_type) = parsed.classification()?;
         let pid = decoded.uint("ClientProcessId").unwrap_or(0) as u32;
         let image = self.image_of(pid);
@@ -1140,7 +1157,8 @@ impl MainRouter {
         ];
         // Sysmon keys a binding on the two objects it links, spelled the way
         // the WMI object path spells them.
-        let (consumer, filter) = crate::inputs::wmi_format::binding_parts(&parsed.target);
+        let (consumer, filter) =
+            sigmacatch_input_etw_common::wmi_format::binding_parts(&parsed.target);
         if event_id == 21 {
             if let Some(consumer) = consumer.as_deref() {
                 fields.push(("Consumer", consumer));
@@ -1154,7 +1172,7 @@ impl MainRouter {
         if let Some(user) = decoded.str("User") {
             fields.push(("User", user));
         }
-        let xml = crate::inputs::etw_sysmon::event_xml(
+        let xml = sigmacatch_input_etw_common::etw_sysmon::event_xml(
             &self.computer,
             event_id,
             at,
@@ -1162,16 +1180,16 @@ impl MainRouter {
             image.as_deref(),
             &fields,
         );
-        crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
+        sigmacatch_core::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")).ok()
     }
 
     /// `Kernel-Process` `ImageUnload` → EID 507 (`module_unload` extension),
     /// and EID 25 when the image is the process's own while it is still alive.
     fn module_unload(
         &self,
-        decoded: &crate::inputs::etw_event::DecodedEvent,
+        decoded: &sigmacatch_input_etw_common::etw_event::DecodedEvent,
         at: chrono::DateTime<chrono::Utc>,
-    ) -> Vec<crate::types::Event> {
+    ) -> Vec<sigmacatch_core::types::Event> {
         let Some(module) = decoded.str("ImageName") else {
             return Vec::new();
         };
@@ -1185,7 +1203,7 @@ impl MainRouter {
         // driver-unload extension, not a module unload (Sysmon has no id for
         // it either).
         if pid == 0 {
-            let xml = crate::inputs::etw_sysmon::event_xml(
+            let xml = sigmacatch_input_etw_common::etw_sysmon::event_xml(
                 &self.computer,
                 511,
                 at,
@@ -1193,10 +1211,14 @@ impl MainRouter {
                 None,
                 &[("ModuleName", module)],
             );
-            return crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon"))
-                .ok()
-                .into_iter()
-                .collect();
+            return sigmacatch_core::types::Event::from_xml_injected(
+                &xml,
+                "windows",
+                Some("sysmon"),
+            )
+            .ok()
+            .into_iter()
+            .collect();
         }
         let image = self.image_of(pid);
         // Process tampering: the image a process was started from is unmapped
@@ -1211,14 +1233,16 @@ impl MainRouter {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .contains(&pid);
         let tampering = not_exited
-            && crate::inputs::etw_process::is_running(pid)
+            && sigmacatch_input_etw_common::etw_process::is_running(pid)
             && image
                 .as_deref()
                 .map(|image| image.strip_prefix(r"\??\").unwrap_or(image))
-                .is_some_and(|image| crate::inputs::nt_file::same_file(module, image));
+                .is_some_and(|image| {
+                    sigmacatch_input_etw_common::nt_file::same_file(module, image)
+                });
         let mut events = Vec::new();
         if tampering {
-            let xml = crate::inputs::etw_sysmon::event_xml(
+            let xml = sigmacatch_input_etw_common::etw_sysmon::event_xml(
                 &self.computer,
                 25,
                 at,
@@ -1227,12 +1251,12 @@ impl MainRouter {
                 &[("Type", "ImageUnloaded")],
             );
             if let Ok(event) =
-                crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon"))
+                sigmacatch_core::types::Event::from_xml_injected(&xml, "windows", Some("sysmon"))
             {
                 events.push(event);
             }
         }
-        let xml = crate::inputs::etw_sysmon::event_xml(
+        let xml = sigmacatch_input_etw_common::etw_sysmon::event_xml(
             &self.computer,
             507,
             at,
@@ -1240,7 +1264,9 @@ impl MainRouter {
             image.as_deref(),
             &[("ModuleName", module)],
         );
-        if let Ok(event) = crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")) {
+        if let Ok(event) =
+            sigmacatch_core::types::Event::from_xml_injected(&xml, "windows", Some("sysmon"))
+        {
             events.push(event);
         }
         events
@@ -1292,18 +1318,18 @@ const POLL_INTERVAL_MS: u64 = 50;
 /// [`new`](Self::new) owns both the process source (EID 1) and the main
 /// session; the kernel sensor supersedes the former, while
 /// [`main_only`](Self::main_only) keeps the network/DNS events flowing next
-/// to it. See [`crate::inputs::windows`].
+/// to it. See the `windows` orchestrator in `sigmacatch`.
 pub struct EventCollector {
     /// Whether this instance also runs the process session (the fallback when
     /// the kernel sensor is absent).
     process: bool,
     /// Image paths shared with the kernel sensor.
-    images: crate::inputs::etw_process::ImageCache,
+    images: sigmacatch_input_etw_common::etw_process::ImageCache,
 }
 
 impl EventCollector {
     /// Create the producer that owns both sessions.
-    pub fn new(images: crate::inputs::etw_process::ImageCache) -> Self {
+    pub fn new(images: sigmacatch_input_etw_common::etw_process::ImageCache) -> Self {
         Self {
             process: true,
             images,
@@ -1314,7 +1340,7 @@ impl EventCollector {
     ///
     /// The driver owns process telemetry when it is loaded, so starting the
     /// process session too would report every process twice.
-    pub fn main_only(images: crate::inputs::etw_process::ImageCache) -> Self {
+    pub fn main_only(images: sigmacatch_input_etw_common::etw_process::ImageCache) -> Self {
         Self {
             process: false,
             images,
@@ -1324,16 +1350,16 @@ impl EventCollector {
 
 impl Default for EventCollector {
     fn default() -> Self {
-        Self::new(crate::inputs::etw_process::ImageCache::new())
+        Self::new(sigmacatch_input_etw_common::etw_process::ImageCache::new())
     }
 }
 
 /// Enrich `pid` and, when it is a process created during the capture, send
 /// its EID 1 event.
 fn emit_process(
-    tracker: &std::sync::Mutex<crate::inputs::etw_process::ProcessTracker>,
+    tracker: &std::sync::Mutex<sigmacatch_input_etw_common::etw_process::ProcessTracker>,
     computer: &str,
-    tx: &tokio::sync::mpsc::Sender<crate::types::Event>,
+    tx: &tokio::sync::mpsc::Sender<sigmacatch_core::types::Event>,
     pid: u32,
 ) {
     let observed = tracker
@@ -1344,25 +1370,31 @@ fn emit_process(
         return;
     };
     if let Some(image) = facts.image.as_deref() {
-        facts.hashes = crate::inputs::nt_file::hashes_of(image);
+        facts.hashes = sigmacatch_input_etw_common::nt_file::hashes_of(image);
     }
-    let xml = crate::inputs::etw_sysmon::process_start_xml(computer, &facts, parent.as_ref());
-    if let Ok(event) = crate::types::Event::from_xml_injected(&xml, "windows", Some("sysmon")) {
+    let xml = sigmacatch_input_etw_common::etw_sysmon::process_start_xml(
+        computer,
+        &facts,
+        parent.as_ref(),
+    );
+    if let Ok(event) =
+        sigmacatch_core::types::Event::from_xml_injected(&xml, "windows", Some("sysmon"))
+    {
         let _ = tx.blocking_send(event);
     }
 }
 
 #[async_trait::async_trait]
-impl crate::types::EventProducer for EventCollector {
+impl sigmacatch_core::types::EventProducer for EventCollector {
     async fn run(
         self: Box<Self>,
-        tx: tokio::sync::mpsc::Sender<crate::types::Event>,
+        tx: tokio::sync::mpsc::Sender<sigmacatch_core::types::Event>,
         mut stop: tokio::sync::watch::Receiver<bool>,
-    ) -> Result<(), crate::types::ProducerError> {
+    ) -> Result<(), sigmacatch_core::types::ProducerError> {
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::{Arc, Mutex};
 
-        use crate::inputs::etw_process::ProcessTracker;
+        use sigmacatch_input_etw_common::etw_process::ProcessTracker;
 
         let tracker = Arc::new(Mutex::new(ProcessTracker::new()));
         let computer = std::env::var("COMPUTERNAME").unwrap_or_default();
@@ -1390,7 +1422,9 @@ impl crate::types::EventProducer for EventCollector {
         let running = if self.process {
             let process = TraceSession::start(PROCESS_SESSION_NAME, SessionConfig::PROCESS)
                 .map_err(|e| {
-                    crate::types::ProducerError::Message(format!("ETW process session: {e:#}"))
+                    sigmacatch_core::types::ProducerError::Message(format!(
+                        "ETW process session: {e:#}"
+                    ))
                 })?;
             Some(
                 RunningSession::spawn_with_flush(
@@ -1401,7 +1435,9 @@ impl crate::types::EventProducer for EventCollector {
                     Some(std::time::Duration::from_millis(5)),
                 )
                 .map_err(|e| {
-                    crate::types::ProducerError::Message(format!("ETW process consumer: {e:#}"))
+                    sigmacatch_core::types::ProducerError::Message(format!(
+                        "ETW process consumer: {e:#}"
+                    ))
                 })?,
             )
         } else {
@@ -1447,7 +1483,7 @@ impl crate::types::EventProducer for EventCollector {
                 .name("etw-poller".into())
                 .spawn(move || {
                     while !halt.load(Ordering::Relaxed) {
-                        for pid in crate::inputs::etw_process::snapshot() {
+                        for pid in sigmacatch_input_etw_common::etw_process::snapshot() {
                             emit_process(&tracker, &computer, &tx, pid);
                         }
                         std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));

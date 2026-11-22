@@ -22,18 +22,13 @@ pub mod windows;
 // Native ETW collector (feature `etw`): no Sysmon, no driver. The session
 // layer is only meaningful on Windows.
 #[cfg(all(target_os = "windows", feature = "etw"))]
-pub mod etw;
-// Decoding helpers shared with the kernel-sensor client. The Win32-backed
-// ones are empty off Windows; the pure format modules are target-independent.
+pub use sigmacatch_input_etw as etw;
+// Process cache for the Windows orchestrator, owned by the ETW crate.
 #[cfg(all(target_os = "windows", feature = "etw"))]
-pub use sigmacatch_input_etw_common::{
-    etw_event, etw_process, etw_registry, etw_sysmon, nt_file, signature, version_info,
-};
-#[cfg(feature = "etw")]
-pub use sigmacatch_input_etw_common::{pe_format, registry_format, wmi_format};
+pub use sigmacatch_input_etw::etw_process;
 // Kernel-sensor client (feature `driver`, implies `etw`).
 #[cfg(all(target_os = "windows", feature = "driver"))]
-pub mod etw_driver;
+pub use sigmacatch_input_etw_driver as etw_driver;
 
 // One-shot EVTX cross-platform input. Not `target_os`-gated: pure file
 // parsing, runs on Windows and Linux alike.

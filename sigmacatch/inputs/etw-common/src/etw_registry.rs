@@ -15,7 +15,7 @@
 //!
 //! `Details` is the value *data* (Sysmon EID 13 semantics, which the rules
 //! match on), not the value name. It only arrives when the session asked the
-//! provider for `CapturedData`; see `sigmacatch::inputs::etw::TraceSession::enable_provider`.
+//! provider for `CapturedData`; see `sigmacatch_input_etw::TraceSession::enable_provider`.
 
 use std::collections::HashMap;
 

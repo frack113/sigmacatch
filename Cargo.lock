@@ -2488,18 +2488,17 @@ version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "chrono",
  "dunce",
  "linux-audit-parser",
  "rand_core",
  "rayon",
  "serde",
  "serde_json",
- "sha1",
  "sigmacatch-core",
  "sigmacatch-input-auditd",
  "sigmacatch-input-ebpf",
- "sigmacatch-input-etw-common",
+ "sigmacatch-input-etw",
+ "sigmacatch-input-etw-driver",
  "sigmacatch-input-evtx",
  "sigmacatch-input-macos",
  "sigmacatch-input-syslog",
@@ -2511,7 +2510,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "windows",
 ]
 
 [[package]]
@@ -2582,6 +2580,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sigmacatch-input-etw"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "sigmacatch-core",
+ "sigmacatch-input-etw-common",
+ "tokio",
+ "tracing",
+ "windows",
+]
+
+[[package]]
 name = "sigmacatch-input-etw-common"
 version = "0.8.0"
 dependencies = [
@@ -2589,6 +2601,21 @@ dependencies = [
  "md-5",
  "sha1",
  "sha2 0.11.1",
+ "windows",
+]
+
+[[package]]
+name = "sigmacatch-input-etw-driver"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "sha1",
+ "sigmacatch-core",
+ "sigmacatch-input-etw-common",
+ "tokio",
+ "tracing",
  "windows",
 ]
 
