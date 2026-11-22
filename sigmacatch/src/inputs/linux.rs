@@ -229,7 +229,7 @@ impl CollectorKind for LinuxCollector {
 
 /// Async entry of the Linux inputs: privilege and source guards, then the
 /// continuous runner. Selected from `main.rs`.
-pub async fn run() -> Result<()> {
+pub async fn run(factory: &dyn crate::RegressionSinkFactory) -> Result<()> {
     // Spec constraint: refuse to start without eBPF privileges rather than
     // degrade silently — the syslog fallback only covers old kernels.
     #[cfg(feature = "ebpf")]
@@ -247,7 +247,7 @@ pub async fn run() -> Result<()> {
              feature (auditd / builtin / sysmon / ebpf) and publish a log first."
         );
     }
-    crate::runner::run(&LinuxCollector).await
+    crate::runner::run(&LinuxCollector, factory).await
 }
 
 #[cfg(test)]

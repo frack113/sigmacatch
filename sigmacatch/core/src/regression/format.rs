@@ -16,14 +16,14 @@ use crate::types::Alert;
 /// precedence order. `json` doubles as auxiliary output
 /// (`regression.add_json_output`) and as legacy json-only data; `raw` is
 /// read for pre-existing non-Winevt data but never generated.
-pub(crate) const DATA_EXTENSIONS: [&str; 4] = ["evtx", "log", "raw", "json"];
+pub const DATA_EXTENSIONS: [&str; 4] = ["evtx", "log", "raw", "json"];
 
 /// EVTX files start with this 8-byte magic.
 const EVTX_MAGIC: &[u8; 8] = b"ElfFile\x00";
 
 /// Upper bound for any generated or scanned data blob — bounds RAM during
 /// validation. Larger blobs are treated as broken so the rule is re-captured.
-pub(crate) const MAX_DATA_BLOB_SIZE: usize = 64 * 1024 * 1024;
+pub const MAX_DATA_BLOB_SIZE: usize = 64 * 1024 * 1024;
 
 /// Output format of the per-rule regression data file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,7 +43,7 @@ impl DataFormat {
     /// Refine the collector's preferred format for one alert. A Linux
     /// collector with eBPF active writes JSON for eBPF events, but the same
     /// batch may carry an auditd alert whose original bytes are log lines.
-    pub(crate) fn for_alert(self, alert: &Alert) -> Self {
+    pub fn for_alert(self, alert: &Alert) -> Self {
         if self != Self::Json {
             return self;
         }
@@ -101,49 +101,6 @@ impl DataFormat {
                 } else {
                     Ok(provider.to_string())
                 }
-            }
-        }
-    }
-
-    /// Write the data file for one matched alert.
-    pub fn write(self, alert: &Alert, path: &Path) -> Result<()> {
-        match self {
-            Self::Evtx => crate::regression::evtx::write_evtx(
-                alert.raw_xml(),
-                alert.channel(),
-                alert.record_id(),
-                path,
-            ),
-            Self::Log => {
-                if alert.event_raw.len() > self.max_blob_size() {
-                    return Err(RegressionError::Invalid(format!(
-                        "event exceeds {} MiB — refusing to write {}",
-                        self.max_blob_size() / 1024 / 1024,
-                        path.display()
-                    )));
-                }
-                std::fs::write(path, &alert.event_raw[..]).map_err(|e| {
-                    RegressionError::Invalid(format!(
-                        "Failed to write log data {}: {e}",
-                        path.display()
-                    ))
-                })
-            }
-            Self::Json => {
-                let bytes = alert.event_raw.as_ref();
-                if bytes.len() > self.max_blob_size() {
-                    return Err(RegressionError::Invalid(format!(
-                        "json event exceeds {} MiB — refusing to write {}",
-                        self.max_blob_size() / 1024 / 1024,
-                        path.display()
-                    )));
-                }
-                std::fs::write(path, bytes).map_err(|e| {
-                    RegressionError::Invalid(format!(
-                        "Failed to write json data {}: {e}",
-                        path.display()
-                    ))
-                })
             }
         }
     }
@@ -357,21 +314,5 @@ mod tests {
         drop(file);
         assert!(!DataFormat::Evtx.cheap_validate(&path));
         assert!(!DataFormat::Log.cheap_validate(&tmp.path().join("missing.log")));
-    }
-
-    #[test]
-    fn test_log_write_rejects_oversized_event() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("x.log");
-        let alert = bare_alert(vec![0u8; MAX_DATA_BLOB_SIZE + 1]);
-        assert!(DataFormat::Log.write(&alert, &path).is_err());
-        assert!(!path.exists());
-
-        let small = bare_alert(b"type=EXECVE msg=audit(1.2:3)\n".to_vec());
-        DataFormat::Log.write(&small, &path).unwrap();
-        assert_eq!(
-            std::fs::read(&path).unwrap(),
-            small.event_raw.as_ref().clone()
-        );
     }
 }

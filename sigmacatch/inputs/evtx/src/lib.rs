@@ -84,7 +84,10 @@ pub fn evtx_path_or_default(evtx_path: Option<PathBuf>) -> PathBuf {
 }
 
 /// Async entry — selected by `main.rs` when `--evtx` is present.
-pub async fn run(evtx_path: Option<PathBuf>) -> Result<()> {
+pub async fn run(
+    evtx_path: Option<PathBuf>,
+    factory: &dyn sigmacatch_core::RegressionSinkFactory,
+) -> Result<()> {
     let evtx_path = evtx_path_or_default(evtx_path);
 
     if !evtx_path.exists() {
@@ -105,7 +108,7 @@ pub async fn run(evtx_path: Option<PathBuf>) -> Result<()> {
     );
 
     let collector = EvtxCollector { files };
-    sigmacatch_core::runner::run(&collector).await
+    sigmacatch_core::runner::run(&collector, factory).await
 }
 
 #[cfg(test)]
@@ -113,6 +116,17 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    struct NoSinkFactory;
+
+    impl sigmacatch_core::RegressionSinkFactory for NoSinkFactory {
+        fn build(
+            &self,
+            _path: &std::path::Path,
+        ) -> anyhow::Result<Box<dyn sigmacatch_core::RegressionSink>> {
+            anyhow::bail!("no sink is needed for these path-validation tests")
+        }
+    }
 
     #[test]
     fn test_find_evtx_files_empty_dir() {
@@ -202,7 +216,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_missing_path_bails() {
-        let err = run(Some(PathBuf::from("/nonexistent/evtx/dir")))
+        let err = run(Some(PathBuf::from("/nonexistent/evtx/dir")), &NoSinkFactory)
             .await
             .unwrap_err()
             .to_string();
@@ -218,7 +232,10 @@ mod tests {
         let file = dir.path().join("not-a-dir.txt");
         fs::write(&file, b"").unwrap();
 
-        let err = run(Some(file)).await.unwrap_err().to_string();
+        let err = run(Some(file), &NoSinkFactory)
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("not a directory"), "unexpected error: {err}");
     }
 
@@ -226,7 +243,7 @@ mod tests {
     async fn test_run_dir_without_evtx_bails() {
         let dir = tempdir().unwrap();
 
-        let err = run(Some(dir.path().to_path_buf()))
+        let err = run(Some(dir.path().to_path_buf()), &NoSinkFactory)
             .await
             .unwrap_err()
             .to_string();

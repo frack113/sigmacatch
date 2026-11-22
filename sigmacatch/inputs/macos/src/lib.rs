@@ -619,9 +619,9 @@ impl EventProducer for MacosEsCollector {
 
 /// Module-level entry point: subscribe with the default kind set and run the
 /// shared pipeline.
-pub async fn run() -> Result<()> {
+pub async fn run(factory: &dyn sigmacatch_core::RegressionSinkFactory) -> Result<()> {
     let collector = MacosEsCollector::new();
-    sigmacatch_core::runner::run(&collector).await
+    sigmacatch_core::runner::run(&collector, factory).await
 }
 
 /// macOS-only native Endpoint Security plumbing.

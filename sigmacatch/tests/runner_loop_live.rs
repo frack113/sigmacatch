@@ -153,7 +153,13 @@ async fn live_loop_stop_file_triggers_drain_flush_and_offline_upload() {
             max_runs: None,
             ..CliArgs::default()
         };
-        run_with_cli(&kind, cli, config_path).await
+        run_with_cli(
+            &kind,
+            cli,
+            config_path,
+            &sigmacatch::outputs::regression::SinkFactory,
+        )
+        .await
     });
 
     // Let the pipeline spin up (collector task, stop-file poller), then bloom

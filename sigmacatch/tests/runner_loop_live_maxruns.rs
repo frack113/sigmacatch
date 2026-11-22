@@ -141,7 +141,15 @@ async fn live_max_runs_interval_cycle_generates_uploads_and_exits() {
         ..CliArgs::default()
     };
     let config_path = PathBuf::from("config.yaml");
-    let task = tokio::spawn(async move { run_with_cli(&kind, cli, config_path).await });
+    let task = tokio::spawn(async move {
+        run_with_cli(
+            &kind,
+            cli,
+            config_path,
+            &sigmacatch::outputs::regression::SinkFactory,
+        )
+        .await
+    });
 
     // The live generation interval is 30 s, so the full run takes ~30 s.
     tokio::time::timeout(Duration::from_secs(60), task)

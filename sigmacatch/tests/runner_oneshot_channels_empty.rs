@@ -124,9 +124,14 @@ async fn empty_resolved_channels_stop_the_run_before_building_a_collector() {
         max_runs: None,
         ..CliArgs::default()
     };
-    run_with_cli(&kind, cli, PathBuf::from("config.yaml"))
-        .await
-        .expect("empty resolved channels must end the run with Ok(())");
+    run_with_cli(
+        &kind,
+        cli,
+        PathBuf::from("config.yaml"),
+        &sigmacatch::outputs::regression::SinkFactory,
+    )
+    .await
+    .expect("empty resolved channels must end the run with Ok(())");
 
     assert!(
         !built.load(std::sync::atomic::Ordering::SeqCst),

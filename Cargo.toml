@@ -18,6 +18,8 @@ members = [
   "sigmacatch/inputs/macos",
   "sigmacatch/inputs/etw",
   "sigmacatch/inputs/etw-driver",
+  "sigmacatch/outputs/evtx",
+  "sigmacatch/outputs/regression",
 ]
 
 # The ebpf probe (sigmacatch/ebpf) is excluded: built separately by build.rs.

@@ -13,9 +13,9 @@
 //! `evtx` v0.2.0) accept. Round-trip testable on any platform via the `evtx`
 //! crate.
 //!
-//! The module is self-contained within `sigmacatch-regression`: it depends on
-//! no sibling module of the crate — only on the external crates `thiserror`,
-//! `chrono`, `crc32fast` and `roxmltree`. Consumed through [`crate::regression::evtx`].
+//! The encoder is self-contained: it depends on no sibling module of the crate
+//! — only on the external crates `thiserror`, `chrono`, `crc32fast` and
+//! `roxmltree`. Consumed through [`crate::write_evtx`].
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -55,7 +55,7 @@ const UNIX_TO_FILETIME_NS: i128 = 116_444_736_000_000_000;
 
 /// Sample Winevt XML event (includes TaskInstanceId). Sourced from fixture.
 #[cfg(test)]
-pub(crate) const SAMPLE_XML: &str = include_str!("../../tests/fixtures/sample.xml");
+pub(crate) const SAMPLE_XML: &str = include_str!("../tests/fixtures/sample.xml");
 
 /// Errors produced while writing EVTX files.
 #[derive(Debug, thiserror::Error)]
@@ -606,7 +606,7 @@ mod tests {
         let path = dir.path().join("event.evtx");
         write_evtx_from_xml(SAMPLE_XML, 1, &path).unwrap();
 
-        let events = crate::evtx_reader::parse_evtx_file(&path).unwrap();
+        let events = sigmacatch_core::evtx_reader::parse_evtx_file(&path).unwrap();
         assert_eq!(events.len(), 1);
         let event = &events[0];
         assert_eq!(event.event_json["Event"]["System"]["EventID"], 106);
@@ -738,7 +738,7 @@ mod tests {
         let path = dir.path().join("event.evtx");
         write_evtx_from_xml(XML, 1, &path).unwrap();
 
-        let events = crate::evtx_reader::parse_evtx_file(&path).unwrap();
+        let events = sigmacatch_core::evtx_reader::parse_evtx_file(&path).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_json["Event"]["System"]["EventID"], 106);
     }

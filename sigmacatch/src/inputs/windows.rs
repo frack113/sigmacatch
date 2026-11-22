@@ -147,6 +147,6 @@ impl EventProducer for MultiCollector {
 }
 
 /// Async entry — selected by `main.rs` on Windows.
-pub async fn run() -> Result<()> {
-    crate::runner::run(&WindowsCollector).await
+pub async fn run(factory: &dyn crate::RegressionSinkFactory) -> Result<()> {
+    crate::runner::run(&WindowsCollector, factory).await
 }

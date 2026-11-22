@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::config::Config;
-use crate::regression::SigmahqRegression;
+use crate::regression::{DataFormat, committed_rule_ids};
 use crate::repo::SigmaRepo;
 use crate::rule::{
     Level, MinLevel, MinStatus, SigmaFilterConfig, SigmaRuleExt, SigmahqRules, Status,
@@ -640,13 +640,11 @@ fn build_rule_infos(rules: &SigmahqRules, sigma_repo_path: &Path) -> Vec<RuleInf
 
 fn compute_coverage_info(rules: &SigmahqRules, sigma_repo_path: &Path) -> Option<CoverageInfo> {
     let mut skip_set: BTreeSet<String> = BTreeSet::new();
-    match SigmahqRegression::new_from_path(&sigma_repo_path.join("regression_data")) {
-        Ok(reg) => {
-            for id in reg.get_sigma_id() {
-                skip_set.insert(id.to_string());
-            }
+    let regression_dir = sigma_repo_path.join("regression_data");
+    if regression_dir.exists() {
+        for id in committed_rule_ids(&regression_dir, DataFormat::Evtx) {
+            skip_set.insert(id.to_string());
         }
-        Err(e) => eprintln!("Warning: failed to scan local regression_data: {e}"),
     }
     let mut sigma_repo = SigmaRepo::new();
     sigma_repo.set_repo_path(sigma_repo_path.to_path_buf());

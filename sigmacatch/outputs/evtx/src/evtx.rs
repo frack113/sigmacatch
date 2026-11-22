@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-use crate::regression::{RegressionError, Result};
+use sigmacatch_core::regression::{RegressionError, Result};
 use std::path::Path;
 #[cfg(windows)]
 use std::thread::sleep;
@@ -31,10 +31,10 @@ const EVTX_EXPORT_BACKOFF_SECS: [u64; (EVTX_EXPORT_MAX_ATTEMPTS - 1) as usize] =
 ///
 /// Implementation details:
 ///
-/// - The pure-Rust EVTX encoder lives in the [`crate::regression::evtx_writer`] module.
-/// - Low-level deterministic API: [`crate::regression::evtx_writer::write_evtx_from_xml`]
+/// - The pure-Rust EVTX encoder lives in the [`crate::evtx_writer`] module.
+/// - Low-level deterministic API: [`crate::evtx_writer::write_evtx_from_xml`]
 ///   (extracts timestamp from XML, errors if missing/malformed).
-/// - Explicit-timestamp API: [`crate::regression::evtx_writer::write_evtx_from_xml_with_time`]
+/// - Explicit-timestamp API: [`crate::evtx_writer::write_evtx_from_xml_with_time`]
 ///   (fully deterministic, no fallback).
 /// - Validation: [`validate_evtx_structure`] performs a full re-parse via the
 ///   `evtx` crate to verify structural integrity.
@@ -168,7 +168,7 @@ fn write_evtx_winevt(_xml: &str, channel: &str, _rid: u64, _path: &Path) -> Resu
 fn write_evtx_pure_rust(xml: &str, channel: &str, rid: u64, path: &Path) -> Result<()> {
     let path = sigma_regression::long_path(path);
 
-    let result = crate::regression::evtx_writer::write_evtx_from_xml(xml, rid, &path)
+    let result = crate::evtx_writer::write_evtx_from_xml(xml, rid, &path)
         .map_err(|e| {
             RegressionError::Export(format!("evtx-writer failed for {}: {e}", path.display()))
         })
@@ -199,7 +199,7 @@ fn write_evtx_pure_rust(xml: &str, channel: &str, rid: u64, path: &Path) -> Resu
 #[cfg(windows)]
 fn exported_has_records(path: &Path) -> Result<bool> {
     let path = sigma_regression::long_path(path);
-    let events = crate::evtx_reader::parse_evtx_file(&path).map_err(|e| {
+    let events = sigmacatch_core::evtx_reader::parse_evtx_file(&path).map_err(|e| {
         RegressionError::Invalid(format!(
             "Failed to parse exported EVTX {}: {e}",
             path.display()
@@ -229,7 +229,7 @@ fn validate_evtx_structure(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::regression::evtx_writer::SAMPLE_XML;
+    use crate::evtx_writer::SAMPLE_XML;
 
     #[test]
     fn test_write_evtx_pure_rust_writes_valid_evtx() {

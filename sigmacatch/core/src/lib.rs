@@ -6,7 +6,7 @@
 //! data generator. Input adapters live in their own crates and depend on this
 //! one; nothing here knows how an event was captured.
 
-pub use crate::regression::DataFormat;
+pub use crate::regression::{DataFormat, RegressionSink, RegressionSinkFactory};
 pub use crate::runner::{CollectorKind, bootstrap_repo_regression, run};
 
 /// Diagnostic subcommands (check-filter, list-rules).
@@ -24,7 +24,7 @@ pub mod evtx_reader;
 /// Logging bootstrap shared by the collector and `regressiondata-check`.
 pub mod logging;
 
-/// Regression data generator + validation structures.
+/// Shared regression-data vocabulary, discovery and output seams.
 pub mod regression;
 
 /// SigmaHQ repository layer (clone, branch, commit, transport).

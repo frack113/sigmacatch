@@ -12,9 +12,20 @@
 //! the eBPF probe code are gated by features.
 
 pub use sigmacatch_core::{
-    CollectorKind, DataFormat, bootstrap_repo_regression, cli, config, detection, evtx_reader,
-    logging, regression, repo, rule, run, runner, types,
+    CollectorKind, DataFormat, RegressionSink, RegressionSinkFactory, bootstrap_repo_regression,
+    cli, config, detection, evtx_reader, logging, repo, rule, run, runner, types,
 };
+
+/// Regression-data output: shared vocabulary from core plus the concrete
+/// SigmaHQ writer crate.
+pub mod regression {
+    pub use sigmacatch_core::regression::*;
+    pub use sigmacatch_output_regression::{RegressionEntry, SigmahqRegression};
+}
+
+/// Output adapters. The binary builds the sink and injects it into the runner,
+/// mirroring how each input crate builds its event producer.
+pub mod outputs;
 
 // Wire-format types for the eBPF ring buffer. The probe crate includes the
 // source directly via `#[path]`; the host adapter owns it.

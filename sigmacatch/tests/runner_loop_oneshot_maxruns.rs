@@ -154,6 +154,7 @@ async fn oneshot_max_runs_interval_cycle_generates_uploads_and_exits() {
             &LongLivedKind { event: Some(event) },
             cli,
             PathBuf::from("config.yaml"),
+            &sigmacatch::outputs::regression::SinkFactory,
         ),
     )
     .await

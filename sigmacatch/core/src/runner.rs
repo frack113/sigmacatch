@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{CliArgs, Config, parse_args};
 use crate::detection::DetectionEngine;
-use crate::regression::{DataFormat, SigmahqRegression};
+use crate::regression::{DataFormat, RegressionSink, RegressionSinkFactory};
 use crate::repo::SigmaRepo;
 use crate::rule::SigmahqRules;
 use crate::types::{Event, EventProducer};
@@ -90,10 +90,13 @@ fn setup_console() {
 /// `spawn_blocking` for each generation cycle so a slow data write
 /// (`EvtExportLog` retries block for up to ~17s per failing rule) never
 /// freezes the async runtime: collection keeps buffering into the channel.
-struct Pipeline {
-    engine: DetectionEngine,
-    rules: SigmahqRules,
-    regression: SigmahqRegression,
+pub struct Pipeline {
+    /// Detection engine holding the buffered events.
+    pub engine: DetectionEngine,
+    /// Active rule set, pruned when a rule's data is committed.
+    pub rules: SigmahqRules,
+    /// Output sink driven by the generation cycle.
+    pub regression: Box<dyn RegressionSink>,
 }
 
 /// Bootstrap the sigma git repository and the shared regression handler
@@ -108,7 +111,8 @@ struct Pipeline {
 pub async fn bootstrap_repo_regression(
     config: &Config,
     sigma_repo_path: &Path,
-) -> Result<(SigmaRepo, String, SigmahqRegression)> {
+    factory: &dyn RegressionSinkFactory,
+) -> Result<(SigmaRepo, String, Box<dyn RegressionSink>)> {
     let fork_url = config
         .git
         .fork_repo_url
@@ -164,19 +168,17 @@ pub async fn bootstrap_repo_regression(
     sigma_repo.set_working_branch(branch_name.clone())?;
     sigma_repo.check_remote_working_branch()?;
 
-    let regression =
-        match SigmahqRegression::new_from_path(&sigma_repo_path.join("regression_data")) {
-            Ok(r) => r,
-            Err(e) => anyhow::bail!("Failed to load regression data: {e}"),
-        };
+    let regression = factory
+        .build(&sigma_repo_path.join("regression_data"))
+        .map_err(|e| anyhow::anyhow!("Failed to load regression data: {e}"))?;
 
     Ok((sigma_repo, branch_name, regression))
 }
 
 /// Run the sigmacatch pipeline with the given collector.
-pub async fn run<C: CollectorKind>(kind: &C) -> Result<()> {
+pub async fn run<C: CollectorKind>(kind: &C, factory: &dyn RegressionSinkFactory) -> Result<()> {
     let cli = parse_args();
-    run_with_cli(kind, cli, PathBuf::from("config.yaml")).await
+    run_with_cli(kind, cli, PathBuf::from("config.yaml"), factory).await
 }
 
 /// Run the sigmacatch pipeline with an explicit parsed CLI and config path.
@@ -188,6 +190,7 @@ pub async fn run_with_cli<C: CollectorKind>(
     kind: &C,
     cli: CliArgs,
     config_path: PathBuf,
+    factory: &dyn RegressionSinkFactory,
 ) -> Result<()> {
     let mut config = if cli.dry_run {
         // Dry-run never creates config.yaml and skips git validation — only the
@@ -229,7 +232,7 @@ pub async fn run_with_cli<C: CollectorKind>(
     config.ensure_dirs()?;
     let sigma_repo_path = Path::new(&config.git.sigma_repo_path).to_path_buf();
     let (sigma_repo, branch_name, mut regression) =
-        bootstrap_repo_regression(&config, &sigma_repo_path).await?;
+        bootstrap_repo_regression(&config, &sigma_repo_path, factory).await?;
     let push_branch = branch_name.clone();
 
     regression.set_author(config.git.author.clone());
@@ -240,7 +243,7 @@ pub async fn run_with_cli<C: CollectorKind>(
     let existing_rules: HashSet<Uuid> = if cli.all_rules {
         HashSet::new()
     } else {
-        let mut existing: HashSet<Uuid> = regression.get_sigma_id().into_iter().collect();
+        let mut existing: HashSet<Uuid> = regression.active_rule_ids().into_iter().collect();
         if !existing.is_empty() {
             info!(
                 "{} rules with existing regression data (skipped)",
@@ -738,7 +741,9 @@ fn upload_regression(
     }
 }
 
-fn process_and_generate(mut pipeline: Pipeline) -> (Pipeline, Vec<(Uuid, Vec<String>)>) {
+/// Process buffered events and write every match through the sink. Returns the
+/// pipeline (with retired rules removed) and the generated batches.
+pub fn process_and_generate(mut pipeline: Pipeline) -> (Pipeline, Vec<(Uuid, Vec<String>)>) {
     pipeline.engine.process_events();
     let alerts = pipeline.engine.get_alerts();
 
@@ -797,9 +802,40 @@ fn process_and_generate(mut pipeline: Pipeline) -> (Pipeline, Vec<(Uuid, Vec<Str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{EventProducer, ProducerError};
+    use crate::types::{Alert, EventProducer, ProducerError};
     use async_trait::async_trait;
     use tempfile::tempdir;
+
+    #[derive(Default)]
+    struct TestSink;
+
+    impl RegressionSink for TestSink {
+        fn set_author(&mut self, _author: String) {}
+        fn set_max_failed_cycles(&mut self, _cycles: u32) {}
+        fn set_format(&mut self, _format: DataFormat) {}
+        fn set_add_json_output(&mut self, _enabled: bool) {}
+        fn active_rule_ids(&self) -> Vec<Uuid> {
+            Vec::new()
+        }
+        fn is_empty(&self) -> bool {
+            true
+        }
+        fn begin_cycle(&mut self) {}
+        fn add(&mut self, _alert: &Alert) -> Option<Vec<String>> {
+            None
+        }
+        fn take_blocked(&mut self) -> Vec<Uuid> {
+            Vec::new()
+        }
+    }
+
+    struct TestFactory;
+
+    impl RegressionSinkFactory for TestFactory {
+        fn build(&self, _path: &Path) -> Result<Box<dyn RegressionSink>> {
+            Ok(Box::new(TestSink))
+        }
+    }
 
     /// sigma/rules/linux/builtin/sshd/lnx_sshd_susp_ssh.yml (keyword list kept
     /// verbatim; unused keywords trimmed to keep the fixture readable).
@@ -932,115 +968,11 @@ level: medium
         config.git.offline = Some(true);
         config.git.working_branch = Some("sigmacatch/runner-test".to_string());
 
-        let (repo, branch, regression) = bootstrap_repo_regression(&config, &sigma)
+        let (repo, branch, regression) = bootstrap_repo_regression(&config, &sigma, &TestFactory)
             .await
             .expect("offline bootstrap");
         assert_eq!(branch, "sigmacatch/runner-test");
         assert!(regression.is_empty());
         let _ = repo;
-    }
-
-    mod tests_sigma {
-        use super::*;
-
-        const SSHD_LINE: &[u8] =
-            b"Aug 23 10:00:03 sigmacatch-linux sshd[123]: fatal: Corrupted MAC on input from 192.168.122.1";
-
-        /// Full cycle: injected syslog-shaped event → engine → process_and_generate
-        /// writes the regression batch and retires the rule from the returned pipeline.
-        #[tokio::test]
-        async fn process_and_generate_writes_batch_for_matching_event() {
-            let (_tmp, sigma) = make_rule_dir();
-            std::fs::create_dir_all(sigma.join("regression_data")).unwrap();
-
-            let rules = SigmahqRules::new_from_path(&sigma).unwrap();
-            assert_eq!(rules.len(), 1);
-
-            let mut engine = DetectionEngine::new(&rules).unwrap();
-            let message = "fatal: Corrupted MAC on input from 192.168.122.1";
-            let event = Event::new_injected(
-                serde_json::json!({ "message": message, "program": "sshd" }),
-                serde_json::json!({ "message": message, "program": "sshd" }),
-                SSHD_LINE.to_vec(),
-                "linux",
-                Some("sshd"),
-            );
-            assert_eq!(event.event_json["service"], "sshd");
-            engine.put_events(vec![event]);
-            engine.process_events();
-            assert_eq!(
-                engine.stats().events_processed,
-                1,
-                "the fixture line must be processed by the engine"
-            );
-
-            let mut regression =
-                SigmahqRegression::new_from_path(&sigma.join("regression_data")).unwrap();
-            regression.set_format(DataFormat::Log);
-            regression.set_author("runner-test".to_string());
-
-            let pipeline = Pipeline {
-                engine,
-                rules,
-                regression,
-            };
-            let (returned, batches) = process_and_generate(pipeline);
-
-            assert_eq!(batches.len(), 1, "one matching rule → one batch");
-            let (rule_id, files) = &batches[0];
-            assert_eq!(files.len(), 3, "data file + info.yml + rule yaml");
-            for f in files {
-                assert!(
-                    sigma.join(f).exists(),
-                    "generated file {} must exist on disk",
-                    f
-                );
-            }
-
-            assert!(
-                returned.rules.get_rule_path(rule_id).is_none(),
-                "rule must be retired from the returned pipeline"
-            );
-
-            let (_returned2, batches2) = process_and_generate(returned);
-            assert!(
-                batches2.is_empty(),
-                "no further alerts → no further batches (rule already captured)"
-            );
-        }
-
-        #[tokio::test]
-        async fn process_and_generate_without_alerts_returns_no_batches() {
-            let (_tmp, sigma) = make_rule_dir();
-            std::fs::create_dir_all(sigma.join("regression_data")).unwrap();
-
-            let rules = SigmahqRules::new_from_path(&sigma).unwrap();
-            let mut engine = DetectionEngine::new(&rules).unwrap();
-
-            let message = "(root) CMD (run-parts /etc/cron.daily)";
-            let event = Event::new_injected(
-                serde_json::json!({ "message": message, "program": "cron" }),
-                serde_json::json!({ "message": message, "program": "cron" }),
-                b"Aug 23 10:00:03 sigmacatch-linux cron[999]: (root) CMD (run-parts /etc/cron.daily)".to_vec(),
-                "linux",
-                Some("cron"),
-            );
-            engine.put_events(vec![event]);
-            engine.process_events();
-            assert!(
-                engine.get_alerts().is_empty(),
-                "benign event must not match"
-            );
-
-            let regression =
-                SigmahqRegression::new_from_path(&sigma.join("regression_data")).unwrap();
-            let pipeline = Pipeline {
-                engine,
-                rules,
-                regression,
-            };
-            let (_returned, batches) = process_and_generate(pipeline);
-            assert!(batches.is_empty());
-        }
     }
 }

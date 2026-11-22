@@ -114,9 +114,14 @@ async fn dry_run_loads_rules_and_writes_nothing() {
         dry_run: true,
         ..CliArgs::default()
     };
-    run_with_cli(&NoCollectorKind, cli, PathBuf::from("config.yaml"))
-        .await
-        .expect("dry-run must succeed");
+    run_with_cli(
+        &NoCollectorKind,
+        cli,
+        PathBuf::from("config.yaml"),
+        &sigmacatch::outputs::regression::SinkFactory,
+    )
+    .await
+    .expect("dry-run must succeed");
 
     let regression_root = tmp.path().join("sigma").join("regression_data");
     assert!(

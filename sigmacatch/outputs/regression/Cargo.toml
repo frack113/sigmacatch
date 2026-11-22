@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[package]
+name = "sigmacatch-output-regression"
+version.workspace = true
+edition.workspace = true
+description = "sigmacatch SigmaHQ regression-data output adapter"
+license.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+anyhow = "1.0.104"
+serde_json = "1.0.154"
+sigma-regression = { path = "../../sigma-regression" }
+sigmacatch-core = { path = "../../core" }
+sigmacatch-output-evtx = { path = "../evtx" }
+tracing.workspace = true
+uuid = { version = "1.29.3", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[lints]
+workspace = true

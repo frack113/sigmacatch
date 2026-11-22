@@ -154,6 +154,7 @@ async fn sigint_triggers_ctrl_c_handler_and_oneshot_shutdown_arm() {
             &LongLivedKind { event: Some(event) },
             cli,
             PathBuf::from("config.yaml"),
+            &sigmacatch::outputs::regression::SinkFactory,
         )
         .await
     });

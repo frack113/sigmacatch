@@ -2517,6 +2517,7 @@ dependencies = [
  "sigmacatch-input-sysmon",
  "sigmacatch-input-tail",
  "sigmacatch-input-winevt",
+ "sigmacatch-output-regression",
  "tempfile",
  "tokio",
  "tracing",
@@ -2706,6 +2707,36 @@ dependencies = [
  "tokio",
  "tracing",
  "windows",
+]
+
+[[package]]
+name = "sigmacatch-output-evtx"
+version = "0.8.0"
+dependencies = [
+ "chrono",
+ "crc32fast",
+ "evtx",
+ "roxmltree",
+ "sigma-regression",
+ "sigmacatch-core",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
+ "windows",
+]
+
+[[package]]
+name = "sigmacatch-output-regression"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "serde_json",
+ "sigma-regression",
+ "sigmacatch-core",
+ "sigmacatch-output-evtx",
+ "tempfile",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

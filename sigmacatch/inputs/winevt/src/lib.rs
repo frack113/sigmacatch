@@ -39,7 +39,7 @@ impl CollectorKind for WinevtCollector {
 }
 
 /// Async entry — selected by `main.rs` on Windows.
-pub async fn run() -> Result<()> {
+pub async fn run(factory: &dyn sigmacatch_core::RegressionSinkFactory) -> Result<()> {
     let collector = WinevtCollector;
-    sigmacatch_core::runner::run(&collector).await
+    sigmacatch_core::runner::run(&collector, factory).await
 }

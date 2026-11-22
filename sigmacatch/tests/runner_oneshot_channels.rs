@@ -151,9 +151,14 @@ async fn resolved_channels_reach_the_collector_and_data_is_written() {
         max_runs: None,
         ..CliArgs::default()
     };
-    run_with_cli(&kind, cli, PathBuf::from("config.yaml"))
-        .await
-        .expect("one-shot pipeline with resolved channels must run");
+    run_with_cli(
+        &kind,
+        cli,
+        PathBuf::from("config.yaml"),
+        &sigmacatch::outputs::regression::SinkFactory,
+    )
+    .await
+    .expect("one-shot pipeline with resolved channels must run");
 
     let channels = received.lock().expect("channels mutex").take();
     assert_eq!(

@@ -152,6 +152,7 @@ async fn all_rules_have_existing_regression_data_bails_without_collecting() {
         &OneShotKind { event: Some(event) },
         cli,
         PathBuf::from("config.yaml"),
+        &sigmacatch::outputs::regression::SinkFactory,
     )
     .await
     .expect_err("pipeline must bail when every rule already has regression data");

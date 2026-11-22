@@ -155,6 +155,7 @@ async fn oneshot_loop_offline_generates_and_uploads_batch() {
         &OneShotKind { event: Some(event) },
         cli,
         PathBuf::from("config.yaml"),
+        &sigmacatch::outputs::regression::SinkFactory,
     )
     .await
     .expect("one-shot pipeline must run end to end offline");
