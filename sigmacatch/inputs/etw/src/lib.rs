@@ -220,10 +220,10 @@ pub fn ensure_privileges() -> Result<()> {
 
 /// True when the process token is elevated (high integrity).
 fn is_elevated() -> Result<bool> {
+    // SAFETY: pseudo-handle for the current process; the token handle is
+    // closed below.
     unsafe {
         let mut token = HANDLE::default();
-        // SAFETY: pseudo-handle for the current process; the token handle is
-        // closed below.
         OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token)
             .context("OpenProcessToken")?;
         let mut elevation = TOKEN_ELEVATION::default();
@@ -313,9 +313,9 @@ impl TraceSession {
         let mut properties = vec![0u64; total.div_ceil(size_of::<u64>())];
         let props = properties.as_mut_ptr().cast::<EVENT_TRACE_PROPERTIES>();
 
+        // SAFETY: the allocation is at least `total` bytes and 8-byte
+        // aligned, so the header fits and the name can follow it.
         unsafe {
-            // SAFETY: the allocation is at least `total` bytes and 8-byte
-            // aligned, so the header fits and the name can follow it.
             let header = &mut *props;
             header.Wnode.BufferSize = total as u32;
             header.Wnode.Flags = WNODE_FLAG_TRACED_GUID;
@@ -361,10 +361,8 @@ impl TraceSession {
         }
 
         let mut handle = CONTROLTRACE_HANDLE::default();
-        let status = unsafe {
-            // SAFETY: properties blob and name are valid for the call.
-            StartTraceW(&mut handle, PCWSTR(name_wide.as_ptr()), props)
-        };
+        // SAFETY: properties blob and name are valid for the call.
+        let status = unsafe { StartTraceW(&mut handle, PCWSTR(name_wide.as_ptr()), props) };
         if status != ERROR_SUCCESS {
             bail!(
                 "StartTraceW({name}) failed: {}",
