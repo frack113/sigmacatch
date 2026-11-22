@@ -13,8 +13,11 @@
 
 #![cfg(feature = "builtin")]
 
+mod common;
+use common::{SSHD_LINE, SSHD_RULE, find_file};
+
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -25,33 +28,6 @@ use sigmacatch::regression::DataFormat;
 use sigmacatch::runner::{CollectorKind, run_with_cli};
 use sigmacatch::types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
-
-const SSHD_RULE: &str = r#"title: Suspicious OpenSSH Daemon Error
-id: e76b413a-83d0-4b94-8e4c-85db4a5b8bdc
-status: test
-description: Detects suspicious SSH / SSHD error messages that indicate a fatal or suspicious error that could be caused by exploiting attempts
-references:
-    - https://github.com/openssh/openssh-portable/blob/c483a5c0fb8e8b8915fad85c5f6113386a4341ca/ssherr.c
-author: Florian Roth (Nextron Systems)
-date: 2017-06-30
-tags:
-    - attack.initial-access
-    - attack.t1190
-logsource:
-    product: linux
-    service: sshd
-detection:
-    keywords:
-        - 'Corrupted MAC on input'
-        - 'bad client public DH value'
-    condition: keywords
-falsepositives:
-    - Unknown
-level: medium
-"#;
-
-const SSHD_LINE: &[u8] =
-    b"Aug 23 10:00:03 sigmacatch-linux sshd[123]: fatal: Corrupted MAC on input from 192.168.122.1";
 
 struct ResolvingProducer {
     event: Option<Event>,
@@ -104,22 +80,6 @@ impl CollectorKind for ResolvingKind {
     fn live_capture(&self) -> bool {
         false
     }
-}
-
-fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(d) = stack.pop() {
-        let entries = std::fs::read_dir(&d).ok()?;
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_dir() {
-                stack.push(p);
-            } else if entry.file_name() == name {
-                return Some(p);
-            }
-        }
-    }
-    None
 }
 
 #[tokio::test]

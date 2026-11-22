@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[package]
+name = "sigmacatch-driver-protocol"
+version = "0.8.0"
+edition = "2024"
+description = "Wire protocol shared by the sigmacatch kernel sensor and its user-mode client"
+license = "MIT"
+
+# This crate is also built from the standalone driver workspace, which has no
+# workspace lints to inherit.
+[lints]

@@ -19,6 +19,8 @@ members = [
   "sigmacatch/inputs/macos",
   "sigmacatch/inputs/etw",
   "sigmacatch/inputs/etw-driver",
+  # Shared with the standalone driver workspace by path dependency.
+  "sigmacatch/driver/protocol",
   "sigmacatch/outputs/evtx",
   "sigmacatch/outputs/regression",
 ]

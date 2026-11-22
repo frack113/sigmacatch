@@ -21,7 +21,7 @@ use wdk_sys::{
     UNICODE_STRING,
 };
 
-use crate::{SIGMACATCH_PROTOCOL_VERSION, SensorEvent, kind, ring_push};
+use crate::{SIGMACATCH_PROTOCOL_VERSION, SensorEvent, copy_wide, kind, ring_push};
 
 // ---------------------------------------------------------------------------
 // Types (transcribed from fltkernel.h)
@@ -1325,19 +1325,4 @@ mod tests {
         };
         assert!(!has_stream(&us));
     }
-}
-
-/// Copy a counted wide string into a fixed record field.
-unsafe fn copy_wide(source: &UNICODE_STRING, destination: &mut [u16], copied: &mut u16) {
-    if source.Buffer.is_null() || source.Length == 0 {
-        *copied = 0;
-        return;
-    }
-    let units = (source.Length as usize) / 2;
-    let count = units.min(destination.len());
-    // SAFETY: the source is valid for the callback; the destination is sized.
-    unsafe {
-        core::ptr::copy_nonoverlapping(source.Buffer, destination.as_mut_ptr(), count);
-    }
-    *copied = count as u16;
 }

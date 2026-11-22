@@ -11,15 +11,15 @@ license.workspace = true
 [lib]
 doctest = false
 
-# The kernel device and its Win32 IOCTLs are Windows-only. The protocol wire
-# format is included verbatim from `sigmacatch/src/windows/driver_protocol.rs`
-# so the WDK driver and this client cannot drift; that file stays in place.
+# The kernel device and its Win32 IOCTLs are Windows-only. The wire format
+# comes from `sigmacatch-driver-protocol`, shared with the WDK driver crate.
 [target.'cfg(target_os = "windows")'.dependencies]
 anyhow = "1.0.104"
 async-trait = "0.1.92"
 chrono = "0.4.45"
 sha1 = "0.11.0"
 sigmacatch-core = { path = "../../core" }
+sigmacatch-driver-protocol = { path = "../../driver/protocol" }
 sigmacatch-input-etw-common = { path = "../etw-common" }
 tokio = { version = "1.54.1", features = ["rt", "sync", "time"] }
 tracing.workspace = true

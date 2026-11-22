@@ -33,11 +33,7 @@ use sigmacatch_input_etw_common::etw_sysmon::{
 };
 use sigmacatch_input_etw_common::signature::Signature;
 
-// The protocol lives next to the driver crate and is included verbatim, so
-// the two sides cannot drift.
-#[path = "../../../src/windows/driver_protocol.rs"]
-mod protocol;
-pub use protocol::{
+pub use sigmacatch_driver_protocol::{
     IOCTL_GET_VERSION, IOCTL_READ_EVENTS, RING_CAPACITY, SIGMACATCH_PROTOCOL_VERSION, SensorEvent,
     kind,
 };

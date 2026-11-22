@@ -4,6 +4,7 @@
 # Standalone crate, excluded from the workspace: builds only on Windows with the WDK.
 
 [workspace]
+members = ["protocol"]
 
 [package]
 name = "sigmacatch-driver"
@@ -21,6 +22,7 @@ kmdf-version-major = 1
 target-kmdf-version-minor = 33
 
 [dependencies]
+sigmacatch-driver-protocol = { path = "protocol" }
 wdk = "0.5"
 wdk-panic = "0.5"
 wdk-sys = "0.5"

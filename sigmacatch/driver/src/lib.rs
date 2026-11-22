@@ -12,8 +12,8 @@
 //!
 //! D1 registers `PsSetCreateProcessNotifyRoutineEx` and copies every process
 //! create/exit into a fixed ring, read by the collector through
-//! `IOCTL_READ_EVENTS`. The record layout is shared with user mode in
-//! `sigmacatch/src/windows/driver_protocol.rs`.
+//! `IOCTL_READ_EVENTS`. The record layout is shared with user mode through
+//! `sigmacatch-driver-protocol`.
 //!
 //! Build: Windows host with the WDK and LLVM, `cargo build --release`
 //! (`.github/workflows/driver.yml` is the reference). See README.md.
@@ -43,19 +43,15 @@ use wdk_sys::{
     WDFDRIVER, WDFMEMORY, WDFQUEUE, WDFREQUEST, WDFSPINLOCK, call_unsafe_wdf_function_binding,
 };
 
+use sigmacatch_driver_protocol::{
+    IOCTL_GET_VERSION, IOCTL_READ_EVENTS, RING_CAPACITY, SIGMACATCH_PROTOCOL_VERSION, SensorEvent,
+    kind,
+};
+
 // `PsProcessType` is not bound by wdk-sys; it is an exported kernel variable.
 unsafe extern "C" {
     static PsProcessType: POBJECT_TYPE;
 }
-
-// The protocol lives in the user-mode crate and is included verbatim, so the
-// two sides cannot drift.
-#[path = "../../src/windows/driver_protocol.rs"]
-pub(crate) mod protocol;
-use protocol::{
-    IOCTL_GET_VERSION, IOCTL_READ_EVENTS, RING_CAPACITY, SIGMACATCH_PROTOCOL_VERSION, SensorEvent,
-    kind,
-};
 
 mod flt;
 
@@ -218,7 +214,7 @@ fn unicode_string(buffer: &'static [u16]) -> UNICODE_STRING {
 
 /// Copy a counted wide string into a fixed buffer, reporting the characters
 /// copied. Silently truncates to the buffer (the consumer also bounds reads).
-unsafe fn copy_wide(source: &UNICODE_STRING, destination: &mut [u16], copied: &mut u16) {
+pub(crate) unsafe fn copy_wide(source: &UNICODE_STRING, destination: &mut [u16], copied: &mut u16) {
     if source.Buffer.is_null() || source.Length == 0 {
         *copied = 0;
         return;

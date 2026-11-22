@@ -17,8 +17,8 @@ WINRM="$SKILL/winrm_vm.py"
 DEV_MAC="52:54:00:ea:59:6b"
 REMOTE_BASE='C:\sigmacatch-dev\sigmacatch'
 
-# The two files the driver crate compiles from, relative to sigmacatch/.
-FILES="driver/Cargo.toml driver/build.rs driver/src/lib.rs driver/src/flt.rs src/windows/driver_protocol.rs"
+# The driver and protocol sources, relative to sigmacatch/.
+FILES="driver/Cargo.toml driver/build.rs driver/src/lib.rs driver/src/flt.rs driver/protocol/Cargo.toml driver/protocol/src/lib.rs driver/protocol/src/protocol.rs"
 
 vm_ip="${SIGMACATCH_DEV_IP:-}"
 if [ -z "$vm_ip" ]; then
@@ -35,7 +35,7 @@ echo "dev VM: ${vm_ip}"
 python3 "$WINRM" run "cmd /c del /q C:\sigmacatch-dev-build.done C:\sigmacatch-dev-build.log 2>nul" >/dev/null
 
 # The directories must exist before the streamed puts.
-python3 "$WINRM" run "cmd /c if not exist ${REMOTE_BASE}\\driver\\src mkdir ${REMOTE_BASE}\\driver\\src & if not exist ${REMOTE_BASE}\\src\\windows mkdir ${REMOTE_BASE}\\src\\windows" >/dev/null
+python3 "$WINRM" run "cmd /c if not exist ${REMOTE_BASE}\\driver\\src mkdir ${REMOTE_BASE}\\driver\\src & if not exist ${REMOTE_BASE}\\driver\\protocol\\src mkdir ${REMOTE_BASE}\\driver\\protocol\\src" >/dev/null
 
 for f in $FILES; do
   python3 "$WINRM" put "$REPO_ROOT/sigmacatch/$f" "${REMOTE_BASE}\\${f//\//\\}" >/dev/null

@@ -2556,6 +2556,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "sigmacatch-driver-protocol"
+version = "0.8.0"
+
+[[package]]
 name = "sigmacatch-input-auditd"
 version = "0.8.0"
 dependencies = [
@@ -2622,6 +2626,7 @@ dependencies = [
  "chrono",
  "sha1",
  "sigmacatch-core",
+ "sigmacatch-driver-protocol",
  "sigmacatch-input-etw-common",
  "tokio",
  "tracing",

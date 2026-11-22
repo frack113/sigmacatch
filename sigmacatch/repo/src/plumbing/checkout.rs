@@ -119,7 +119,7 @@ fn checkout_tree(odb: &Odb, tree_oid: ObjectId, base_path: &Path, prefix: &str) 
 
 /// Collect every blob path reachable from `tree_oid` as forward-slash separated
 /// relative paths (directories are recursed, not recorded).
-fn collect_tree_paths(
+pub(crate) fn collect_tree_paths(
     odb: &Odb,
     tree_oid: ObjectId,
     prefix: &str,

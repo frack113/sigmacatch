@@ -40,6 +40,7 @@
 use crate::config::EngineConfig;
 use crate::rule::SigmahqRules;
 use crate::types::{Alert, Event};
+use crate::util::to_hex;
 use rayon::prelude::*;
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::pipeline::{Pipeline, parse_pipeline};
@@ -56,17 +57,6 @@ use uuid::Uuid;
 
 mod indexed_event;
 use indexed_event::IndexedEvent;
-
-/// Lowercase hex encoding for the sha1 digests used by the cache key.
-fn to_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0x0f) as usize] as char);
-    }
-    out
-}
 
 /// Windows logsource add_condition + change_logsource transformations.
 pub const WIN_LOGSOURCE_PIPELINE: &str = include_str!("./pipelines/1_win_logsource.yml");

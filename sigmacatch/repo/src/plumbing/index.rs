@@ -322,9 +322,11 @@ pub(crate) fn add_directory_to_index(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plumbing::checkout::collect_tree_paths;
     use crate::plumbing::init::init_repo;
     use crate::porcelain::{git_add, git_commit};
     use grit_lib::objects::ObjectKind;
+    use std::collections::HashSet;
 
     /// Create an initial commit containing `rel_path` (content `content`) on
     /// branch `main`, so HEAD resolves for subsequent `git_commit` calls.
@@ -367,32 +369,6 @@ mod tests {
         Ok(())
     }
 
-    /// Walk a tree and collect all blob paths, so a test can assert which files
-    /// ended up in a commit.
-    fn collect_tree_paths(
-        odb: &Odb,
-        tree_oid: grit_lib::objects::ObjectId,
-        prefix: &str,
-        out: &mut Vec<String>,
-    ) -> Result<()> {
-        let obj = crate::plumbing::refs::map_grit(odb.read(&tree_oid))?;
-        let entries = crate::plumbing::refs::map_grit(grit_lib::objects::parse_tree(&obj.data))?;
-        for entry in entries {
-            let name = std::str::from_utf8(&entry.name).unwrap().to_string();
-            let rel = if prefix.is_empty() {
-                name
-            } else {
-                format!("{}/{}", prefix, name)
-            };
-            if entry.mode == 0o040000 {
-                collect_tree_paths(odb, entry.oid, &rel, out)?;
-            } else {
-                out.push(rel);
-            }
-        }
-        Ok(())
-    }
-
     /// Regression test for the commit-tree amputation bug: staging new
     /// regression files must NOT drop every other file already in the parent
     /// tree. The merged commit must contain the parent files AND the staged ones.
@@ -427,8 +403,9 @@ mod tests {
         let head_oid = resolve_head(&git_dir).unwrap();
         let head_obj = odb.read(&head_oid).unwrap();
         let head_commit = grit_lib::objects::parse_commit(&head_obj.data).unwrap();
-        let mut paths = Vec::new();
-        collect_tree_paths(&odb, head_commit.tree, "", &mut paths).unwrap();
+        let mut path_set = HashSet::new();
+        collect_tree_paths(&odb, head_commit.tree, "", &mut path_set).unwrap();
+        let paths: Vec<String> = path_set.into_iter().collect();
 
         assert!(
             paths.contains(&existing.to_string()),

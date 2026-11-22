@@ -39,23 +39,12 @@ mod attack;
 // Note: init_from_sigma_path was removed; use SigmahqRules::new() for production,
 // SigmahqRules::new_from_path() for tests with custom directories.
 
+use crate::util::to_hex;
 use sha1::{Digest, Sha1};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use uuid::Uuid;
-
-/// Lowercase hex encoding (no allocation surprises): parent of the sha1
-/// digests used by the rule-set fingerprint.
-fn to_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0x0f) as usize] as char);
-    }
-    out
-}
 
 /// Rule loading filters. All fields are optional — `None` means no filtering.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

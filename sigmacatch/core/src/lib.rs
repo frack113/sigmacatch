@@ -39,3 +39,6 @@ pub mod runner;
 
 /// Shared domain types (Event, Alert, EventProducer…).
 pub mod types;
+
+/// Internal helpers shared across core modules.
+pub(crate) mod util;
