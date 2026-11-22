@@ -72,10 +72,7 @@ pub trait CollectorKind {
 #[cfg(windows)]
 fn setup_console() {
     use windows::Win32::System::Console::*;
-    // SAFETY: plain console API calls on the current thread; handles come from
-    // GetStdHandle and are only passed to GetConsoleMode/SetConsoleMode; all
-    // failures are ignored by design (best-effort UTF-8 enablement).
-    // SAFETY: console codepage/mode APIs are always safe to call; the handle from
+    // SAFETY: console codepage/mode APIs are safe to call; the handle from
     // GetStdHandle is either valid or the subsequent calls no-op on error.
     unsafe {
         let _ = SetConsoleOutputCP(65001);
@@ -943,16 +940,14 @@ level: medium
         let _ = repo;
     }
 
-    #[cfg(feature = "builtin")]
     mod tests_sigma {
         use super::*;
-        use crate::inputs::syslog;
 
         const SSHD_LINE: &[u8] =
             b"Aug 23 10:00:03 sigmacatch-linux sshd[123]: fatal: Corrupted MAC on input from 192.168.122.1";
 
-        /// Full cycle: syslog event → engine → process_and_generate writes the
-        /// regression batch and retires the rule from the returned pipeline.
+        /// Full cycle: injected syslog-shaped event → engine → process_and_generate
+        /// writes the regression batch and retires the rule from the returned pipeline.
         #[tokio::test]
         async fn process_and_generate_writes_batch_for_matching_event() {
             let (_tmp, sigma) = make_rule_dir();
@@ -962,8 +957,14 @@ level: medium
             assert_eq!(rules.len(), 1);
 
             let mut engine = DetectionEngine::new(&rules).unwrap();
-            let record = syslog::parse_line(SSHD_LINE).expect("fixture line must parse");
-            let event = syslog::record_to_event(SSHD_LINE, &record);
+            let message = "fatal: Corrupted MAC on input from 192.168.122.1";
+            let event = Event::new_injected(
+                serde_json::json!({ "message": message, "program": "sshd" }),
+                serde_json::json!({ "message": message, "program": "sshd" }),
+                SSHD_LINE.to_vec(),
+                "linux",
+                Some("sshd"),
+            );
             assert_eq!(event.event_json["service"], "sshd");
             engine.put_events(vec![event]);
             engine.process_events();
@@ -1016,12 +1017,20 @@ level: medium
             let rules = SigmahqRules::new_from_path(&sigma).unwrap();
             let mut engine = DetectionEngine::new(&rules).unwrap();
 
-            let benign: &[u8] = b"Aug 23 10:00:03 sigmacatch-linux cron[999]: (root) CMD (run-parts /etc/cron.daily)";
-            let record = syslog::parse_line(benign).expect("benign line must parse");
-            let event = syslog::record_to_event(benign, &record);
+            let message = "(root) CMD (run-parts /etc/cron.daily)";
+            let event = Event::new_injected(
+                serde_json::json!({ "message": message, "program": "cron" }),
+                serde_json::json!({ "message": message, "program": "cron" }),
+                b"Aug 23 10:00:03 sigmacatch-linux cron[999]: (root) CMD (run-parts /etc/cron.daily)".to_vec(),
+                "linux",
+                Some("cron"),
+            );
             engine.put_events(vec![event]);
             engine.process_events();
-            assert!(engine.get_alerts().is_empty(), "benign line must not match");
+            assert!(
+                engine.get_alerts().is_empty(),
+                "benign event must not match"
+            );
 
             let regression =
                 SigmahqRegression::new_from_path(&sigma.join("regression_data")).unwrap();

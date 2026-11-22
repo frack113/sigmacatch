@@ -473,9 +473,9 @@ dependencies = [
 
 [[package]]
 name = "crc32fast"
-version = "1.5.4"
+version = "1.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f97d3416d5337d15c4b0d78c8c91df922ca143f57ec20e2d1c188333047ef04"
+checksum = "2b929dd2a135771f40afabd1073f85eed59c800b7c61901e5c254270497dad64"
 dependencies = [
  "cfg-if",
 ]
@@ -2086,9 +2086,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.13.1"
+version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
+checksum = "9807af0e638c12e753aa1b4e601791bf2a8f71274023c8bbeec12fc149950857"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -2098,9 +2098,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.18"
+version = "0.4.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad8553b9b26413251cbf30e620595c7a41b3887f03da04579c0e6b0d6a06b4b2"
+checksum = "41d60ef07df457506a0a1a2073112eb4aae5733dbd2813c3da77d1b0fd441158"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -2109,9 +2109,9 @@ dependencies = [
 
 [[package]]
 name = "regex-syntax"
-version = "0.8.11"
+version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+checksum = "d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6"
 
 [[package]]
 name = "rend"
@@ -2491,20 +2491,44 @@ dependencies = [
  "aya",
  "bytemuck",
  "chrono",
- "crc32fast",
  "dunce",
  "endpoint-sec",
- "evtx",
- "flate2",
- "grit-lib",
  "hex",
  "libc",
  "linux-audit-parser",
  "md-5",
- "phf",
  "rand_core",
  "rayon",
  "regex",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2 0.11.1",
+ "sigmacatch-core",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "walkdir",
+ "windows",
+]
+
+[[package]]
+name = "sigmacatch-core"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "crc32fast",
+ "dunce",
+ "evtx",
+ "flate2",
+ "grit-lib",
+ "phf",
+ "rand_core",
+ "rayon",
  "roxmltree",
  "rsigma-eval",
  "rsigma-parser",
@@ -2520,7 +2544,6 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "uuid",
- "walkdir",
  "windows",
  "yaml_serde",
 ]
@@ -3237,9 +3260,9 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "walkdir"
-version = "2.5.0"
+version = "2.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
+checksum = "b42e295b7452c4604982280d8586001fcad9b8b201cac67bca9771e7a7475403"
 dependencies = [
  "same-file",
  "winapi-util",
