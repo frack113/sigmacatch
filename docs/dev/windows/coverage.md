@@ -14,9 +14,9 @@ stock SigmaHQ Sysmon rules match unchanged; only the provenance differs:
 | Event Log channels | — | all Windows channels (PowerShell, Security, System, …) |
 
 Every "✅" below was produced and read back on the Windows 11 test VM; the
-method is the same for all of them — `etw_dump --map` for the user-mode path
-and `etw_driver_probe` for the kernel path, plus one end-to-end run through the
-detector for the field predicates (`match_count: 1`).
+method is the same for all of them — a Rust ETW probe for the user-mode path
+and a kernel-sensor probe for the kernel path, plus one end-to-end run through
+the detector for the field predicates (`match_count: 1`).
 
 ## Sysmon Event IDs
 
@@ -144,13 +144,13 @@ Sysmon id, it reads the channel the rule names.
 
 ## Reproducing the table
 
-```text
-etw_dump.exe --sessions main --map --seconds 12      # EID 2/3/12/13/14/19-22/500/507
-etw_driver_probe.exe                                 # EID 1/5-11/15/17/18/23/503-506
-```
+Exercise these sources with the collector itself: build with
+`--features winevt,etw,driver` and let it capture from the Event Log channels
+plus the kernel sensor, falling back to native ETW when the driver is not
+loaded.
 
-[Measurements](evidence.md) holds the per-milestone evidence, the provider
-quirks and the measurements behind each row.
+[Measurements](evidence.md) holds the provider quirks and the measurements
+behind each row.
 
 ## Known gaps
 

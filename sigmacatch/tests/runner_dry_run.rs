@@ -11,6 +11,9 @@
 
 #![cfg(feature = "builtin")]
 
+mod common;
+use common::SSHD_RULE;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -22,30 +25,6 @@ use sigmacatch::regression::DataFormat;
 use sigmacatch::runner::{CollectorKind, run_with_cli};
 use sigmacatch::types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
-
-const SSHD_RULE: &str = r#"title: Suspicious OpenSSH Daemon Error
-id: e76b413a-83d0-4b94-8e4c-85db4a5b8bdc
-status: test
-description: Detects suspicious SSH / SSHD error messages that indicate a fatal or suspicious error that could be caused by exploiting attempts
-references:
-    - https://github.com/openssh/openssh-portable/blob/c483a5c0fb8e8b8915fad85c5f6113386a4341ca/ssherr.c
-author: Florian Roth (Nextron Systems)
-date: 2017-06-30
-tags:
-    - attack.initial-access
-    - attack.t1190
-logsource:
-    product: linux
-    service: sshd
-detection:
-    keywords:
-        - 'Corrupted MAC on input'
-        - 'bad client public DH value'
-    condition: keywords
-falsepositives:
-    - Unknown
-level: medium
-"#;
 
 /// Dry-run never builds a collector: a minimal kind whose producer is never
 /// started.
@@ -114,9 +93,14 @@ async fn dry_run_loads_rules_and_writes_nothing() {
         dry_run: true,
         ..CliArgs::default()
     };
-    run_with_cli(&NoCollectorKind, cli, PathBuf::from("config.yaml"))
-        .await
-        .expect("dry-run must succeed");
+    run_with_cli(
+        &NoCollectorKind,
+        cli,
+        PathBuf::from("config.yaml"),
+        &sigmacatch::outputs::regression::SinkFactory,
+    )
+    .await
+    .expect("dry-run must succeed");
 
     let regression_root = tmp.path().join("sigma").join("regression_data");
     assert!(

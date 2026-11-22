@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[package]
+name = "sigmacatch-core"
+version.workspace = true
+edition.workspace = true
+description = "sigmacatch shared pipeline, detection, rule and regression core"
+license.workspace = true
+
+[lib]
+doctest = false
+
+[target.'cfg(not(unix))'.dependencies]
+dunce = "1.0.5"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_System_Console",
+  "Win32_System_EventLog",
+] }
+
+[dependencies]
+anyhow = "1.0.104"
+async-trait = "0.1.92"
+chrono = "0.4.45"
+evtx = "0.15.1"
+phf = { version = "0.14.0", features = ["macros"] }
+rayon = "1.12.0"
+roxmltree = "0.21.2"
+rsigma-eval = { version = "0.27.0", features = ["daachorse-index", "parallel"] }
+rsigma-parser = "0.27.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+serde_yaml = { package = "yaml_serde", version = "0.10.7" }
+sigma-regression = { path = "../sigma-regression" }
+sha1 = "0.11.0"
+sigmacatch-repo = { path = "../repo" }
+thiserror.workspace = true
+tokio = { version = "1.54.1", features = [
+  "rt",
+  "rt-multi-thread",
+  "macros",
+  "sync",
+  "time",
+  "signal",
+  "fs",
+  "io-util",
+  "process",
+] }
+tracing.workspace = true
+tracing-appender = "0.2.5"
+tracing-subscriber.workspace = true
+uuid = { version = "1.29.3", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[lints]
+workspace = true

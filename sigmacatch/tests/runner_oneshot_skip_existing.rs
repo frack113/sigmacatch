@@ -12,6 +12,9 @@
 
 #![cfg(feature = "builtin")]
 
+mod common;
+use common::SSHD_RULE;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -25,30 +28,6 @@ use sigmacatch::types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
 
 const RULE_ID: &str = "e76b413a-83d0-4b94-8e4c-85db4a5b8bdc";
-
-const SSHD_RULE: &str = r#"title: Suspicious OpenSSH Daemon Error
-id: e76b413a-83d0-4b94-8e4c-85db4a5b8bdc
-status: test
-description: Detects suspicious SSH / SSHD error messages that indicate a fatal or suspicious error that could be caused by exploiting attempts
-references:
-    - https://github.com/openssh/openssh-portable/blob/c483a5c0fb8e8b8915fad85c5f6113386a4341ca/ssherr.c
-author: Florian Roth (Nextron Systems)
-date: 2017-06-30
-tags:
-    - attack.initial-access
-    - attack.t1190
-logsource:
-    product: linux
-    service: sshd
-detection:
-    keywords:
-        - 'Corrupted MAC on input'
-        - 'bad client public DH value'
-    condition: keywords
-falsepositives:
-    - Unknown
-level: medium
-"#;
 
 struct OneShotKind {
     event: Option<Event>,
@@ -152,6 +131,7 @@ async fn all_rules_have_existing_regression_data_bails_without_collecting() {
         &OneShotKind { event: Some(event) },
         cli,
         PathBuf::from("config.yaml"),
+        &sigmacatch::outputs::regression::SinkFactory,
     )
     .await
     .expect_err("pipeline must bail when every rule already has regression data");

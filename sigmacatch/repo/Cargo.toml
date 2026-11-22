@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[package]
+name = "sigmacatch-repo"
+version.workspace = true
+edition.workspace = true
+description = "sigmacatch SigmaHQ repository layer: clone, branch, commit, transport"
+license.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+chrono = "0.4.45"
+crc32fast = "1.5.5"
+flate2 = "1.1.11"
+grit-lib = "0.5.33"
+rayon = "1.12.0"
+sha1 = "0.11.0"
+sha2 = "0.11.1"
+sigma-regression = { path = "../sigma-regression" }
+ssh-key = { version = "0.6.7", features = ["alloc", "ed25519"] }
+thiserror.workspace = true
+tokio = { version = "1.54.1", features = ["rt", "time"] }
+tracing.workspace = true
+uuid = { version = "1.29.3", features = ["v4"] }
+
+[dev-dependencies]
+anyhow = "1.0.104"
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+tempfile = "3.27.0"
+
+[lints]
+workspace = true

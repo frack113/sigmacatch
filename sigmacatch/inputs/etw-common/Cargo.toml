@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[package]
+name = "sigmacatch-input-etw-common"
+version.workspace = true
+edition.workspace = true
+description = "sigmacatch Windows ETW decoding helpers shared by the ETW and kernel-sensor inputs"
+license.workspace = true
+
+[lib]
+doctest = false
+
+# `md-5` is used by `pe_format`'s imphash and `nt_file`'s hash list; its crate
+# name (`md5`) differs from the package name, which is what the scan looks for.
+[package.metadata.cargo-machete]
+ignored = ["md-5"]
+
+[dependencies]
+md-5 = "0.11.0"
+
+# Only the Windows helpers touch these. Target scoping keeps the pure format
+# modules buildable — and their unit tests runnable — on Linux.
+[target.'cfg(target_os = "windows")'.dependencies]
+chrono = "0.4.45"
+sha1 = "0.11.0"
+sha2 = "0.11.1"
+windows = { version = "0.62.2", features = [
+  "Wdk_System_Threading",
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Security_Cryptography",
+  "Win32_Security_Cryptography_Catalog",
+  "Win32_Security_WinTrust",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Diagnostics_Etw",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Kernel",
+  "Win32_System_Threading",
+] }
+
+[lints]
+workspace = true

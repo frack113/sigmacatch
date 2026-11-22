@@ -102,7 +102,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73cd58deff2140a0a8eae87e417bd01db68a33e148aa93d1e8cd837e55e312b6"
 dependencies = [
- "object",
+ "object 0.39.1",
 ]
 
 [[package]]
@@ -130,9 +130,9 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "aya"
-version = "0.14.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66e644424fada9fff4fdc63848db1732fb69b626e8328202ef55c03df1f4d939"
+checksum = "3c193744eaa31250fd29ceb101a85219ae3cc26ea595a2cdb848df5a866cf19e"
 dependencies = [
  "assert_matches",
  "aya-obj",
@@ -140,7 +140,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "libc",
  "log",
- "object",
+ "object 0.40.0",
  "once_cell",
  "scopeguard",
  "thiserror 2.0.21",
@@ -148,13 +148,13 @@ dependencies = [
 
 [[package]]
 name = "aya-obj"
-version = "0.3.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c76b9c75d9cdc155ff8f6a06d61e873f67bf47be8cfa92a3b5aaea43f4b4077"
+checksum = "66254e485eda05c8ab20b83fb55ea4bde22a8436981f435e35cffa5e6aa6196d"
 dependencies = [
  "bytes",
  "log",
- "object",
+ "object 0.40.0",
  "thiserror 2.0.21",
 ]
 
@@ -473,9 +473,9 @@ dependencies = [
 
 [[package]]
 name = "crc32fast"
-version = "1.5.4"
+version = "1.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f97d3416d5337d15c4b0d78c8c91df922ca143f57ec20e2d1c188333047ef04"
+checksum = "2b929dd2a135771f40afabd1073f85eed59c800b7c61901e5c254270497dad64"
 dependencies = [
  "cfg-if",
 ]
@@ -929,9 +929,9 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "form_urlencoded"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
+checksum = "afa489199eaffb1211795df1c6236ce1ad0d41a6fa45250add73e3b02420f06e"
 dependencies = [
  "percent-encoding",
 ]
@@ -1037,9 +1037,9 @@ dependencies = [
 
 [[package]]
 name = "grit-lib"
-version = "0.5.31"
+version = "0.5.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0f069b1ab347dd75f3d5b558b10ed7159e05fc738e9b89bb60fb4f5d0128862"
+checksum = "6ba663668430bb4ac10577fb36844d94eb4c24add871e7ef6c64e0b6b30b33ca"
 dependencies = [
  "crc32fast",
  "encoding_rs",
@@ -1481,12 +1481,12 @@ dependencies = [
 
 [[package]]
 name = "md-5"
-version = "0.10.6"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
+checksum = "69b6441f590336821bb897fb28fc622898ccceb1d6cea3fde5ea86b090c4de98"
 dependencies = [
  "cfg-if",
- "digest 0.10.7",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -1688,6 +1688,15 @@ name = "object"
 version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "object"
+version = "0.40.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd229a0361b9d0d4396176e02d65897f487eebeab7caa6d443855ee152ca0b9c"
 dependencies = [
  "crc32fast",
  "hashbrown 0.17.1",
@@ -2077,9 +2086,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.13.1"
+version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
+checksum = "9807af0e638c12e753aa1b4e601791bf2a8f71274023c8bbeec12fc149950857"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -2089,9 +2098,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.18"
+version = "0.4.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad8553b9b26413251cbf30e620595c7a41b3887f03da04579c0e6b0d6a06b4b2"
+checksum = "41d60ef07df457506a0a1a2073112eb4aae5733dbd2813c3da77d1b0fd441158"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -2100,9 +2109,9 @@ dependencies = [
 
 [[package]]
 name = "regex-syntax"
-version = "0.8.11"
+version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+checksum = "d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6"
 
 [[package]]
 name = "rend"
@@ -2181,9 +2190,9 @@ dependencies = [
 
 [[package]]
 name = "rsigma-eval"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "424720c1494689388408057dc3bfa86b21f3ecb06c5ba27a7c1e96a7be574308"
+checksum = "bb242d294625c9dd305a5accd2cc814dc625c734d2a1bfc8f4401e362b877e50"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -2206,9 +2215,9 @@ dependencies = [
 
 [[package]]
 name = "rsigma-ir"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f861de52817d6934abb88d3a234b6715406313040a800fc8a5f4fc458067475"
+checksum = "672b59eb31c5d99ba477a3bc2ac134d1e715340631863fbc77c7dfdcecf4a3db"
 dependencies = [
  "base64",
  "ciborium",
@@ -2221,9 +2230,9 @@ dependencies = [
 
 [[package]]
 name = "rsigma-parser"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6521f3931158b9180e58b1cef37c3df3ad5e41144b3248ee3715361e549fd642"
+checksum = "9f710ef27d9e50e46a276f242e81ff8483e668b90b48ac2d8d0a6c57f04e0711"
 dependencies = [
  "fancy-regex",
  "globset",
@@ -2235,6 +2244,8 @@ dependencies = [
  "serde_json",
  "stacker",
  "thiserror 2.0.21",
+ "tree-sitter",
+ "tree-sitter-yaml",
  "yaml_serde",
  "yamlpatch",
  "yamlpath",
@@ -2472,36 +2483,67 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "sigma-regression"
+version = "0.8.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
+ "uuid",
+ "yaml_serde",
+]
+
+[[package]]
 name = "sigmacatch"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "aya",
- "bytemuck",
- "chrono",
- "crc32fast",
- "dunce",
- "endpoint-sec",
- "evtx",
- "flate2",
- "grit-lib",
- "hex",
- "libc",
  "linux-audit-parser",
- "md-5",
- "phf",
- "rand_core",
  "rayon",
- "regex",
+ "serde",
+ "serde_json",
+ "sigma-regression",
+ "sigmacatch-core",
+ "sigmacatch-input-auditd",
+ "sigmacatch-input-ebpf",
+ "sigmacatch-input-etw",
+ "sigmacatch-input-etw-driver",
+ "sigmacatch-input-evtx",
+ "sigmacatch-input-macos",
+ "sigmacatch-input-syslog",
+ "sigmacatch-input-sysmon",
+ "sigmacatch-input-tail",
+ "sigmacatch-input-winevt",
+ "sigmacatch-output-regression",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "sigmacatch-core"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dunce",
+ "evtx",
+ "phf",
+ "rayon",
  "roxmltree",
  "rsigma-eval",
  "rsigma-parser",
  "serde",
  "serde_json",
  "sha1",
- "sha2 0.11.1",
- "ssh-key",
+ "sigma-regression",
+ "sigmacatch-repo",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -2509,9 +2551,214 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "uuid",
- "walkdir",
  "windows",
  "yaml_serde",
+]
+
+[[package]]
+name = "sigmacatch-driver-protocol"
+version = "0.8.0"
+
+[[package]]
+name = "sigmacatch-input-auditd"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "linux-audit-parser",
+ "serde_json",
+ "sigmacatch-core",
+ "sigmacatch-input-tail",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "sigmacatch-input-ebpf"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "aya",
+ "bytemuck",
+ "chrono",
+ "hex",
+ "serde_json",
+ "sha2 0.11.1",
+ "sigmacatch-core",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "sigmacatch-input-etw"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "sigmacatch-core",
+ "sigmacatch-input-etw-common",
+ "tokio",
+ "tracing",
+ "windows",
+]
+
+[[package]]
+name = "sigmacatch-input-etw-common"
+version = "0.8.0"
+dependencies = [
+ "chrono",
+ "md-5",
+ "sha1",
+ "sha2 0.11.1",
+ "windows",
+]
+
+[[package]]
+name = "sigmacatch-input-etw-driver"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "sha1",
+ "sigmacatch-core",
+ "sigmacatch-driver-protocol",
+ "sigmacatch-input-etw-common",
+ "tokio",
+ "tracing",
+ "windows",
+]
+
+[[package]]
+name = "sigmacatch-input-evtx"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "sigmacatch-core",
+ "tempfile",
+ "tokio",
+ "walkdir",
+]
+
+[[package]]
+name = "sigmacatch-input-macos"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "endpoint-sec",
+ "libc",
+ "serde_json",
+ "sigmacatch-core",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "sigmacatch-input-syslog"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "regex",
+ "serde_json",
+ "sigmacatch-core",
+ "sigmacatch-input-tail",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "sigmacatch-input-sysmon"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "sigmacatch-core",
+ "sigmacatch-input-syslog",
+ "sigmacatch-input-tail",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "sigmacatch-input-tail"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "sigmacatch-core",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "sigmacatch-input-winevt"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "sigmacatch-core",
+ "tokio",
+ "tracing",
+ "windows",
+]
+
+[[package]]
+name = "sigmacatch-output-evtx"
+version = "0.8.0"
+dependencies = [
+ "chrono",
+ "crc32fast",
+ "evtx",
+ "roxmltree",
+ "sigma-regression",
+ "sigmacatch-core",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
+ "windows",
+]
+
+[[package]]
+name = "sigmacatch-output-regression"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "serde_json",
+ "sigma-regression",
+ "sigmacatch-core",
+ "sigmacatch-output-evtx",
+ "tempfile",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "sigmacatch-repo"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "crc32fast",
+ "flate2",
+ "grit-lib",
+ "rand_core",
+ "rayon",
+ "sha1",
+ "sha2 0.11.1",
+ "sigma-regression",
+ "ssh-key",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -3151,9 +3398,9 @@ checksum = "ca718471876992059f251e33aafc334346ada08042b7661dd1fe313a9bced557"
 
 [[package]]
 name = "url"
-version = "2.5.8"
+version = "2.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
+checksum = "f00cd2407bb42c0ef17be88d4cf020f5cceffd121665bac9b8b9493a369b3b1a"
 dependencies = [
  "form_urlencoded",
  "idna",
@@ -3202,9 +3449,9 @@ checksum = "3a3b425286980a367278453f3b6d28cdcb134b574e5a35824a6ff5eebad50bb6"
 
 [[package]]
 name = "uuid"
-version = "1.29.1"
+version = "1.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a06f08a856b009bc7bbaf7d3e79808595d032dd19074c0c2ef26e49e03e6bdc"
+checksum = "3c14b15dffa2f4bd712103e857140aa04a4f2ff6e955c77d7eb8e53ee02a3b64"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
@@ -3226,9 +3473,9 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "walkdir"
-version = "2.5.0"
+version = "2.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
+checksum = "b42e295b7452c4604982280d8586001fcad9b8b201cac67bca9771e7a7475403"
 dependencies = [
  "same-file",
  "winapi-util",

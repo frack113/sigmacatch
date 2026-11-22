@@ -6,13 +6,18 @@ events (`etw_sysmon`) and injected into the normal Windows pipeline. No Sysmon,
 no driver.
 
 ```text
-sigmacatch/src/inputs/
-├── etw.rs           # sessions + callback loop (the ebpf.rs analogue)
-├── etw_event.rs     # TDH property → typed fields
-├── etw_process.rs   # live-process facts (CommandLine, User, parent, creation)
-├── etw_registry.rs  # Kernel-Registry handle → path cache
-├── etw_sysmon.rs    # Sysmon-schema rendering (provider/channel `sigmacatch`)
-└── windows.rs       # orchestrator: channels + exactly one process source
+sigmacatch/inputs/etw/src/         # sigmacatch-input-etw
+└── lib.rs            # sessions + callback loop (the ebpf.rs analogue)
+
+sigmacatch/inputs/etw-common/src/  # sigmacatch-input-etw-common
+├── etw_event.rs      # TDH property → typed fields
+├── etw_process.rs    # live-process facts (CommandLine, User, parent, creation)
+├── etw_registry.rs   # Kernel-Registry handle → path cache
+├── etw_sysmon.rs     # Sysmon-schema rendering (provider/channel `sigmacatch`)
+├── registry_format.rs / wmi_format.rs / pe_format.rs
+└── nt_file.rs / signature.rs / version_info.rs
+
+sigmacatch/src/inputs/windows.rs   # orchestrator: channels + one process source
 ```
 
 - **Rendering**: unlike eBPF (nested JSON, Linux), produce Sysmon-shaped data
@@ -26,7 +31,8 @@ sigmacatch/src/inputs/
 - **Privileges**: requires an elevated token (`ensure_privileges`); without it
   the ETW source fails with a clear message and the channels keep running.
 
-The driver client, the shared `src/windows/` files and the kernel crate are in
+The driver client (`sigmacatch-input-etw-driver`), the shared helpers in
+`sigmacatch-input-etw-common` and the kernel crate are in
 [Kernel driver](driver.md).
 
 ## Session design
@@ -60,7 +66,7 @@ Each is a bug Rustinel fixed the hard way; our `etw.rs` encodes it as a test:
 ## Provider behaviour
 
 Measured on the test VM (full measurements in
-[Measurements](evidence.md#etw-provider-measurements-2026-11-14)). Four findings
+[Measurements](evidence.md#etw-provider-measurements)). Four findings
 shape the code:
 
 - **Registry paths are not NT paths.** `RelativeName` is a full NT path only

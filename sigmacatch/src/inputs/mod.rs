@@ -1,91 +1,54 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Input adapters of the `sigmacatch` binary — the single source of the
-//! `feature × platform` gate matrix. `lib.rs` exposes this module
-//! unconditionally; every file below is compiled only when its input features
-//! are enabled (and, for Linux, only on `target_os = "linux"`).
-//!
-//! Linux impls are gated on `target_os = "linux"` (Unix-only code: `tail`
-//! `MetadataExt`, eBPF loaders); enabling a Linux feature on another platform
-//! is silently inert.
+//! Input adapters of the `sigmacatch` binary. Each input now lives in its own
+//! crate, which owns its `feature × platform` gates; this module only aliases
+//! those crates and hosts the two orchestrators that combine them. `lib.rs`
+//! exposes it unconditionally, so enabling a feature for another platform is
+//! inert rather than a compile error.
 
-// Windows inputs.
+// Windows inputs. Crate aliases keep host call sites unchanged; each crate
+// compiles as an empty shell off Windows.
 #[cfg(feature = "winevt")]
-pub mod channels;
-#[cfg(feature = "winevt")]
-pub mod winevt;
+pub use sigmacatch_input_winevt::channels;
 // Windows orchestrator: Event Log channels + kernel sensor or ETW.
 #[cfg(all(target_os = "windows", feature = "winevt"))]
 pub mod windows;
 // Native ETW collector (feature `etw`): no Sysmon, no driver. The session
-// layer and the TDH decoder are only meaningful on Windows.
+// layer is only meaningful on Windows.
 #[cfg(all(target_os = "windows", feature = "etw"))]
-pub mod etw;
+pub use sigmacatch_input_etw as etw;
+// Process cache for the Windows orchestrator, owned by the ETW crate.
 #[cfg(all(target_os = "windows", feature = "etw"))]
-pub mod etw_event;
-#[cfg(all(target_os = "windows", feature = "etw"))]
-pub mod etw_process;
-#[cfg(all(target_os = "windows", feature = "etw"))]
-pub mod etw_registry;
-// Included by path, like `windows/driver_protocol.rs`: the `src/windows/`
-// directory holds files shared with the driver crate, not a module tree.
-#[cfg(all(target_os = "windows", feature = "etw"))]
-pub mod etw_sysmon;
-#[cfg(all(target_os = "windows", feature = "etw"))]
-#[path = "../windows/nt_file.rs"]
-pub mod nt_file;
-#[cfg(any(feature = "etw", test))]
-pub mod pe_format;
-#[cfg(any(feature = "etw", test))]
-pub mod registry_format;
-#[cfg(all(target_os = "windows", feature = "etw"))]
-#[path = "../windows/signature.rs"]
-pub mod signature;
-#[cfg(all(target_os = "windows", feature = "etw"))]
-#[path = "../windows/version_info.rs"]
-pub mod version_info;
-#[cfg(any(feature = "etw", test))]
-pub mod wmi_format;
+pub use sigmacatch_input_etw::etw_process;
 // Kernel-sensor client (feature `driver`, implies `etw`).
 #[cfg(all(target_os = "windows", feature = "driver"))]
-pub mod etw_driver;
+pub use sigmacatch_input_etw_driver as etw_driver;
 
 // One-shot EVTX cross-platform input. Not `target_os`-gated: pure file
 // parsing, runs on Windows and Linux alike.
 #[cfg(feature = "evtx")]
-pub mod evtx;
+pub use sigmacatch_input_evtx as evtx;
 
-// Linux inputs.
+// Linux inputs. Crate aliases keep every `crate::inputs::<name>` call site
+// unchanged; each crate is empty off Linux.
 #[cfg(all(target_os = "linux", feature = "auditd"))]
-pub mod auditd;
+pub use sigmacatch_input_auditd as auditd;
 #[cfg(all(target_os = "linux", feature = "builtin"))]
-pub mod syslog;
-// Shared line-tail driver (Linux `MetadataExt`), compiled with any tail-based
-// input.
-#[cfg(all(
-    target_os = "linux",
-    any(feature = "auditd", feature = "builtin", feature = "sysmon")
-))]
-mod tail;
+pub use sigmacatch_input_syslog as syslog;
 // Test hook, publicly reachable so integration tests can arm the injected
-// tail timing / READY barrier through the collector constructors. Only the
-// knob type is exposed — `TailState` stays private.
+// tail timing / READY barrier through the collector constructors.
+#[cfg(all(target_os = "linux", feature = "ebpf"))]
+pub use sigmacatch_input_ebpf::ebpf;
+#[cfg(all(target_os = "linux", feature = "sysmon"))]
+pub use sigmacatch_input_sysmon as sysmon;
+#[cfg(all(target_os = "linux", feature = "sysmon"))]
+pub use sigmacatch_input_sysmon::sysmon_parse;
 #[cfg(all(
     target_os = "linux",
     any(feature = "auditd", feature = "builtin", feature = "sysmon")
 ))]
-pub use tail::TailOptions;
-// Parsed by the `builtin` collector (not `sysmon`): the built-in syslog tail
-// must recognise Sysmon-for-Linux XML lines so it can hand them to `sysmon`.
-#[cfg(all(target_os = "linux", feature = "ebpf"))]
-pub mod ebpf;
-#[cfg(all(target_os = "linux", feature = "ebpf"))]
-pub mod ebpf_event;
-#[cfg(all(target_os = "linux", feature = "sysmon"))]
-pub mod sysmon;
-#[cfg(all(target_os = "linux", feature = "builtin"))]
-pub mod sysmon_parse;
+pub use sigmacatch_input_tail::TailOptions;
 // Linux orchestrator: selects every compiled, available source at runtime.
 #[cfg(all(
     target_os = "linux",
@@ -102,4 +65,4 @@ pub mod linux;
 // is always compiled with the feature so its field mapping can be tested on
 // Linux; the ES client itself is `#[cfg(target_os = "macos")]` inside.
 #[cfg(feature = "macos")]
-pub mod macos_es;
+pub use sigmacatch_input_macos as macos_es;

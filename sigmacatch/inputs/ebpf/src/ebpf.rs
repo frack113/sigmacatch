@@ -1,0 +1,754 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+//! eBPF-based sysmon input: loads the probes embedded by `build.rs`,
+//! checks privileges at startup, attaches the tracepoints and produces
+//! Sysmon-schema events from the kernel ring buffer.
+
+use std::fs;
+
+use crate::ebpf_common::{
+    CapabilityChangeEvent, CredentialChangeEvent, DnsEvent, DnsResponseEvent, DriverLoadEvent,
+    EVENT_CAPABILITY_CHANGE, EVENT_CREDENTIAL_CHANGE, EVENT_DNS, EVENT_DNS_RESPONSE,
+    EVENT_DRIVER_LOAD, EVENT_EXEC, EVENT_EXIT, EVENT_FILE, EVENT_FILE_CHANGE, EVENT_FILE_CHMOD,
+    EVENT_FILE_CHOWN, EVENT_FILE_DELETE, EVENT_FILE_RENAME, EVENT_FILE_TRUNCATE, EVENT_FORK,
+    EVENT_LISTEN, EVENT_MODULE_UNLOAD, EVENT_NET, EVENT_PIPE_CREATE, EVENT_PROCESS_ACCESS,
+    EVENT_PROCESS_TAMPERING, EVENT_RAW_ACCESS, EVENTS_ABI_MAP, FileChangeEvent, FileChmodEvent,
+    FileChownEvent, FileCreateEvent, FileDeleteEvent, FileRenameEvent, FileTruncateEvent,
+    ForkEvent, ListenEvent, ModuleUnloadEvent, NetEvent, PipeCreateEvent, ProcessAccessEvent,
+    ProcessTamperingEvent, RawAccessEvent,
+};
+use anyhow::{Context, bail};
+use async_trait::async_trait;
+use aya::Ebpf;
+use aya::maps::RingBuf;
+use aya::programs::TracePoint;
+use sigmacatch_core::types::{Event, EventProducer, ProducerError};
+use tokio::sync::{mpsc, watch};
+use tracing::info;
+
+use crate::ebpf_event::EventBuilder;
+
+const RING_POLL_MS: u64 = 100;
+
+/// Object embedded by `build.rs`: real probes when the nightly toolchain
+/// was available at build time, an empty placeholder otherwise (the loader
+/// rejects it and collection falls back to the legacy syslog tail). On CI
+/// (`GITHUB_ACTIONS`) the build script refuses the placeholder — an empty
+/// object there is a hard build error, never a silent fallback.
+static PROBE_OBJECT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sigmacatch_ebpf.o"));
+
+const CAP_SYS_ADMIN: u64 = 1 << 21;
+const CAP_PERFMON: u64 = 1 << 38;
+const CAP_BPF: u64 = 1 << 39;
+
+/// True when the process may load eBPF programs: root, CAP_SYS_ADMIN
+/// (legacy gating), or both CAP_BPF and CAP_PERFMON.
+pub fn has_required_privileges() -> bool {
+    match fs::read_to_string("/proc/self/status") {
+        Ok(status) => privileges_from_status(&status),
+        Err(_) => false,
+    }
+}
+
+/// Pure decision over a `/proc/self/status` payload.
+fn privileges_from_status(status: &str) -> bool {
+    if is_root(status) {
+        return true;
+    }
+    match cap_eff(status) {
+        Some(caps) => caps & CAP_SYS_ADMIN != 0 || caps & CAP_BPF != 0 && caps & CAP_PERFMON != 0,
+        None => false,
+    }
+}
+
+/// Effective UID == 0, read from the `Uid:` line of `/proc/self/status`.
+fn is_root(status: &str) -> bool {
+    status
+        .lines()
+        .find_map(|l| l.strip_prefix("Uid:"))
+        .and_then(|rest| rest.split_whitespace().nth(1)?.parse::<u32>().ok())
+        == Some(0)
+}
+
+/// Hex value of the `CapEff:` line of `/proc/self/status`.
+fn cap_eff(status: &str) -> Option<u64> {
+    status
+        .lines()
+        .find_map(|l| l.strip_prefix("CapEff:"))
+        .and_then(|rest| u64::from_str_radix(rest.trim(), 16).ok())
+}
+
+/// (probe name, tracepoint category, tracepoint name, required)
+/// Required attachments abort initialization on failure; optional ones are
+/// best-effort so kernels missing a tracepoint (e.g. `open`/`openat2`
+/// variants) still get the rest of the coverage.
+const ATTACHMENTS: &[(&str, &str, &str, bool)] = &[
+    ("sys_enter_execve", "syscalls", "sys_enter_execve", true),
+    (
+        "sys_enter_execveat",
+        "syscalls",
+        "sys_enter_execveat",
+        false,
+    ),
+    ("sched_process_exec", "sched", "sched_process_exec", true),
+    ("sched_process_fork", "sched", "sched_process_fork", false),
+    ("sched_process_exit", "sched", "sched_process_exit", true),
+    ("sys_enter_connect", "syscalls", "sys_enter_connect", true),
+    ("sys_enter_accept", "syscalls", "sys_enter_accept", false),
+    ("sys_exit_accept", "syscalls", "sys_exit_accept", false),
+    ("sys_enter_accept4", "syscalls", "sys_enter_accept4", false),
+    ("sys_exit_accept4", "syscalls", "sys_exit_accept4", false),
+    (
+        "sys_enter_recvfrom",
+        "syscalls",
+        "sys_enter_recvfrom",
+        false,
+    ),
+    ("sys_exit_recvfrom", "syscalls", "sys_exit_recvfrom", false),
+    ("sys_enter_openat", "syscalls", "sys_enter_openat", true),
+    ("sys_exit_openat", "syscalls", "sys_exit_openat", true),
+    ("sys_enter_open", "syscalls", "sys_enter_open", false),
+    ("sys_exit_open", "syscalls", "sys_exit_open", false),
+    ("sys_enter_openat2", "syscalls", "sys_enter_openat2", false),
+    ("sys_exit_openat2", "syscalls", "sys_exit_openat2", false),
+    ("sys_enter_unlink", "syscalls", "sys_enter_unlink", false),
+    ("sys_exit_unlink", "syscalls", "sys_exit_unlink", false),
+    (
+        "sys_enter_unlinkat",
+        "syscalls",
+        "sys_enter_unlinkat",
+        false,
+    ),
+    ("sys_exit_unlinkat", "syscalls", "sys_exit_unlinkat", false),
+    ("sys_enter_ptrace", "syscalls", "sys_enter_ptrace", false),
+    (
+        "sys_enter_finit_module",
+        "syscalls",
+        "sys_enter_finit_module",
+        false,
+    ),
+    (
+        "sys_exit_finit_module",
+        "syscalls",
+        "sys_exit_finit_module",
+        false,
+    ),
+    // init_module tracepoints disabled: attaching them caused a startup segfault on the
+    // AlmaLinux test VM (investigation pending). Probe handlers remain in the BPF object.
+    (
+        "sys_enter_delete_module",
+        "syscalls",
+        "sys_enter_delete_module",
+        false,
+    ),
+    (
+        "sys_exit_delete_module",
+        "syscalls",
+        "sys_exit_delete_module",
+        false,
+    ),
+    ("sys_enter_mknodat", "syscalls", "sys_enter_mknodat", false),
+    ("sys_exit_mknodat", "syscalls", "sys_exit_mknodat", false),
+    ("sys_enter_mknod", "syscalls", "sys_enter_mknod", false),
+    ("sys_exit_mknod", "syscalls", "sys_exit_mknod", false),
+    ("sys_exit_pipe", "syscalls", "sys_exit_pipe", false),
+    ("sys_exit_pipe2", "syscalls", "sys_exit_pipe2", false),
+    (
+        "sys_enter_process_vm_writev",
+        "syscalls",
+        "sys_enter_process_vm_writev",
+        false,
+    ),
+    ("sys_enter_bind", "syscalls", "sys_enter_bind", false),
+    ("sys_enter_listen", "syscalls", "sys_enter_listen", false),
+    ("sys_exit_listen", "syscalls", "sys_exit_listen", false),
+    ("sys_enter_sendto", "syscalls", "sys_enter_sendto", true),
+    ("sys_enter_sendmsg", "syscalls", "sys_enter_sendmsg", true),
+    ("sys_enter_setuid", "syscalls", "sys_enter_setuid", false),
+    ("sys_exit_setuid", "syscalls", "sys_exit_setuid", false),
+    (
+        "sys_enter_setfsuid",
+        "syscalls",
+        "sys_enter_setfsuid",
+        false,
+    ),
+    ("sys_exit_setfsuid", "syscalls", "sys_exit_setfsuid", false),
+    (
+        "sys_enter_setreuid",
+        "syscalls",
+        "sys_enter_setreuid",
+        false,
+    ),
+    ("sys_exit_setreuid", "syscalls", "sys_exit_setreuid", false),
+    (
+        "sys_enter_setresuid",
+        "syscalls",
+        "sys_enter_setresuid",
+        false,
+    ),
+    (
+        "sys_exit_setresuid",
+        "syscalls",
+        "sys_exit_setresuid",
+        false,
+    ),
+    ("sys_enter_setgid", "syscalls", "sys_enter_setgid", false),
+    ("sys_exit_setgid", "syscalls", "sys_exit_setgid", false),
+    (
+        "sys_enter_setfsgid",
+        "syscalls",
+        "sys_enter_setfsgid",
+        false,
+    ),
+    ("sys_exit_setfsgid", "syscalls", "sys_exit_setfsgid", false),
+    (
+        "sys_enter_setregid",
+        "syscalls",
+        "sys_enter_setregid",
+        false,
+    ),
+    ("sys_exit_setregid", "syscalls", "sys_exit_setregid", false),
+    (
+        "sys_enter_setresgid",
+        "syscalls",
+        "sys_enter_setresgid",
+        false,
+    ),
+    (
+        "sys_exit_setresgid",
+        "syscalls",
+        "sys_exit_setresgid",
+        false,
+    ),
+    (
+        "sys_enter_setgroups",
+        "syscalls",
+        "sys_enter_setgroups",
+        false,
+    ),
+    (
+        "sys_exit_setgroups",
+        "syscalls",
+        "sys_exit_setgroups",
+        false,
+    ),
+    ("sys_enter_capset", "syscalls", "sys_enter_capset", false),
+    ("sys_exit_capset", "syscalls", "sys_exit_capset", false),
+    ("sys_enter_prctl", "syscalls", "sys_enter_prctl", false),
+    ("sys_exit_prctl", "syscalls", "sys_exit_prctl", false),
+    ("sys_enter_rename", "syscalls", "sys_enter_rename", false),
+    ("sys_exit_rename", "syscalls", "sys_exit_rename", false),
+    (
+        "sys_enter_renameat",
+        "syscalls",
+        "sys_enter_renameat",
+        false,
+    ),
+    ("sys_exit_renameat", "syscalls", "sys_exit_renameat", false),
+    (
+        "sys_enter_renameat2",
+        "syscalls",
+        "sys_enter_renameat2",
+        false,
+    ),
+    (
+        "sys_exit_renameat2",
+        "syscalls",
+        "sys_exit_renameat2",
+        false,
+    ),
+    ("sys_enter_chmod", "syscalls", "sys_enter_chmod", false),
+    ("sys_exit_chmod", "syscalls", "sys_exit_chmod", false),
+    ("sys_enter_fchmod", "syscalls", "sys_enter_fchmod", false),
+    ("sys_exit_fchmod", "syscalls", "sys_exit_fchmod", false),
+    (
+        "sys_enter_fchmodat",
+        "syscalls",
+        "sys_enter_fchmodat",
+        false,
+    ),
+    ("sys_exit_fchmodat", "syscalls", "sys_exit_fchmodat", false),
+    (
+        "sys_enter_fchmodat2",
+        "syscalls",
+        "sys_enter_fchmodat2",
+        false,
+    ),
+    (
+        "sys_exit_fchmodat2",
+        "syscalls",
+        "sys_exit_fchmodat2",
+        false,
+    ),
+    ("sys_enter_chown", "syscalls", "sys_enter_chown", false),
+    ("sys_exit_chown", "syscalls", "sys_exit_chown", false),
+    ("sys_enter_lchown", "syscalls", "sys_enter_lchown", false),
+    ("sys_exit_lchown", "syscalls", "sys_exit_lchown", false),
+    ("sys_enter_fchown", "syscalls", "sys_enter_fchown", false),
+    ("sys_exit_fchown", "syscalls", "sys_exit_fchown", false),
+    (
+        "sys_enter_fchownat",
+        "syscalls",
+        "sys_enter_fchownat",
+        false,
+    ),
+    ("sys_exit_fchownat", "syscalls", "sys_exit_fchownat", false),
+    (
+        "sys_enter_truncate",
+        "syscalls",
+        "sys_enter_truncate",
+        false,
+    ),
+    ("sys_exit_truncate", "syscalls", "sys_exit_truncate", false),
+    (
+        "sys_enter_ftruncate",
+        "syscalls",
+        "sys_enter_ftruncate",
+        false,
+    ),
+    (
+        "sys_exit_ftruncate",
+        "syscalls",
+        "sys_exit_ftruncate",
+        false,
+    ),
+    ("sys_enter_write", "syscalls", "sys_enter_write", false),
+    ("sys_exit_write", "syscalls", "sys_exit_write", false),
+    (
+        "sys_enter_pwrite64",
+        "syscalls",
+        "sys_enter_pwrite64",
+        false,
+    ),
+    ("sys_exit_pwrite64", "syscalls", "sys_exit_pwrite64", false),
+    ("sys_enter_writev", "syscalls", "sys_enter_writev", false),
+    ("sys_exit_writev", "syscalls", "sys_exit_writev", false),
+    ("sys_enter_pwritev", "syscalls", "sys_enter_pwritev", false),
+    ("sys_exit_pwritev", "syscalls", "sys_exit_pwritev", false),
+    (
+        "sys_enter_pwritev2",
+        "syscalls",
+        "sys_enter_pwritev2",
+        false,
+    ),
+    ("sys_exit_pwritev2", "syscalls", "sys_exit_pwritev2", false),
+];
+
+/// eBPF-backed sysmon collector (feature `ebpf`): loads the embedded probe
+/// object, attaches the tracepoints and produces Sysmon-XML events.
+pub struct EventCollector {
+    _ebpf: Ebpf,
+    builder: EventBuilder,
+    attached: usize,
+}
+
+impl EventCollector {
+    /// Validate privileges, load the probe object and attach all tracepoints
+    /// up front so the caller can fall back to the legacy syslog tail when
+    /// eBPF is unusable.
+    pub fn new() -> anyhow::Result<Self> {
+        if !has_required_privileges() {
+            bail!("insufficient privileges to load eBPF probes");
+        }
+        let mut ebpf = aya::EbpfLoader::new()
+            .load(PROBE_OBJECT)
+            .context("loading embedded eBPF object failed (built without nightly toolchain?)")?;
+        if ebpf.map("EVENTS").is_none() {
+            bail!("probe object has no EVENTS ring buffer (probes not implemented yet)");
+        }
+        if ebpf.map(EVENTS_ABI_MAP).is_none() {
+            bail!(
+                "probe object ABI mismatch: missing {EVENTS_ABI_MAP}; rebuild it from the current \
+                 source or unset SIGMACATCH_EBPF_OBJECT"
+            );
+        }
+
+        // Attachments stay live for the process lifetime; aya 0.13 tracks
+        // them inside each program (ids only needed to detach explicitly).
+        let mut attached = 0usize;
+        for (name, category, tp, required) in ATTACHMENTS {
+            let outcome = (|| -> anyhow::Result<()> {
+                let program: &mut TracePoint = ebpf
+                    .program_mut(name)
+                    .with_context(|| format!("probe {name} missing from object"))?
+                    .try_into()
+                    .with_context(|| format!("probe {name} is not a tracepoint"))?;
+                program
+                    .load()
+                    .with_context(|| format!("loading probe {name}"))?;
+                program
+                    .attach(category, tp)
+                    .with_context(|| format!("attaching probe {name} to {category}:{tp}"))?;
+                Ok(())
+            })();
+            match outcome {
+                Ok(()) => attached += 1,
+                Err(e) if *required => return Err(e),
+                Err(e) => {
+                    tracing::debug!("optional probe {name} unavailable: {e:#}");
+                }
+            }
+        }
+
+        Ok(Self {
+            _ebpf: ebpf,
+            builder: EventBuilder::new(),
+            attached,
+        })
+    }
+}
+
+#[async_trait]
+impl EventProducer for EventCollector {
+    async fn run(
+        mut self: Box<Self>,
+        tx: mpsc::Sender<Event>,
+        stop: watch::Receiver<bool>,
+    ) -> Result<(), ProducerError> {
+        info!(
+            "sysmon(ebpf) collector starting ({} tracepoints)",
+            self.attached
+        );
+        let Some(data) = self._ebpf.map_mut("EVENTS") else {
+            return Err(ProducerError::Message(
+                "EVENTS ring buffer disappeared after attach".to_string(),
+            ));
+        };
+        let mut ring = RingBuf::try_from(data).map_err(|e| {
+            ProducerError::Collector(anyhow::anyhow!("mapping EVENTS ring buffer: {e}").into())
+        })?;
+
+        while !*stop.borrow() {
+            tokio::time::sleep(std::time::Duration::from_millis(RING_POLL_MS)).await;
+            while let Some(item) = ring.next() {
+                let bytes: &[u8] = &item;
+                let Some([t0, t1, t2, t3]) = bytes.first_chunk::<4>() else {
+                    tracing::warn!(size = bytes.len(), "short ring buffer record");
+                    continue;
+                };
+                match u32::from_le_bytes([*t0, *t1, *t2, *t3]) {
+                    EVENT_EXEC => match ExecEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.exec_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "exec record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_EXIT => match ExitEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            if let Some(event) = self.builder.exit_event(&ev)
+                                && tx.send(event).await.is_err()
+                            {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "exit record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FORK => match ForkEvent::from_bytes(bytes) {
+                        Some(ev) => self.builder.fork_event(&ev),
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "fork record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE => match FileCreateEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.file_create_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_DNS => match DnsEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            if let Some(event) = self.builder.dns_event(&ev)
+                                && tx.send(event).await.is_err()
+                            {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "dns record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_NET => match NetEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.net_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "net record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_DELETE => match FileDeleteEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.file_delete_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-delete record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_PROCESS_ACCESS => match ProcessAccessEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.process_access_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "process-access record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_DRIVER_LOAD => match DriverLoadEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.driver_load_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "driver-load record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_RAW_ACCESS => match RawAccessEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.raw_access_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "raw-access record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_PIPE_CREATE => match PipeCreateEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.pipe_create_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "pipe-create record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_PROCESS_TAMPERING => match ProcessTamperingEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.process_tampering_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "process-tampering record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_LISTEN => match ListenEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.listen_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "listen record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_CREDENTIAL_CHANGE => match CredentialChangeEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.credential_change_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "credential-change record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_CAPABILITY_CHANGE => match CapabilityChangeEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.capability_change_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "capability-change record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_RENAME => match FileRenameEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.file_rename_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-rename record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_CHMOD => match FileChmodEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.file_chmod_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-chmod record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_CHOWN => match FileChownEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.file_chown_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-chown record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_TRUNCATE => match FileTruncateEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.file_truncate_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-truncate record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_FILE_CHANGE => match FileChangeEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            if let Some(event) = self.builder.file_change_event(&ev)
+                                && tx.send(event).await.is_err()
+                            {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "file-change record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_MODULE_UNLOAD => match ModuleUnloadEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            let event = self.builder.module_unload_event(&ev);
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "module-unload record with unexpected size — skipped"
+                        ),
+                    },
+                    EVENT_DNS_RESPONSE => match DnsResponseEvent::from_bytes(bytes) {
+                        Some(ev) => {
+                            if let Some(event) = self.builder.dns_response_event(&ev)
+                                && tx.send(event).await.is_err()
+                            {
+                                return Ok(());
+                            }
+                        }
+                        None => tracing::warn!(
+                            size = bytes.len(),
+                            "dns-response record with unexpected size — skipped"
+                        ),
+                    },
+                    other => tracing::warn!(tag = other, "unknown ring buffer record tag"),
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+use crate::ebpf_common::{ExecEvent, ExitEvent};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status(uid: u32, caps: u64) -> String {
+        format!("Uid:\t{uid}\t{uid}\t{uid}\t{uid}\nCapEff:\t{caps:016x}\n")
+    }
+
+    #[test]
+    fn embedded_probe_object_has_the_current_abi_marker() {
+        if PROBE_OBJECT.is_empty() {
+            return; // local build without nightly: the loader rejects this object
+        }
+        assert!(
+            PROBE_OBJECT
+                .windows(EVENTS_ABI_MAP.len())
+                .any(|window| window == EVENTS_ABI_MAP.as_bytes()),
+            "embedded probe object is missing the {EVENTS_ABI_MAP} ABI marker"
+        );
+    }
+
+    #[test]
+    fn root_is_privileged_regardless_of_caps() {
+        assert!(privileges_from_status(&status(0, 0)));
+    }
+
+    #[test]
+    fn unprivileged_user_without_caps_is_rejected() {
+        assert!(!privileges_from_status(&status(1000, 0)));
+    }
+
+    #[test]
+    fn sys_admin_alone_grants_legacy_access() {
+        assert!(privileges_from_status(&status(1000, CAP_SYS_ADMIN)));
+    }
+
+    #[test]
+    fn bpf_requires_perfmon() {
+        assert!(!privileges_from_status(&status(1000, CAP_BPF)));
+        assert!(privileges_from_status(&status(1000, CAP_BPF | CAP_PERFMON)));
+    }
+
+    #[test]
+    fn missing_or_malformed_lines_are_rejected() {
+        assert!(!privileges_from_status(""));
+        assert!(!privileges_from_status(
+            "CapEff:\tzz\nUid:\t1000\t1000\t1000\t1000\n"
+        ));
+        assert_eq!(cap_eff("no line"), None);
+    }
+}

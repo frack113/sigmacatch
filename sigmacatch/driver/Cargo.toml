@@ -1,12 +1,10 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sigmacatch contributors
 #
-# Standalone crate nested in the sigmacatch package, deliberately EXCLUDED
-# from the root workspace: a kernel driver only builds on a Windows host with
-# the WDK (see README.md). The user-mode collector treats it as optional and
-# must keep working when it is absent.
+# Standalone crate, excluded from the workspace: builds only on Windows with the WDK.
 
 [workspace]
+members = ["protocol"]
 
 [package]
 name = "sigmacatch-driver"
@@ -24,6 +22,7 @@ kmdf-version-major = 1
 target-kmdf-version-minor = 33
 
 [dependencies]
+sigmacatch-driver-protocol = { path = "protocol" }
 wdk = "0.5"
 wdk-panic = "0.5"
 wdk-sys = "0.5"

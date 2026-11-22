@@ -1,21 +1,20 @@
 # Measurements and VM validation
 
-Reference page: the provider measurements behind the ETW collector and the
-journal of the driver's validation on the Windows 11 test VM. Read
-[ETW](etw.md) and [Kernel driver](driver.md) first; the per-id result is
+Reference page: what the Windows ETW providers actually expose, and how the
+driver was verified on the Windows 11 test VM. Read [ETW](etw.md) and
+[Kernel driver](driver.md) first; the per-id result is
 [Sysmon coverage](coverage.md).
 
-## ETW provider measurements (2026-11-14)
+## ETW provider measurements
 
-Measured with `logman`/`tracerpt` in file mode and with the Rust probe
-(`sigmacatch/examples/etw_dump.rs`, feature `etw`) in realtime mode.
+Measured with `logman`/`tracerpt` in file mode and with a Rust ETW probe
+(feature `etw`) in realtime mode.
 
 **Surface.** `windows` 0.62.2 exposes everything the design needs
 (`Win32_System_Diagnostics_Etw` + `Win32_System_Time`): `StartTraceW`,
 `EnableTraceEx2`, `OpenTraceW`, `ProcessTrace`, `ControlTraceW`, `CloseTrace`,
 `TdhGetEventInformation`, `TdhGetProperty(Size)`. The WinRM session on the test
-VM carries a **high-integrity token**, so kernel providers can be enabled; the
-skill's "no elevated admin" note is stale.
+VM carries a **high-integrity token**, so kernel providers can be enabled.
 
 **What the providers actually give us.**
 
@@ -82,13 +81,13 @@ Sysmon-only enrichments that cannot be sourced exactly (`ProcessGuid`,
 `LogonGuid`, `Hashes`, `FileVersion`, `Company`, ...) are omitted rather than
 approximated.
 
-## VM validation (2026-11-14)
+## VM validation
 
 The driver was loaded and exercised end to end on the QEMU test VM.
 
 **Setup** — test-signing in the VM:
 
-1. Secure Boot was **disabled at the firmware level**: swap the libvirt
+1. Secure Boot **must be disabled at the firmware level**: swap the libvirt
    `<loader>` to the non-secure `OVMF_CODE_4M.qcow2` and give the domain a
    *fresh* non-secure `OVMF_VARS_4M.qcow2`. Keeping the secure-boot VARS with
    the non-secure CODE dumped Windows into recovery (`minint-*`); a fresh VARS
@@ -99,7 +98,7 @@ The driver was loaded and exercised end to end on the QEMU test VM.
    `Set-AuthenticodeSignature` on the `.sys`.
 4. `sc create sigmacatch type= kernel` + `sc start`.
 
-**Bugs the run surfaced** (each is now a fix in the driver):
+**Driver constraints** (each handled in the driver):
 
 - `sc create type= kernel` loads a **legacy** service, so KMDF never calls
   `EvtDriverDeviceAdd`: the control device must be allocated in `DriverEntry`
@@ -107,8 +106,8 @@ The driver was loaded and exercised end to end on the QEMU test VM.
 - the queue is not the default unless `DefaultQueue` is set, so IOCTLs are not
   dispatched to `EvtIoDeviceControl`.
 
-**Result** — `sigmacatch/examples/etw_driver_probe.rs` drained the ring and
-produced, under provider `sigmacatch`:
+**Result** — a Rust kernel-sensor probe drained the ring and produced, under
+provider `sigmacatch`:
 
 - EID 1 with the creation-time `CommandLine` (exact), `Image`, `User`,
   `IntegrityLevel`, and the full `ParentImage`/`ParentCommandLine`/`ParentUser`
@@ -145,13 +144,12 @@ carries 0) — a few milliseconds late, acceptable for EID 5/10.
 
 Paths are the NT paths the callback carries (exact), not DOS-mapped.
 
-**The minifilter needed a hand-written FFI.** `wdk-sys` does **not** bind
-`fltmgr` (`FltRegisterFilter`, `FLT_REGISTRATION`, `FLT_CALLBACK_DATA`,
-`FltGetFileNameInformation`, ...), and no maintained Rust binding exists
-(`fsfilter-rs` is a 2023 user-mode loader pinned to `windows` 0.44). File
-events 2/11/23/503/504/505/506 therefore need a hand-written `fltmgr` FFI in
-the driver crate (`#[link(name = "fltmgr")]` plus the structure definitions),
-which is the next sub-project.
+**The minifilter uses a hand-written FFI.** `wdk-sys` does not bind `fltmgr`
+(`FltRegisterFilter`, `FLT_REGISTRATION`, `FLT_CALLBACK_DATA`,
+`FltGetFileNameInformation`, ...) and no maintained Rust binding exists, so file
+events 2/11/23/503/504/505/506 are built on a hand-written `fltmgr` FFI in
+`sigmacatch/driver/src/flt.rs` (`#[link(name = "fltmgr")]` plus the structure
+definitions).
 
 **End to end on a Sysmon-less host.** With the driver loaded, the collector ran
 one cycle against the SigmaHQ clone: its EID 7 events matched real
@@ -179,16 +177,14 @@ hand-written `fltmgr` FFI (wdk-sys does not bind it), transcribed from the WDK
 `FltGetFileNameInformation`, `FltParseFileNameInformation`,
 `FltReleaseFileNameInformation` and `FltGetRequestorProcessId` are needed.
 
-Two bugs cost a bugcheck each:
+Two ordering/signature rules avoid a bugcheck:
 
-- **`FLT_POST_OPERATION_CALLBACK` takes `Data` first**, not `FltObjects`. The
-  driver had the two swapped, so it read `IoStatus` out of
-  `FLT_RELATED_OBJECTS` — every create looked like a non-create with a
-  pointer-shaped `Information`.
-- **`FltStartFiltering` delivers callbacks immediately.** Starting it before
-  `create_device` built the ring's KMDF spinlock gave a
-  `WDF_VIOLATION (0x10D)` bugcheck on load. `register` and `start` are now
-  separate, and `start` runs after the spinlock exists.
+- **`FLT_POST_OPERATION_CALLBACK` takes `Data` first**, not `FltObjects`.
+  Reversing them reads `IoStatus` out of `FLT_RELATED_OBJECTS`, so every create
+  looks like a non-create with a pointer-shaped `Information`.
+- **`FltStartFiltering` delivers callbacks immediately.** `start` therefore
+  runs after `create_device` has built the ring's KMDF spinlock; starting it
+  earlier gives a `WDF_VIOLATION (0x10D)` bugcheck on load.
 
 Measured in the VM: creating files produced EID 11 with the normalized NT
 path, e.g.
@@ -200,7 +196,7 @@ same registration grows `IRP_MJ_SET_INFORMATION` and
 `IRP_MJ_SET_SECURITY`; the parameter block is the `SetFileInformation` /
 `SetSecurity` member of the `FLT_PARAMETERS` union.
 
-Two more bugs, both found in the VM:
+Two FFI details matter on x64:
 
 - **`FileInformationClass` is declared `POINTER_ALIGNMENT`** in
   `fltkernel.h` (8-byte aligned on x64), so the field sits at offset 8 with
@@ -239,8 +235,8 @@ image (`Image`). Category mapping already covers 23/503/504/505/506, so
 `file_delete`, `file_rename`, `file_chmod`, `file_chown` and `file_truncate`
 rules are selected for them.
 
-**Creation time, raw reads and named pipes (EID 2/9/17).** Three hooks that
-the first pass had written off as unreachable:
+**Creation time, raw reads and named pipes (EID 2/9/17).** Three less obvious
+sources:
 
 - **EID 2** comes from `IRP_MJ_SET_INFORMATION` with `FileBasicInformation`
   (4). The new stamp is `CreationTime` in the buffer; the previous one is

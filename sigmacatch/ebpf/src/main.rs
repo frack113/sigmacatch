@@ -29,10 +29,10 @@ use aya_ebpf::{
 };
 
 // Shared wire-format types: same single source as the userspace loader
-// (sigmacatch/src/ebpf_common.rs, included via #[path]). The probe only uses
-// the constants and struct layouts; the `from_bytes`/`*_str` accessors are
-// userspace-only, hence the targeted allow.
-#[path = "../../src/ebpf_common.rs"]
+// (sigmacatch/inputs/ebpf/src/ebpf_common.rs, included via #[path]). The probe
+// only uses the constants and struct layouts; the `from_bytes`/`*_str`
+// accessors are userspace-only, hence the targeted allow.
+#[path = "../../inputs/ebpf/src/ebpf_common.rs"]
 #[allow(dead_code)]
 mod ebpf_common;
 
@@ -415,6 +415,8 @@ fn try_emit_exec() -> Result<(), i64> {
     // Copy staged argv/image out before removal to avoid holding a reference
     // across map mutation. Staging uses the task id (tid) for syscall-instance
     // correlation; prefer tid, fall back to tgid for robustness.
+    // SAFETY: read-only lookup by current task id; the fixed-size PendingExec
+    // value is copied out before the entry is removed.
     let staged = match unsafe { EXEC_ARGS.get(&tid) } {
         Some(s) => {
             let s = PendingExec {
@@ -426,6 +428,7 @@ fn try_emit_exec() -> Result<(), i64> {
             EXEC_ARGS.remove(&tid)?;
             s
         }
+        // SAFETY: read-only fallback lookup by tgid; value copied out before removal.
         None => match unsafe { EXEC_ARGS.get(&tgid) } {
             Some(s) => {
                 let s = PendingExec {
@@ -1527,6 +1530,7 @@ fn stage_cred(syscall: u32, arg0: u32, arg1: u32, arg2: u32, groups_count: u32) 
 
 fn emit_cred_exit(ctx: &TracePointContext) -> Result<(), i64> {
     let key = bpf_get_current_pid_tgid();
+    // SAFETY: read-only map borrow; the fixed-size PendingCred is copied out before removal.
     let Some(pending) = (unsafe { CRED_STAGE.get(&key) }) else {
         return Ok(());
     };
@@ -1571,6 +1575,7 @@ fn stage_cap(syscall: u32, option: u32, arg2: u64, arg3: u64, arg4: u64) {
 
 fn emit_cap_exit(ctx: &TracePointContext) -> Result<(), i64> {
     let key = bpf_get_current_pid_tgid();
+    // SAFETY: read-only map borrow; the fixed-size PendingCap is copied out before removal.
     let Some(pending) = (unsafe { CAP_STAGE.get(&key) }) else {
         return Ok(());
     };
@@ -1602,6 +1607,7 @@ fn emit_cap_exit(ctx: &TracePointContext) -> Result<(), i64> {
 
 #[tracepoint(category = "syscalls", name = "sys_enter_setuid")]
 fn sys_enter_setuid(ctx: TracePointContext) -> i32 {
+    // SAFETY: bounds-checked 8-byte read at uid@16 of the tracepoint context.
     match unsafe { ctx.read_at::<u64>(16) } {
         Ok(v) => stage_cred(CRED_SETUID, v as u32, 0, 0, 0),
         Err(_) => {}
@@ -1616,6 +1622,7 @@ fn sys_exit_setuid(ctx: TracePointContext) -> i32 {
 
 #[tracepoint(category = "syscalls", name = "sys_enter_setfsuid")]
 fn sys_enter_setfsuid(ctx: TracePointContext) -> i32 {
+    // SAFETY: bounds-checked 8-byte read at fsuid@16 of the tracepoint context.
     match unsafe { ctx.read_at::<u64>(16) } {
         Ok(v) => stage_cred(CRED_SETFSUID, v as u32, 0, 0, 0),
         Err(_) => {}
@@ -1630,6 +1637,7 @@ fn sys_exit_setfsuid(ctx: TracePointContext) -> i32 {
 
 #[tracepoint(category = "syscalls", name = "sys_enter_setreuid")]
 fn sys_enter_setreuid(ctx: TracePointContext) -> i32 {
+    // SAFETY: bounds-checked 8-byte reads at ruid@16 and euid@24 of the context.
     let ruid = unsafe { ctx.read_at::<u64>(16) }.unwrap_or(0) as u32;
     let euid = unsafe { ctx.read_at::<u64>(24) }.unwrap_or(0) as u32;
     stage_cred(CRED_SETREUID, ruid, euid, 0, 0);
@@ -1643,6 +1651,7 @@ fn sys_exit_setreuid(ctx: TracePointContext) -> i32 {
 
 #[tracepoint(category = "syscalls", name = "sys_enter_setresuid")]
 fn sys_enter_setresuid(ctx: TracePointContext) -> i32 {
+    // SAFETY: bounds-checked 8-byte reads at ruid@16, euid@24 and suid@32 of the context.
     let ruid = unsafe { ctx.read_at::<u64>(16) }.unwrap_or(0) as u32;
     let euid = unsafe { ctx.read_at::<u64>(24) }.unwrap_or(0) as u32;
     let suid = unsafe { ctx.read_at::<u64>(32) }.unwrap_or(0) as u32;
@@ -1657,6 +1666,7 @@ fn sys_exit_setresuid(ctx: TracePointContext) -> i32 {
 
 #[tracepoint(category = "syscalls", name = "sys_enter_setgid")]
 fn sys_enter_setgid(ctx: TracePointContext) -> i32 {
+    // SAFETY: bounds-checked 8-byte read at gid@16 of the tracepoint context.
     match unsafe { ctx.read_at::<u64>(16) } {
         Ok(v) => stage_cred(CRED_SETGID, v as u32, 0, 0, 0),
         Err(_) => {}
@@ -1671,6 +1681,7 @@ fn sys_exit_setgid(ctx: TracePointContext) -> i32 {
 
 #[tracepoint(category = "syscalls", name = "sys_enter_setfsgid")]
 fn sys_enter_setfsgid(ctx: TracePointContext) -> i32 {
+    // SAFETY: bounds-checked 8-byte read at fsgid@16 of the tracepoint context.
     match unsafe { ctx.read_at::<u64>(16) } {
         Ok(v) => stage_cred(CRED_SETFSGID, v as u32, 0, 0, 0),
         Err(_) => {}
@@ -1685,6 +1696,7 @@ fn sys_exit_setfsgid(ctx: TracePointContext) -> i32 {
 
 #[tracepoint(category = "syscalls", name = "sys_enter_setregid")]
 fn sys_enter_setregid(ctx: TracePointContext) -> i32 {
+    // SAFETY: bounds-checked 8-byte reads at rgid@16 and egid@24 of the context.
     let rgid = unsafe { ctx.read_at::<u64>(16) }.unwrap_or(0) as u32;
     let egid = unsafe { ctx.read_at::<u64>(24) }.unwrap_or(0) as u32;
     stage_cred(CRED_SETREGID, rgid, egid, 0, 0);
@@ -1698,6 +1710,7 @@ fn sys_exit_setregid(ctx: TracePointContext) -> i32 {
 
 #[tracepoint(category = "syscalls", name = "sys_enter_setresgid")]
 fn sys_enter_setresgid(ctx: TracePointContext) -> i32 {
+    // SAFETY: bounds-checked 8-byte reads at rgid@16, egid@24 and sgid@32 of the context.
     let rgid = unsafe { ctx.read_at::<u64>(16) }.unwrap_or(0) as u32;
     let egid = unsafe { ctx.read_at::<u64>(24) }.unwrap_or(0) as u32;
     let sgid = unsafe { ctx.read_at::<u64>(32) }.unwrap_or(0) as u32;
@@ -1712,6 +1725,7 @@ fn sys_exit_setresgid(ctx: TracePointContext) -> i32 {
 
 #[tracepoint(category = "syscalls", name = "sys_enter_setgroups")]
 fn sys_enter_setgroups(ctx: TracePointContext) -> i32 {
+    // SAFETY: bounds-checked 8-byte read at the size argument@16 of the context.
     let size = unsafe { ctx.read_at::<u64>(16) }.unwrap_or(0) as u32;
     stage_cred(CRED_SETGROUPS, 0, 0, 0, size);
     0
@@ -1735,10 +1749,12 @@ fn sys_exit_capset(ctx: TracePointContext) -> i32 {
 
 #[tracepoint(category = "syscalls", name = "sys_enter_prctl")]
 fn sys_enter_prctl(ctx: TracePointContext) -> i32 {
+    // SAFETY: bounds-checked 8-byte read at sys_enter_prctl's option@16 slot.
     let option = unsafe { ctx.read_at::<u64>(16) }.unwrap_or(u64::MAX);
     if option != PR_SET_KEEPCAPS && option != PR_CAPBSET_DROP && option != PR_CAP_AMBIENT {
         return 0;
     }
+    // SAFETY: bounds-checked 8-byte reads at arg2@24, arg3@32 and arg4@40 of the context.
     let arg2 = unsafe { ctx.read_at::<u64>(24) }.unwrap_or(0);
     let arg3 = unsafe { ctx.read_at::<u64>(32) }.unwrap_or(0);
     let arg4 = unsafe { ctx.read_at::<u64>(40) }.unwrap_or(0);
@@ -1905,6 +1921,8 @@ fn try_stage_chmod(ctx: &TracePointContext, syscall: u32) -> Result<(), i64> {
     pending.fd = -1;
     pending.mode = 0;
     pending._pad0 = 0;
+    // SAFETY: pending points into per-cpu map storage; path is PATH_LEN bytes
+    // and exclusively writable here.
     unsafe {
         ptr::write_bytes(pending.path.as_mut_ptr(), 0, PATH_LEN);
     }
@@ -1952,6 +1970,7 @@ fn try_emit_chmod(ctx: &TracePointContext) -> Result<(), i64> {
     // SAFETY: sys_exit_* tracepoints have ret at offset 16.
     let ret: i64 = unsafe { ctx.read_at(16)? };
     let tid = bpf_get_current_pid_tgid() as u32;
+    // SAFETY: read-only map borrow; the staged value is used before the entry is removed.
     let Some(staged) = (unsafe { CHMOD_STAGE.get(&tid) }) else {
         return Ok(());
     };
@@ -1964,6 +1983,8 @@ fn try_emit_chmod(ctx: &TracePointContext) -> Result<(), i64> {
     let comm = bpf_get_current_comm().unwrap_or([0; 16]);
     if let Some(mut entry) = EVENTS.reserve::<FileChmodEvent>(0) {
         let p = entry.as_mut_ptr();
+        // SAFETY: reserve owns an exclusively writable FileChmodEvent-sized slot;
+        // the zeroing and field writes stay in bounds.
         unsafe {
             ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<FileChmodEvent>());
             (*p).kind = EVENT_FILE_CHMOD;
@@ -1999,6 +2020,8 @@ fn try_stage_chown(ctx: &TracePointContext, syscall: u32) -> Result<(), i64> {
     pending.flags = 0;
     pending.dirfd = AT_FDCWD;
     pending.fd = -1;
+    // SAFETY: pending points into per-cpu map storage; path is PATH_LEN bytes
+    // and exclusively writable here.
     unsafe {
         ptr::write_bytes(pending.path.as_mut_ptr(), 0, PATH_LEN);
     }
@@ -2043,6 +2066,7 @@ fn try_emit_chown(ctx: &TracePointContext) -> Result<(), i64> {
     // SAFETY: sys_exit_* tracepoints have ret at offset 16.
     let ret: i64 = unsafe { ctx.read_at(16)? };
     let tid = bpf_get_current_pid_tgid() as u32;
+    // SAFETY: read-only map borrow; the staged value is used before the entry is removed.
     let Some(staged) = (unsafe { CHOWN_STAGE.get(&tid) }) else {
         return Ok(());
     };
@@ -2055,6 +2079,8 @@ fn try_emit_chown(ctx: &TracePointContext) -> Result<(), i64> {
     let comm = bpf_get_current_comm().unwrap_or([0; 16]);
     if let Some(mut entry) = EVENTS.reserve::<FileChownEvent>(0) {
         let p = entry.as_mut_ptr();
+        // SAFETY: reserve owns an exclusively writable FileChownEvent-sized slot;
+        // the zeroing and field writes stay in bounds.
         unsafe {
             ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<FileChownEvent>());
             (*p).kind = EVENT_FILE_CHOWN;
@@ -2088,6 +2114,8 @@ fn try_stage_truncate(ctx: &TracePointContext, syscall: u32) -> Result<(), i64> 
     pending.syscall = syscall;
     pending.fd = -1;
     pending.length = 0;
+    // SAFETY: pending points into per-cpu map storage; path is PATH_LEN bytes
+    // and exclusively writable here.
     unsafe {
         ptr::write_bytes(pending.path.as_mut_ptr(), 0, PATH_LEN);
     }
@@ -2115,6 +2143,7 @@ fn try_emit_truncate(ctx: &TracePointContext) -> Result<(), i64> {
     // SAFETY: sys_exit_* tracepoints have ret at offset 16.
     let ret: i64 = unsafe { ctx.read_at(16)? };
     let tid = bpf_get_current_pid_tgid() as u32;
+    // SAFETY: read-only map borrow; the staged value is used before the entry is removed.
     let Some(staged) = (unsafe { TRUNCATE_STAGE.get(&tid) }) else {
         return Ok(());
     };
@@ -2127,6 +2156,8 @@ fn try_emit_truncate(ctx: &TracePointContext) -> Result<(), i64> {
     let comm = bpf_get_current_comm().unwrap_or([0; 16]);
     if let Some(mut entry) = EVENTS.reserve::<FileTruncateEvent>(0) {
         let p = entry.as_mut_ptr();
+        // SAFETY: reserve owns an exclusively writable FileTruncateEvent-sized slot;
+        // the zeroing and field writes stay in bounds.
         unsafe {
             ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<FileTruncateEvent>());
             (*p).kind = EVENT_FILE_TRUNCATE;
@@ -2314,6 +2345,7 @@ fn try_emit_write(ctx: &TracePointContext) -> Result<(), i64> {
     // SAFETY: sys_exit_* tracepoints have ret at offset 16.
     let ret: i64 = unsafe { ctx.read_at(16)? };
     let tid = bpf_get_current_pid_tgid() as u32;
+    // SAFETY: read-only map borrow; the fixed-size PendingWrite is copied out before removal.
     let Some(staged) = (unsafe { WRITE_STAGE.get(&tid) }) else {
         return Ok(());
     };
@@ -2327,6 +2359,8 @@ fn try_emit_write(ctx: &TracePointContext) -> Result<(), i64> {
     let comm = bpf_get_current_comm().unwrap_or([0; 16]);
     if let Some(mut entry) = EVENTS.reserve::<FileChangeEvent>(0) {
         let p = entry.as_mut_ptr();
+        // SAFETY: reserve owns an exclusively writable FileChangeEvent-sized slot;
+        // the zeroing and field writes stay in bounds.
         unsafe {
             ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<FileChangeEvent>());
             (*p).kind = EVENT_FILE_CHANGE;
@@ -2667,6 +2701,8 @@ fn try_stage_delete_module(ctx: &TracePointContext) -> Result<(), i64> {
     };
     pending.flags = flags as u32;
     pending._pad0 = 0;
+    // SAFETY: pending points into per-cpu map storage; name is IMAGE_LEN bytes
+    // and exclusively writable here.
     unsafe {
         ptr::write_bytes(pending.name.as_mut_ptr(), 0, IMAGE_LEN);
     }
@@ -2679,6 +2715,7 @@ fn try_emit_delete_module(ctx: &TracePointContext) -> Result<(), i64> {
     // SAFETY: sys_exit_* tracepoints have ret at offset 16.
     let ret: i64 = unsafe { ctx.read_at(16)? };
     let tid_key = bpf_get_current_pid_tgid();
+    // SAFETY: read-only map borrow; the staged value is used before the entry is removed.
     let Some(staged) = (unsafe { MODUNLOAD_STAGE.get(&tid_key) }) else {
         return Ok(());
     };
@@ -2691,6 +2728,8 @@ fn try_emit_delete_module(ctx: &TracePointContext) -> Result<(), i64> {
     let comm = bpf_get_current_comm().unwrap_or([0; 16]);
     if let Some(mut entry) = EVENTS.reserve::<ModuleUnloadEvent>(0) {
         let p = entry.as_mut_ptr();
+        // SAFETY: reserve owns an exclusively writable ModuleUnloadEvent-sized slot;
+        // the zeroing and field writes stay in bounds.
         unsafe {
             ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<ModuleUnloadEvent>());
             (*p).kind = EVENT_MODULE_UNLOAD;

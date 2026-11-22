@@ -12,8 +12,8 @@
 //!
 //! D1 registers `PsSetCreateProcessNotifyRoutineEx` and copies every process
 //! create/exit into a fixed ring, read by the collector through
-//! `IOCTL_READ_EVENTS`. The record layout is shared with user mode in
-//! `sigmacatch/src/windows/driver_protocol.rs`.
+//! `IOCTL_READ_EVENTS`. The record layout is shared with user mode through
+//! `sigmacatch-driver-protocol`.
 //!
 //! Build: Windows host with the WDK and LLVM, `cargo build --release`
 //! (`.github/workflows/driver.yml` is the reference). See README.md.
@@ -43,19 +43,15 @@ use wdk_sys::{
     WDFDRIVER, WDFMEMORY, WDFQUEUE, WDFREQUEST, WDFSPINLOCK, call_unsafe_wdf_function_binding,
 };
 
+use sigmacatch_driver_protocol::{
+    IOCTL_GET_VERSION, IOCTL_READ_EVENTS, RING_CAPACITY, SIGMACATCH_PROTOCOL_VERSION, SensorEvent,
+    kind,
+};
+
 // `PsProcessType` is not bound by wdk-sys; it is an exported kernel variable.
 unsafe extern "C" {
     static PsProcessType: POBJECT_TYPE;
 }
-
-// The protocol lives in the user-mode crate and is included verbatim, so the
-// two sides cannot drift.
-#[path = "../../src/windows/driver_protocol.rs"]
-pub(crate) mod protocol;
-use protocol::{
-    IOCTL_GET_VERSION, IOCTL_READ_EVENTS, RING_CAPACITY, SIGMACATCH_PROTOCOL_VERSION, SensorEvent,
-    kind,
-};
 
 mod flt;
 
@@ -218,7 +214,7 @@ fn unicode_string(buffer: &'static [u16]) -> UNICODE_STRING {
 
 /// Copy a counted wide string into a fixed buffer, reporting the characters
 /// copied. Silently truncates to the buffer (the consumer also bounds reads).
-unsafe fn copy_wide(source: &UNICODE_STRING, destination: &mut [u16], copied: &mut u16) {
+pub(crate) unsafe fn copy_wide(source: &UNICODE_STRING, destination: &mut [u16], copied: &mut u16) {
     if source.Buffer.is_null() || source.Length == 0 {
         *copied = 0;
         return;
@@ -309,6 +305,8 @@ unsafe extern "C" fn process_access_post_op(
     // SAFETY: `information` is valid for the duration of the callback.
     let info = unsafe { &*information };
     // `Object` is the target process (PEPROCESS) for handle-create/duplicate.
+    // SAFETY: `info` is live and `CreateHandleInformation` is the active
+    // member for a handle operation.
     let granted = unsafe { (*info.Parameters).CreateHandleInformation.GrantedAccess };
     if granted & INTERESTING_ACCESS == 0 {
         return;
@@ -385,10 +383,12 @@ unsafe fn is_fresh_process(pid: u32) -> bool {
     }
     let created = unsafe { PsGetProcessCreateTimeQuadPart(process) };
     let mut now = wdk_sys::LARGE_INTEGER::default();
+    // SAFETY: the call only writes into the local `now`.
     unsafe { wdk_sys::ntddk::KeQuerySystemTimePrecise(&raw mut now) };
     // SAFETY: the reference taken by `PsLookupProcessByProcessId` is released
     // exactly once.
     unsafe { wdk_sys::ntddk::ObfDereferenceObject(process.cast()) };
+    // SAFETY: `LARGE_INTEGER` is a union and the call above filled `QuadPart`.
     let age = unsafe { now.QuadPart } - created;
     (0..INITIAL_THREAD_WINDOW).contains(&age)
 }
@@ -404,6 +404,7 @@ unsafe extern "C" fn thread_notify(process_id: HANDLE, thread_id: HANDLE, create
         return;
     }
     let target = process_id as usize as u32;
+    // SAFETY: the callback runs in a thread context; the call only reads the current pid.
     let source = unsafe { PsGetCurrentProcessId() } as usize as u32;
     let thread = thread_id as usize as u32;
     if target <= 4 || source <= 4 || target == source || thread == target {
@@ -411,6 +412,7 @@ unsafe extern "C" fn thread_notify(process_id: HANDLE, thread_id: HANDLE, create
     }
     // A thread created in a process that has just come up is that process's
     // own first thread, created from the parent's context by `CreateProcess`.
+    // SAFETY: the callback runs at PASSIVE_LEVEL, where the callee's process lookup is legal.
     if unsafe { is_fresh_process(target) } {
         return;
     }
@@ -501,6 +503,7 @@ unsafe extern "C" fn registry_notify(
 /// Register the process-access object callbacks.
 fn register_ob_callbacks() -> NTSTATUS {
     let mut operation = OB_OPERATION_REGISTRATION {
+        // SAFETY: `PsProcessType` is a kernel global initialized before driver load.
         ObjectType: unsafe { PsProcessType } as *mut POBJECT_TYPE,
         Operations: OB_OPERATION_HANDLE_CREATE | OB_OPERATION_HANDLE_DUPLICATE,
         PreOperation: Some(process_access_pre_op),
@@ -763,6 +766,58 @@ fn create_device(mut device_init: PWDFDEVICE_INIT) -> NTSTATUS {
         }
 
         status
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unicode_string_finds_null_terminator() {
+        static BUF: [u16; 5] = [b'a' as u16, b'b' as u16, b'c' as u16, 0, b'x' as u16];
+        let us = unicode_string(&BUF);
+        assert_eq!(us.Length, 6); // 3 chars * 2
+        assert_eq!(us.MaximumLength, 10); // 5 units * 2
+    }
+
+    #[test]
+    fn unicode_string_without_null_uses_full_length() {
+        static BUF: [u16; 3] = [b'a' as u16, b'b' as u16, b'c' as u16];
+        let us = unicode_string(&BUF);
+        assert_eq!(us.Length, 6);
+        assert_eq!(us.MaximumLength, 6);
+    }
+
+    #[test]
+    fn copy_wide_copies_and_truncates() {
+        static SRC: [u16; 4] = [b'h' as u16, b'i' as u16, b'!' as u16, 0];
+        let src = UNICODE_STRING {
+            Length: 6, // "hi"
+            MaximumLength: 8,
+            Buffer: SRC.as_ptr().cast_mut(),
+        };
+        let mut dest = [0u16; 1]; // only room for 1 char
+        let mut copied = 0u16;
+        // SAFETY: `SRC` outlives the call and `dest` holds the single copied unit.
+        unsafe { copy_wide(&src, &mut dest, &mut copied) };
+        assert_eq!(copied, 1);
+        assert_eq!(dest[0], b'h' as u16);
+    }
+
+    #[test]
+    fn copy_wide_null_buffer_is_noop() {
+        let src = UNICODE_STRING {
+            Length: 0,
+            MaximumLength: 0,
+            Buffer: core::ptr::null_mut(),
+        };
+        let mut dest = [0u16; 4];
+        let mut copied = 99u16;
+        // SAFETY: `src.Buffer` is null with zero length, so no source bytes are read.
+        unsafe { copy_wide(&src, &mut dest, &mut copied) };
+        assert_eq!(copied, 0);
+        assert_eq!(dest, [0u16; 4]);
     }
 }
 

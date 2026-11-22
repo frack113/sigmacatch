@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[package]
+name = "sigmacatch-input-ebpf"
+version.workspace = true
+edition.workspace = true
+description = "sigmacatch eBPF host adapter: probe loader and ring-buffer decoder"
+license.workspace = true
+
+[lib]
+doctest = false
+
+# Every dependency is gated because the whole adapter is: without `ebpf` the
+# crate is an empty shell, and the unused-dependencies lint would fire on all
+# of them.
+[features]
+default = []
+ebpf = [
+  "dep:anyhow",
+  "dep:async-trait",
+  "dep:aya",
+  "dep:bytemuck",
+  "dep:chrono",
+  "dep:hex",
+  "dep:serde_json",
+  "dep:sha2",
+  "dep:sigmacatch-core",
+  "dep:tokio",
+  "dep:tracing",
+  "dep:tempfile",
+  "dep:uuid",
+]
+
+[dependencies]
+anyhow = { version = "1.0.104", optional = true }
+async-trait = { version = "0.1.92", optional = true }
+aya = { version = "0.16.0", optional = true }
+bytemuck = { version = "1.25.2", default-features = false, features = [
+  "derive",
+], optional = true }
+chrono = { version = "0.4.45", optional = true }
+hex = { version = "0.4.3", optional = true }
+serde_json = { version = "1.0.154", optional = true }
+sha2 = { version = "0.11.1", optional = true }
+sigmacatch-core = { path = "../../core", optional = true }
+tempfile = { version = "3.27.0", optional = true }
+tokio = { version = "1.54.1", features = [
+  "macros",
+  "rt",
+  "sync",
+  "time",
+], optional = true }
+tracing = { workspace = true, optional = true }
+uuid = { version = "1.29.3", features = ["v4"], optional = true }
+
+[[example]]
+name = "ebpf_parse_check"
+required-features = ["ebpf"]
+
+[lints]
+workspace = true

@@ -3,20 +3,35 @@
 
 [workspace]
 resolver = "2"
-members = ["sigmacatch"]
+members = [
+  "sigmacatch",
+  "sigmacatch/core",
+  "sigmacatch/repo",
+  "sigmacatch/sigma-regression",
+  "sigmacatch/inputs/ebpf",
+  "sigmacatch/inputs/tail",
+  "sigmacatch/inputs/etw-common",
+  "sigmacatch/inputs/auditd",
+  "sigmacatch/inputs/syslog",
+  "sigmacatch/inputs/sysmon",
+  "sigmacatch/inputs/winevt",
+  "sigmacatch/inputs/evtx",
+  "sigmacatch/inputs/macos",
+  "sigmacatch/inputs/etw",
+  "sigmacatch/inputs/etw-driver",
+  # Shared with the standalone driver workspace by path dependency.
+  "sigmacatch/driver/protocol",
+  "sigmacatch/outputs/evtx",
+  "sigmacatch/outputs/regression",
+]
 
-# The nightly-only bpf-el probe crate lives nested INSIDE the sigmacatch
-# package (sigmacatch/ebpf, its own `[workspace]` opt-out): it is built
-# separately by sigmacatch/src/build.rs, never as part of the stable
-# workspace graph.
+# The ebpf probe (sigmacatch/ebpf) is excluded: built separately by build.rs.
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 license = "MIT"
 
-# Quality contract: explicit lint tiers, single source of truth ([workspace.lints]).
-# Pedantic/nursery groups stay OUT — cherry-pick individual lints only, each
-# ratcheted to zero before being added here (ratchet protocol Q2.3).
+# Cherry-pick individual lints only; each ratcheted to zero before adding.
 [workspace.dependencies]
 thiserror = "2.0.21"
 tracing = "0.1.44"

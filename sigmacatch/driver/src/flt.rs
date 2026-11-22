@@ -21,7 +21,7 @@ use wdk_sys::{
     UNICODE_STRING,
 };
 
-use crate::{SIGMACATCH_PROTOCOL_VERSION, SensorEvent, kind, ring_push};
+use crate::{SIGMACATCH_PROTOCOL_VERSION, SensorEvent, copy_wide, kind, ring_push};
 
 // ---------------------------------------------------------------------------
 // Types (transcribed from fltkernel.h)
@@ -621,6 +621,7 @@ unsafe fn volume_kind(flt_objects: *mut core::ffi::c_void) -> VolumeKind {
         return VolumeKind::FileSystem;
     };
     let mut buffer = [0u16; 128];
+    // SAFETY: `objects.volume` is live for the callback and `buffer` is local.
     let Some(units) = (unsafe { volume_device_name(objects.volume, &mut buffer) }) else {
         return VolumeKind::FileSystem;
     };
@@ -644,6 +645,7 @@ unsafe extern "C" fn pre_read(
     flt_objects: *mut core::ffi::c_void,
     _completion_context: *mut *mut core::ffi::c_void,
 ) -> i32 {
+    // SAFETY: `flt_objects` is a live FLT_RELATED_OBJECTS for the callback.
     if unsafe { volume_kind(flt_objects) } != VolumeKind::FileSystem {
         return PREOP_SUCCESS_NO_CALLBACK;
     }
@@ -659,12 +661,14 @@ unsafe extern "C" fn pre_read(
         return PREOP_SUCCESS_NO_CALLBACK;
     }
     let mut buffer = [0u16; 128];
+    // SAFETY: `objects.volume` is live for the callback and `buffer` is local.
     let Some(units) = (unsafe { volume_device_name(objects.volume, &mut buffer) }) else {
         return PREOP_SUCCESS_NO_CALLBACK;
     };
     let mut event = SensorEvent::empty();
     event.version = SIGMACATCH_PROTOCOL_VERSION;
     event.kind = kind::RAW_READ;
+    // SAFETY: `data` is the live callback data passed by fltmgr.
     event.pid = unsafe { FltGetRequestorProcessId(data) } as usize as u32;
     let count = units.min(event.primary.len());
     // SAFETY: both buffers are local and `count` is bounded by both.
@@ -699,6 +703,7 @@ unsafe extern "C" fn pre_set_information(
     _completion_context: *mut *mut core::ffi::c_void,
 ) -> i32 {
     // Only file systems carry the information classes handled here.
+    // SAFETY: `flt_objects` is a live FLT_RELATED_OBJECTS for the callback.
     if unsafe { volume_kind(flt_objects) } != VolumeKind::FileSystem {
         return PREOP_SUCCESS_WITH_CALLBACK;
     }
@@ -760,6 +765,7 @@ unsafe extern "C" fn pre_set_information(
             // exposed here, so it is left out rather than invented.
             let new_value = u64::try_from(new_creation).unwrap_or(0);
             let old_value = u64::try_from(old).unwrap_or(0);
+            // SAFETY: `data` is the live callback data read by the helper.
             unsafe {
                 push_named_values(data, kind::FILE_CREATION_TIME, 0, old_value, new_value);
             }
@@ -772,6 +778,7 @@ unsafe extern "C" fn pre_set_information(
                 // Sysmon reports both ids for one delete: 23 (FileDelete,
                 // archived) and 26 (FileDeleteDetected, no backup). This
                 // sensor keeps no archive, so both carry the same shape.
+                // SAFETY: `data` is the live callback data read by both helpers.
                 unsafe {
                     push_named(data, kind::FILE_DELETE, 0);
                     push_named(data, kind::FILE_DELETE_DETECTED, 0);
@@ -787,6 +794,7 @@ unsafe extern "C" fn pre_set_information(
             if !disposition.is_null()
                 && unsafe { (*disposition).flags } & FILE_DISPOSITION_DELETE != 0
             {
+                // SAFETY: `data` is the live callback data read by both helpers.
                 unsafe {
                     push_named(data, kind::FILE_DELETE, 0);
                     push_named(data, kind::FILE_DELETE_DETECTED, 0);
@@ -805,10 +813,12 @@ unsafe extern "C" fn pre_set_information(
     let rename = unsafe { &*rename };
 
     let mut old = core::ptr::null_mut();
+    // SAFETY: `data` is live; fltmgr allocates `old`, which is released below.
     if unsafe { FltGetFileNameInformation(data, NAME_FLAGS, &mut old) } != STATUS_SUCCESS {
         return PREOP_SUCCESS_WITH_CALLBACK;
     }
     let mut new = core::ptr::null_mut();
+    // SAFETY: `rename` is this operation's live buffer and fltmgr allocates `new`.
     let status = unsafe {
         FltGetDestinationFileNameInformation(
             iopb.target_instance,
@@ -912,6 +922,7 @@ unsafe extern "C" fn post_set_information(
     _context: *mut core::ffi::c_void,
     _flags: u32,
 ) -> i32 {
+    // SAFETY: `flt_objects` is a live FLT_RELATED_OBJECTS for the callback.
     if unsafe { volume_kind(flt_objects) } != VolumeKind::FileSystem {
         return POSTOP_FINISHED;
     }
@@ -919,6 +930,7 @@ unsafe extern "C" fn post_set_information(
     let Some(callback) = (unsafe { data.as_ref() }) else {
         return POSTOP_FINISHED;
     };
+    // SAFETY: `callback` is live and the I/O manager initialized `io_status`.
     if unsafe { callback.io_status.__bindgen_anon_1.Status } < 0 {
         return POSTOP_FINISHED;
     }
@@ -937,6 +949,7 @@ unsafe extern "C" fn post_set_information(
                 return POSTOP_FINISHED;
             }
             let size = unsafe { (*truncate).end_of_file };
+            // SAFETY: `data` is the live callback data read by the helper.
             unsafe { push_named(data, kind::FILE_TRUNCATE, size as u32) };
         }
         _ => {}
@@ -951,6 +964,7 @@ unsafe extern "C" fn post_set_security(
     _context: *mut core::ffi::c_void,
     _flags: u32,
 ) -> i32 {
+    // SAFETY: `flt_objects` is a live FLT_RELATED_OBJECTS for the callback.
     if unsafe { volume_kind(flt_objects) } != VolumeKind::FileSystem {
         return POSTOP_FINISHED;
     }
@@ -958,6 +972,7 @@ unsafe extern "C" fn post_set_security(
     let Some(callback) = (unsafe { data.as_ref() }) else {
         return POSTOP_FINISHED;
     };
+    // SAFETY: `callback` is live and the I/O manager initialized `io_status`.
     if unsafe { callback.io_status.__bindgen_anon_1.Status } < 0 {
         return POSTOP_FINISHED;
     }
@@ -968,9 +983,11 @@ unsafe extern "C" fn post_set_security(
     // SAFETY: the SetSecurity member is the active union member here.
     let security_information = unsafe { iopb.parameters.set_security.security_information };
     if security_information & DACL_SECURITY_INFORMATION != 0 {
+        // SAFETY: `data` is the live callback data read by the helper.
         unsafe { push_named(data, kind::FILE_SET_SECURITY, 0) };
     }
     if security_information & OWNER_SECURITY_INFORMATION != 0 {
+        // SAFETY: `data` is the live callback data read by the helper.
         unsafe { push_named(data, kind::FILE_SET_SECURITY, 1) };
     }
     POSTOP_FINISHED
@@ -997,9 +1014,11 @@ unsafe extern "C" fn post_create(
     // arrives as `IRP_MJ_CREATE_NAMED_PIPE` (EID 17); a create on NPFS is a
     // client connecting to an existing pipe, which is EID 18. A mailslot has
     // no Sysmon equivalent and is dropped.
+    // SAFETY: `flt_objects` is a live FLT_RELATED_OBJECTS for the callback.
     match unsafe { volume_kind(flt_objects) } {
         VolumeKind::NamedPipe => {
             if callback.io_status.Information == u64::from(FILE_OPENED) {
+                // SAFETY: `data` and `flt_objects` are live for the callback.
                 unsafe { push_pipe_create(data, flt_objects, kind::PIPE_CONNECT) };
             }
             return POSTOP_FINISHED;
@@ -1027,6 +1046,7 @@ unsafe extern "C" fn post_create(
         if desired & (FILE_WRITE_DATA | FILE_APPEND_DATA) != 0
             && under_budget(&OPEN_COUNT, FILE_OPEN_BUDGET)
         {
+            // SAFETY: `data` is the live callback data read by the helper.
             unsafe { push_named(data, kind::FILE_OPEN, desired) };
         }
         return POSTOP_FINISHED;
@@ -1090,9 +1110,11 @@ unsafe extern "C" fn post_write(
     let Some(callback) = (unsafe { data.as_ref() }) else {
         return POSTOP_FINISHED;
     };
+    // SAFETY: `callback` is live and the I/O manager initialized `io_status`.
     if unsafe { callback.io_status.__bindgen_anon_1.Status } < 0 || callback.iopb.is_null() {
         return POSTOP_FINISHED;
     }
+    // SAFETY: `flt_objects` is a live FLT_RELATED_OBJECTS for the callback.
     if unsafe { volume_kind(flt_objects) } != VolumeKind::FileSystem {
         return POSTOP_FINISHED;
     }
@@ -1123,12 +1145,15 @@ unsafe extern "C" fn post_create_pipe(
     let Some(callback) = (unsafe { data.as_ref() }) else {
         return POSTOP_FINISHED;
     };
+    // SAFETY: `callback` is live and the I/O manager initialized `io_status`.
     if unsafe { callback.io_status.__bindgen_anon_1.Status } < 0 {
         return POSTOP_FINISHED;
     }
+    // SAFETY: `flt_objects` is a live FLT_RELATED_OBJECTS for the callback.
     if unsafe { volume_kind(flt_objects) } != VolumeKind::NamedPipe {
         return POSTOP_FINISHED;
     }
+    // SAFETY: `data` and `flt_objects` are live for the callback.
     unsafe { push_pipe_create(data, flt_objects, kind::PIPE_CREATE) };
     POSTOP_FINISHED
 }
@@ -1151,6 +1176,7 @@ unsafe fn push_pipe_create(
     let mut event = SensorEvent::empty();
     event.version = SIGMACATCH_PROTOCOL_VERSION;
     event.kind = kind;
+    // SAFETY: `data` is the live callback data passed by fltmgr.
     event.pid = unsafe { FltGetRequestorProcessId(data) } as usize as u32;
     // SAFETY: the name lives as long as the file object we hold.
     unsafe {
@@ -1172,6 +1198,7 @@ fn has_stream(name: &UNICODE_STRING) -> bool {
     if name.Buffer.is_null() || name.Length < 2 {
         return false;
     }
+    // SAFETY: `name.Buffer` points to at least `Length / 2` live wide characters.
     let units = unsafe { core::slice::from_raw_parts(name.Buffer, (name.Length as usize) / 2) };
     for unit in units.iter().rev() {
         match *unit {
@@ -1226,17 +1253,76 @@ fn first_write_in_second(file_object: *mut core::ffi::c_void) -> bool {
     true
 }
 
-/// Copy a counted wide string into a fixed record field.
-unsafe fn copy_wide(source: &UNICODE_STRING, destination: &mut [u16], copied: &mut u16) {
-    if source.Buffer.is_null() || source.Length == 0 {
-        *copied = 0;
-        return;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ascii_lower_converts_uppercase() {
+        assert_eq!(ascii_lower(b'A' as u16), b'a' as u16);
+        assert_eq!(ascii_lower(b'Z' as u16), b'z' as u16);
     }
-    let units = (source.Length as usize) / 2;
-    let count = units.min(destination.len());
-    // SAFETY: the source is valid for the callback; the destination is sized.
-    unsafe {
-        core::ptr::copy_nonoverlapping(source.Buffer, destination.as_mut_ptr(), count);
+
+    #[test]
+    fn ascii_lower_passes_lowercase_and_non_alpha() {
+        assert_eq!(ascii_lower(b'a' as u16), b'a' as u16);
+        assert_eq!(ascii_lower(b'0' as u16), b'0' as u16);
+        assert_eq!(ascii_lower(b' ' as u16), b' ' as u16);
     }
-    *copied = count as u16;
+
+    #[test]
+    fn wide_eq_ignore_ascii_case_matches() {
+        assert!(wide_eq_ignore_ascii_case(&[b'\\' as u16, b'T' as u16], &[b'\\' as u16, b't' as u16]));
+    }
+
+    #[test]
+    fn wide_eq_ignore_ascii_case_rejects_different_lengths() {
+        assert!(!wide_eq_ignore_ascii_case(&[b'a' as u16], &[b'a' as u16, b'b' as u16]));
+    }
+
+    #[test]
+    fn wide_eq_ignore_ascii_case_rejects_different_content() {
+        assert!(!wide_eq_ignore_ascii_case(&[b'a' as u16], &[b'b' as u16]));
+    }
+
+    #[test]
+    fn has_stream_detects_colon_after_last_separator() {
+        // "...file.txt:hidden:$DATA"
+        static BUF: [u16; 8] = [
+            b'f' as u16, b'i' as u16, b'l' as u16, b'e' as u16,
+            b':' as u16, b'h' as u16, b'i' as u16, b'd' as u16,
+        ];
+        let us = UNICODE_STRING {
+            Length: (BUF.len() * 2) as u16,
+            MaximumLength: (BUF.len() * 2) as u16,
+            Buffer: BUF.as_ptr().cast_mut(),
+        };
+        assert!(has_stream(&us));
+    }
+
+    #[test]
+    fn has_stream_rejects_colon_before_last_separator() {
+        // "C:\\dir\\file" — the colon is before the last backslash
+        static BUF: [u16; 8] = [
+            b'C' as u16, b':' as u16, b'\\' as u16, b'd' as u16,
+            b'i' as u16, b'r' as u16, b'\\' as u16, b'f' as u16,
+        ];
+        let us = UNICODE_STRING {
+            Length: (BUF.len() * 2) as u16,
+            MaximumLength: (BUF.len() * 2) as u16,
+            Buffer: BUF.as_ptr().cast_mut(),
+        };
+        assert!(!has_stream(&us));
+    }
+
+    #[test]
+    fn has_stream_rejects_no_colon() {
+        static BUF: [u16; 3] = [b'a' as u16, b'b' as u16, b'c' as u16];
+        let us = UNICODE_STRING {
+            Length: 6,
+            MaximumLength: 6,
+            Buffer: BUF.as_ptr().cast_mut(),
+        };
+        assert!(!has_stream(&us));
+    }
 }

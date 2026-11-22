@@ -2,23 +2,26 @@
 
 Each input is a `CollectorKind`: one struct that names the input, exposes the
 channels it can read, builds its event producer, and declares the regression
-format it writes. The feature × platform gate matrix lives in
-`inputs/mod.rs`; `main.rs` picks the runtime input.
+format it writes. Each input crate owns its feature × platform gates;
+`sigmacatch/src/inputs/mod.rs` aliases the crates and hosts the two
+orchestrators, and `main.rs` picks the runtime input.
 
 | Input | Page | Feature | Regression format |
 |---|---|---|---|
 | Windows Event Log + driver/ETW | [Windows](windows.md) | `winevt`, then `etw` / `driver` | `.evtx` |
 | One-shot EVTX files | [EVTX](evtx.md) | `evtx` | `.evtx` |
-| auditd, syslog, Sysmon-for-Linux, eBPF | [Linux](linux.md) | `auditd`, `builtin`, `sysmon`, `ebpf` | `.log` / `.json` |
+| auditd, syslog, Sysmon-for-Linux, eBPF | [Linux](linux.md) — overview in [Linux telemetry](../linux/index.md) | `auditd`, `builtin`, `sysmon`, `ebpf` | `.log` / `.json` |
 | Endpoint Security | [macOS](macos.md) | `macos` | `.json` |
 
 ## The `CollectorKind` contract
 
 Every input implements
 `name()`/`mode()`/`channels()`/`build()`/`regression_format()`/`live_capture()`.
-The Linux inputs share a single `LinuxCollector` (`inputs/linux.rs`), the
-Windows inputs a single `WindowsCollector` (`inputs/windows.rs`), and the
-macOS input is a single `MacosEsCollector` (`inputs/macos_es.rs`).
+The Linux inputs share a single `LinuxCollector`
+(`sigmacatch/src/inputs/linux.rs`), the Windows inputs a single
+`WindowsCollector` (`sigmacatch/src/inputs/windows.rs`), and the macOS input is
+a single `MacosEsCollector` in `sigmacatch-input-macos`, aliased as
+`sigmacatch::inputs::macos_es`.
 
 - **Regression format** comes from `regression_format()`: `DataFormat::Evtx`
   for winevt, EVTX, ETW and driver events; `DataFormat::Log` for

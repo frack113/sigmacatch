@@ -11,7 +11,7 @@ the normal collection loop (or, with `--evtx`, the one-shot EVTX pass).
 > therefore fail on a git error before reaching its own work.
 
 An explicit `filter.product` from the config wins; when the key is absent, the
-collector chooses `windows` or `linux`.
+collector chooses `windows`, `linux` or `macos`.
 
 ## check-filter
 

@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[package]
+name = "sigmacatch-input-evtx"
+version.workspace = true
+edition.workspace = true
+description = "sigmacatch one-shot EVTX file collector"
+license.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+anyhow = "1.0.104"
+sigmacatch-core = { path = "../../core" }
+walkdir = "2.5.1"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+tokio = { version = "1.54.1", features = ["macros", "rt", "sync"] }
+
+[lints]
+workspace = true

@@ -9,16 +9,14 @@ analogue of the [Windows dev VM](../windows/vm.md).
 
 - **macOS Tahoe 26.7.3** (25G342), installed fresh from its own BaseSystem
   (OSX-KVM `fetch-macOS-v2.py --shortname tahoe` + `dmg2img`). Installer
-  language French, keyboard AZERTY — set the layout at install time, a
-  QWERTY guest turns a typed `azerty` password into `qwerty`.
-- Disk: `~/Games/Qemu/qcow2/macos.qcow2` (128 GiB), with a qcow2 internal
+  language French, keyboard AZERTY — set the layout at install time; with a
+  QWERTY guest the keys send different characters.
+- Disk: a 128 GiB `macos.qcow2` outside the project tree, with a qcow2 internal
   snapshot **`clean-install`** taken after provisioning (VM stopped,
   `qemu-img snapshot -c`).
-- Boot script: `~/Games/Qemu/OSX-KVM/sigmacatch-macos-boot.sh` (8 GiB RAM,
-  8 vCPU, monitor on `unix:/tmp/opencode/macos-monitor.sock`, SSH forward
-  `tcp/2222 → 22`).
-- Guest account `frack113` / `azerty`, SSH key `~/.ssh/id_sigmacatch`
-  installed in `authorized_keys`.
+- Boot script `sigmacatch-macos-boot.sh` (8 GiB RAM, 8 vCPU, monitor on
+  `unix:/tmp/opencode/macos-monitor.sock`, SSH forward `tcp/2222 → 22`).
+- A local guest account with an SSH key in `authorized_keys`.
 - Auto-updates fully locked (system and user plists: check/download/install/
   critical all false). Re-verify the locks after any update attempt — a
   Sequoia VM got force-upgraded to Tahoe despite the locks.
@@ -64,7 +62,7 @@ look like the same symptom, which is why all three are written down:
 
    ```sh
    qemu-img convert -O raw /usr/share/edk2/ovmf/OVMF_VARS_4M.qcow2 \
-     ~/Games/Qemu/ovmf-vars-4m.fd     # 540672 bytes
+     ovmf-vars-4m.fd     # 540672 bytes, outside the git clone
    # boot script: -drive if=pflash,format=raw,file="$OVMF_VARS"
    ```
 

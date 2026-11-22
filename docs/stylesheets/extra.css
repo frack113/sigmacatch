@@ -9,3 +9,9 @@
 .md-grid {
   max-width: min(96rem, 92vw);
 }
+
+/* The logo ships in two variants: swap the header and drawer logo when the
+   reader switches Material to the slate (dark) palette. */
+[data-md-color-scheme="slate"] .md-logo img {
+  content: url("../media/logo-dark.svg");
+}

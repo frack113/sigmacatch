@@ -26,6 +26,8 @@ use std::path::{Path, PathBuf};
 use rayon::prelude::*;
 use serde::Serialize;
 use serde_json::{Map, Value as JsonValue};
+use sigma_regression::indent::{canonical_indent, yaml_lines};
+use sigma_regression::info::write_canonical_indent;
 use sigmacatch::detection::DetectionEngine;
 use sigmacatch::regression::SigmahqRegression;
 use sigmacatch::regression::info::InfoYml;
@@ -964,91 +966,6 @@ fn validate_yaml_indentation(idx: usize, regression: &SigmahqRegression) -> Opti
     None
 }
 
-/// Compact structural key of a YAML line, ignoring indent and value:
-/// `(key, is_list_item)` from e.g. `    - id: x` → `("id", true)`.
-fn yaml_template(line: &str) -> Option<(String, bool)> {
-    let t = line.trim_start();
-    if t.is_empty() || t.starts_with('#') {
-        return None;
-    }
-    let is_list = t.starts_with('-') && (t.starts_with("- ") || t.len() == 1);
-    let body = if is_list {
-        t.trim_start_matches('-').trim_start()
-    } else {
-        t
-    };
-    let key = body.split(':').next().unwrap_or("").trim();
-    if key.is_empty() {
-        return None;
-    }
-    Some((key.to_string(), is_list))
-}
-
-/// `(template, indent)` pairs of a YAML document (comments/blank lines excluded).
-fn yaml_lines(content: &str) -> Vec<((String, bool), usize)> {
-    content
-        .lines()
-        .filter_map(|l| {
-            let indent = l.len() - l.trim_start().len();
-            yaml_template(l).map(|t| (t, indent))
-        })
-        .collect()
-}
-
-/// Canonical indent for a template in the canonical document.
-fn canonical_indent(canonical: &str, template: &(String, bool)) -> Option<usize> {
-    yaml_lines(canonical)
-        .into_iter()
-        .find(|(t, _)| t == template)
-        .map(|(_, i)| i)
-}
-
-/// Whether any significant line's indent differs from canonical, requiring a fix.
-fn needs_reindent(raw: &str, canonical: &str) -> bool {
-    let canonical_lines = yaml_lines(canonical);
-    yaml_lines(raw).into_iter().any(|(template, indent)| {
-        canonical_lines
-            .iter()
-            .find(|(t, _)| *t == template)
-            .map(|(_, i)| i != &indent)
-            .unwrap_or(true)
-    })
-}
-
-/// Re-indent a YAML document to canonical 4-space SigmaHQ style while
-/// preserving `#` comment lines, blank lines, and values verbatim.
-fn reindent_yaml(raw: &str, canonical: &str) -> String {
-    let canonical_lines = yaml_lines(canonical);
-    let mut out = Vec::new();
-    for line in raw.lines() {
-        let t = line.trim_start();
-        if t.is_empty() || t.starts_with('#') {
-            out.push(line.to_string());
-            continue;
-        }
-        let Some((key, is_list)) = yaml_template(line) else {
-            out.push(line.to_string());
-            continue;
-        };
-        let indent = canonical_lines
-            .iter()
-            .find(|(t2, _)| *t2 == (key.clone(), is_list))
-            .map(|(_, i)| *i)
-            .unwrap_or(0);
-        if is_list {
-            // Dash at the canonical indent, content aligned two columns after.
-            out.push(format!(
-                "{}- {}",
-                " ".repeat(indent),
-                t.trim_start_matches('-').trim_start()
-            ));
-        } else {
-            out.push(format!("{}{}", " ".repeat(indent), t));
-        }
-    }
-    out.join("\n")
-}
-
 fn fix_json_newlines(regression: &SigmahqRegression) -> anyhow::Result<()> {
     let root = regression.path().to_path_buf();
     if !root.exists() {
@@ -1111,16 +1028,12 @@ fn fix_json_newlines(regression: &SigmahqRegression) -> anyhow::Result<()> {
                     None
                 };
                 if let Some(reason) = needs_fix {
-                    let mut trimmed = bytes;
-                    while trimmed.last() == Some(&b'\n') {
-                        trimmed.pop();
-                    }
-                    trimmed.push(b'\n');
-                    match std::fs::write(&path, &trimmed) {
-                        Ok(()) => {
+                    match sigma_regression::normalize_trailing_newline(&path, &bytes) {
+                        Ok(true) => {
                             fixed += 1;
                             println!("[FIX] {} ({reason})", path.display());
                         }
+                        Ok(false) => {}
                         Err(e) => {
                             eprintln!("  [ERROR] Cannot write {}: {e}", path.display());
                         }
@@ -1137,19 +1050,14 @@ fn fix_json_newlines(regression: &SigmahqRegression) -> anyhow::Result<()> {
                 match sigmacatch::regression::info::InfoYml::load(&path) {
                     Ok(info) => match info.canonical_yaml() {
                         Ok(canonical) => {
-                            let original_trimmed = original.trim_end_matches('\n');
-                            if needs_reindent(original_trimmed, &canonical) {
-                                let rewritten = reindent_yaml(&original, &canonical);
-                                let mut content = rewritten;
-                                content.push('\n');
-                                match std::fs::write(&path, content) {
-                                    Ok(()) => {
-                                        yml_fixed += 1;
-                                        println!("[FIX] {} (indentation)", path.display());
-                                    }
-                                    Err(e) => {
-                                        eprintln!("  [ERROR] Cannot write {}: {e}", path.display());
-                                    }
+                            match write_canonical_indent(&path, &original, &canonical) {
+                                Ok(true) => {
+                                    yml_fixed += 1;
+                                    println!("[FIX] {} (indentation)", path.display());
+                                }
+                                Ok(false) => {}
+                                Err(e) => {
+                                    eprintln!("  [ERROR] Cannot write {}: {e}", path.display());
                                 }
                             }
                         }
@@ -1893,7 +1801,7 @@ mod tests {
     fn reindent_yaml_preserves_comments() {
         let raw = "# top comment\nid: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\nrule_metadata:\n- id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb\n  title: R\n";
         let canonical = "id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\nrule_metadata:\n    - id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb\n      title: R\n";
-        let out = reindent_yaml(raw, canonical);
+        let out = sigma_regression::indent::reindent_yaml(raw, canonical);
         assert!(
             out.starts_with("# top comment\n"),
             "comment preserved, got: {out}"

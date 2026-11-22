@@ -7,11 +7,12 @@ stays the green gate; this VM gives a ~2 min local build loop.
 ## What it is
 
 - Clone (disk + domain) of the Windows 11 test VM — same provisioning: WinRM
-  on port 5985, test-signing already on, MinGit, `frack113`/`azerty`
-  (admin-group member with a non-elevated WinRM token; use stored-credential
-  scheduled tasks to run elevated — see pitfalls).
-- Domain `sigmacatch-dev`, MAC `52:54:00:ea:59:6b`, DHCP IP on virbr0
-  (e.g. `192.168.122.158`), 8 vCPU in a single socket / 8 GiB, 128 GiB disk.
+  on port 5985, test-signing already on, MinGit, and an account in the admin
+  group (its WinRM token is still filtered; use stored-credential scheduled
+  tasks to run elevated — see pitfalls).
+- Domain `sigmacatch-dev`, DHCP on virbr0; 8 vCPU in a single socket / 8 GiB,
+  128 GiB disk. The guest hostname is inherited from the test VM — see the
+  hostname pitfall below.
 - Disk is a clone of the test VM's overlay; the underlying `win11.qcow2`
   base is shared read-only between both VMs — never modify it directly.
 
@@ -30,7 +31,7 @@ The build uses the same environment pins as the CI cache-hit path
 registry discovery and latest-SDK-version scan), plus
 `LIBCLANG_PATH` and the CI `RUSTFLAGS` (`-D warnings -C target-feature=+crt-static`).
 
-## Build box optimization (applied 2026-11-15)
+## Build box optimization
 
 The VM is build-only; the guest was stripped accordingly (snapshot
 `toolchain-optimized` holds this state — `virsh snapshot-revert sigmacatch-dev
@@ -53,7 +54,7 @@ toolchain-optimized` restores it):
   auto+running services before, 35 core ones after (plus 0 per-user).
 - Search: the WSearch indexing service is disabled, and the taskbar search UI
   (`SearchHost.exe`, ~120 MB, owned by the CBS shell package, NOT by WSearch)
-  is kept from starting via frack113's HKCU
+  is kept from starting via the account's HKCU
   (`SearchboxTaskbarMode=0`, `DisableSearchBoxSuggestions=1`); verified absent
   after reboot. It only comes back on demand if someone searches from the
   Start menu on the console. The old index data (ProgramData\Microsoft\Search)
@@ -78,13 +79,13 @@ toolchain-optimized` restores it):
 scripts/dev_win_build.sh
 ```
 
-Syncs `driver/` + `src/windows/` to `C:\sigmacatch-dev\sigmacatch\`, runs
+Syncs `driver/` + `driver/protocol/` to `C:\sigmacatch-dev\sigmacatch\`, runs
 `C:\sigmacatch-dev-build.ps1` (scheduled task, no elevation needed), and
 fetches `sigmacatch_driver.dll` to `target/sigmacatch-dev/` (rename to `.sys`
 for the service). Logs live on the VM at `C:\sigmacatch-dev-build.log`.
 
 Loading and testing the driver against a live VM session is the test VM's
-job (`heiter-test-vms-qemu` skill); the dev VM can also load local builds the
+job; the dev VM can also load local builds the
 same way (`sc create` + test-signing), but keep the two boxes separate so the
 validation VM stays clean-room.
 
@@ -104,5 +105,5 @@ too — drift shows up as "compiles locally, fails in CI".
 - `WinRM` sessions run with a filtered token even for admin-group members;
   machine-scope installs need a scheduled task with `/rl highest` (plus
   `/ru`/`/rp`).
-- Both VMs currently report the same hostname (`SIGMACATCHVM`); renaming the
-  dev VM (`Rename-Computer` + reboot) is pending, not blocking builds.
+- Both VMs report the same guest hostname; renaming the dev VM
+  (`Rename-Computer` + reboot) is pending, not blocking builds.

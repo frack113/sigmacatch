@@ -23,7 +23,7 @@ Two findings worth keeping:
 
 - **The IPv4 decoder reversed the octets.** TDH hands the four bytes over in
   network order; reading them as a little-endian `u32` and formatting that as
-  big-endian turned `192.168.122.157` into `157.122.168.192`. Every address in
+  big-endian turned `192.0.2.7` into `7.2.0.192`. Every address in
   the committed data would have been wrong.
 - **`DestinationHostname` is filled from the DNS answers** the same session
   already carries: 3008 results are cached per `(pid, address)` and looked up
@@ -59,8 +59,8 @@ what the first version did (0 detections).
 `Microsoft-Windows-Kernel-Registry` delivers `SetValueKey`, `DeleteValueKey`
 and `DeleteKey` with an **empty `KeyName`**; only `CreateKey`/`OpenKey` carry a
 path (`RelativeName`, keyed by the `KeyObject` handle) and `CloseKey` releases
-it. `inputs/etw_registry.rs` keeps that handle → path cache, and
-`inputs/registry_format.rs` turns the native path into the `TargetObject`
+it. `sigmacatch-input-etw-common`'s `etw_registry.rs` keeps that handle → path
+cache, and `registry_format.rs` turns the native path into the `TargetObject`
 spelling rules use (`\REGISTRY\MACHINE\…` → `HKLM\…`, `\REGISTRY\USER\…` →
 `HKU\…`; both spellings of the prefix appear on the wire).
 
@@ -111,7 +111,8 @@ free-form string:
 Start IWbemServices::PutInstance - root\subscription : __EventFilter.Name="probe"
 ```
 
-`inputs/wmi_format.rs` parses it (method, namespace, class, `Name="…"`) and
+`sigmacatch-input-etw-common`'s `wmi_format.rs` parses it (method, namespace,
+class, `Name="…"`) and
 classifies like Sysmon: `__EventFilter` → 19, any `*EventConsumer` → 20,
 `__FilterToConsumerBinding` → 21, with `Created`/`Deleted` event types. A
 binding exposes the `Consumer="…"` and `Filter="…"` members the WMI object path

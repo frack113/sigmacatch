@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+//! Plumbing layer — raw git operations on top of grit-lib.
+//!
+//! Mirrors the architecture documented in the crate root:
+//!   Plumbing → Raw git ops: Odb, Index, commit, checkout, refs
+
+pub(crate) mod checkout;
+pub(crate) mod clone;
+pub(crate) mod commit;
+pub(crate) mod fetch;
+pub(crate) mod index;
+pub(crate) mod init;
+pub(crate) mod pack;
+pub(crate) mod push;
+pub(crate) mod refs;
+
+pub(crate) use checkout::{checkout_main_branch, open_odb};
+pub(crate) use clone::setup_sparse_checkout;
+pub(crate) use commit::commit_tree;
+pub(crate) use fetch::{
+    discover_and_fetch, fetch_options_for_branches, fetch_options_for_shallow_clone,
+    fetch_options_for_sigmacatch_namespace, fetch_options_for_unshallow, fetch_remote,
+};
+pub(crate) use index::{
+    PatchTreeError, add_directory_to_index, add_file_to_index, add_tree_to_index, patch_tree,
+    write_index,
+};
+pub(crate) use init::init_repo;
+pub(crate) use pack::pack_loose_objects;
+pub(crate) use push::push_branch;
+pub(crate) use refs::{
+    fast_forward_branch, list_sigmacatch_remote_refs, read_loose_or_packed_ref,
+    read_remote_url_from_config, resolve_head, set_head_after_fetch, symbolic_ref_target,
+};
+pub(crate) use sigma_regression::long_path;

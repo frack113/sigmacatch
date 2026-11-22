@@ -14,14 +14,14 @@ sigmacatch 5xx extensions, under the `sigmacatch` provider and the
 driver; the kernel driver (`driver`, implies `etw`) adds process, file, image,
 pipe and thread events that ETW cannot reach.*
 
-`inputs/windows.rs` runs the Event Log channels next to **exactly one** process
+`sigmacatch/src/inputs/windows.rs` runs the Event Log channels next to **exactly one** process
 source: the driver when its service is loaded and answers the current protocol
 version, native ETW otherwise. The ETW main session keeps running next to the
 driver, because network, DNS, registry, WMI and unloads are user-mode only.
 
-What sigmacatch produces today, per Sysmon event id and with the fields that
-stay absent, is [Sysmon coverage](coverage.md). The pages here explain the
-machinery behind it:
+What sigmacatch produces, per Sysmon event id and with the fields that stay
+absent, is [Sysmon coverage](coverage.md). The pages here explain the machinery
+behind it:
 
 | Page | Content |
 |---|---|
@@ -30,23 +30,23 @@ machinery behind it:
 | [Kernel driver](driver.md) | why a driver, callbacks, minifilter, protocol |
 | [Driver events](driver-events.md) | files, pipes, registry and thread events, 509/510 |
 | [Coverage](coverage.md) | event-by-event comparison with Sysmon (reference) |
-| [Measurements](evidence.md) | M0 provider measurements and the VM validation journal (reference) |
+| [Measurements](evidence.md) | provider measurements and VM verification (reference) |
 | [Dev VM](vm.md) | the QEMU box used to build and load the driver |
 
 ## Scope and decisions
 
 ### Environment
 
-The QEMU Windows 11 test VM (`heiter-test-vms-qemu`). No distribution target,
+The QEMU Windows 11 test VM. No distribution target,
 no code-signing budget: the kernel driver is test-signed there, and a
 distributable build is a separate signing effort. See
-[the driver decision](driver.md#decision-the-driver-replaces-sysmon).
+[why the driver replaces Sysmon](driver.md#why-the-driver-replaces-sysmon).
 
 ### No ferrisetw
 
-The crate is dormant (last push 2025-10), pins `windows` 0.61 against our 0.62,
-and its manifest decode is re-implementable on the `windows` crate we already
-depend on. Hand-roll on `windows` 0.62.2 (`Win32_System_Diagnostics_Etw`:
+The crate pins `windows` 0.61 against our 0.62, and its manifest decode is
+re-implementable on the `windows` crate we already depend on. Sigmacatch
+hand-rolls on `windows` 0.62.2 (`Win32_System_Diagnostics_Etw`:
 `StartTraceW`, `EnableTraceEx2`, `OpenTraceW`, `ProcessTrace`; TDH:
 `TdhGetEventInformation`, `TdhGetPropertySize`, `TdhGetProperty`).
 
@@ -54,7 +54,7 @@ depend on. Hand-roll on `windows` 0.62.2 (`Win32_System_Diagnostics_Etw`:
 
 `sigmacatch/driver/` supplies what user-mode ETW cannot reach (process
 create/exit, process access, file paths); see
-[the driver decision](driver.md#decision-the-driver-replaces-sysmon). User-mode
+[why the driver replaces Sysmon](driver.md#why-the-driver-replaces-sysmon). User-mode
 ETW stays as the portable fallback and the reference the driver output is
 compared against.
 
@@ -94,7 +94,7 @@ Concretely:
   full NT path when the base key is a root, so an event is committed only when
   the `BaseObject`/`KeyObject` chain resolves to a root.
 
-## What works today
+## What each feature adds
 
 - **Event Log channels** — always: they are in the default `winevt` build.
 - **`etw`** — adds Sysmon-schema process, network, registry, DNS, WMI and

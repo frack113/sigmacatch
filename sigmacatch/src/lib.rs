@@ -2,57 +2,36 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 //! Single `sigmacatch` package: one binary (`sigmacatch`) plus a second
-//! artifact (`regressiondata-check`). Cargo features select which inputs are
-//! compiled in:
-//! - Windows: `winevt` (live Event Log, default), `evtx` (one-shot EVTX files);
-//! - Linux: `auditd`, `builtin` (system syslog), `sysmon` (Sysmon-for-Linux
-//!   tail), `ebpf` (native probes).
+//! artifact (`regressiondata-check`). Cargo features select which input crates
+//! are linked in: `winevt` (default) and `evtx` everywhere, `etw` and `driver`
+//! on Windows, `auditd`/`builtin`/`sysmon`/`ebpf` on Linux, `macos` on macOS.
 //!
 //! The collection → detection → regression pipeline, configuration, rule
-//! management, the Sigma repo layer and the regression data generator all live
-//! here as plain modules. Only the input adapters and the eBPF probe code are
-//! gated by features.
+//! management, the Sigma repo layer and the regression data generator live in
+//! [`sigmacatch_core`] and are re-exported here. Only the input adapters and
+//! the eBPF probe code are gated by features.
 
-pub use crate::runner::{CollectorKind, bootstrap_repo_regression, run};
+pub use sigmacatch_core::{
+    CollectorKind, DataFormat, RegressionSink, RegressionSinkFactory, bootstrap_repo_regression,
+    cli, config, detection, evtx_reader, logging, repo, rule, run, runner, types,
+};
 
-/// Re-export of the regression data format so collector wrappers do not need
-/// a deep path into [`crate::regression`].
-pub use crate::regression::DataFormat;
+/// Regression-data output: shared vocabulary from core plus the concrete
+/// SigmaHQ writer crate.
+pub mod regression {
+    pub use sigmacatch_core::regression::*;
+    pub use sigmacatch_output_regression::{RegressionEntry, SigmahqRegression};
+}
 
-// Always compiled: diagnostic subcommands (check-filter, list-rules).
-pub mod cli;
+/// Output adapters. The binary builds the sink and injects it into the runner,
+/// mirroring how each input crate builds its event producer.
+pub mod outputs;
 
-/// Shared pipeline (trait + continuous run loop).
-pub mod runner;
+// Wire-format types for the eBPF ring buffer. The probe crate includes the
+// source directly via `#[path]`; the host adapter owns it.
+#[cfg(feature = "ebpf")]
+pub use sigmacatch_input_ebpf::ebpf_common;
 
-/// Logging bootstrap shared by `sigmacatch` and `regressiondata-check`.
-pub mod logging;
-
-/// Application configuration.
-pub mod config;
-
-/// Detection engine wrapped around rsigma-eval.
-pub mod detection;
-
-/// Sigma rule management.
-pub mod rule;
-
-/// SigmaHQ repository layer (clone, branch, commit, transport).
-pub mod repo;
-
-/// Regression data generator + validation structures.
-pub mod regression;
-
-/// Shared domain types (Event, Alert, EventProducer…).
-pub mod types;
-
-/// EVTX file parsing (cross-platform).
-pub mod evtx_reader;
-
-// Wire-format types for the eBPF ring buffer, shared with the probe crate
-// (`sigmacatch/ebpf`, which includes this file via `#[path]`).
-pub mod ebpf_common;
-
-// Input adapters. The whole `feature × platform` gate matrix lives in
-// `inputs/mod.rs`; this library exposes it unconditionally here.
+// Input adapters. Each crate owns its gates; `inputs/mod.rs` only aliases them
+// and hosts the two orchestrators.
 pub mod inputs;

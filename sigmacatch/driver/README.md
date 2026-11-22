@@ -67,9 +67,9 @@ Blocked / remaining:
   created from the parent's context, which made every process start look like
   an injection).
 
-The ring record is kind-tagged (`sigmacatch/src/windows/driver_protocol.rs`,
-shared with the user-mode client via `#[path]`), so adding a kind does not
-change the IOCTL layout.
+The ring record is kind-tagged (`sigmacatch/driver/protocol/`, shared with
+the user-mode client as `sigmacatch-driver-protocol`), so adding a kind does
+not change the IOCTL layout.
 
 ## Build
 

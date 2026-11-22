@@ -15,8 +15,9 @@ Contains two real regression entries, one per supported data format:
 ## Scrub policy
 
 Usernames are neutralized to `siguser1` (length-stable replacement so the
-binary `.evtx` stays byte-valid) and `info.yml` `author` fields are set to
-`sigmacatch`. Hostnames (`SigmaCatchVm`) and raw event data are kept
+binary `.evtx` stays byte-valid); the Linux `info.yml` `author` field is set
+to `sigmacatch`, the Windows one keeps its captured `siguser1`. Hostnames
+(`SigmaCatchVm`) and raw event data are kept
 byte-for-byte : the data is detection-valid only if it replays unchanged.
 
 Rules are upstream SigmaHQ copies with their `regression_tests_path` pointing
@@ -30,11 +31,14 @@ pointing at the rule, then `passwd -S` and a graceful stop
 (`touch .sigmacatch.stop`). The `.evtx` entry comes from the Win11 rig via
 the `--evtx` writer.
 
-## Sibling fixtures
+## Derived variants
 
-- `sigma_negative/` — same tree with the mimikatz `rules/` file removed ;
-  the `linux` job asserts non-zero exit on it.
-- `sigma_malformed/` + `sigma_malformed_reference/` — formatting
-  regressions (2-space info.yml indent, JSON lacking its trailing newline)
-  vs their normalized form ; the job asserts `--fix` reproduces the
-  reference byte-for-byte and leaves the committed tree untouched.
+The `linux` CI job (`.github/workflows/build.yml`) copies this tree into
+`$RUNNER_TEMP` and derives the negative and malformed cases there, so no
+duplicate trees are committed:
+
+- negative — the mimikatz `rules/` file is removed from the copy ; the job
+  asserts non-zero exit, with and without `--ignore`.
+- malformed — the mimikatz `.json` loses its trailing newline and its
+  `info.yml` is reindented to 2 spaces ; the job asserts `--fix` restores
+  this canonical tree byte-for-byte and leaves the committed tree untouched.

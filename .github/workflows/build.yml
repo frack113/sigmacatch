@@ -34,7 +34,7 @@ jobs:
         with:
           toolchain: stable
       # Cache the install-action tool cache (cargo-deny / cargo-machete binaries).
-      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-deny,cargo-machete
       - run: cargo deny check
@@ -74,25 +74,34 @@ jobs:
           jq -e '.total == 2 and .failed_count == 0' <<<"$out"
       - name: Negative — broken fixture fails (and --ignore must not mask it)
         run: |
+          neg="$RUNNER_TEMP/regress-negative"
+          rm -rf "$neg"
+          cp -r sigmacatch/tests/fixtures/sigma "$neg"
+          rm "$neg/rules/windows/builtin/win_alert_mimikatz_keywords.yml"
           set +e
-          out=$(./target/debug/regressiondata-check --json --path sigmacatch/tests/fixtures/sigma_negative)
+          out=$(./target/debug/regressiondata-check --json --path "$neg")
           rc=$?
           set -e
           printf '%s\n' "$out"
           [ "$rc" -ne 0 ]
           jq -e '.failed_count >= 1' <<<"$out"
           set +e
-          out=$(./target/debug/regressiondata-check --json --ignore --path sigmacatch/tests/fixtures/sigma_negative)
+          out=$(./target/debug/regressiondata-check --json --ignore --path "$neg")
           rc=$?
           set -e
           printf '%s\n' "$out"
           [ "$rc" -ne 0 ]
-      - name: --fix reproduces the normalized reference on a throwaway copy
+      - name: --fix reproduces the normalized tree on a throwaway copy
         run: |
           tmp="$RUNNER_TEMP/regress-malformed"
-          cp -r sigmacatch/tests/fixtures/sigma_malformed "$tmp"
+          rm -rf "$tmp"
+          cp -r sigmacatch/tests/fixtures/sigma "$tmp"
+          json="$tmp/regression_data/rules/windows/builtin/win_alert_mimikatz_keywords/06d71506-7beb-4f22-8888-e2e5e2ca7fd8.json"
+          info="$tmp/regression_data/rules/windows/builtin/win_alert_mimikatz_keywords/info.yml"
+          truncate -s -1 "$json"
+          sed -i 's/^    /  /' "$info"
           ./target/debug/regressiondata-check --fix --path "$tmp"
-          diff -r "$tmp" sigmacatch/tests/fixtures/sigma_malformed_reference
+          diff -r "$tmp" sigmacatch/tests/fixtures/sigma
           git diff --exit-code
 
   # ebpf needs nightly + rust-src + bpf-linker (build.rs) and must stay its

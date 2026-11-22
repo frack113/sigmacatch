@@ -13,98 +13,48 @@ license.workspace = true
 [lib]
 doctest = false
 
-# `md-5` is only reachable from the Windows `etw` path (`inputs/windows/nt_file.rs`)
-# and its crate name (`md5`) does not match the package name, which is what the
-# unused-dependency scan looks for.
-[package.metadata.cargo-machete]
-ignored = ["md-5"]
-
-# Inputs are selected with cargo features:
-#   Windows: winevt (live Event Log), evtx (one-shot EVTX files)
-#   Linux:   auditd, builtin (system syslog), sysmon (Sysmon-for-Linux tail), ebpf (native probes)
-#   macOS:   macos (Endpoint Security client)
-# At runtime, `--evtx <PATH>` selects the EVTX one-shot, `winevt` the live
-# collector (Windows), the Linux inputs run in parallel, and `macos` the
-# macOS Endpoint Security collector.
-#
-# Everything else (runner, detection, rules, repo, regression data generator)
-# is OS-independent and always compiled in. The `regressiondata-check` bin is
-# a second artifact of this package and needs no input features.
 [features]
 default = ["winevt"]
-winevt = []
-evtx = ["dep:walkdir"]
-etw = ["dep:md-5"]                            # native Windows ETW (no Sysmon)
-driver = ["etw"]                               # kernel sensor client (Windows)
-auditd = []
-builtin = ["dep:regex"]
-sysmon = ["builtin"]                          # Sysmon-for-Linux legacy tail
-ebpf = ["dep:aya", "dep:bytemuck", "dep:hex"]
-# Plan A (system.log/os_log) needs no extra dependency; Plan B (Endpoint
-# Security) pulls the macOS-only bindings, so they are optional and only
-# activated with this feature.
-macos = ["dep:endpoint-sec", "dep:libc"]
+winevt = ["dep:sigmacatch-input-winevt"]
+evtx = ["dep:sigmacatch-input-evtx"]
+etw = ["dep:sigmacatch-input-etw"]                  # native Windows ETW (no Sysmon)
+driver = ["etw", "dep:sigmacatch-input-etw-driver"]  # kernel sensor client (Windows)
+auditd = ["dep:sigmacatch-input-auditd", "dep:sigmacatch-input-tail"]
+builtin = ["dep:sigmacatch-input-syslog", "dep:sigmacatch-input-tail"]
+sysmon = ["builtin", "dep:sigmacatch-input-sysmon"] # Sysmon-for-Linux legacy tail
+ebpf = ["dep:sigmacatch-input-ebpf", "sigmacatch-input-ebpf/ebpf"]
+macos = ["dep:sigmacatch-input-macos"]
 
-[target.'cfg(not(unix))'.dependencies]
-dunce = "1.0.5"
+# Linux input crates are empty shells on other targets, so their re-exports in
+# `inputs/mod.rs` are Linux-only too. Target scoping keeps the dependency lint
+# quiet when a Linux feature is enabled on a Windows build.
+[target.'cfg(target_os = "linux")'.dependencies]
+sigmacatch-input-auditd = { path = "inputs/auditd", optional = true }
+sigmacatch-input-ebpf = { path = "inputs/ebpf", optional = true }
+sigmacatch-input-syslog = { path = "inputs/syslog", optional = true }
+sigmacatch-input-sysmon = { path = "inputs/sysmon", optional = true }
+sigmacatch-input-tail = { path = "inputs/tail", optional = true }
 
-# Endpoint Security is a macOS-only framework: the bindings are declared in a
-# target table so a Linux/Windows build never tries to link them. `max`
-# compiles every ES event type up to macOS 15.4; the collector still filters
-# subscriptions by the runtime macOS version.
-[target.'cfg(target_os = "macos")'.dependencies]
-endpoint-sec = { version = "0.6.2", features = ["max"], optional = true }
-libc = { version = "0.2.188", optional = true }
-
+# The ETW inputs are empty shells off Windows, like the Linux input crates.
+# Target scoping keeps the dependency lint quiet when an ETW feature is enabled
+# on Linux (e.g. `cargo clippy --all-features`).
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62.2", features = [
-  "Wdk_System_Threading",
-  "Win32_Foundation",
-  "Win32_Security",
-  "Win32_Security_Authorization",
-  "Win32_Security_Cryptography",
-  "Win32_Security_Cryptography_Catalog",
-  "Win32_Security_WinTrust",
-  "Win32_System_Console",
-  "Win32_System_Com",
-  "Win32_Storage_FileSystem",
-  "Win32_System_Diagnostics_Etw",
-  "Win32_System_Diagnostics_ToolHelp",
-  "Win32_System_EventLog",
-  "Win32_System_IO",
-  "Win32_System_Kernel",
-  "Win32_System_Threading",
-  "Win32_System_Time",
-] }
+sigmacatch-input-etw = { path = "inputs/etw", optional = true }
+sigmacatch-input-etw-driver = { path = "inputs/etw-driver", optional = true }
 
 [dependencies]
 anyhow = "1.0.104"
 async-trait = "0.1.92"
-aya = { version = "0.14.0", optional = true }
-bytemuck = { version = "1.25.2", default-features = false, features = [
-  "derive",
-], optional = true }
-chrono = "0.4.45"
-crc32fast = "1.5.4"
-evtx = "0.15.1"
-flate2 = "1.1.11"
-grit-lib = "0.5.31"
-hex = { version = "0.4.3", optional = true }
 linux-audit-parser = "0.2.8"
-phf = { version = "0.14.0", features = ["macros"] }
 rayon = "1.12.0"
-regex = { version = "1.13.1", optional = true }
-roxmltree = "0.21.2"
-rsigma-eval = { version = "0.26.0", features = ["daachorse-index", "parallel"] }
-rsigma-parser = "0.26.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-serde_yaml = { package = "yaml_serde", version = "0.10.7" }
-md-5 = { version = "0.10.6", optional = true }
-sha1 = "0.11.0"
-sha2 = "0.11.1"
-ssh-key = { version = "0.6.7", features = ["alloc", "ed25519"] }
-thiserror.workspace = true
+sigma-regression = { path = "sigma-regression" }
+sigmacatch-core = { path = "core" }
+sigmacatch-output-regression = { path = "outputs/regression" }
+sigmacatch-input-evtx = { path = "inputs/evtx", optional = true }
+sigmacatch-input-macos = { path = "inputs/macos", optional = true }
+sigmacatch-input-winevt = { path = "inputs/winevt", optional = true }
 tokio = { version = "1.54.1", features = [
   "rt",
   "rt-multi-thread",
@@ -117,17 +67,12 @@ tokio = { version = "1.54.1", features = [
   "process",
 ] }
 tracing.workspace = true
-tracing-appender = "0.2.5"
 tracing-subscriber.workspace = true
-uuid = { version = "1.29.1", features = ["v4", "serde"] }
-walkdir = { version = "2.5.0", optional = true }
+uuid = { version = "1.29.3", features = ["v4", "serde"] }
 
 [dev-dependencies]
-md-5 = "0.10.6"
-rand_core = { version = "0.6.4", features = ["getrandom"] }
 tempfile = "3.27.0"
 
-# Integration tests: each requires its input features compiled in.
 [[test]]
 name = "auditd_collector"
 required-features = ["auditd", "builtin"]
@@ -140,26 +85,9 @@ required-features = ["builtin"]
 name = "syslog_e2e"
 required-features = ["auditd", "builtin"]
 
-# End-to-end against the legacy Sysmon-for-Linux tail.
 [[test]]
 name = "sysmon_e2e"
 required-features = ["auditd", "builtin", "sysmon"]
 
-# Diagnostics eBPF-only (parses the embedded probe object).
-[[example]]
-name = "ebpf_parse_check"
-required-features = ["ebpf"]
-
-# ETW probe: starts the real sessions and dumps decoded provider events.
-[[example]]
-name = "etw_dump"
-required-features = ["etw"]
-
-# Kernel-sensor smoke test.
-[[example]]
-name = "etw_driver_probe"
-required-features = ["driver"]
-
-# Quality contract: inherit workspace lint tiers ([workspace.lints] in root Cargo.toml).
 [lints]
 workspace = true

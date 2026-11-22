@@ -78,8 +78,8 @@ create it.
   `x86_64-apple-darwin` linker needs the Apple SDK). A type-check-only
   cross-check works from Linux; see [Build](../build.md#macos).
 - **Root** — the collector runs under root, same as the Linux auditd path.
-- **No CI runner** — until one exists, the native in-VM build is the gate for
-  macOS changes.
+- **CI coverage** — build, test, lint and release jobs run on `macos-15-intel`
+  runners; the in-VM build stays the gate for native entitlement behaviour.
 
 The `eslogger` backend is verified live on the [dev VM](vm.md): NDJSON
 parsed, events pushed, `product: macos` rules loaded and matching.

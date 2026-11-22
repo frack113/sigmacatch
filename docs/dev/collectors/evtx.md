@@ -1,10 +1,11 @@
 # One-shot EVTX input
 
-The `evtx` input (feature `evtx`) is a `CollectorKind` with
-`live_capture() = false`: it runs through the same shared `run()` pipeline as
-the continuous collectors, in one-shot mode — enumerate `.evtx` files, parse
-each event (`evtx_reader`), feed the `DetectionEngine`, then reuse the shared
-`SigmahqRegression` + `SigmaRepo` machinery to write `DataFormat::Evtx`
+The `evtx` input (`sigmacatch-input-evtx`, feature `evtx`) is a `CollectorKind`
+with `live_capture() = false`: it runs through the same shared `run()` pipeline
+as the continuous collectors, in one-shot mode — enumerate `.evtx` files, parse
+each event (`sigmacatch-core`'s `evtx_reader`), feed the `DetectionEngine`,
+then reuse `sigmacatch-output-regression` and `sigmacatch-repo` to write
+`DataFormat::Evtx`
 regression data (always via the pure-Rust EVTX writer, never `EvtExportLog`)
 and commit/push it to the fork.
 

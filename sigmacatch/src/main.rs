@@ -19,6 +19,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use sigmacatch::config::parse_args;
+use sigmacatch::outputs::regression_sink_factory;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -29,17 +30,21 @@ async fn main() -> Result<()> {
     }
     // Single argument parse for the whole run (help/unknown flags, --evtx…).
     let cli = parse_args();
+    let factory = regression_sink_factory();
     if cli.evtx_path.is_some() {
-        return run_evtx(cli.evtx_path).await;
+        return run_evtx(cli.evtx_path, factory).await;
     }
-    dispatch_collector().await
+    dispatch_collector(factory).await
 }
 
 #[allow(unused_variables)]
-async fn run_evtx(evtx_path: Option<PathBuf>) -> Result<()> {
+async fn run_evtx(
+    evtx_path: Option<PathBuf>,
+    factory: &dyn sigmacatch::RegressionSinkFactory,
+) -> Result<()> {
     #[cfg(feature = "evtx")]
     {
-        sigmacatch::inputs::evtx::run(evtx_path).await
+        sigmacatch::inputs::evtx::run(evtx_path, factory).await
     }
     #[cfg(not(feature = "evtx"))]
     {
@@ -51,17 +56,18 @@ async fn run_evtx(evtx_path: Option<PathBuf>) -> Result<()> {
 }
 
 /// Dispatch to the compiled-in platform input. Each arm is `#[cfg]`-gated; on
-/// a given build exactly one platform arm is live, so the trailing bail is
-/// unreachable there (allowed).
-#[allow(unreachable_code)]
-async fn dispatch_collector() -> Result<()> {
+/// a given build either one platform arm consumes `factory` or no arm is live,
+/// which makes the trailing bail unreachable. The `#[allow]` covers both
+/// build-dependent unused bindings.
+#[allow(unreachable_code, unused_variables)]
+async fn dispatch_collector(factory: &dyn sigmacatch::RegressionSinkFactory) -> Result<()> {
     #[cfg(all(target_os = "windows", feature = "winevt"))]
     {
-        return sigmacatch::inputs::windows::run().await;
+        return sigmacatch::inputs::windows::run(factory).await;
     }
     #[cfg(all(target_os = "macos", feature = "macos"))]
     {
-        return sigmacatch::inputs::macos_es::run().await;
+        return sigmacatch::inputs::macos_es::run(factory).await;
     }
     #[cfg(all(
         target_os = "linux",
@@ -73,7 +79,7 @@ async fn dispatch_collector() -> Result<()> {
         )
     ))]
     {
-        return sigmacatch::inputs::linux::run().await;
+        return sigmacatch::inputs::linux::run(factory).await;
     }
     anyhow::bail!(
         "no usable input compiled into this build — rebuild with one of:\n  \

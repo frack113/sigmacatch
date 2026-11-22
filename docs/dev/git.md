@@ -3,7 +3,8 @@
 How sigmacatch interacts with the SigmaHQ repository: clone, working branch,
 per-rule commits, push to your fork, and the skip set that keeps a fresh VM
 from re-capturing data that is already on a pending PR. All git operations
-run through **grit-lib** (pure Rust) in the `repo` module — never a `git`
+run through **grit-lib** (pure Rust) in the `sigmacatch-repo` crate
+(`sigmacatch/repo/`, re-exported as `sigmacatch_core::repo`) — never a `git`
 binary on PATH. The configuration keys for every step live in
 [config.md](../user/config.md#git).
 
