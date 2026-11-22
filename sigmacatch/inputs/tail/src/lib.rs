@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 //! Shared tail driver for the Linux collectors (auditd, syslog, sysmon).
+
+#![cfg(target_os = "linux")]
 //!
 //! Reads appended lines from a log file, detects log rotation (inode change)
 //! and hands each complete line to a [`LineHandler`]. The handler is pure — it
@@ -29,7 +31,7 @@
 //! `timeout(…, rx.recv())` everywhere else. A deadline paired with a
 //! predicate is a bound; an unguarded `sleep` is a gamble.
 
-use crate::types::Event;
+use sigmacatch_core::types::Event;
 use tokio::sync::{mpsc, oneshot, watch};
 
 /// Poll interval of the tail loop (how often new bytes are read from the file).

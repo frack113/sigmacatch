@@ -3,7 +3,12 @@
 
 [workspace]
 resolver = "2"
-members = ["sigmacatch", "sigmacatch/core", "sigmacatch/inputs/ebpf"]
+members = [
+  "sigmacatch",
+  "sigmacatch/core",
+  "sigmacatch/inputs/ebpf",
+  "sigmacatch/inputs/tail",
+]
 
 # The ebpf probe (sigmacatch/ebpf) is excluded: built separately by build.rs.
 [workspace.package]

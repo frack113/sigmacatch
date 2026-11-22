@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[package]
+name = "sigmacatch-input-tail"
+version.workspace = true
+edition.workspace = true
+description = "sigmacatch shared log tail driver for Linux collectors"
+license.workspace = true
+
+[lib]
+doctest = false
+
+# The driver is Unix-only (file identity via MetadataExt). Target-scoping the
+# dependencies keeps the crate empty — and warning-free — on Windows.
+[target.'cfg(target_os = "linux")'.dependencies]
+anyhow = "1.0.104"
+sigmacatch-core = { path = "../../core" }
+tokio = { version = "1.54.1", features = ["sync", "time"] }
+tracing.workspace = true
+
+[lints]
+workspace = true

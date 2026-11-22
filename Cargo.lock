@@ -2502,6 +2502,7 @@ dependencies = [
  "sha1",
  "sigmacatch-core",
  "sigmacatch-input-ebpf",
+ "sigmacatch-input-tail",
  "tempfile",
  "tokio",
  "tracing",
@@ -2562,6 +2563,16 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "sigmacatch-input-tail"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "sigmacatch-core",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

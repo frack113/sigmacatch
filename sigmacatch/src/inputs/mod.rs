@@ -62,20 +62,13 @@ pub mod auditd;
 #[cfg(all(target_os = "linux", feature = "builtin"))]
 pub mod syslog;
 // Shared line-tail driver (Linux `MetadataExt`), compiled with any tail-based
-// input.
-#[cfg(all(
-    target_os = "linux",
-    any(feature = "auditd", feature = "builtin", feature = "sysmon")
-))]
-mod tail;
+// input. The crate is empty off Linux; callers below are themselves gated.
+#[cfg(any(feature = "auditd", feature = "builtin", feature = "sysmon"))]
+pub use sigmacatch_input_tail as tail;
 // Test hook, publicly reachable so integration tests can arm the injected
-// tail timing / READY barrier through the collector constructors. Only the
-// knob type is exposed — `TailState` stays private.
-#[cfg(all(
-    target_os = "linux",
-    any(feature = "auditd", feature = "builtin", feature = "sysmon")
-))]
-pub use tail::TailOptions;
+// tail timing / READY barrier through the collector constructors.
+#[cfg(any(feature = "auditd", feature = "builtin", feature = "sysmon"))]
+pub use sigmacatch_input_tail::TailOptions;
 // Parsed by the `builtin` collector (not `sysmon`): the built-in syslog tail
 // must recognise Sysmon-for-Linux XML lines so it can hand them to `sysmon`.
 #[cfg(all(target_os = "linux", feature = "ebpf"))]
