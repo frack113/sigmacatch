@@ -2,7 +2,10 @@
 <!-- SPDX-FileCopyrightText: 2026 sigmacatch contributors -->
 <!-- markdownlint-disable MD033 MD041 -->
 <p align="center">
-  <img src="docs/media/logo.svg" alt="sigmacatch logo" width="240" height="118">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/media/logo-dark.svg">
+    <img src="docs/media/logo-light.svg" alt="sigmacatch logo" width="240" height="118">
+  </picture>
 </p>
 
 <h1 align="center">sigmacatch</h1>
@@ -12,7 +15,7 @@
   <a href=".github/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/frack113/sigmacatch/release.yml?label=release" alt="release"></a>
   <a href="https://frack113.github.io/sigmacatch/"><img src="https://img.shields.io/github/actions/workflow/status/frack113/sigmacatch/documentation.yml?label=docs" alt="docs"></a>
   <a href="https://github.com/frack113/sigmacatch/releases"><img src="https://img.shields.io/github/v/release/frack113/sigmacatch?label=latest" alt="latest release"></a>
-  <img src="https://img.shields.io/badge/rust-1.96%2B-6551af?logo=rust&logoColor=white" alt="Rust 1.96+">
+  <img src="https://img.shields.io/badge/rust-1.97.1%2B-6551af?logo=rust&logoColor=white" alt="Rust 1.97.1+">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/frack113/sigmacatch" alt="License"></a>
 </p>
 <!-- markdownlint-enable MD033 MD041 -->

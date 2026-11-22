@@ -7,15 +7,12 @@ through a versioned ring buffer that the collector drains on
 `\\.\sigmacatch`.
 
 The per-id result is [Sysmon coverage](coverage.md); the event-by-event
-implementation notes are [Driver events](driver-events.md); the validation
-journal is [Measurements](evidence.md#vm-validation-2026-11-14).
+implementation notes are [Driver events](driver-events.md); how it was verified is in [Measurements](evidence.md#vm-validation).
 
-## Decision: the driver replaces Sysmon
+## Why the driver replaces Sysmon
 
-Recorded on 2026-11-14, after the ETW spike showed what user mode cannot reach.
-The driver is what delivers the sigmacatch taxonomy — the Sysmon-schema ids plus
-the 5xx extensions — in place of Sysmon; it is implemented and validated on the
-VM.
+The driver delivers the sigmacatch taxonomy — the Sysmon-schema ids plus the
+5xx extensions — in place of Sysmon, for the ids user mode cannot reach.
 
 The project exists **to produce Sysmon-schema telemetry on hosts that do not
 have Sysmon**. "Hosts without Sysmon" is therefore the target environment, not
@@ -34,9 +31,9 @@ Two layers, same output:
   23/26 (files, streams, pipes, deletes), 14 (key rename), 29 (PE written),
   503-506 (rename/chmod/chown/truncate) and 509/510 (open for write, write).
   With the driver loaded, the ETW **main** session alone still runs (network,
-  DNS, WMI, registry 12/13, image/driver unload): `inputs/windows.rs` starts one
-  process source, the two producers share the pid→image cache, and nothing is
-  reported twice.
+  DNS, WMI, registry 12/13, image/driver unload):
+  `sigmacatch/src/inputs/windows.rs` starts one process source, the two
+  producers share the pid→image cache, and nothing is reported twice.
 
 Constraints accepted up front:
 
@@ -53,19 +50,17 @@ Constraints accepted up front:
 ## How the pieces fit
 
 ```text
-sigmacatch/driver/            # kernel sensor (excluded from the workspace)
-├── src/lib.rs                # DriverEntry, control device \Device\sigmacatch,
-│                             #   IOCTLs, ring buffer, process/image/thread/registry callbacks
-└── src/flt.rs                # hand-written fltmgr FFI + minifilter (file/pipe events)
+sigmacatch/driver/                 # kernel sensor (outside the workspace)
+├── src/lib.rs                    # DriverEntry, control device \Device\sigmacatch,
+│                                 #   IOCTLs, ring buffer, process/image/thread/registry callbacks
+├── src/flt.rs                    # hand-written fltmgr FFI + minifilter (file/pipe events)
+└── protocol/                     # sigmacatch-driver-protocol, workspace member
+    └── src/protocol.rs           # wire record + IOCTLs (v6), shared with the client
 
-sigmacatch/src/windows/       # shared with the driver crate via #[path]
-├── driver_protocol.rs        # wire record + IOCTLs (one source of truth, v6)
-├── nt_file.rs                # NT path helpers, same_file, hashes
-├── signature.rs              # WinVerifyTrust + security-catalog pass
-└── version_info.rs           # PE version resource
-
-sigmacatch/src/inputs/etw_driver.rs  # client: open device, check version,
-                                     # drain IOCTL_READ_EVENTS, map kind → Sysmon event
+sigmacatch/inputs/etw-common/src/ # sigmacatch-input-etw-common: NT paths,
+                                 #   signature and PE version helpers
+sigmacatch/inputs/etw-driver/src/lib.rs  # client: open device, check version,
+                                         #   drain IOCTL_READ_EVENTS, map kind → Sysmon event
 ```
 
 The ring record is kind-tagged: one fixed layout carries every event, and the

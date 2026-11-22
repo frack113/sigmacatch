@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Rust 2024 edition — 1.96+ required by rsigma 0.26 (the workspace does not
+- Rust 2024 edition — 1.97.1+ required by rsigma 0.27 (the workspace does not
   declare a `rust-version` field)
 - For Windows cross-compilation from Linux: `cargo install cargo-xwin`
   (auto-downloads Windows SDK)
@@ -103,9 +103,9 @@ The artifact is `sigmacatch_driver.dll`; rename it to `.sys` for the service
 `.github/workflows/driver.yml` is the gate: it pins WDK 10.0.22621 and LLVM
 17.0.6, and the local dev VM
 ([Windows dev VM](windows/vm.md), `scripts/dev_win_build.sh`) builds with the
-same settings. Driver and collector share `src/windows/driver_protocol.rs`
-(wire record + IOCTLs, protocol version 6): a mismatched pair logs a warning and
-the collector runs on ETW alone.
+same settings. Driver and collector both depend on `sigmacatch/driver/protocol/`
+(`sigmacatch-driver-protocol`: wire record + IOCTLs, protocol version 6): a
+mismatched pair logs a warning and the collector runs on ETW alone.
 
 > The `etw` feature has no dedicated CI job — the Windows CI job builds
 > `winevt` and `winevt+evtx`. Cross-build it before a PR:

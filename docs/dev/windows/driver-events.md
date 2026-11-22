@@ -75,7 +75,8 @@ EID 510 for the destination, where a per-chunk report would have produced fifty.
 `Hashes` on 1/6/7/15/29 is `SHA1=…,SHA256=…,MD5=…,IMPHASH=…`, computed in user
 mode: the kernel never reads file content. The IMPHASH follows FireEye's
 `pefile` algorithm (lowercased DLL name without `.dll`/`.ocx`/`.sys`, then each
-imported function, joined and MD5'd) — `inputs/pe_format.rs` implements it as a
+imported function, joined and MD5'd) — `sigmacatch-input-etw-common`'s
+`pe_format.rs` implements it as a
 pure, bounds-checked reader, and it was cross-checked against an independent
 Python implementation on `cmd.exe`: 287 import pairs, same digest
 (`010b165e4c37f484601d3dbd700c9423`). Ordinals of `ws2_32.dll`/`oleaut32.dll`
@@ -96,4 +97,4 @@ catalog-signed images.
 The create-time, create/delete/rename, ACL/owner, truncate, raw-read, driver
 load and PE-detected events (EID 2/11/23/503/504/505/506/9/6/29) are covered by
 the minifilter and the image/process callbacks; their implementation details
-and measured traces are in the [validation journal](evidence.md#vm-validation-2026-11-14).
+and measured traces are in [Measurements](evidence.md#vm-validation).

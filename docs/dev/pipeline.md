@@ -1,9 +1,9 @@
 # Pipeline
 
-The shared `run<C: CollectorKind>()` runner in `runner.rs` drives every
-collector — continuous and one-shot alike. Collectors push events into an
-mpsc channel; the runner runs the detection engine and the regression
-generation off it.
+The shared `run<C: CollectorKind>()` runner in
+`sigmacatch-core/src/runner.rs` drives every collector — continuous and
+one-shot alike. Collectors push events into an mpsc channel; the runner runs
+the detection engine and the regression generation off it.
 
 <!-- markdownlint-disable MD033 -->
 <iframe src="../media/interactive/run-pipeline.html?embed=1" loading="lazy"

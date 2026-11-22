@@ -9,6 +9,7 @@ edit_uri: edit/main/docs/
 theme:
   name: material
   language: en
+  logo: media/logo-light.svg
   palette:
     - scheme: default
       primary: deep purple
@@ -68,9 +69,12 @@ nav:
       - Sysmon coverage: dev/windows/coverage.md
       - Measurements: dev/windows/evidence.md
       - Dev VM: dev/windows/vm.md
-    - macOS:
+    - Mac telemetry:
       - Overview: dev/macos/index.md
       - Dev VM: dev/macos/vm.md
+    - Linux telemetry:
+      - Overview: dev/linux/index.md
+      - Dev VM: dev/linux/vm.md
     - Pipeline: dev/pipeline.md
     - Design Notes: dev/design-notes.md
     - Build: dev/build.md

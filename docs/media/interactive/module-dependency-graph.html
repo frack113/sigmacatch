@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="generator" content="archify 3.2.0">
   <meta name="archify-reader-contract" content="declared-wide-v1">
-  <title>Module dependency graph Diagram</title>
+  <title>Crate dependency graph Diagram</title>
   <script>try{localStorage.setItem('archify-motion','live')}catch(e){}</script><script>
     // Resolve the theme before first paint so light-preference users don't
     // see a dark flash. The toolbar script below re-applies with UI state.
@@ -5194,19 +5194,19 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
            data-preset-badge-blueprint="BLUEPRINT / REV 01"
            data-preset-badge-editorial="EDITORIAL / FIELD NOTE">
         <div class="pulse-dot"></div>
-        <h1>Module dependency graph</h1>
+        <h1>Crate dependency graph</h1>
       </div>
-      <p class="subtitle">Which module calls which; inputs implement the CollectorKind contract that the runner drives.</p>
+      <p class="subtitle">Inputs implement CollectorKind; sigmacatch-core drives them, sigmacatch-repo + sigma-regression persist the result.</p>
     </div>
 
-
+    <script id="archify-source-evidence-data" type="application/json">{"schemaVersion":1,"verified":true,"repository":{"url":"git@github.com:frack113/sigmacatch","revision":"d10b887d2bc275de28cfb03bd21b5569fcf9ab93","shortRevision":"d10b887","label":"frack113/sigmacatch","linkMode":"local-only"},"referenceCount":19,"nodes":{"winevt":[{"path":"sigmacatch/inputs/winevt/Cargo.toml","line":5}],"etw":[{"path":"sigmacatch/inputs/etw/Cargo.toml","line":5}],"etwcommon":[{"path":"sigmacatch/inputs/etw-common/Cargo.toml","line":5}],"etwdriver":[{"path":"sigmacatch/inputs/etw-driver/Cargo.toml","line":5}],"macos":[{"path":"sigmacatch/inputs/macos/Cargo.toml","line":5}],"linuxin":[{"path":"sigmacatch/inputs/auditd/Cargo.toml","line":5}],"evtxin":[{"path":"sigmacatch/inputs/evtx/Cargo.toml","line":5}],"dispatch":[{"path":"sigmacatch/src/main.rs","line":1}],"runner":[{"path":"sigmacatch/core/src/runner.rs","line":1}],"config":[{"path":"sigmacatch/core/src/config.rs","line":1}],"types":[{"path":"sigmacatch/core/src/types.rs","line":1}],"rule":[{"path":"sigmacatch/core/src/rule/mod.rs","line":1}],"detection":[{"path":"sigmacatch/core/src/detection/mod.rs","line":1}],"regression":[{"path":"sigmacatch/core/src/regression/mod.rs","line":1}],"repo":[{"path":"sigmacatch/repo/src/lib.rs","line":1}],"protocol":[{"path":"sigmacatch/driver/protocol/src/lib.rs","line":1}],"outreg":[{"path":"sigmacatch/outputs/regression/Cargo.toml","line":5}],"outevtx":[{"path":"sigmacatch/outputs/evtx/Cargo.toml","line":5}],"validator":[{"path":"sigmacatch/src/bin/regressiondata-check.rs","line":1}]}}</script>
     <script id="archify-i18n-data" type="application/json">{"locale":"en","messages":{"viewer.kind.frontend":"Frontend","viewer.kind.backend":"Backend","viewer.kind.database":"Database","viewer.kind.cloud":"Cloud","viewer.kind.security":"Security","viewer.kind.messagebus":"Message bus","viewer.kind.external":"External","viewer.kind.neutral":"Neutral","viewer.kind.node":"Node","viewer.kind.start":"Start","viewer.kind.active":"Active","viewer.kind.waiting":"Waiting","viewer.kind.decision":"Decision","viewer.kind.success":"Success","viewer.kind.failure":"Failure","viewer.toolbar.actions":"Diagram actions","viewer.theme.toggle.title":"Toggle theme (T)","viewer.theme.toggle":"Toggle color theme","viewer.theme.dark":"Dark","viewer.theme.light":"Light","viewer.preset.choose.title":"Choose visual style (S cycles)","viewer.preset.choose":"Choose visual style","viewer.preset.style":"Style","viewer.preset.menu":"Visual style","viewer.preset.identity":"Visual identity","viewer.preset.cycles":"to cycle","viewer.preset.classic":"Classic","viewer.preset.classic.short":"Classic","viewer.preset.classic.hint":"Stable technical default","viewer.preset.flow":"Signal Flow","viewer.preset.flow.short":"Flow","viewer.preset.flow.hint":"Motion-forward presentation","viewer.preset.blueprint":"Blueprint","viewer.preset.blueprint.hint":"Engineering review","viewer.preset.editorial":"Editorial","viewer.preset.editorial.hint":"Publication and launch notes","viewer.preset.badge.signalFlow":"SIGNAL FLOW","viewer.preset.badge.blueprint":"BLUEPRINT / REV 01","viewer.preset.badge.editorial":"EDITORIAL / FIELD NOTE","viewer.preset.badge.editorialPlate":"ARCHIFY / PLATE 04","viewer.preset.current":"Visual style: {style}. Choose visual style","viewer.motion.live":"Live","viewer.motion.still":"Still","viewer.motion.pause":"Pause motion","viewer.motion.resume":"Resume motion","viewer.motion.reduced":"Motion paused by reduced-motion preference","viewer.motion.hidden":"Motion paused while this page is hidden","viewer.motion.yielding":"Pause motion; currently yielding to {owner}","viewer.motion.yielding.title":"Live preview enabled · yielding to {owner}","viewer.owner.route":"Route Probe","viewer.owner.lens":"Semantic Lens","viewer.owner.relationship":"Relationship Preview","viewer.owner.intent":"Intent Trace","viewer.owner.focus":"semantic focus","viewer.owner.legend":"legend preview","viewer.owner.reader":"reader interaction","viewer.present.enter":"Enter presentation stage","viewer.present.enter.title":"Presentation stage (F)","viewer.present.exit":"Exit presentation stage","viewer.present.exit.title":"Exit presentation stage (F or Escape)","viewer.present.present":"Present","viewer.present.exit.label":"Exit","viewer.export.button":"Export","viewer.export.button.title":"Export diagram (E)","viewer.export.diagram":"Export diagram","viewer.export.menu":"Export","viewer.export.subtitle":"Portable, clean outputs","viewer.export.share":"Share","viewer.export.shareCard":"Share Card","viewer.export.routeShareCard":"Route Share Card","viewer.export.reachShareCard":"Reach Share Card","viewer.export.copyDiagram":"Copy diagram","viewer.export.clipboardPng":"PNG to clipboard","viewer.export.raster":"Raster images","viewer.export.image":"Image","viewer.export.lossless":"Lossless image","viewer.export.compact":"Compact image","viewer.export.modern":"Modern image","viewer.export.vectorMotion":"Vector and motion","viewer.export.vectorMotion.heading":"Vector \u0026 motion","viewer.export.editable":"Editable vector","viewer.export.svg.auto":"SVG · Auto","viewer.export.svg.auto.hint":"Matches host theme","viewer.export.svg.light":"SVG · Light","viewer.export.svg.light.hint":"Always light","viewer.export.svg.dark":"SVG · Dark","viewer.export.svg.dark.hint":"Always dark","viewer.export.motion6s":"6s motion","viewer.export.unsupported":"Not supported by this browser","viewer.export.clipboardUnsupported":"Clipboard image write not supported by this browser","viewer.export.clipboardUnsupported.short":"Clipboard image write not supported in this browser.","viewer.export.motionUnavailable":"Motion capture unavailable in this browser","viewer.export.webmUnavailable":"WebM unavailable in this browser","viewer.export.failed":"Export failed: {message}","viewer.export.unknownVariant":"Unknown Share Card variant: {variant}","viewer.export.routeRequired":"Trace a route before exporting a Route Share Card","viewer.export.reachRequired":"Trace authored reach before exporting a Reach Share Card","viewer.export.unknown":"unknown","viewer.export.routeFailed":"Route Share Card export failed: {message}","viewer.export.reachFailed":"Reach Share Card export failed: {message}","viewer.export.copyFailed":"Copy failed: {message}","viewer.export.copiedPng":"Copied PNG to clipboard","viewer.export.downloadedRoute":"Downloaded Route Share Card","viewer.export.downloadedReach":"Downloaded Reach Share Card","viewer.export.downloadedWebm":"Downloaded WebM","viewer.export.recording":"Recording 6 seconds of motion…","viewer.export.card.routeSummary.one":"Path: {source} → {target} · {count} step","viewer.export.card.routeSummary.other":"Path: {source} → {target} · {count} steps","viewer.export.card.reachSummary":"Authored {direction} from {origin} · {nodes} · {links} · max {hops}","viewer.export.card.node.one":"{count} node","viewer.export.card.node.other":"{count} nodes","viewer.export.card.link.one":"{count} link","viewer.export.card.link.other":"{count} links","viewer.export.card.hop.one":"{count} hop","viewer.export.card.hop.other":"{count} hops","viewer.export.card.routeBadge":"ARCHIFY · ROUTE · {hops}","viewer.export.card.reachBadge":"ARCHIFY · {direction} REACH","viewer.export.direction.upstream":"Upstream","viewer.export.direction.downstream":"Downstream","viewer.export.error.canvasUnavailable":"Canvas unavailable for {label}","viewer.export.error.contextUnavailable":"2D canvas context unavailable for {label}","viewer.export.error.toBlobUnavailable":"canvas.toBlob unavailable for {label}","viewer.export.error.toBlobNull":"canvas.toBlob returned no data for {label}","viewer.export.error.variantsCombined":"Share Card variants cannot be combined","viewer.export.error.viewerState":"Share Card export could not remove temporary viewer state","viewer.export.error.routeState":"Route Card export could not preserve the resolved route safely","viewer.export.error.reachState":"Reach Card export could not preserve authored reach safely","viewer.export.error.webmRequirements":"WebM motion export requires a trace animation and browser MediaRecorder support","viewer.export.error.mediaRecorder":"MediaRecorder failed","viewer.export.error.emptyWebm":"MediaRecorder produced an empty WebM","viewer.export.error.webmBackground":"SVG background could not be loaded for WebM export","viewer.guide.title":"Explore this system","viewer.focus.selectedNodes":"{count} selected nodes","viewer.guide.eyebrow":"Diagram guide","viewer.guide.close":"Close diagram guide","viewer.guide.inspecting":"Inspecting compiled semantics","viewer.guide.actions":"Diagram exploration actions","viewer.guide.find":"Find any node","viewer.guide.find.hint":"Search labels, responsibilities, kinds, and stable IDs.","viewer.guide.route":"Trace a route","viewer.guide.route.aria":"Trace a directed route","viewer.guide.route.hint":"Ask how two semantic nodes connect in authored direction.","viewer.guide.map":"See the whole system","viewer.guide.map.hint":"Open Semantic Radar with a live viewport and stable nodes.","viewer.guide.lens":"Compare semantic kinds","viewer.guide.lens.hint":"Count roles, reveal their traffic, and compare direct authored links.","viewer.guide.present":"Enter Presentation Stage","viewer.guide.present.hint":"Give the live diagram the viewport without changing export.","viewer.guide.shortcuts":"Additional keyboard shortcuts","viewer.guide.shortcut.export":"Export","viewer.guide.shortcut.theme":"Theme","viewer.guide.shortcut.style":"Style","viewer.guide.shortcut.reset":"Reset","viewer.guide.shortcut.zoomIn":"Zoom in","viewer.guide.shortcut.zoomOut":"Zoom out","viewer.guide.shortcut.close":"Close","viewer.guide.credit":"Find Archify useful? A star on GitHub helps","viewer.guide.star":"Star","viewer.guide.facts":"{nodes} · {relationships}","viewer.guide.fact.node.one":"{count} semantic node","viewer.guide.fact.node.other":"{count} semantic nodes","viewer.guide.fact.relationship.one":"{count} relationship","viewer.guide.fact.relationship.other":"{count} relationships","viewer.guide.open":"Open diagram guide","viewer.finder.title":"Find a node","viewer.finder.close":"Close node finder","viewer.finder.placeholder":"Search labels or IDs","viewer.finder.search":"Search diagram nodes","viewer.finder.results":"Diagram nodes","viewer.finder.empty":"No matching nodes","viewer.finder.result.focus":"Focus {label}","viewer.finder.result.routeStart":"Choose {label} as route start","viewer.finder.result.routeTarget":"Choose {label} as route destination, {links}","viewer.finder.status.empty":"No matching nodes","viewer.finder.status.count.one":"{count} matching node","viewer.finder.status.count.other":"{count} matching nodes","viewer.finder.noun.nodes":"nodes","viewer.finder.link.one":"{count} link","viewer.finder.link.other":"{count} links","viewer.finder.result.focus.one":"Focus {label}, {count} related connection","viewer.finder.result.focus.other":"Focus {label}, {count} related connections","viewer.finder.status.filtered":"{visible} of {available} {noun}","viewer.finder.status.all":"{available} {noun}","viewer.passport.eyebrow":"Semantic passport","viewer.passport.metadata":"Node metadata","viewer.passport.evidence":"Verified source evidence","viewer.passport.verified":"Verified source","viewer.passport.verificationScope":"Verified against local Git at the pinned revision. Remote access has not been checked.","viewer.passport.reach":"Authored reach","viewer.passport.reach.trace":"Trace authored reachability","viewer.passport.upstream":"Upstream","viewer.passport.downstream":"Downstream","viewer.passport.upstream.trace":"Trace upstream authored reachability","viewer.passport.downstream.trace":"Trace downstream authored reachability","viewer.passport.close":"Close semantic passport","viewer.passport.move":"Move semantic passport. Drag, use arrow keys, or press Home to reset.","viewer.passport.copy":"Copy link","viewer.passport.copy.focus":"Copy link to focused node","viewer.passport.relations":"Relations","viewer.passport.relations.show":"Show connected relationships","viewer.passport.relations.hide":"Hide connected relationships","viewer.passport.relations.list":"Connected relationships","viewer.passport.copyRelation":"Copy relation","viewer.passport.copyNode":"Copy node","viewer.passport.copyPinned":"Copy link to pinned relationship","viewer.passport.copySource":"Copy link to source node","viewer.passport.copy.focused.success":"Focused node link copied","viewer.passport.copy.pinned.success":"Pinned relationship link copied","viewer.passport.copy.focused.failed":"Could not copy focused node link","viewer.passport.copy.pinned.failed":"Could not copy pinned relationship link","viewer.passport.relationship.none":"No connected relationships","viewer.passport.relationship.count.one":"{count} relation","viewer.passport.relationship.count.other":"{count} relations","viewer.passport.relationship.show.one":"Show {count} connected relationship","viewer.passport.relationship.show.other":"Show {count} connected relationships","viewer.passport.relationship.summary":"{out} outgoing · {in} incoming{loops}","viewer.passport.relationship.loops":" · {count} loop","viewer.passport.relationship.explorer":"Direct relationship explorer","viewer.passport.relationship.help":"Use arrow keys to explore relationships. Press Enter or Space to pin details; Escape clears.","viewer.passport.relationship.loopsBack":"loops back","viewer.passport.relationship.connectsTo":"connects to","viewer.passport.relationship.connectsFrom":"connects from","viewer.passport.relationship.pinned":"Pinned relationship · {from} → {to} · {label}","viewer.passport.relationship.inspect":"Inspect relationship {index} of {total}: {from} to {to}, {label}. Press Enter for details.","viewer.passport.relationship.group.out":"Outgoing","viewer.passport.relationship.group.in":"Incoming","viewer.passport.relationship.group.loop":"Self loops","viewer.passport.relationship.row":"{group}: {relationship}, {neighbor}","viewer.passport.relationship.direction.out":"OUT →","viewer.passport.relationship.direction.in":"← IN","viewer.passport.relationship.direction.loop":"LOOP","viewer.passport.sourceCount.one":"{count} verified source reference","viewer.passport.sourceCount.other":"{count} verified source references","viewer.passport.repository.open":"Open verified repository revision {revision}","viewer.passport.source.open":"Open verified source {path} at revision {revision}","viewer.passport.source.openLink":"Open ↗","viewer.passport.reach.upstream.one":"Trace {count} upstream authored node","viewer.passport.reach.upstream.other":"Trace {count} upstream authored nodes","viewer.passport.reach.downstream.one":"Trace {count} downstream authored node","viewer.passport.reach.downstream.other":"Trace {count} downstream authored nodes","viewer.passport.reach.noUpstream":"No upstream authored nodes","viewer.passport.reach.noDownstream":"No downstream authored nodes","viewer.passport.reach.status":"{direction} · {nodes} nodes · {links} links · max {hops} hops","viewer.route.eyebrow":"Path","viewer.route.start":"Click where the path starts","viewer.route.start.find":"Find start","viewer.route.start.find.aria":"Find a route start","viewer.route.copy":"Copy link","viewer.route.copy.aria":"Copy link to traced route","viewer.route.clear":"Clear","viewer.route.clear.aria":"Clear route probe","viewer.route.traced":"Path","viewer.route.pickTwo":"Click two nodes on the diagram","viewer.route.pickOne":"Click a node on the diagram","viewer.route.controls":"Route journey controls","viewer.route.previous":"Previous route position","viewer.route.play":"Play route journey","viewer.route.pause":"Pause route journey","viewer.route.replay":"Replay route journey","viewer.route.next":"Next route position","viewer.route.journey":"Journey","viewer.route.pause.label":"Pause","viewer.route.replay.label":"Replay","viewer.route.overview":"Overview","viewer.route.overview.aria":"Show complete route overview","viewer.route.instructions":"Click a start, then an end. Paths follow the arrows.","viewer.route.destination":"Where does the path from {label} end?","viewer.route.destination.find":"Find target","viewer.route.destination.find.aria":"Find a reachable route destination","viewer.route.differentDestination":"Choose a different destination","viewer.route.distinct":"Pick two different nodes.","viewer.route.unreachable":"Cannot reach {label} from here","viewer.route.unreachable.detail":"{target} cannot be reached from {source} along the arrows. Pick a highlighted node.","viewer.route.start.instructions":"Next, pick the end. Only nodes you can reach will light up.","viewer.route.copy.success":"Traced route link copied","viewer.route.copy.failed":"Could not copy traced route link","viewer.route.position":"Route position {index} of {total}: {label}","viewer.route.step":"Step {index} of {total} · {phase} · {label}","viewer.route.motionRequired":"Automatic journey requires Live motion","viewer.route.trigger.clear":"Clear traced route","viewer.route.overview.status":"{nodes} · {hops} · shortest path","viewer.route.overview.node.one":"{count} node","viewer.route.overview.node.other":"{count} nodes","viewer.route.overview.hop.one":"{count} step","viewer.route.overview.hop.other":"{count} steps","viewer.route.phase.playing":"Playing","viewer.route.phase.complete":"Complete","viewer.route.phase.inspecting":"Inspecting","viewer.route.destination.count.one":"{count} reachable node is highlighted. Click it.","viewer.route.destination.count.other":"{count} reachable nodes are highlighted. Click one.","viewer.route.noOutgoing":"No arrows lead out of this node. Clear it and pick another start.","viewer.route.result.title":"{source} to {target}","viewer.route.finder.source.title":"Choose route start","viewer.route.finder.source.placeholder":"Search route sources","viewer.route.finder.source.empty":"No matching route sources","viewer.route.finder.source.results":"Nodes that can start a route","viewer.route.finder.source.noun":"route sources","viewer.route.finder.source.badge":"start","viewer.route.finder.target.title":"Destination from {label}","viewer.route.finder.target.placeholder":"Search reachable destinations","viewer.route.finder.target.empty":"No matching reachable destinations","viewer.route.finder.target.results":"Reachable route destinations","viewer.route.finder.target.noun":"reachable destinations","viewer.route.hop.one":"{count} hop","viewer.route.hop.other":"{count} hops","viewer.lens.eyebrow":"Semantic lens","viewer.lens.title":"Compare system roles","viewer.lens.close":"Close semantic lens","viewer.lens.instruction":"Choose up to two semantic kinds. One reveals its real traffic; two compare only direct authored relationships.","viewer.lens.kinds":"Semantic kinds","viewer.lens.choose":"Choose a kind to inspect its nodes and touching relationships.","viewer.lens.copy":"Copy link to semantic lens","viewer.lens.clear":"Clear semantic lens","viewer.lens.open":"Open semantic lens","viewer.lens.openActive":"Open active semantic lens","viewer.lens.legend":"Semantic legend","viewer.lens.legend.inspect.one":"Inspect {label}, {count} node","viewer.lens.legend.inspect.other":"Inspect {label}, {count} nodes","viewer.lens.kind.count.one":"{label}, {count} node","viewer.lens.kind.count.other":"{label}, {count} nodes","viewer.lens.compare.one":"{first} → {second}: {forward} · {second} → {first}: {reverse} · {count} direct relationship","viewer.lens.compare.other":"{first} → {second}: {forward} · {second} → {first}: {reverse} · {count} direct relationships","viewer.lens.single":"{nodes} · {relationships} · connected peers remain visible","viewer.lens.node.one":"{count} {label} node","viewer.lens.node.other":"{count} {label} nodes","viewer.lens.relationship.one":"{count} touching relationship","viewer.lens.relationship.other":"{count} touching relationships","viewer.radar.title":"Semantic radar","viewer.radar.building":"Building overview","viewer.radar.openFull":"Open full semantic radar","viewer.radar.open":"Open radar","viewer.radar.close":"Close semantic radar","viewer.radar.surface":"Diagram overview. Click a node to focus it, or use arrow keys to pan.","viewer.radar.click":"Click node","viewer.radar.drag":"Drag to pan","viewer.radar.space":"Semantic radar needs more MAP space.","viewer.radar.nodes":"Semantic diagram radar nodes","viewer.radar.focus":"Focus {label} from Semantic Radar","viewer.radar.status":"{count} nodes · {viewport}","viewer.radar.fullMap":"{count} nodes · full map","viewer.radar.compacted":"Radar compacted to avoid covering the Semantic Passport or MAP controls.","viewer.radar.cancelWaiting":"Cancel semantic radar waiting for more MAP space","viewer.radar.needsSpace":"Semantic radar needs more visible MAP space","viewer.radar.viewport.full":"full map","viewer.radar.viewport.width":"{percent}% width","viewer.radar.viewport.scale":"{percent}% viewport","viewer.nav.controls":"Diagram view controls","viewer.nav.route":"Trace a directed route","viewer.nav.route.title":"Trace route (R)","viewer.nav.route.short":"ROUTE","viewer.nav.radar":"Open semantic radar","viewer.nav.radar.title":"Semantic radar (M)","viewer.nav.radar.short":"MAP","viewer.nav.lens":"Open semantic lens","viewer.nav.lens.title":"Semantic lens (L)","viewer.nav.lens.short":"LENS","viewer.nav.find":"Find a node","viewer.nav.find.title":"Find a node (/)","viewer.outline.title":"Node index","viewer.rail.show":"Notes \u0026 index","viewer.rail.controls":"Side panel","viewer.rail.collapse":"Collapse side panel","viewer.rail.bottom":"Move panel below the diagram","viewer.rail.right":"Move panel beside the diagram","viewer.nav.guide":"Open diagram guide","viewer.nav.guide.title":"Diagram guide (?)","viewer.nav.zoomOut":"Zoom out","viewer.nav.zoomOut.title":"Zoom out (-)","viewer.nav.reset":"Reset diagram view","viewer.nav.reset.title":"Reset view (0)","viewer.nav.read":"READ","viewer.nav.zoomIn":"Zoom in","viewer.nav.zoomIn.title":"Zoom in (+)","viewer.nav.camera":"{hint}. Reset diagram view","viewer.nav.camera.title":"{semantic}{hint} · reset view (0)","viewer.nav.camera.semantic":"Semantic camera active · ","viewer.nav.level.map":"MAP","viewer.nav.level.read":"READ","viewer.nav.level.full":"FULL","viewer.nav.level.auto":"AUTO","viewer.nav.detail.map":"Zoom in to reveal relationship labels and node context","viewer.nav.detail.read":"Zoom in again to reveal tags and annotations","viewer.nav.detail.full":"Full diagram detail","viewer.intent.summary":"{label}. {out} outgoing, {in} incoming{loops}. {total} connections. Press Enter for details.","viewer.intent.loops":", {count} self loop","viewer.common.copied":"Copied","viewer.common.copyFailed":"Copy failed","viewer.common.copyLink":"Copy link","viewer.common.clear":"Clear","viewer.common.close":"Close"}}</script>
     <!-- Main Diagram -->
     <div class="diagram-container" data-detail-level="read"
          data-preset-badge-editorial-plate="ARCHIFY / PLATE 04">
-      <svg viewBox="0 0 1010 852" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-animation="trace" data-preset="classic" data-quality-profile="showcase" data-node-ui="" data-reader-fit="intrinsic-height" data-reader-min-text="7.5" data-reader-primary-text="14">
-        <title id="archify-diagram-title">Module dependency graph</title>
-        <desc id="archify-diagram-description">Which module calls which; inputs implement the CollectorKind contract that the runner drives.</desc>
+      <svg viewBox="0 0 1162 1096" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-animation="trace" data-preset="classic" data-quality-profile="showcase" data-node-ui="" data-reader-fit="intrinsic-height" data-reader-min-text="7.5" data-reader-primary-text="14">
+        <title id="archify-diagram-title">Crate dependency graph</title>
+        <desc id="archify-diagram-description">Inputs implement CollectorKind; sigmacatch-core drives them, sigmacatch-repo + sigma-regression persist the result.</desc>
         <!-- Definitions -->
         <defs>
           <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -5255,352 +5255,452 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
         <!-- Connection paths (before components for correct z-order) -->
         <g data-graph-role="automatic-crossover" style="--step:0">
-          <path data-graph-role="automatic-crossover-underlay" d="M 93 232 L 93 140" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="windows" data-edge-to="etw" data-edge-label="channels + ETW" data-edge-key="0" data-composition-points="93,232;93,140" data-composition-crossover="halo" data-composition-independent="true" d="M 93 232 L 93 140" class="a-default" data-animate="edge" style="--step:0" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 384 288 L 384 524" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="dispatch" data-edge-to="runner" data-edge-label="run()" data-edge-key="0" data-composition-points="384,288;384,524" data-composition-crossover="halo" data-composition-independent="true" d="M 384 288 L 384 524" class="a-default" data-animate="edge" style="--step:0" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:1">
-          <path data-graph-role="automatic-crossover-underlay" d="M 100 292 L 100 384" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="windows" data-edge-to="driverc" data-edge-label="one process source" data-edge-key="1" data-composition-points="100,292;100,384" data-composition-crossover="halo" data-composition-independent="true" d="M 100 292 L 100 384" class="a-default" data-animate="edge" style="--step:1" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 100 140 L 100 217 Q 100 225 108 225 L 268 225 Q 276 225 276 233 L 276 453 Q 276 461 284 461 L 362 461 Q 370 461 370 469 L 370 524" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="winevt" data-edge-to="runner" data-edge-label="CollectorKind · Event" data-edge-key="1" data-composition-points="100,140;100,225;276,225;276,461;370,461;370,524" data-composition-crossover="halo" data-composition-independent="true" d="M 100 140 L 100 217 Q 100 225 108 225 L 268 225 Q 276 225 276 233 L 276 453 Q 276 461 284 461 L 362 461 Q 370 461 370 469 L 370 524" class="a-default" data-animate="edge" style="--step:1" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:2">
-          <path data-graph-role="automatic-crossover-underlay" d="M 100 444 L 100 536" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="driverc" data-edge-to="protocol" data-edge-label="IOCTL records" data-edge-key="2" data-composition-points="100,444;100,536" data-composition-crossover="halo" data-composition-independent="true" d="M 100 444 L 100 536" class="a-default" data-animate="edge" style="--step:2" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 107 288 L 107 364 Q 107 372 115 372 L 276 372 Q 284 372 284 380 L 284 492 Q 284 500 292 500 L 348 500 Q 356 500 356 508 L 356 524" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="etw" data-edge-to="runner" data-edge-label="CollectorKind · Event" data-edge-key="2" data-composition-points="107,288;107,372;284,372;284,500;356,500;356,524" data-composition-crossover="halo" data-composition-independent="true" d="M 107 288 L 107 364 Q 107 372 115 372 L 276 372 Q 284 372 284 380 L 284 492 Q 284 500 292 500 L 348 500 Q 356 500 356 508 L 356 524" class="a-default" data-animate="edge" style="--step:2" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:3">
-          <path data-graph-role="automatic-crossover-underlay" d="M 160 262 L 227 262 Q 235 262 235 270 L 235 406 Q 235 414 243 414 L 310 414" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="windows" data-edge-to="types" data-edge-label="Event" data-edge-key="3" data-composition-points="160,262;235,262;235,414;310,414" data-composition-crossover="halo" data-composition-independent="true" d="M 160 262 L 227 262 Q 235 262 235 270 L 235 406 Q 235 414 243 414 L 310 414" class="a-default" data-animate="edge" style="--step:3" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 160 561 L 324 561" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="etwdriver" data-edge-to="runner" data-edge-label="CollectorKind · Event" data-edge-key="3" data-composition-points="160,561;324,561" data-composition-crossover="halo" data-composition-independent="true" d="M 160 561 L 324 561" class="a-default" data-animate="edge" style="--step:3" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:4">
-          <path data-graph-role="automatic-crossover-underlay" d="M 107 140 L 107 221 Q 107 229 115 229 L 296 229 Q 304 229 304 237 L 304 352 Q 304 360 312 360 L 348 360 Q 356 360 356 368 L 356 384" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="etw" data-edge-to="types" data-edge-label="Event" data-edge-key="4" data-composition-points="107,140;107,229;304,229;304,360;356,360;356,384" data-composition-crossover="halo" data-composition-independent="true" d="M 107 140 L 107 221 Q 107 229 115 229 L 296 229 Q 304 229 304 237 L 304 352 Q 304 360 312 360 L 348 360 Q 356 360 356 368 L 356 384" class="a-default" data-animate="edge" style="--step:4" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 160 702 L 348 702 Q 356 702 356 694 L 356 584" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="macos" data-edge-to="runner" data-edge-label="CollectorKind · Event" data-edge-key="4" data-composition-points="160,702;356,702;356,584" data-composition-crossover="halo" data-composition-independent="true" d="M 160 702 L 348 702 Q 356 702 356 694 L 356 584" class="a-default" data-animate="edge" style="--step:4" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:5">
-          <path data-graph-role="automatic-crossover-underlay" d="M 370 536 L 370 444" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="evtx_reader" data-edge-to="types" data-edge-label="Event" data-edge-key="5" data-composition-points="370,536;370,444" data-composition-crossover="halo" data-composition-independent="true" d="M 370 536 L 370 444" class="a-default" data-animate="edge" style="--step:5" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 100 820 L 100 804 Q 100 796 108 796 L 376 796 Q 384 796 384 788 L 384 584" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="linuxin" data-edge-to="runner" data-edge-label="CollectorKind · Event" data-edge-key="5" data-composition-points="100,820;100,796;384,796;384,584" data-composition-crossover="halo" data-composition-independent="true" d="M 100 820 L 100 804 Q 100 796 108 796 L 376 796 Q 384 796 384 788 L 384 584" class="a-default" data-animate="edge" style="--step:5" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:6">
-          <path data-graph-role="automatic-crossover-underlay" d="M 370 232 L 370 118 Q 370 110 378 110 L 580 110" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="runner" data-edge-to="config" data-edge-label="Config" data-edge-key="6" data-composition-points="370,232;370,110;580,110" data-composition-crossover="halo" data-composition-independent="true" d="M 370 232 L 370 118 Q 370 110 378 110 L 580 110" class="a-default" data-animate="edge" style="--step:6" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 40 998 L 24 998 Q 16 998 16 990 L 16 616 Q 16 608 24 608 L 362 608 Q 370 608 370 600 L 370 584" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="evtxin" data-edge-to="runner" data-edge-label="CollectorKind · Event" data-edge-key="6" data-composition-points="40,998;16,998;16,608;370,608;370,584" data-composition-crossover="halo" data-composition-independent="true" d="M 40 998 L 24 998 Q 16 998 16 990 L 16 616 Q 16 608 24 608 L 362 608 Q 370 608 370 600 L 370 584" class="a-default" data-animate="edge" style="--step:6" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:7">
-          <path data-graph-role="automatic-crossover-underlay" d="M 430 269 L 580 269" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="runner" data-edge-to="rule" data-edge-label="rules" data-edge-key="7" data-composition-points="430,269;580,269" data-composition-crossover="halo" data-composition-independent="true" d="M 430 269 L 580 269" class="a-default" data-animate="edge" style="--step:7" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 93 288 L 93 376" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="etw" data-edge-to="etwcommon" data-edge-label="shared helpers" data-edge-key="7" data-composition-points="93,288;93,376" data-composition-crossover="halo" data-composition-independent="true" d="M 93 288 L 93 376" class="a-default" data-animate="edge" style="--step:7" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:8">
-          <path data-graph-role="automatic-crossover-underlay" d="M 363 292 L 363 352 Q 363 360 371 360 L 625 360 Q 633 360 633 368 L 633 384" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="runner" data-edge-to="detection" data-edge-label="events" data-edge-key="8" data-composition-points="363,292;363,360;633,360;633,384" data-composition-crossover="halo" data-composition-independent="true" d="M 363 292 L 363 352 Q 363 360 371 360 L 625 360 Q 633 360 633 368 L 633 384" class="a-default" data-animate="edge" style="--step:8" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 100 524 L 100 436" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="etwdriver" data-edge-to="etwcommon" data-edge-label="shared helpers" data-edge-key="8" data-composition-points="100,524;100,436" data-composition-crossover="halo" data-composition-independent="true" d="M 100 524 L 100 436" class="a-default" data-animate="edge" style="--step:8" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:9">
-          <path data-graph-role="automatic-crossover-underlay" d="M 310 262 L 294 262 Q 286 262 286 270 L 286 612 Q 286 620 294 620 L 618 620 Q 626 620 626 612 L 626 596" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="runner" data-edge-to="regression" data-edge-label="alerts" data-edge-key="9" data-composition-points="310,262;286,262;286,620;626,620;626,596" data-composition-crossover="halo" data-composition-independent="true" d="M 310 262 L 294 262 Q 286 262 286 270 L 286 612 Q 286 620 294 620 L 618 620 Q 626 620 626 612 L 626 596" class="a-default" data-animate="edge" style="--step:9" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 160 547 L 278.4 547 Q 286.4 547 286.4 539 L 286.4 151 Q 286.4 143 294.4 143 L 860 143 Q 868 143 868 135 L 868 118 Q 868 110 876 110 L 892 110" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="etwdriver" data-edge-to="protocol" data-edge-label="IOCTL records" data-edge-key="9" data-composition-points="160,547;286.4,547;286.4,143;868,143;868,110;892,110" data-composition-crossover="halo" data-composition-independent="true" d="M 160 547 L 278.4 547 Q 286.4 547 286.4 539 L 286.4 151 Q 286.4 143 294.4 143 L 860 143 Q 868 143 868 135 L 868 118 Q 868 110 876 110 L 892 110" class="a-default" data-animate="edge" style="--step:9" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:10">
-          <path data-graph-role="automatic-crossover-underlay" d="M 384 232 L 384 216 Q 384 208 392 208 L 902 208 Q 910 208 910 216 L 910 384" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="runner" data-edge-to="repo" data-edge-label="commits" data-edge-key="10" data-composition-points="384,232;384,208;910,208;910,384" data-composition-crossover="halo" data-composition-independent="true" d="M 384 232 L 384 216 Q 384 208 392 208 L 902 208 Q 910 208 910 216 L 910 384" class="a-default" data-animate="edge" style="--step:10" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 107 968 L 107 945.5 Q 107 937.5 115 937.5 L 571.8 937.5 Q 579.8 937.5 579.8 929.5 L 579.8 200 Q 579.8 192 587.8 192 L 632 192 Q 640 192 640 184 L 640 140" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="evtxin" data-edge-to="types" data-edge-label="parse → Event" data-edge-key="10" data-composition-points="107,968;107,937.5;579.8,937.5;579.8,192;640,192;640,140" data-composition-crossover="halo" data-composition-independent="true" d="M 107 968 L 107 945.5 Q 107 937.5 115 937.5 L 571.8 937.5 Q 579.8 937.5 579.8 929.5 L 579.8 200 Q 579.8 192 587.8 192 L 632 192 Q 640 192 640 184 L 640 140" class="a-default" data-animate="edge" style="--step:10" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:11">
-          <path data-graph-role="automatic-crossover-underlay" d="M 349 292 L 349 352 Q 349 360 357 360 L 362 360 Q 370 360 370 368 L 370 384" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="runner" data-edge-to="types" data-edge-label="Event" data-edge-key="11" data-composition-points="349,292;349,360;370,360;370,384" data-composition-crossover="halo" data-composition-independent="true" d="M 349 292 L 349 352 Q 349 360 357 360 L 362 360 Q 370 360 370 368 L 370 384" class="a-default" data-animate="edge" style="--step:11" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 398 584 L 398 820" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="runner" data-edge-to="config" data-edge-label="config · CliArgs" data-edge-key="11" data-composition-points="398,584;398,820" data-composition-crossover="halo" data-composition-independent="true" d="M 398 584 L 398 820" class="a-default" data-animate="edge" style="--step:11" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:12">
-          <path data-graph-role="automatic-crossover-underlay" d="M 647 384 L 647 368 Q 647 360 655 360 L 655 360 Q 663 360 663 352 L 663 324 Q 663 316 655 316 L 641 316 Q 633 316 633 308 L 633 292" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="detection" data-edge-to="rule" data-edge-label="compiled rules" data-edge-key="12" data-composition-points="647,384;647,360;663,360;663,316;633,316;633,292" data-composition-crossover="halo" data-composition-independent="true" d="M 647 384 L 647 368 Q 647 360 655 360 L 655 360 Q 663 360 663 352 L 663 324 Q 663 316 655 316 L 641 316 Q 633 316 633 308 L 633 292" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 398 524 L 398 320 Q 398 312 406 312 L 646 312 Q 654 312 654 304 L 654 288" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="runner" data-edge-to="rule" data-edge-label="rules" data-edge-key="12" data-composition-points="398,524;398,312;654,312;654,288" data-composition-crossover="halo" data-composition-independent="true" d="M 398 524 L 398 320 Q 398 312 406 312 L 646 312 Q 654 312 654 304 L 654 288" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:13">
-          <path data-graph-role="automatic-crossover-underlay" d="M 580 407 L 430 407" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="detection" data-edge-to="types" data-edge-label="Event" data-edge-key="13" data-composition-points="580,407;430,407" data-composition-crossover="halo" data-composition-independent="true" d="M 580 407 L 430 407" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 426 524 L 426 414 Q 426 406 434 406 L 608 406" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="runner" data-edge-to="detection" data-edge-label="events" data-edge-key="13" data-composition-points="426,524;426,406;608,406" data-composition-crossover="halo" data-composition-independent="true" d="M 426 524 L 426 414 Q 426 406 434 406 L 608 406" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:14">
-          <path data-graph-role="automatic-crossover-underlay" d="M 580 559 L 462 559 Q 454 559 454 551 L 454 429 Q 454 421 446 421 L 430 421" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="regression" data-edge-to="types" data-edge-label="Alert" data-edge-key="14" data-composition-points="580,559;454,559;454,421;430,421" data-composition-crossover="halo" data-composition-independent="true" d="M 580 559 L 462 559 Q 454 559 454 551 L 454 429 Q 454 421 446 421 L 430 421" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 444 554 L 608 554" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="runner" data-edge-to="regression" data-edge-label="alerts" data-edge-key="14" data-composition-points="444,554;608,554" data-composition-crossover="halo" data-composition-independent="true" d="M 444 554 L 608 554" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:15">
-          <path data-graph-role="automatic-crossover-underlay" d="M 700 566 L 902 566 Q 910 566 910 558 L 910 444" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="regression" data-edge-to="repo" data-edge-label="batches" data-edge-key="15" data-composition-points="700,566;910,566;910,444" data-composition-crossover="halo" data-composition-independent="true" d="M 700 566 L 902 566 Q 910 566 910 558 L 910 444" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 428 584 L 428 680 Q 428 688 436 688 L 608 688" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="runner" data-edge-to="repo" data-edge-label="commits" data-edge-key="15" data-composition-points="428,584;428,688;608,688" data-composition-crossover="halo" data-composition-independent="true" d="M 428 584 L 428 680 Q 428 688 436 688 L 608 688" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:16">
-          <path data-graph-role="automatic-crossover-underlay" d="M 580 573 L 430 573" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="regression" data-edge-to="evtx_reader" data-edge-label="parse" data-edge-key="16" data-composition-points="580,573;430,573" data-composition-crossover="halo" data-composition-independent="true" d="M 580 573 L 430 573" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 412 524 L 412 344 Q 412 336 420 336 L 579.8 336 Q 587.8 336 587.8 328 L 587.8 172 Q 587.8 164 595.8 164 L 646 164 Q 654 164 654 156 L 654 140" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="runner" data-edge-to="types" data-edge-label="Event" data-edge-key="16" data-composition-points="412,524;412,336;587.8,336;587.8,164;654,164;654,140" data-composition-crossover="halo" data-composition-independent="true" d="M 412 524 L 412 344 Q 412 336 420 336 L 579.8 336 Q 587.8 336 587.8 328 L 587.8 172 Q 587.8 164 595.8 164 L 646 164 Q 654 164 654 156 L 654 140" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:17">
-          <path data-graph-role="automatic-crossover-underlay" d="M 810 736 L 826 736 Q 834 736 834 728 L 834 476 Q 834 468 826 468 L 648 468 Q 640 468 640 460 L 640 444" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="bin" data-edge-to="detection" data-edge-label="engine" data-edge-key="17" data-composition-points="810,736;834,736;834,468;640,468;640,444" data-composition-crossover="halo" data-composition-independent="true" d="M 810 736 L 826 736 Q 834 736 834 728 L 834 476 Q 834 468 826 468 L 648 468 Q 640 468 640 460 L 640 444" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 668 376 L 668 288" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="detection" data-edge-to="rule" data-edge-label="compiled rules" data-edge-key="17" data-composition-points="668,376;668,288" data-composition-crossover="halo" data-composition-independent="true" d="M 668 376 L 668 288" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:18">
-          <path data-graph-role="automatic-crossover-underlay" d="M 709 688 L 709 280.5 Q 709 276 704.5 276 L 700 276" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="bin" data-edge-to="rule" data-edge-label="rules" data-edge-key="18" data-composition-points="709,688;709,276;700,276" data-composition-crossover="halo" data-composition-independent="true" d="M 709 688 L 709 280.5 Q 709 276 704.5 276 L 700 276" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 728 392 L 744 392 Q 752 392 752 384 L 752 118 Q 752 110 744 110 L 728 110" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="detection" data-edge-to="types" data-edge-label="Event" data-edge-key="18" data-composition-points="728,392;752,392;752,110;728,110" data-composition-crossover="halo" data-composition-independent="true" d="M 728 392 L 744 392 Q 752 392 752 384 L 752 118 Q 752 110 744 110 L 728 110" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:19">
-          <path data-graph-role="automatic-crossover-underlay" d="M 684 688 L 684 596" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="bin" data-edge-to="regression" data-edge-label="writer" data-edge-key="19" data-composition-points="684,688;684,596" data-composition-crossover="halo" data-composition-independent="true" d="M 684 688 L 684 596" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 668 524 L 668 447 Q 668 439 660 439 L 603.8 439 Q 595.8 439 595.8 431 L 595.8 233 Q 595.8 225 603.8 225 L 674 225 Q 682 225 682 217 L 682 140" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="regression" data-edge-to="types" data-edge-label="Alert" data-edge-key="19" data-composition-points="668,524;668,439;595.8,439;595.8,225;682,225;682,140" data-composition-crossover="halo" data-composition-independent="true" d="M 668 524 L 668 447 Q 668 439 660 439 L 603.8 439 Q 595.8 439 595.8 431 L 595.8 233 Q 595.8 225 603.8 225 L 674 225 Q 682 225 682 217 L 682 140" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:20">
-          <path data-graph-role="automatic-crossover-underlay" d="M 580 736 L 378 736 Q 370 736 370 728 L 370 596" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="bin" data-edge-to="evtx_reader" data-edge-label="parse" data-edge-key="20" data-composition-points="580,736;370,736;370,596" data-composition-crossover="halo" data-composition-independent="true" d="M 580 736 L 378 736 Q 370 736 370 728 L 370 596" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 668 584 L 668 672" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="regression" data-edge-to="repo" data-edge-label="batches" data-edge-key="20" data-composition-points="668,584;668,672" data-composition-crossover="halo" data-composition-independent="true" d="M 668 584 L 668 672" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:21">
-          <path data-graph-role="automatic-crossover-underlay" d="M 910 80 L 910 64 Q 910 56 902 56 L 582.8 56 Q 574.8 56 574.8 64 L 574.8 460 Q 574.8 468 566.8 468 L 392 468 Q 384 468 384 460 L 384 444" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="macoses" data-edge-to="types" data-edge-label="Event" data-edge-key="21" data-composition-points="910,80;910,56;574.8,56;574.8,468;384,468;384,444" data-composition-crossover="halo" data-composition-independent="true" d="M 910 80 L 910 64 Q 910 56 902 56 L 582.8 56 Q 574.8 56 574.8 64 L 574.8 460 Q 574.8 468 566.8 468 L 392 468 Q 384 468 384 460 L 384 444" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 892 406 L 818 406 Q 810 406 810 414 L 810 539 Q 810 547 802 547 L 728 547" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="outreg" data-edge-to="regression" data-edge-label="sink impl" data-edge-key="21" data-composition-points="892,406;810,406;810,547;728,547" data-composition-crossover="halo" data-composition-independent="true" d="M 892 406 L 818 406 Q 810 406 810 414 L 810 539 Q 810 547 802 547 L 728 547" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:22">
+          <path data-graph-role="automatic-crossover-underlay" d="M 959 436 L 959 524" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="outreg" data-edge-to="outevtx" data-edge-label="EVTX writer" data-edge-key="22" data-composition-points="959,436;959,524" data-composition-crossover="halo" data-composition-independent="true" d="M 959 436 L 959 524" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:23">
+          <path data-graph-role="automatic-crossover-underlay" d="M 1012 554 L 1028 554 Q 1036 554 1036 546 L 1036 172 Q 1036 164 1028 164 L 704 164 Q 696 164 696 156 L 696 140" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="outevtx" data-edge-to="types" data-edge-label="Event" data-edge-key="23" data-composition-points="1012,554;1036,554;1036,164;696,164;696,140" data-composition-crossover="halo" data-composition-independent="true" d="M 1012 554 L 1028 554 Q 1036 554 1036 546 L 1036 172 Q 1036 164 1028 164 L 704 164 Q 696 164 696 156 L 696 140" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:24">
+          <path data-graph-role="automatic-crossover-underlay" d="M 1007 916 L 1007 932 Q 1007 940 999 940 L 760 940 Q 752 940 752 932 L 752 414 Q 752 406 744 406 L 728 406" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="validator" data-edge-to="detection" data-edge-label="engine" data-edge-key="24" data-composition-points="1007,916;1007,940;752,940;752,406;728,406" data-composition-crossover="halo" data-composition-independent="true" d="M 1007 916 L 1007 932 Q 1007 940 999 940 L 760 940 Q 752 940 752 932 L 752 414 Q 752 406 744 406 L 728 406" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:25">
+          <path data-graph-role="automatic-crossover-underlay" d="M 1106 820 L 1106 280 Q 1106 272 1098 272 L 728 272" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="validator" data-edge-to="rule" data-edge-label="rules" data-edge-key="25" data-composition-points="1106,820;1106,272;728,272" data-composition-crossover="halo" data-composition-independent="true" d="M 1106 820 L 1106 280 Q 1106 272 1098 272 L 728 272" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:26">
+          <path data-graph-role="automatic-crossover-underlay" d="M 892 868 L 818 868 Q 810 868 810 860 L 810 569 Q 810 561 802 561 L 728 561" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="validator" data-edge-to="regression" data-edge-label="validate" data-edge-key="26" data-composition-points="892,868;810,868;810,561;728,561" data-composition-crossover="halo" data-composition-independent="true" d="M 892 868 L 818 868 Q 810 868 810 860 L 810 569 Q 810 561 802 561 L 728 561" class="a-default" data-animate="edge" style="--step:12" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
 
         <!-- Components -->
-        <g id="node-etw" data-node-id="etw" data-node-label="etw*.rs" tabindex="0" role="button" aria-label="Focus etw*.rs, sessions · TDH · renderer, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="sessions · TDH · renderer" data-node-tag="etw" data-node-context="Architecture component">
-          <title>etw*.rs · sessions · TDH · renderer · Architecture component · etw</title>
+        <g id="node-winevt" data-node-id="winevt" data-node-label="input-winevt" tabindex="0" role="button" aria-label="Focus input-winevt, Event Log channels, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Event Log channels" data-node-tag="input" data-node-context="Architecture component">
+          <title>input-winevt · Event Log channels · Architecture component · input</title>
           <rect x="40" y="80" width="120" height="60" rx="8" class="c-mask"/>
           <rect x="40" y="80" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:1" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(46 86) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="100" y="108" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">etw*.rs</text>
-        <text data-detail="context" x="100" y="124" class="t-muted" font-size="7.4" text-anchor="middle">sessions · TDH · renderer</text>
-        <text data-detail="fine" x="100" y="132" class="t-backend" font-size="7" text-anchor="middle">etw</text>
+          <text data-node-label="" data-detail-anchor="" x="100" y="108" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">input-winevt</text>
+        <text data-detail="context" x="100" y="124" class="t-muted" font-size="9" text-anchor="middle">Event Log channels</text>
+        <text data-detail="fine" x="100" y="132" class="t-backend" font-size="7" text-anchor="middle">input</text>
         </g>
 
-        <g id="node-windows" data-node-id="windows" data-node-label="windows.rs" tabindex="0" role="button" aria-label="Focus windows.rs, channels + process source, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="channels + process source" data-node-tag="winevt" data-node-context="Architecture component">
-          <title>windows.rs · channels + process source · Architecture component · winevt</title>
-          <rect x="40" y="232" width="120" height="60" rx="8" class="c-mask"/>
-          <rect x="40" y="232" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:0" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(46 238) scale(0.6875)">
+        <g id="node-etw" data-node-id="etw" data-node-label="input-etw" tabindex="0" role="button" aria-label="Focus input-etw, sessions · TDH, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="sessions · TDH" data-node-tag="input" data-node-context="Architecture component">
+          <title>input-etw · sessions · TDH · Architecture component · input</title>
+          <rect x="40" y="228" width="120" height="60" rx="8" class="c-mask"/>
+          <rect x="40" y="228" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:2" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(46 234) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="100" y="260" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">windows.rs</text>
-        <text data-detail="context" x="100" y="276" class="t-muted" font-size="7.4" text-anchor="middle">channels + process source</text>
-        <text data-detail="fine" x="100" y="284" class="t-backend" font-size="7" text-anchor="middle">winevt</text>
+          <text data-node-label="" data-detail-anchor="" x="100" y="256" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">input-etw</text>
+        <text data-detail="context" x="100" y="272" class="t-muted" font-size="9" text-anchor="middle">sessions · TDH</text>
+        <text data-detail="fine" x="100" y="280" class="t-backend" font-size="7" text-anchor="middle">input</text>
         </g>
 
-        <g id="node-driverc" data-node-id="driverc" data-node-label="etw_driver.rs" tabindex="0" role="button" aria-label="Focus etw_driver.rs, kernel sensor client, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="kernel sensor client" data-node-tag="driver" data-node-context="Architecture component">
-          <title>etw_driver.rs · kernel sensor client · Architecture component · driver</title>
-          <rect x="40" y="384" width="120" height="60" rx="8" class="c-mask"/>
-          <rect x="40" y="384" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:2" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(46 390) scale(0.6875)">
+        <g id="node-etwcommon" data-node-id="etwcommon" data-node-label="etw-common" tabindex="0" role="button" aria-label="Focus etw-common, NT · PE · signature, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="NT · PE · signature" data-node-tag="shared" data-node-context="Architecture component">
+          <title>etw-common · NT · PE · signature · Architecture component · shared</title>
+          <rect x="40" y="376" width="120" height="60" rx="8" class="c-mask"/>
+          <rect x="40" y="376" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:8" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(46 382) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="100" y="412" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">etw_driver.rs</text>
-        <text data-detail="context" x="100" y="428" class="t-muted" font-size="9" text-anchor="middle">kernel sensor client</text>
-        <text data-detail="fine" x="100" y="436" class="t-backend" font-size="7" text-anchor="middle">driver</text>
+          <text data-node-label="" data-detail-anchor="" x="100" y="404" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">etw-common</text>
+        <text data-detail="context" x="100" y="420" class="t-muted" font-size="9" text-anchor="middle">NT · PE · signature</text>
+        <text data-detail="fine" x="100" y="428" class="t-backend" font-size="7" text-anchor="middle">shared</text>
         </g>
 
-        <g id="node-protocol" data-node-id="protocol" data-node-label="src/windows/" tabindex="0" role="button" aria-label="Focus src/windows/, wire + nt_file + signature, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="wire + nt_file + signature" data-node-tag="shared" data-node-context="Architecture component">
-          <title>src/windows/ · wire + nt_file + signature · Architecture component · shared</title>
-          <rect x="40" y="536" width="120" height="60" rx="8" class="c-mask"/>
-          <rect x="40" y="536" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:3" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(46 542) scale(0.6875)">
+        <g id="node-etwdriver" data-node-id="etwdriver" data-node-label="input-etw-driver" tabindex="0" role="button" aria-label="Focus input-etw-driver, kernel sensor, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="kernel sensor" data-node-tag="input" data-node-context="Architecture component">
+          <title>input-etw-driver · kernel sensor · Architecture component · input</title>
+          <rect x="40" y="524" width="120" height="60" rx="8" class="c-mask"/>
+          <rect x="40" y="524" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:3" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(46 530) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="100" y="564" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">src/windows/</text>
-        <text data-detail="context" x="100" y="580" class="t-muted" font-size="7.1" text-anchor="middle">wire + nt_file + signature</text>
-        <text data-detail="fine" x="100" y="588" class="t-backend" font-size="7" text-anchor="middle">shared</text>
+          <text data-node-label="" data-detail-anchor="" x="100" y="552" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">input-etw-driver</text>
+        <text data-detail="context" x="100" y="568" class="t-muted" font-size="9" text-anchor="middle">kernel sensor</text>
+        <text data-detail="fine" x="100" y="576" class="t-backend" font-size="7" text-anchor="middle">input</text>
         </g>
 
-        <g id="node-runner" data-node-id="runner" data-node-label="runner.rs" tabindex="0" role="button" aria-label="Focus runner.rs, run&lt;C: CollectorKind&gt;, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="run&lt;C: CollectorKind&gt;" data-node-tag="pipeline" data-node-context="Architecture component">
-          <title>runner.rs · run&lt;C: CollectorKind&gt; · Architecture component · pipeline</title>
-          <rect x="310" y="232" width="120" height="60" rx="8" class="c-mask"/>
-          <rect x="310" y="232" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:6" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(316 238) scale(0.6875)">
+        <g id="node-macos" data-node-id="macos" data-node-label="input-macos" tabindex="0" role="button" aria-label="Focus input-macos, Endpoint Security, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Endpoint Security" data-node-tag="input" data-node-context="Architecture component">
+          <title>input-macos · Endpoint Security · Architecture component · input</title>
+          <rect x="40" y="672" width="120" height="60" rx="8" class="c-mask"/>
+          <rect x="40" y="672" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:4" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(46 678) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="370" y="260" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">runner.rs</text>
-        <text data-detail="context" x="370" y="276" class="t-muted" font-size="8.8" text-anchor="middle">run&lt;C: CollectorKind&gt;</text>
-        <text data-detail="fine" x="370" y="284" class="t-backend" font-size="7" text-anchor="middle">pipeline</text>
+          <text data-node-label="" data-detail-anchor="" x="100" y="700" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">input-macos</text>
+        <text data-detail="context" x="100" y="716" class="t-muted" font-size="9" text-anchor="middle">Endpoint Security</text>
+        <text data-detail="fine" x="100" y="724" class="t-backend" font-size="7" text-anchor="middle">input</text>
         </g>
 
-        <g id="node-types" data-node-id="types" data-node-label="types.rs" tabindex="0" role="button" aria-label="Focus types.rs, Event · Alert · logsource, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Event · Alert · logsource" data-node-tag="shared" data-node-context="Architecture component">
-          <title>types.rs · Event · Alert · logsource · Architecture component · shared</title>
-          <rect x="310" y="384" width="120" height="60" rx="8" class="c-mask"/>
-          <rect x="310" y="384" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:4" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(316 390) scale(0.6875)">
+        <g id="node-linuxin" data-node-id="linuxin" data-node-label="Linux inputs" tabindex="0" role="button" aria-label="Focus Linux inputs, file + BPF adapters, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="file + BPF adapters" data-node-tag="input" data-node-context="Architecture component">
+          <title>Linux inputs · file + BPF adapters · Architecture component · input</title>
+          <rect x="40" y="820" width="120" height="60" rx="8" class="c-mask"/>
+          <rect x="40" y="820" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:5" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(46 826) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="370" y="412" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">types.rs</text>
-        <text data-detail="context" x="370" y="428" class="t-muted" font-size="7.4" text-anchor="middle">Event · Alert · logsource</text>
-        <text data-detail="fine" x="370" y="436" class="t-backend" font-size="7" text-anchor="middle">shared</text>
+          <text data-node-label="" data-detail-anchor="" x="100" y="848" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Linux inputs</text>
+        <text data-detail="context" x="100" y="864" class="t-muted" font-size="9" text-anchor="middle">file + BPF adapters</text>
+        <text data-detail="fine" x="100" y="872" class="t-backend" font-size="7" text-anchor="middle">input</text>
         </g>
 
-        <g id="node-evtx_reader" data-node-id="evtx_reader" data-node-label="evtx_reader.rs" tabindex="0" role="button" aria-label="Focus evtx_reader.rs, EVTX → Event, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="EVTX → Event" data-node-tag="shared" data-node-context="Architecture component">
-          <title>evtx_reader.rs · EVTX → Event · Architecture component · shared</title>
-          <rect x="310" y="536" width="120" height="60" rx="8" class="c-mask"/>
-          <rect x="310" y="536" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:5" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(316 542) scale(0.6875)">
+        <g id="node-evtxin" data-node-id="evtxin" data-node-label="input-evtx" tabindex="0" role="button" aria-label="Focus input-evtx, one-shot EVTX, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="one-shot EVTX" data-node-tag="input" data-node-context="Architecture component">
+          <title>input-evtx · one-shot EVTX · Architecture component · input</title>
+          <rect x="40" y="968" width="120" height="60" rx="8" class="c-mask"/>
+          <rect x="40" y="968" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:6" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(46 974) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="370" y="564" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">evtx_reader.rs</text>
-        <text data-detail="context" x="370" y="580" class="t-muted" font-size="9" text-anchor="middle">EVTX → Event</text>
-        <text data-detail="fine" x="370" y="588" class="t-backend" font-size="7" text-anchor="middle">shared</text>
+          <text data-node-label="" data-detail-anchor="" x="100" y="996" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">input-evtx</text>
+        <text data-detail="context" x="100" y="1012" class="t-muted" font-size="9" text-anchor="middle">one-shot EVTX</text>
+        <text data-detail="fine" x="100" y="1020" class="t-backend" font-size="7" text-anchor="middle">input</text>
         </g>
 
-        <g id="node-config" data-node-id="config" data-node-label="config.rs" tabindex="0" role="button" aria-label="Focus config.rs, config.yaml + CLI, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="config.yaml + CLI" data-node-tag="shared" data-node-context="Architecture component">
-          <title>config.rs · config.yaml + CLI · Architecture component · shared</title>
-          <rect x="580" y="80" width="120" height="60" rx="8" class="c-mask"/>
-          <rect x="580" y="80" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:7" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(586 86) scale(0.6875)">
+        <g id="node-dispatch" data-node-id="dispatch" data-node-label="dispatch" tabindex="0" role="button" aria-label="Focus dispatch, main · inputs/mod, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="main · inputs/mod" data-node-tag="binary" data-node-context="Architecture component">
+          <title>dispatch · main · inputs/mod · Architecture component · binary</title>
+          <rect x="324" y="228" width="120" height="60" rx="8" class="c-mask"/>
+          <rect x="324" y="228" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:0" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(330 234) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="640" y="108" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">config.rs</text>
-        <text data-detail="context" x="640" y="124" class="t-muted" font-size="9" text-anchor="middle">config.yaml + CLI</text>
-        <text data-detail="fine" x="640" y="132" class="t-backend" font-size="7" text-anchor="middle">shared</text>
+          <text data-node-label="" data-detail-anchor="" x="384" y="256" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">dispatch</text>
+        <text data-detail="context" x="384" y="272" class="t-muted" font-size="9" text-anchor="middle">main · inputs/mod</text>
+        <text data-detail="fine" x="384" y="280" class="t-backend" font-size="7" text-anchor="middle">binary</text>
         </g>
 
-        <g id="node-rule" data-node-id="rule" data-node-label="rule/" tabindex="0" role="button" aria-label="Focus rule/, load · filter · retire, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="load · filter · retire" data-node-tag="shared" data-node-context="Architecture component">
-          <title>rule/ · load · filter · retire · Architecture component · shared</title>
-          <rect x="580" y="232" width="120" height="60" rx="8" class="c-mask"/>
-          <rect x="580" y="232" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:8" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(586 238) scale(0.6875)">
+        <g id="node-runner" data-node-id="runner" data-node-label="core::runner" tabindex="0" role="button" aria-label="Focus core::runner, run&lt;C&gt; pipeline, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="run&lt;C&gt; pipeline" data-node-tag="pipeline" data-node-context="Architecture component">
+          <title>core::runner · run&lt;C&gt; pipeline · Architecture component · pipeline</title>
+          <rect x="324" y="524" width="120" height="60" rx="8" class="c-mask"/>
+          <rect x="324" y="524" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:1" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(330 530) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="640" y="260" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">rule/</text>
-        <text data-detail="context" x="640" y="276" class="t-muted" font-size="8.4" text-anchor="middle">load · filter · retire</text>
-        <text data-detail="fine" x="640" y="284" class="t-backend" font-size="7" text-anchor="middle">shared</text>
+          <text data-node-label="" data-detail-anchor="" x="384" y="552" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">core::runner</text>
+        <text data-detail="context" x="384" y="568" class="t-muted" font-size="9" text-anchor="middle">run&lt;C&gt; pipeline</text>
+        <text data-detail="fine" x="384" y="576" class="t-backend" font-size="7" text-anchor="middle">pipeline</text>
         </g>
 
-        <g id="node-detection" data-node-id="detection" data-node-label="detection/" tabindex="0" role="button" aria-label="Focus detection/, rsigma + pipelines, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="rsigma + pipelines" data-node-tag="engine" data-node-context="Architecture component">
-          <title>detection/ · rsigma + pipelines · Architecture component · engine</title>
-          <rect x="580" y="384" width="120" height="60" rx="8" class="c-mask"/>
-          <rect x="580" y="384" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:9" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(586 390) scale(0.6875)">
+        <g id="node-config" data-node-id="config" data-node-label="core::config" tabindex="0" role="button" aria-label="Focus core::config, config + CLI, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="config + CLI" data-node-tag="shared" data-node-context="Architecture component">
+          <title>core::config · config + CLI · Architecture component · shared</title>
+          <rect x="324" y="820" width="120" height="60" rx="8" class="c-mask"/>
+          <rect x="324" y="820" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:12" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(330 826) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="640" y="412" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">detection/</text>
-        <text data-detail="context" x="640" y="428" class="t-muted" font-size="9" text-anchor="middle">rsigma + pipelines</text>
-        <text data-detail="fine" x="640" y="436" class="t-backend" font-size="7" text-anchor="middle">engine</text>
+          <text data-node-label="" data-detail-anchor="" x="384" y="848" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">core::config</text>
+        <text data-detail="context" x="384" y="864" class="t-muted" font-size="9" text-anchor="middle">config + CLI</text>
+        <text data-detail="fine" x="384" y="872" class="t-backend" font-size="7" text-anchor="middle">shared</text>
         </g>
 
-        <g id="node-regression" data-node-id="regression" data-node-label="regression/" tabindex="0" role="button" aria-label="Focus regression/, info.yml + EVTX writer, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="info.yml + EVTX writer" data-node-tag="output" data-node-context="Architecture component">
-          <title>regression/ · info.yml + EVTX writer · Architecture component · output</title>
-          <rect x="580" y="536" width="120" height="60" rx="8" class="c-mask"/>
-          <rect x="580" y="536" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:10" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(586 542) scale(0.6875)">
+        <g id="node-types" data-node-id="types" data-node-label="core::types" tabindex="0" role="button" aria-label="Focus core::types, Event · Alert, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Event · Alert" data-node-tag="shared" data-node-context="Architecture component">
+          <title>core::types · Event · Alert · Architecture component · shared</title>
+          <rect x="608" y="80" width="120" height="60" rx="8" class="c-mask"/>
+          <rect x="608" y="80" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:11" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(614 86) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="640" y="564" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">regression/</text>
-        <text data-detail="context" x="640" y="580" class="t-muted" font-size="8.4" text-anchor="middle">info.yml + EVTX writer</text>
-        <text data-detail="fine" x="640" y="588" class="t-backend" font-size="7" text-anchor="middle">output</text>
+          <text data-node-label="" data-detail-anchor="" x="668" y="108" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">core::types</text>
+        <text data-detail="context" x="668" y="124" class="t-muted" font-size="9" text-anchor="middle">Event · Alert</text>
+        <text data-detail="fine" x="668" y="132" class="t-backend" font-size="7" text-anchor="middle">shared</text>
         </g>
 
-        <g id="node-repo" data-node-id="repo" data-node-label="repo/" tabindex="0" role="button" aria-label="Focus repo/, grit-lib · commits, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="grit-lib · commits" data-node-tag="output" data-node-context="Architecture component">
-          <title>repo/ · grit-lib · commits · Architecture component · output</title>
-          <rect x="850" y="384" width="120" height="60" rx="8" class="c-mask"/>
-          <rect x="850" y="384" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:11" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(856 390) scale(0.6875)">
+        <g id="node-rule" data-node-id="rule" data-node-label="core::rule" tabindex="0" role="button" aria-label="Focus core::rule, load · filter, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="load · filter" data-node-tag="shared" data-node-context="Architecture component">
+          <title>core::rule · load · filter · Architecture component · shared</title>
+          <rect x="608" y="228" width="120" height="60" rx="8" class="c-mask"/>
+          <rect x="608" y="228" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:12" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(614 234) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="910" y="412" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">repo/</text>
-        <text data-detail="context" x="910" y="428" class="t-muted" font-size="9" text-anchor="middle">grit-lib · commits</text>
-        <text data-detail="fine" x="910" y="436" class="t-backend" font-size="7" text-anchor="middle">output</text>
+          <text data-node-label="" data-detail-anchor="" x="668" y="256" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">core::rule</text>
+        <text data-detail="context" x="668" y="272" class="t-muted" font-size="9" text-anchor="middle">load · filter</text>
+        <text data-detail="fine" x="668" y="280" class="t-backend" font-size="7" text-anchor="middle">shared</text>
         </g>
 
-        <g id="node-bin" data-node-id="bin" data-node-label="regressiondata-check" tabindex="0" role="button" aria-label="Focus regressiondata-check, validator binary, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="validator binary" data-node-tag="binary" data-node-context="Architecture component">
-          <title>regressiondata-check · validator binary · Architecture component · binary</title>
-          <rect x="580" y="688" width="230" height="96" rx="8" class="c-mask"/>
-          <rect x="580" y="688" width="230" height="96" rx="8" class="c-external" data-animate="node" style="--step:12" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(586 694) scale(0.6875)">
+        <g id="node-detection" data-node-id="detection" data-node-label="core::detection" tabindex="0" role="button" aria-label="Focus core::detection, rsigma + pipelines, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="rsigma + pipelines" data-node-tag="engine" data-node-context="Architecture component">
+          <title>core::detection · rsigma + pipelines · Architecture component · engine</title>
+          <rect x="608" y="376" width="120" height="60" rx="8" class="c-mask"/>
+          <rect x="608" y="376" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:12" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(614 382) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="668" y="404" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">core::detection</text>
+        <text data-detail="context" x="668" y="420" class="t-muted" font-size="9" text-anchor="middle">rsigma + pipelines</text>
+        <text data-detail="fine" x="668" y="428" class="t-backend" font-size="7" text-anchor="middle">engine</text>
+        </g>
+
+        <g id="node-regression" data-node-id="regression" data-node-label="core::regression" tabindex="0" role="button" aria-label="Focus core::regression, formats · info.yml, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="formats · info.yml" data-node-tag="output" data-node-context="Architecture component">
+          <title>core::regression · formats · info.yml · Architecture component · output</title>
+          <rect x="608" y="524" width="120" height="60" rx="8" class="c-mask"/>
+          <rect x="608" y="524" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:12" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(614 530) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="668" y="552" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">core::regression</text>
+        <text data-detail="context" x="668" y="568" class="t-muted" font-size="9" text-anchor="middle">formats · info.yml</text>
+        <text data-detail="fine" x="668" y="576" class="t-backend" font-size="7" text-anchor="middle">output</text>
+        </g>
+
+        <g id="node-repo" data-node-id="repo" data-node-label="sigmacatch-repo" tabindex="0" role="button" aria-label="Focus sigmacatch-repo, grit-lib · commits, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="grit-lib · commits" data-node-tag="output" data-node-context="Architecture component">
+          <title>sigmacatch-repo · grit-lib · commits · Architecture component · output</title>
+          <rect x="608" y="672" width="120" height="60" rx="8" class="c-mask"/>
+          <rect x="608" y="672" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:12" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(614 678) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="668" y="700" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">sigmacatch-repo</text>
+        <text data-detail="context" x="668" y="716" class="t-muted" font-size="9" text-anchor="middle">grit-lib · commits</text>
+        <text data-detail="fine" x="668" y="724" class="t-backend" font-size="7" text-anchor="middle">output</text>
+        </g>
+
+        <g id="node-protocol" data-node-id="protocol" data-node-label="driver-protocol" tabindex="0" role="button" aria-label="Focus driver-protocol, IOCTLs v6, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="IOCTLs v6" data-node-tag="shared" data-node-context="Architecture component">
+          <title>driver-protocol · IOCTLs v6 · Architecture component · shared</title>
+          <rect x="892" y="80" width="120" height="60" rx="8" class="c-mask"/>
+          <rect x="892" y="80" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:10" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(898 86) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="952" y="108" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">driver-protocol</text>
+        <text data-detail="context" x="952" y="124" class="t-muted" font-size="9" text-anchor="middle">IOCTLs v6</text>
+        <text data-detail="fine" x="952" y="132" class="t-backend" font-size="7" text-anchor="middle">shared</text>
+        </g>
+
+        <g id="node-outreg" data-node-id="outreg" data-node-label="regression sink" tabindex="0" role="button" aria-label="Focus regression sink, SigmahqRegression, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="SigmahqRegression" data-node-tag="output" data-node-context="Architecture component">
+          <title>regression sink · SigmahqRegression · Architecture component · output</title>
+          <rect x="892" y="376" width="120" height="60" rx="8" class="c-mask"/>
+          <rect x="892" y="376" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:12" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(898 382) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="952" y="404" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">regression sink</text>
+        <text data-detail="context" x="952" y="420" class="t-muted" font-size="9" text-anchor="middle">SigmahqRegression</text>
+        <text data-detail="fine" x="952" y="428" class="t-backend" font-size="7" text-anchor="middle">output</text>
+        </g>
+
+        <g id="node-outevtx" data-node-id="outevtx" data-node-label="output-evtx" tabindex="0" role="button" aria-label="Focus output-evtx, EVTX writer, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="EVTX writer" data-node-tag="output" data-node-context="Architecture component">
+          <title>output-evtx · EVTX writer · Architecture component · output</title>
+          <rect x="892" y="524" width="120" height="60" rx="8" class="c-mask"/>
+          <rect x="892" y="524" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:12" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(898 530) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="952" y="552" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">output-evtx</text>
+        <text data-detail="context" x="952" y="568" class="t-muted" font-size="9" text-anchor="middle">EVTX writer</text>
+        <text data-detail="fine" x="952" y="576" class="t-backend" font-size="7" text-anchor="middle">output</text>
+        </g>
+
+        <g id="node-validator" data-node-id="validator" data-node-label="regressiondata-check" tabindex="0" role="button" aria-label="Focus regressiondata-check, standalone validator, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="standalone validator" data-node-tag="binary" data-node-context="Architecture component">
+          <title>regressiondata-check · standalone validator · Architecture component · binary</title>
+          <rect x="892" y="820" width="230" height="96" rx="8" class="c-mask"/>
+          <rect x="892" y="820" width="230" height="96" rx="8" class="c-external" data-animate="node" style="--step:12" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(898 826) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="695" y="734" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">regressiondata-check</text>
-        <text data-detail="context" x="695" y="750" class="t-muted" font-size="9" text-anchor="middle">validator binary</text>
-        <text data-detail="fine" x="695" y="776" class="t-external" font-size="7" text-anchor="middle">binary</text>
-        </g>
-
-        <g id="node-macoses" data-node-id="macoses" data-node-label="macos_es.rs" tabindex="0" role="button" aria-label="Focus macos_es.rs, ES + eslogger, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="ES + eslogger" data-node-tag="macos" data-node-context="Architecture component">
-          <title>macos_es.rs · ES + eslogger · Architecture component · macos</title>
-          <rect x="850" y="80" width="120" height="60" rx="8" class="c-mask"/>
-          <rect x="850" y="80" width="120" height="60" rx="8" class="c-backend" data-animate="node" style="--step:12" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(856 86) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-node-label="" data-detail-anchor="" x="910" y="108" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">macos_es.rs</text>
-        <text data-detail="context" x="910" y="124" class="t-muted" font-size="9" text-anchor="middle">ES + eslogger</text>
-        <text data-detail="fine" x="910" y="132" class="t-backend" font-size="7" text-anchor="middle">macos</text>
+          <text data-node-label="" data-detail-anchor="" x="1007" y="866" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">regressiondata-check</text>
+        <text data-detail="context" x="1007" y="882" class="t-muted" font-size="9" text-anchor="middle">standalone validator</text>
+        <text data-detail="fine" x="1007" y="908" class="t-external" font-size="7" text-anchor="middle">binary</text>
         </g>
 
         <!-- Connection labels -->
-        <g data-detail="context" data-edge-from="windows" data-edge-to="etw" data-edge-label="channels + ETW" data-edge-key="0">
-          <rect x="9.799999999999997" y="179" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="48.4" y="189" class="t-edge-default" font-size="8" text-anchor="middle">channels + ETW</text>
+        <g data-detail="context" data-edge-from="dispatch" data-edge-to="runner" data-edge-label="run()" data-edge-key="0">
+          <rect x="344" y="399" width="34" height="14" rx="3" class="c-mask"/>
+          <text x="361" y="409" class="t-edge-default" font-size="8" text-anchor="middle">run()</text>
         </g>
-        <g data-detail="context" data-edge-from="windows" data-edge-to="driverc" data-edge-label="one process source" data-edge-key="1">
-          <rect x="106" y="331" width="96.39999999999999" height="14" rx="3" class="c-mask"/>
-          <text x="154.2" y="341" class="t-edge-default" font-size="8" text-anchor="middle">one process source</text>
+        <g data-detail="context" data-edge-from="winevt" data-edge-to="runner" data-edge-label="CollectorKind · Event" data-edge-key="1">
+          <rect x="132.6" y="205" width="110.8" height="14" rx="3" class="c-mask"/>
+          <text x="188" y="215" class="t-edge-default" font-size="8" text-anchor="middle">CollectorKind · Event</text>
         </g>
-        <g data-detail="context" data-edge-from="driverc" data-edge-to="protocol" data-edge-label="IOCTL records" data-edge-key="2">
-          <rect x="21.599999999999994" y="483" width="72.4" height="14" rx="3" class="c-mask"/>
-          <text x="57.8" y="493" class="t-edge-default" font-size="8" text-anchor="middle">IOCTL records</text>
+        <g data-detail="context" data-edge-from="etw" data-edge-to="runner" data-edge-label="CollectorKind · Event" data-edge-key="2">
+          <rect x="140.1" y="352" width="110.8" height="14" rx="3" class="c-mask"/>
+          <text x="195.5" y="362" class="t-edge-default" font-size="8" text-anchor="middle">CollectorKind · Event</text>
         </g>
-        <g data-detail="context" data-edge-from="windows" data-edge-to="types" data-edge-label="Event" data-edge-key="3">
-          <rect x="218" y="318" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="235" y="328" class="t-edge-default" font-size="8" text-anchor="middle">Event</text>
+        <g data-detail="context" data-edge-from="etwdriver" data-edge-to="runner" data-edge-label="CollectorKind · Event" data-edge-key="3">
+          <rect x="186.6" y="571" width="110.8" height="14" rx="3" class="c-mask"/>
+          <text x="242" y="581" class="t-edge-default" font-size="8" text-anchor="middle">CollectorKind · Event</text>
         </g>
-        <g data-detail="context" data-edge-from="etw" data-edge-to="types" data-edge-label="Event" data-edge-key="4">
-          <rect x="188.5" y="209" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="205.5" y="219" class="t-edge-default" font-size="8" text-anchor="middle">Event</text>
+        <g data-detail="context" data-edge-from="macos" data-edge-to="runner" data-edge-label="CollectorKind · Event" data-edge-key="4">
+          <rect x="202.6" y="682" width="110.8" height="14" rx="3" class="c-mask"/>
+          <text x="258" y="692" class="t-edge-default" font-size="8" text-anchor="middle">CollectorKind · Event</text>
         </g>
-        <g data-detail="context" data-edge-from="evtx_reader" data-edge-to="types" data-edge-label="Event" data-edge-key="5">
-          <rect x="353" y="516" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="370" y="526" class="t-edge-default" font-size="8" text-anchor="middle">Event</text>
+        <g data-detail="context" data-edge-from="linuxin" data-edge-to="runner" data-edge-label="CollectorKind · Event" data-edge-key="5">
+          <rect x="186.6" y="776" width="110.8" height="14" rx="3" class="c-mask"/>
+          <text x="242" y="786" class="t-edge-default" font-size="8" text-anchor="middle">CollectorKind · Event</text>
         </g>
-        <g data-detail="context" data-edge-from="runner" data-edge-to="config" data-edge-label="Config" data-edge-key="6">
-          <rect x="455.6" y="90" width="38.8" height="14" rx="3" class="c-mask"/>
-          <text x="475" y="100" class="t-edge-default" font-size="8" text-anchor="middle">Config</text>
+        <g data-detail="context" data-edge-from="evtxin" data-edge-to="runner" data-edge-label="CollectorKind · Event" data-edge-key="6">
+          <rect x="22.000000000000007" y="893.5" width="110.8" height="14" rx="3" class="c-mask"/>
+          <text x="77.4" y="903.5" class="t-edge-default" font-size="8" text-anchor="middle">CollectorKind · Event</text>
         </g>
-        <g data-detail="context" data-edge-from="runner" data-edge-to="rule" data-edge-label="rules" data-edge-key="7">
-          <rect x="488" y="249" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="505" y="259" class="t-edge-default" font-size="8" text-anchor="middle">rules</text>
+        <g data-detail="context" data-edge-from="etw" data-edge-to="etwcommon" data-edge-label="shared helpers" data-edge-key="7">
+          <rect x="9.799999999999997" y="325" width="77.2" height="14" rx="3" class="c-mask"/>
+          <text x="48.4" y="335" class="t-edge-default" font-size="8" text-anchor="middle">shared helpers</text>
         </g>
-        <g data-detail="context" data-edge-from="runner" data-edge-to="detection" data-edge-label="events" data-edge-key="8">
-          <rect x="478.6" y="340" width="38.8" height="14" rx="3" class="c-mask"/>
-          <text x="498" y="350" class="t-edge-default" font-size="8" text-anchor="middle">events</text>
+        <g data-detail="context" data-edge-from="etwdriver" data-edge-to="etwcommon" data-edge-label="shared helpers" data-edge-key="8">
+          <rect x="61.4" y="504" width="77.2" height="14" rx="3" class="c-mask"/>
+          <text x="100" y="514" class="t-edge-default" font-size="8" text-anchor="middle">shared helpers</text>
         </g>
-        <g data-detail="context" data-edge-from="runner" data-edge-to="regression" data-edge-label="alerts" data-edge-key="9">
-          <rect x="266.6" y="421" width="38.8" height="14" rx="3" class="c-mask"/>
-          <text x="286" y="431" class="t-edge-default" font-size="8" text-anchor="middle">alerts</text>
+        <g data-detail="context" data-edge-from="etwdriver" data-edge-to="protocol" data-edge-label="IOCTL records" data-edge-key="9">
+          <rect x="187" y="527" width="72.4" height="14" rx="3" class="c-mask"/>
+          <text x="223.2" y="537" class="t-edge-default" font-size="8" text-anchor="middle">IOCTL records</text>
         </g>
-        <g data-detail="context" data-edge-from="runner" data-edge-to="repo" data-edge-label="commits" data-edge-key="10">
-          <rect x="625.2" y="188" width="43.6" height="14" rx="3" class="c-mask"/>
-          <text x="647" y="198" class="t-edge-default" font-size="8" text-anchor="middle">commits</text>
+        <g data-detail="context" data-edge-from="evtxin" data-edge-to="types" data-edge-label="parse → Event" data-edge-key="10">
+          <rect x="307.2" y="917.5" width="72.4" height="14" rx="3" class="c-mask"/>
+          <text x="343.4" y="927.5" class="t-edge-default" font-size="8" text-anchor="middle">parse → Event</text>
         </g>
-        <g data-detail="context" data-edge-from="runner" data-edge-to="types" data-edge-label="Event" data-edge-key="11">
-          <rect x="309" y="319" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="326" y="329" class="t-edge-default" font-size="8" text-anchor="middle">Event</text>
+        <g data-detail="context" data-edge-from="runner" data-edge-to="config" data-edge-label="config · CliArgs" data-edge-key="11">
+          <rect x="404" y="695" width="86.8" height="14" rx="3" class="c-mask"/>
+          <text x="447.4" y="705" class="t-edge-default" font-size="8" text-anchor="middle">config · CliArgs</text>
         </g>
-        <g data-detail="context" data-edge-from="detection" data-edge-to="rule" data-edge-label="compiled rules" data-edge-key="12">
-          <rect x="616.4" y="340" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="655" y="350" class="t-edge-default" font-size="8" text-anchor="middle">compiled rules</text>
+        <g data-detail="context" data-edge-from="runner" data-edge-to="rule" data-edge-label="rules" data-edge-key="12">
+          <rect x="509" y="292" width="34" height="14" rx="3" class="c-mask"/>
+          <text x="526" y="302" class="t-edge-default" font-size="8" text-anchor="middle">rules</text>
         </g>
-        <g data-detail="context" data-edge-from="detection" data-edge-to="types" data-edge-label="Event" data-edge-key="13">
-          <rect x="488" y="387" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="505" y="397" class="t-edge-default" font-size="8" text-anchor="middle">Event</text>
+        <g data-detail="context" data-edge-from="runner" data-edge-to="detection" data-edge-label="events" data-edge-key="13">
+          <rect x="497.6" y="386" width="38.8" height="14" rx="3" class="c-mask"/>
+          <text x="517" y="396" class="t-edge-default" font-size="8" text-anchor="middle">events</text>
         </g>
-        <g data-detail="context" data-edge-from="regression" data-edge-to="types" data-edge-label="Alert" data-edge-key="14">
-          <rect x="500" y="531" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="517" y="541" class="t-edge-default" font-size="8" text-anchor="middle">Alert</text>
+        <g data-detail="context" data-edge-from="runner" data-edge-to="regression" data-edge-label="alerts" data-edge-key="14">
+          <rect x="506.6" y="534" width="38.8" height="14" rx="3" class="c-mask"/>
+          <text x="526" y="544" class="t-edge-default" font-size="8" text-anchor="middle">alerts</text>
         </g>
-        <g data-detail="context" data-edge-from="regression" data-edge-to="repo" data-edge-label="batches" data-edge-key="15">
-          <rect x="888.2" y="485" width="43.6" height="14" rx="3" class="c-mask"/>
-          <text x="910" y="495" class="t-edge-default" font-size="8" text-anchor="middle">batches</text>
+        <g data-detail="context" data-edge-from="runner" data-edge-to="repo" data-edge-label="commits" data-edge-key="15">
+          <rect x="496.2" y="668" width="43.6" height="14" rx="3" class="c-mask"/>
+          <text x="518" y="678" class="t-edge-default" font-size="8" text-anchor="middle">commits</text>
         </g>
-        <g data-detail="context" data-edge-from="regression" data-edge-to="evtx_reader" data-edge-label="parse" data-edge-key="16">
-          <rect x="488" y="583" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="505" y="593" class="t-edge-default" font-size="8" text-anchor="middle">parse</text>
+        <g data-detail="context" data-edge-from="runner" data-edge-to="types" data-edge-label="Event" data-edge-key="16">
+          <rect x="482.9" y="316" width="34" height="14" rx="3" class="c-mask"/>
+          <text x="499.9" y="326" class="t-edge-default" font-size="8" text-anchor="middle">Event</text>
         </g>
-        <g data-detail="context" data-edge-from="bin" data-edge-to="detection" data-edge-label="engine" data-edge-key="17">
-          <rect x="814.6" y="582" width="38.8" height="14" rx="3" class="c-mask"/>
-          <text x="834" y="592" class="t-edge-default" font-size="8" text-anchor="middle">engine</text>
+        <g data-detail="context" data-edge-from="detection" data-edge-to="rule" data-edge-label="compiled rules" data-edge-key="17">
+          <rect x="629.4" y="356" width="77.2" height="14" rx="3" class="c-mask"/>
+          <text x="668" y="366" class="t-edge-default" font-size="8" text-anchor="middle">compiled rules</text>
         </g>
-        <g data-detail="context" data-edge-from="bin" data-edge-to="rule" data-edge-label="rules" data-edge-key="18">
-          <rect x="669" y="475" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="686" y="485" class="t-edge-default" font-size="8" text-anchor="middle">rules</text>
+        <g data-detail="context" data-edge-from="detection" data-edge-to="types" data-edge-label="Event" data-edge-key="18">
+          <rect x="735" y="231" width="34" height="14" rx="3" class="c-mask"/>
+          <text x="752" y="241" class="t-edge-default" font-size="8" text-anchor="middle">Event</text>
         </g>
-        <g data-detail="context" data-edge-from="bin" data-edge-to="regression" data-edge-label="writer" data-edge-key="19">
-          <rect x="664.6" y="668" width="38.8" height="14" rx="3" class="c-mask"/>
-          <text x="684" y="678" class="t-edge-default" font-size="8" text-anchor="middle">writer</text>
+        <g data-detail="context" data-edge-from="regression" data-edge-to="types" data-edge-label="Alert" data-edge-key="19">
+          <rect x="628" y="474.5" width="34" height="14" rx="3" class="c-mask"/>
+          <text x="645" y="484.5" class="t-edge-default" font-size="8" text-anchor="middle">Alert</text>
         </g>
-        <g data-detail="context" data-edge-from="bin" data-edge-to="evtx_reader" data-edge-label="parse" data-edge-key="20">
-          <rect x="353" y="646" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="370" y="656" class="t-edge-default" font-size="8" text-anchor="middle">parse</text>
+        <g data-detail="context" data-edge-from="regression" data-edge-to="repo" data-edge-label="batches" data-edge-key="20">
+          <rect x="618.4000000000001" y="621" width="43.6" height="14" rx="3" class="c-mask"/>
+          <text x="640.2" y="631" class="t-edge-default" font-size="8" text-anchor="middle">batches</text>
         </g>
-        <g data-detail="context" data-edge-from="macoses" data-edge-to="types" data-edge-label="Event" data-edge-key="21">
-          <rect x="725.4" y="36" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="742.4" y="46" class="t-edge-default" font-size="8" text-anchor="middle">Event</text>
+        <g data-detail="context" data-edge-from="outreg" data-edge-to="regression" data-edge-label="sink impl" data-edge-key="21">
+          <rect x="783.4" y="456.5" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
+          <text x="810" y="466.5" class="t-edge-default" font-size="8" text-anchor="middle">sink impl</text>
+        </g>
+        <g data-detail="context" data-edge-from="outreg" data-edge-to="outevtx" data-edge-label="EVTX writer" data-edge-key="22">
+          <rect x="890.2" y="473" width="62.8" height="14" rx="3" class="c-mask"/>
+          <text x="921.6" y="483" class="t-edge-default" font-size="8" text-anchor="middle">EVTX writer</text>
+        </g>
+        <g data-detail="context" data-edge-from="outevtx" data-edge-to="types" data-edge-label="Event" data-edge-key="23">
+          <rect x="1019" y="339" width="34" height="14" rx="3" class="c-mask"/>
+          <text x="1036" y="349" class="t-edge-default" font-size="8" text-anchor="middle">Event</text>
+        </g>
+        <g data-detail="context" data-edge-from="validator" data-edge-to="detection" data-edge-label="engine" data-edge-key="24">
+          <rect x="860.1" y="920" width="38.8" height="14" rx="3" class="c-mask"/>
+          <text x="879.5" y="930" class="t-edge-default" font-size="8" text-anchor="middle">engine</text>
+        </g>
+        <g data-detail="context" data-edge-from="validator" data-edge-to="rule" data-edge-label="rules" data-edge-key="25">
+          <rect x="900" y="252" width="34" height="14" rx="3" class="c-mask"/>
+          <text x="917" y="262" class="t-edge-default" font-size="8" text-anchor="middle">rules</text>
+        </g>
+        <g data-detail="context" data-edge-from="validator" data-edge-to="regression" data-edge-label="validate" data-edge-key="26">
+          <rect x="785.8" y="694.5" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="810" y="704.5" class="t-edge-default" font-size="8" text-anchor="middle">validate</text>
         </g>
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->
@@ -5608,14 +5708,14 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
         <!-- Legend -->
         <g data-legend="" data-legend-bridge="">
-          <text x="40" y="816" class="t-primary" font-size="12" font-weight="650">Legend</text>
-          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Backend" data-legend-x="40" data-legend-baseline="836" data-legend-width="87">
-            <rect x="40" y="827" width="16" height="10" rx="2.5" class="c-backend" stroke-width="1"/>
-            <text x="62" y="836" class="t-muted" font-size="10" font-weight="500">Backend</text>
+          <text x="40" y="1060" class="t-primary" font-size="12" font-weight="650">Legend</text>
+          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Backend" data-legend-x="40" data-legend-baseline="1080" data-legend-width="87">
+            <rect x="40" y="1071" width="16" height="10" rx="2.5" class="c-backend" stroke-width="1"/>
+            <text x="62" y="1080" class="t-muted" font-size="10" font-weight="500">Backend</text>
           </g>
-          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="External" data-legend-x="149" data-legend-baseline="836" data-legend-width="93">
-            <rect x="149" y="827" width="16" height="10" rx="2.5" class="c-external" stroke-width="1"/>
-            <text x="171" y="836" class="t-muted" font-size="10" font-weight="500">External</text>
+          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="External" data-legend-x="149" data-legend-baseline="1080" data-legend-width="93">
+            <rect x="149" y="1071" width="16" height="10" rx="2.5" class="c-external" stroke-width="1"/>
+            <text x="171" y="1080" class="t-muted" font-size="10" font-weight="500">External</text>
           </g>
         </g>
       </svg>

@@ -5,7 +5,7 @@ capture, and check what was produced.
 
 ## What you need
 
-- **Rust 1.96+** (2024 edition). Building Windows from Linux additionally
+- **Rust 1.97.1+** (2024 edition, required by rsigma 0.27). Building Windows from Linux additionally
   needs `cargo install cargo-xwin`.
 - **A GitHub account with an SSH key and a fork of
   [SigmaHQ/sigma](https://github.com/SigmaHQ/sigma)** — sigmacatch pushes
@@ -20,7 +20,8 @@ capture, and check what was produced.
     feature adds the `sigmacatch` kernel driver for the ids ETW cannot reach
     (see [Windows without Sysmon](dev/windows/index.md)).
   - **Linux** — an auditd log at `/var/log/audit/audit.log` and/or the
-    standard syslog files. No root needed.
+    standard syslog files. No root needed. See
+    [Linux telemetry](dev/linux/index.md).
   - **macOS** — a macOS host (the executable cannot be linked from Linux).
     The Endpoint Security collector runs as root and uses Apple's `eslogger`
     on a stock machine — no entitlement needed. See

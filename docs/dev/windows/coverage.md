@@ -144,14 +144,13 @@ Sysmon id, it reads the channel the rule names.
 
 ## Reproducing the table
 
-The one-off diagnostic probes used to produce this table were removed when the
-ETW inputs became their own crates. The current way to exercise these sources
-is the collector itself: build with `--features winevt,etw,driver` and let it
-capture from the Event Log channels plus the kernel sensor, falling back to
-native ETW when the driver is not loaded.
+Exercise these sources with the collector itself: build with
+`--features winevt,etw,driver` and let it capture from the Event Log channels
+plus the kernel sensor, falling back to native ETW when the driver is not
+loaded.
 
-[Measurements](evidence.md) holds the per-milestone evidence, the provider
-quirks and the measurements behind each row.
+[Measurements](evidence.md) holds the provider quirks and the measurements
+behind each row.
 
 ## Known gaps
 
