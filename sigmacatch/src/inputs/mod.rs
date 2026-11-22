@@ -10,8 +10,6 @@
 // Windows inputs. Crate aliases keep host call sites unchanged; each crate
 // compiles as an empty shell off Windows.
 #[cfg(feature = "winevt")]
-pub use sigmacatch_input_winevt as winevt;
-#[cfg(feature = "winevt")]
 pub use sigmacatch_input_winevt::channels;
 // Windows orchestrator: Event Log channels + kernel sensor or ETW.
 #[cfg(all(target_os = "windows", feature = "winevt"))]
@@ -38,17 +36,10 @@ pub use sigmacatch_input_evtx as evtx;
 pub use sigmacatch_input_auditd as auditd;
 #[cfg(all(target_os = "linux", feature = "builtin"))]
 pub use sigmacatch_input_syslog as syslog;
-// Shared line-tail driver (Linux `MetadataExt`), compiled with any tail-based
-// input. The crate is empty off Linux; callers below are themselves gated.
-#[cfg(all(
-    target_os = "linux",
-    any(feature = "auditd", feature = "builtin", feature = "sysmon")
-))]
-pub use sigmacatch_input_tail as tail;
 // Test hook, publicly reachable so integration tests can arm the injected
 // tail timing / READY barrier through the collector constructors.
 #[cfg(all(target_os = "linux", feature = "ebpf"))]
-pub use sigmacatch_input_ebpf::{ebpf, ebpf_event};
+pub use sigmacatch_input_ebpf::ebpf;
 #[cfg(all(target_os = "linux", feature = "sysmon"))]
 pub use sigmacatch_input_sysmon as sysmon;
 #[cfg(all(target_os = "linux", feature = "sysmon"))]

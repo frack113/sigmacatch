@@ -17,7 +17,7 @@ async-trait = "0.1.92"
 sigmacatch-core = { path = "../../core" }
 sigmacatch-input-syslog = { path = "../syslog" }
 sigmacatch-input-tail = { path = "../tail" }
-tokio = { version = "1.54.1", features = ["rt", "sync"] }
+tokio = { version = "1.54.1", features = ["macros", "rt", "sync", "time"] }
 tracing.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]

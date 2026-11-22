@@ -25,9 +25,6 @@ sysmon = ["builtin", "dep:sigmacatch-input-sysmon"] # Sysmon-for-Linux legacy ta
 ebpf = ["dep:sigmacatch-input-ebpf", "sigmacatch-input-ebpf/ebpf"]
 macos = ["dep:sigmacatch-input-macos"]
 
-[target.'cfg(not(unix))'.dependencies]
-dunce = "1.0.5"
-
 # Linux input crates are empty shells on other targets, so their re-exports in
 # `inputs/mod.rs` are Linux-only too. Target scoping keeps the dependency lint
 # quiet when a Linux feature is enabled on a Windows build.
@@ -72,7 +69,6 @@ tracing-subscriber.workspace = true
 uuid = { version = "1.29.3", features = ["v4", "serde"] }
 
 [dev-dependencies]
-rand_core = { version = "0.6.4", features = ["getrandom"] }
 tempfile = "3.27.0"
 
 [[test]]
