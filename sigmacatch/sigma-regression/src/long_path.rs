@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Windows extended-length path support.
+//! Windows extended-length path support for regression-data files.
 //!
 //! On Windows, paths exceeding 260 characters must be prefixed with `\\?\`
 //! to use the extended-length API.
@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 /// Return `path` with a `\\?\` prefix when it is an absolute Windows path
 /// longer than 260 characters. Otherwise return `path` unchanged.
-pub(crate) fn long_path(path: &Path) -> PathBuf {
+pub fn long_path(path: &Path) -> PathBuf {
     #[cfg(windows)]
     {
         use std::path::Component;

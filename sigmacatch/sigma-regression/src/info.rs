@@ -129,15 +129,15 @@ impl InfoYml {
     }
 
     /// Write to `path` in SigmaHQ 4-space indentation style.
-    pub fn save(&self, path: &Path) -> crate::regression::Result<()> {
-        let path = crate::regression::long_path::long_path(path);
+    pub fn save(&self, path: &Path) -> crate::Result<()> {
+        let path = crate::long_path(path);
         let mut yaml = self.canonical_yaml()?;
         if !yaml.ends_with('\n') {
             yaml.push('\n');
         }
         let mut file = std::fs::File::create(&path)?;
         file.write_all(yaml.as_bytes())
-            .map_err(|e| crate::regression::RegressionError::Yaml(e.to_string()))?;
+            .map_err(|e| crate::Error::Yaml(e.to_string()))?;
         Ok(())
     }
 
@@ -213,27 +213,25 @@ impl InfoYml {
     }
 
     /// Return the canonical 4-space-indented YAML representation.
-    pub fn canonical_yaml(&self) -> crate::regression::Result<String> {
-        let yaml = serde_yaml::to_string(self)
-            .map_err(|e| crate::regression::RegressionError::Yaml(e.to_string()))?;
+    pub fn canonical_yaml(&self) -> crate::Result<String> {
+        let yaml = serde_yaml::to_string(self).map_err(|e| crate::Error::Yaml(e.to_string()))?;
         Ok(Self::to_sigma_indent(&yaml))
     }
 
     /// Parse an `info.yml` file, stripping BOM if present.
-    pub fn load(path: &Path) -> crate::regression::Result<Self> {
-        let path = crate::regression::long_path::long_path(path);
-        let mut content = std::fs::read_to_string(&path).map_err(|e| {
-            crate::regression::RegressionError::Invalid(format!("Failed to read info.yml: {}", e))
-        })?;
+    pub fn load(path: &Path) -> crate::Result<Self> {
+        let path = crate::long_path(path);
+        let mut content = std::fs::read_to_string(&path)
+            .map_err(|e| crate::Error::Invalid(format!("Failed to read info.yml: {}", e)))?;
         if content.starts_with('\u{feff}') {
             let mut chars = content.chars();
             chars.next();
             content = chars.as_str().to_string();
         }
-        let info: Self = serde_yaml::from_str(&content)
-            .map_err(|e| crate::regression::RegressionError::Yaml(e.to_string()))?;
+        let info: Self =
+            serde_yaml::from_str(&content).map_err(|e| crate::Error::Yaml(e.to_string()))?;
         if info.rule_metadata.is_empty() {
-            return Err(crate::regression::RegressionError::Invalid(
+            return Err(crate::Error::Invalid(
                 "info.yml: 'rule_metadata' must be a non-empty sequence".to_string(),
             ));
         }

@@ -21,10 +21,10 @@ use std::io::Write;
 mod evtx;
 mod evtx_writer;
 mod format;
-pub mod info;
-/// SigmaHQ `logtype` metadata helpers for `info.yml`.
-pub mod logtype;
-mod long_path;
+
+// The `info.yml` schema, its canonical layout and the log-type vocabulary
+// belong to `sigma-regression`; re-exported here so existing paths keep working.
+pub use sigma_regression::{info, logtype};
 
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -50,7 +50,7 @@ pub const DEFAULT_MAX_FAILED_CYCLES: u32 = 3;
 /// `regressiondata-check`.
 fn data_file_exists(dir: &Path, rule_id: &Uuid, format: DataFormat) -> bool {
     let ext = format.ext();
-    let candidate = crate::regression::long_path::long_path(&dir.join(format!("{rule_id}.{ext}")));
+    let candidate = sigma_regression::long_path(&dir.join(format!("{rule_id}.{ext}")));
     std::fs::metadata(&candidate).is_ok_and(|m| m.len() > 0)
 }
 
@@ -348,8 +348,7 @@ impl SigmahqRegression {
         let (info_path, info, _) = self.entries.get(index)?;
         let rule_id = info.rule_metadata.first()?.id;
         let dir = info_path.parent()?;
-        let json_path =
-            crate::regression::long_path::long_path(&dir.join(format!("{rule_id}.json")));
+        let json_path = sigma_regression::long_path(&dir.join(format!("{rule_id}.json")));
         let bytes = std::fs::read(json_path).ok()?;
         parse_json_stream(&bytes)
     }
@@ -539,7 +538,7 @@ impl RegressionData {
         let provider = self.format.resolve_provider(first)?;
 
         let rule_dir = self.rule_dir()?;
-        let rule_dir = crate::regression::long_path::long_path(&rule_dir);
+        let rule_dir = sigma_regression::long_path(&rule_dir);
         std::fs::create_dir_all(&rule_dir).map_err(|e| {
             RegressionError::Invalid(format!(
                 "Failed to create rule directory {:?}: {e}",
@@ -585,7 +584,7 @@ impl RegressionData {
                 provider,
             },
         );
-        let info_path = crate::regression::long_path::long_path(&rule_dir.join("info.yml"));
+        let info_path = sigma_regression::long_path(&rule_dir.join("info.yml"));
         info.save(&info_path)?;
 
         tracing::info!(
@@ -611,8 +610,7 @@ impl RegressionData {
             self.write_json_output(rule_dir, rule_id, written)?;
         }
 
-        let data_path =
-            crate::regression::long_path::long_path(&rule_dir.join(format!("{rule_id}.{ext}")));
+        let data_path = sigma_regression::long_path(&rule_dir.join(format!("{rule_id}.{ext}")));
         self.write_primary_data(&data_path)?;
         written.push(data_path);
         Ok(())
@@ -624,8 +622,7 @@ impl RegressionData {
         rule_id: &Uuid,
         written: &mut Vec<PathBuf>,
     ) -> Result<()> {
-        let raw_json_path =
-            crate::regression::long_path::long_path(&rule_dir.join(format!("{rule_id}.json")));
+        let raw_json_path = sigma_regression::long_path(&rule_dir.join(format!("{rule_id}.json")));
         let mut file = std::fs::File::create(&raw_json_path)?;
         let records: Vec<&serde_json::Value> = self
             .alerts
@@ -736,6 +733,16 @@ pub enum RegressionError {
 
 /// Crate-local result alias over [`RegressionError`].
 pub type Result<T> = std::result::Result<T, RegressionError>;
+
+impl From<sigma_regression::Error> for RegressionError {
+    fn from(error: sigma_regression::Error) -> Self {
+        match error {
+            sigma_regression::Error::Io(error) => Self::Io(error),
+            sigma_regression::Error::Yaml(message) => Self::Yaml(message),
+            sigma_regression::Error::Invalid(message) => Self::Invalid(message),
+        }
+    }
+}
 
 // ─── Free functions ─────────────────────────────────────────────────────
 

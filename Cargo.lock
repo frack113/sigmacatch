@@ -2483,6 +2483,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "sigma-regression"
+version = "0.8.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
+ "uuid",
+ "yaml_serde",
+]
+
+[[package]]
 name = "sigmacatch"
 version = "0.8.0"
 dependencies = [
@@ -2492,6 +2505,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "sigma-regression",
  "sigmacatch-core",
  "sigmacatch-input-auditd",
  "sigmacatch-input-ebpf",
@@ -2532,6 +2546,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "sha2 0.11.1",
+ "sigma-regression",
  "ssh-key",
  "tempfile",
  "thiserror 2.0.21",

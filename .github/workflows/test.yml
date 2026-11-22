@@ -42,6 +42,8 @@ jobs:
           key: test-stable-${{ hashFiles('**/Cargo.lock') }}
       - name: Test (winevt)
         run: cargo test --locked -p sigmacatch
+      - name: Test (sigma-regression)
+        run: cargo test --locked -p sigma-regression
       - name: Test (ETW decoding helpers)
         run: cargo test --locked -p sigmacatch-input-etw-common
       - name: Test (ETW and kernel-sensor input crates)

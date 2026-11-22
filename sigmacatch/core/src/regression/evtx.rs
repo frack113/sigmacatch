@@ -62,7 +62,7 @@ fn write_evtx_winevt(_xml: &str, channel: &str, rid: u64, path: &Path) -> Result
         ));
     }
 
-    let path = crate::regression::long_path::long_path(path);
+    let path = sigma_regression::long_path(path);
     let query = format!("*[System[EventRecordID={}]]", rid);
 
     for attempt in 0..EVTX_EXPORT_MAX_ATTEMPTS {
@@ -166,7 +166,7 @@ fn write_evtx_winevt(_xml: &str, channel: &str, _rid: u64, _path: &Path) -> Resu
 /// structural check catches the failure modes that matter (truncated write,
 /// wrong format) without the cost of `EvtxParser::from_path`.
 fn write_evtx_pure_rust(xml: &str, channel: &str, rid: u64, path: &Path) -> Result<()> {
-    let path = crate::regression::long_path::long_path(path);
+    let path = sigma_regression::long_path(path);
 
     let result = crate::regression::evtx_writer::write_evtx_from_xml(xml, rid, &path)
         .map_err(|e| {
@@ -198,7 +198,7 @@ fn write_evtx_pure_rust(xml: &str, channel: &str, rid: u64, path: &Path) -> Resu
 /// writer) produces the file and a full parse is the only reliable check.
 #[cfg(windows)]
 fn exported_has_records(path: &Path) -> Result<bool> {
-    let path = crate::regression::long_path::long_path(path);
+    let path = sigma_regression::long_path(path);
     let events = crate::evtx_reader::parse_evtx_file(&path).map_err(|e| {
         RegressionError::Invalid(format!(
             "Failed to parse exported EVTX {}: {e}",

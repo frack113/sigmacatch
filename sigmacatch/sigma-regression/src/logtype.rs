@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
+//! Accepted `type` spellings for regression tests in `info.yml`.
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// SigmaHQ log type recorded in `info.yml`.
 pub enum LogType {
