@@ -9,7 +9,7 @@
 //! Only fields that can be sourced exactly are written: a missing field is
 //! always better than an approximated one for committed regression data.
 
-use crate::inputs::etw_process::ProcessFacts;
+use crate::etw_process::ProcessFacts;
 
 /// `sigmacatch` provider id. The events are Sysmon-*schema* (same EventIDs
 /// and field names) but are produced by sigmacatch, not Sysmon, so they are
@@ -201,7 +201,7 @@ pub struct SignatureFields<'a> {
 }
 
 /// Append the version-resource fields, in Sysmon's order.
-fn version_facts(data: &mut String, version: Option<&crate::inputs::version_info::VersionInfo>) {
+fn version_facts(data: &mut String, version: Option<&crate::version_info::VersionInfo>) {
     let Some(version) = version else {
         return;
     };
@@ -241,6 +241,7 @@ fn image_facts(data: &mut String, hashes: Option<&str>, signature: Option<&Signa
 }
 
 /// Render a Sysmon **EID 7 (ImageLoad)** event.
+#[allow(clippy::too_many_arguments)] // One argument per Sysmon EID 7 field.
 pub fn image_load_xml(
     computer: &str,
     at: chrono::DateTime<chrono::Utc>,
@@ -249,7 +250,7 @@ pub fn image_load_xml(
     image_loaded: &str,
     hashes: Option<&str>,
     signature: Option<&SignatureFields<'_>>,
-    version: Option<&crate::inputs::version_info::VersionInfo>,
+    version: Option<&crate::version_info::VersionInfo>,
     user: Option<&str>,
 ) -> String {
     let mut data = String::new();
@@ -524,6 +525,7 @@ mod tests {
                     .with_ymd_and_hms(2026, 11, 14, 9, 2, 12)
                     .unwrap(),
             ),
+            hashes: None,
         }
     }
 

@@ -42,6 +42,8 @@ jobs:
           key: test-stable-${{ hashFiles('**/Cargo.lock') }}
       - name: Test (winevt)
         run: cargo test --locked -p sigmacatch
+      - name: Test (ETW decoding helpers)
+        run: cargo test --locked -p sigmacatch-input-etw-common
       - name: Test (auditd+builtin+sysmon)
         run: cargo test --locked -p sigmacatch --no-default-features --features auditd,builtin,sysmon
       - name: Test (evtx)

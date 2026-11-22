@@ -200,7 +200,7 @@ pub fn hashes_of(path: &str) -> Option<String> {
             out.push_str(&format!("{byte:02x}"));
         }
     }
-    if let Some(imphash) = crate::inputs::pe_format::imphash(&bytes) {
+    if let Some(imphash) = crate::pe_format::imphash(&bytes) {
         out.push_str(",IMPHASH=");
         out.push_str(&imphash);
     }

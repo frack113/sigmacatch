@@ -228,7 +228,7 @@ fn created(handle: HANDLE) -> Option<DateTime<Utc>> {
     // SAFETY: four distinct out-parameters.
     unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user).ok()? };
     let ticks = i64::from(creation.dwLowDateTime) | (i64::from(creation.dwHighDateTime) << 32);
-    crate::inputs::etw_event::filetime_to_utc(ticks)
+    crate::etw_event::filetime_to_utc(ticks)
 }
 
 /// User SID/name and mandatory label from the process token.

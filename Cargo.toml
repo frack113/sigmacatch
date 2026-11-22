@@ -8,6 +8,7 @@ members = [
   "sigmacatch/core",
   "sigmacatch/inputs/ebpf",
   "sigmacatch/inputs/tail",
+  "sigmacatch/inputs/etw-common",
 ]
 
 # The ebpf probe (sigmacatch/ebpf) is excluded: built separately by build.rs.

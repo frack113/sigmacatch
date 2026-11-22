@@ -19,34 +19,17 @@ pub mod winevt;
 #[cfg(all(target_os = "windows", feature = "winevt"))]
 pub mod windows;
 // Native ETW collector (feature `etw`): no Sysmon, no driver. The session
-// layer and the TDH decoder are only meaningful on Windows.
+// layer is only meaningful on Windows.
 #[cfg(all(target_os = "windows", feature = "etw"))]
 pub mod etw;
+// Decoding helpers shared with the kernel-sensor client. The Win32-backed
+// ones are empty off Windows; the pure format modules are target-independent.
 #[cfg(all(target_os = "windows", feature = "etw"))]
-pub mod etw_event;
-#[cfg(all(target_os = "windows", feature = "etw"))]
-pub mod etw_process;
-#[cfg(all(target_os = "windows", feature = "etw"))]
-pub mod etw_registry;
-// Included by path, like `windows/driver_protocol.rs`: the `src/windows/`
-// directory holds files shared with the driver crate, not a module tree.
-#[cfg(all(target_os = "windows", feature = "etw"))]
-pub mod etw_sysmon;
-#[cfg(all(target_os = "windows", feature = "etw"))]
-#[path = "../windows/nt_file.rs"]
-pub mod nt_file;
-#[cfg(any(feature = "etw", test))]
-pub mod pe_format;
-#[cfg(any(feature = "etw", test))]
-pub mod registry_format;
-#[cfg(all(target_os = "windows", feature = "etw"))]
-#[path = "../windows/signature.rs"]
-pub mod signature;
-#[cfg(all(target_os = "windows", feature = "etw"))]
-#[path = "../windows/version_info.rs"]
-pub mod version_info;
-#[cfg(any(feature = "etw", test))]
-pub mod wmi_format;
+pub use sigmacatch_input_etw_common::{
+    etw_event, etw_process, etw_registry, etw_sysmon, nt_file, signature, version_info,
+};
+#[cfg(feature = "etw")]
+pub use sigmacatch_input_etw_common::{pe_format, registry_format, wmi_format};
 // Kernel-sensor client (feature `driver`, implies `etw`).
 #[cfg(all(target_os = "windows", feature = "driver"))]
 pub mod etw_driver;

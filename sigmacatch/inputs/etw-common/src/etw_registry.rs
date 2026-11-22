@@ -15,13 +15,12 @@
 //!
 //! `Details` is the value *data* (Sysmon EID 13 semantics, which the rules
 //! match on), not the value name. It only arrives when the session asked the
-//! provider for `CapturedData`; see
-//! [`crate::inputs::etw::TraceSession::enable_provider`].
+//! provider for `CapturedData`; see `sigmacatch::inputs::etw::TraceSession::enable_provider`.
 
 use std::collections::HashMap;
 
-use crate::inputs::etw_event::{DecodedEvent, PropertyValue};
-use crate::inputs::registry_format::{abbreviate, format_value_data, from_hex};
+use crate::etw_event::{DecodedEvent, PropertyValue};
+use crate::registry_format::{abbreviate, format_value_data, from_hex};
 
 /// `Kernel-Registry` event ids, measured with `etw_dump` on the test VM.
 const CREATE_KEY: u16 = 1;
