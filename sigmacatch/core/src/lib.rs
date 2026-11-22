@@ -27,8 +27,9 @@ pub mod logging;
 /// Shared regression-data vocabulary, discovery and output seams.
 pub mod regression;
 
-/// SigmaHQ repository layer (clone, branch, commit, transport).
-pub mod repo;
+/// SigmaHQ repository layer (clone, branch, commit, transport), re-exported
+/// from `sigmacatch-git-action`.
+pub use sigmacatch_git_action as repo;
 
 /// Sigma rule management.
 pub mod rule;

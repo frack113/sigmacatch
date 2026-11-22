@@ -6,6 +6,7 @@ resolver = "2"
 members = [
   "sigmacatch",
   "sigmacatch/core",
+  "sigmacatch/git-action",
   "sigmacatch/sigma-regression",
   "sigmacatch/inputs/ebpf",
   "sigmacatch/inputs/tail",

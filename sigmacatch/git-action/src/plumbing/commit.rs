@@ -3,13 +3,13 @@
 
 //! Commit object creation.
 
-use crate::repo::{RepoError, Result};
+use crate::{RepoError, Result};
 use grit_lib::objects::odb::Odb;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use std::path::Path;
 use tracing::info;
 
-use crate::repo::plumbing::refs::{resolve_head, symbolic_ref_target, write_direct_ref};
+use crate::plumbing::refs::{resolve_head, symbolic_ref_target, write_direct_ref};
 
 /// Write a new commit object pointing at `tree_oid` with HEAD as its parent,
 /// then advance the ref currently pointed to by HEAD (or detach HEAD if it is
@@ -46,7 +46,7 @@ pub(crate) fn commit_tree(
     raw.extend_from_slice(message.as_bytes());
 
     let raw = match signing_key {
-        Some(key_path) => crate::repo::signing::insert_signature(raw, key_path)?,
+        Some(key_path) => crate::signing::insert_signature(raw, key_path)?,
         None => raw,
     };
 
@@ -80,7 +80,7 @@ pub(crate) fn commit_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repo::plumbing::{init_repo, open_odb, write_index};
+    use crate::plumbing::{init_repo, open_odb, write_index};
     use grit_lib::index::write_tree::write_tree_from_index;
     use grit_lib::objects::{CommitData, ObjectKind};
     #[cfg(unix)]
@@ -104,7 +104,7 @@ mod tests {
         std::fs::write(tmp.join("README.md"), "# test\n").unwrap();
         let odb = open_odb(&git_dir);
         let mut index = grit_lib::index::Index::new();
-        crate::repo::plumbing::add_file_to_index(&git_dir, &tmp.join("README.md"), tmp, &mut index)
+        crate::plumbing::add_file_to_index(&git_dir, &tmp.join("README.md"), tmp, &mut index)
             .unwrap();
         let tree = write_tree_from_index(&odb, &index, "").unwrap();
         let commit = CommitData {
@@ -192,7 +192,7 @@ mod tests {
 
         std::fs::write(work_tree.join("new.txt"), "hello\n").unwrap();
         let mut index = grit_lib::index::Index::new();
-        crate::repo::plumbing::add_file_to_index(
+        crate::plumbing::add_file_to_index(
             &git_dir,
             &work_tree.join("new.txt"),
             &work_tree,
@@ -259,7 +259,7 @@ mod tests {
         let odb = open_odb(&git_dir);
 
         let mut index = grit_lib::index::Index::new();
-        crate::repo::plumbing::add_file_to_index(
+        crate::plumbing::add_file_to_index(
             &git_dir,
             &tmp.path().join("README.md"),
             tmp.path(),
@@ -313,7 +313,7 @@ mod tests {
 
         std::fs::write(work_tree.join("new.txt"), "hello\n").unwrap();
         let mut index = grit_lib::index::Index::new();
-        crate::repo::plumbing::add_file_to_index(
+        crate::plumbing::add_file_to_index(
             &git_dir,
             &work_tree.join("new.txt"),
             &work_tree,
@@ -362,7 +362,7 @@ mod tests {
 
         std::fs::write(work_tree.join("signed.txt"), "signed\n").unwrap();
         let mut index = grit_lib::index::Index::new();
-        crate::repo::plumbing::add_file_to_index(
+        crate::plumbing::add_file_to_index(
             &git_dir,
             &work_tree.join("signed.txt"),
             &work_tree,
@@ -411,7 +411,7 @@ mod tests {
 
         std::fs::write(work_tree.join("detached.txt"), "detached\n").unwrap();
         let mut index = grit_lib::index::Index::new();
-        crate::repo::plumbing::add_file_to_index(
+        crate::plumbing::add_file_to_index(
             &git_dir,
             &work_tree.join("detached.txt"),
             &work_tree,

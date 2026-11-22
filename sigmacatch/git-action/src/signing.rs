@@ -9,7 +9,7 @@
 //! so a commit signed here carries the same "Verified" badge as one signed by
 //! git itself.
 
-use crate::repo::{RepoError, Result};
+use crate::{RepoError, Result};
 use ssh_key::{HashAlg, LineEnding, PrivateKey, SshSig};
 use std::path::Path;
 

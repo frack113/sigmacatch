@@ -4,9 +4,9 @@
 //! Push local branches to the fork over SSH (grit-lib 0.5.31+ public API).
 
 use super::refs::map_grit;
-use crate::repo::plumbing::refs::read_loose_or_packed_ref;
-use crate::repo::transport::SshMode;
-use crate::repo::{RepoError, Result};
+use crate::plumbing::refs::read_loose_or_packed_ref;
+use crate::transport::SshMode;
+use crate::{RepoError, Result};
 use grit_lib::objects::ObjectId;
 use grit_lib::prelude::RepositoryOptions;
 use grit_lib::progress::CancelToken;
@@ -111,7 +111,7 @@ pub fn push_branch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repo::plumbing::init::init_repo;
+    use crate::plumbing::init::init_repo;
     use grit_lib::objects::{CommitData, ObjectKind};
 
     fn setup_repo(tmp: &std::path::Path, branch: &str) -> std::path::PathBuf {
@@ -131,7 +131,7 @@ mod tests {
             raw_message: None,
             extra_headers: Vec::new(),
         };
-        let odb = crate::repo::plumbing::checkout::open_odb(&git_dir);
+        let odb = crate::plumbing::checkout::open_odb(&git_dir);
         let raw = grit_lib::objects::serialize_commit(&commit);
         let commit_oid = odb.write(ObjectKind::Commit, &raw).unwrap();
         let ref_path = git_dir.join("refs").join("heads").join(branch);

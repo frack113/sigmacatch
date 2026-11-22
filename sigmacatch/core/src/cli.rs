@@ -648,7 +648,7 @@ fn compute_coverage_info(rules: &SigmahqRules, sigma_repo_path: &Path) -> Option
     }
     let mut sigma_repo = SigmaRepo::new();
     sigma_repo.set_repo_path(sigma_repo_path.to_path_buf());
-    match sigma_repo.pending_regression_rule_ids() {
+    match sigma_repo.pending_regression_rule_ids(crate::evtx_reader::evtx_blob_has_records) {
         Ok(ids) => {
             for id in ids {
                 skip_set.insert(id.to_string());

@@ -6,12 +6,12 @@
 //! All ref mutations go through grit-lib's ref store (atomic lock writes, packed +
 //! loose + reftable).
 
-use crate::repo::{RepoError, Result};
+use crate::{RepoError, Result};
 use grit_lib::refs::RawRefLookup;
 use std::path::Path;
 use tracing::info;
 
-use crate::repo::plumbing::refs::{
+use crate::plumbing::refs::{
     map_grit, read_loose_or_packed_ref, read_raw_ref_lookup, resolve_head, write_direct_ref,
     write_symbolic_ref,
 };
@@ -126,21 +126,17 @@ pub(crate) fn switch_head(git_dir: &Path, branch_name: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repo::plumbing::read_loose_or_packed_ref;
-    use crate::repo::plumbing::refs::symbolic_ref_target;
+    use crate::plumbing::read_loose_or_packed_ref;
+    use crate::plumbing::refs::symbolic_ref_target;
     use grit_lib::index::Index;
     use grit_lib::index::write_tree::write_tree_from_index;
     use grit_lib::objects::{CommitData, ObjectId, ObjectKind};
 
     fn init_with_commit(tmp: &tempfile::TempDir) -> (std::path::PathBuf, ObjectId) {
         let git_dir = tmp.path().join(".git");
-        crate::repo::plumbing::init::init_repo(
-            &git_dir,
-            tmp.path(),
-            "https://example.com/sigma.git",
-        )
-        .unwrap();
-        let odb = crate::repo::plumbing::open_odb(&git_dir);
+        crate::plumbing::init::init_repo(&git_dir, tmp.path(), "https://example.com/sigma.git")
+            .unwrap();
+        let odb = crate::plumbing::open_odb(&git_dir);
         let tree = write_tree_from_index(&odb, &Index::new(), "").unwrap();
         let commit = CommitData {
             tree,
@@ -163,7 +159,7 @@ mod tests {
     }
 
     fn make_commit(git_dir: &std::path::Path, parents: Vec<ObjectId>, message: &str) -> ObjectId {
-        let odb = crate::repo::plumbing::open_odb(git_dir);
+        let odb = crate::plumbing::open_odb(git_dir);
         let tree = write_tree_from_index(&odb, &Index::new(), "").unwrap();
         let commit = CommitData {
             tree,
@@ -279,12 +275,8 @@ mod tests {
     fn test_switch_head_missing_branch_errors() {
         let tmp = tempfile::tempdir().unwrap();
         let git_dir = tmp.path().join(".git");
-        crate::repo::plumbing::init::init_repo(
-            &git_dir,
-            tmp.path(),
-            "https://example.com/sigma.git",
-        )
-        .unwrap();
+        crate::plumbing::init::init_repo(&git_dir, tmp.path(), "https://example.com/sigma.git")
+            .unwrap();
         let err = switch_head(&git_dir, "sigmacatch/me").unwrap_err();
         assert!(err.to_string().to_lowercase().contains("not found"));
         let target = symbolic_ref_target(&git_dir, "HEAD").unwrap();

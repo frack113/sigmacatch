@@ -3,7 +3,7 @@
 
 //! Repository initialization and config writing.
 
-use crate::repo::Result;
+use crate::Result;
 use std::path::Path;
 use tracing::info;
 

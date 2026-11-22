@@ -3,14 +3,14 @@
 
 //! Working-tree checkout from a commit tree.
 
-use crate::repo::{RepoError, Result};
+use crate::{RepoError, Result};
 use grit_lib::objects::ObjectId;
 use grit_lib::objects::odb::Odb;
 use std::collections::HashSet;
 use std::path::Path;
 use tracing::{info, warn};
 
-use crate::repo::plumbing::refs::read_loose_or_packed_ref;
+use crate::plumbing::refs::read_loose_or_packed_ref;
 
 pub(crate) fn open_odb(git_dir: &Path) -> Odb {
     Odb::new(&git_dir.join("objects")).with_config_git_dir(git_dir.to_path_buf())
@@ -83,7 +83,7 @@ fn checkout_tree(odb: &Odb, tree_oid: ObjectId, base_path: &Path, prefix: &str) 
         }
         let full_path = base_path.join(&rel_path);
 
-        let full_path = crate::repo::plumbing::long_path::long_path(&full_path);
+        let full_path = crate::plumbing::long_path::long_path(&full_path);
         if entry.mode == 0o040000 {
             std::fs::create_dir_all(&full_path)?;
             checkout_tree(odb, entry.oid, base_path, &rel_path)?;
@@ -246,25 +246,21 @@ mod tests {
     /// Init a repo whose HEAD commit contains `rules/a.yml` and `keep.txt`.
     fn build_committed_repo(tmp: &tempfile::TempDir) {
         let git_dir = tmp.path().join(".git");
-        crate::repo::plumbing::init::init_repo(
-            &git_dir,
-            tmp.path(),
-            "https://example.com/sigma.git",
-        )
-        .unwrap();
+        crate::plumbing::init::init_repo(&git_dir, tmp.path(), "https://example.com/sigma.git")
+            .unwrap();
         std::fs::create_dir_all(tmp.path().join("rules")).unwrap();
         std::fs::write(tmp.path().join("rules/a.yml"), "title: a\n").unwrap();
         std::fs::write(tmp.path().join("keep.txt"), "keep\n").unwrap();
         let odb = open_odb(&git_dir);
         let mut index = Index::new();
-        crate::repo::plumbing::add_file_to_index(
+        crate::plumbing::add_file_to_index(
             &git_dir,
             &tmp.path().join("rules/a.yml"),
             tmp.path(),
             &mut index,
         )
         .unwrap();
-        crate::repo::plumbing::add_file_to_index(
+        crate::plumbing::add_file_to_index(
             &git_dir,
             &tmp.path().join("keep.txt"),
             tmp.path(),
@@ -386,7 +382,7 @@ mod tests {
     fn test_recheckout_mirrors_nested_tree_exactly() {
         let tmp = tempfile::tempdir().unwrap();
         let git_dir = tmp.path().join(".git");
-        crate::repo::plumbing::init::init_repo(&git_dir, tmp.path(), "https://example.com/s.git")
+        crate::plumbing::init::init_repo(&git_dir, tmp.path(), "https://example.com/s.git")
             .unwrap();
         let odb = open_odb(&git_dir);
         let mut index = Index::new();
@@ -397,8 +393,7 @@ mod tests {
             let full = tmp.path().join(&rel);
             std::fs::create_dir_all(full.parent().unwrap()).unwrap();
             std::fs::write(&full, &body).unwrap();
-            crate::repo::plumbing::add_file_to_index(&git_dir, &full, tmp.path(), &mut index)
-                .unwrap();
+            crate::plumbing::add_file_to_index(&git_dir, &full, tmp.path(), &mut index).unwrap();
             expected.insert(rel, body);
         }
         let tree = write_tree_from_index(&odb, &index, "").unwrap();

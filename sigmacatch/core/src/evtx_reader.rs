@@ -190,6 +190,15 @@ pub fn parse_evtx_bytes(data: &[u8]) -> Result<Vec<Event>> {
     Ok(events)
 }
 
+/// Whether `data` is an EVTX blob with at least one usable record.
+///
+/// Passed to `sigmacatch_git_action::SigmaRepo::pending_regression_rule_ids`
+/// so the Git layer can drop broken exports from the pending skip set without
+/// depending on the event parser.
+pub fn evtx_blob_has_records(data: &[u8]) -> bool {
+    parse_evtx_bytes(data).is_ok_and(|events| !events.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

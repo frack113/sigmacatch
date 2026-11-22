@@ -5,7 +5,7 @@
 //! and fast-forward updates — all delegated to `grit_lib::refs` (loose/packed/
 //! reftable, atomic lock writes, reflogs).
 
-use crate::repo::{RepoError, Result};
+use crate::{RepoError, Result};
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::store::{
     Expected, FilesRefStore, RawRef, RefName, RefNameRef, RefStore, RefUpdate, RefUpdateFlags,
@@ -205,7 +205,7 @@ pub(crate) fn fast_forward_branch(git_dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repo::plumbing::init::init_repo;
+    use crate::plumbing::init::init_repo;
     use grit_lib::objects::{CommitData, ObjectKind};
 
     /// Minimal repo: one commit on `main`, HEAD symbolic.
@@ -227,7 +227,7 @@ mod tests {
             raw_message: None,
             extra_headers: Vec::new(),
         };
-        let odb = crate::repo::plumbing::checkout::open_odb(&git_dir);
+        let odb = crate::plumbing::checkout::open_odb(&git_dir);
         let raw = grit_lib::objects::serialize_commit(&commit);
         let commit_oid = odb.write(ObjectKind::Commit, &raw).unwrap();
         std::fs::create_dir_all(git_dir.join("refs/heads")).unwrap();
@@ -252,7 +252,7 @@ mod tests {
             raw_message: None,
             extra_headers: Vec::new(),
         };
-        let odb = crate::repo::plumbing::checkout::open_odb(git_dir);
+        let odb = crate::plumbing::checkout::open_odb(git_dir);
         let raw = grit_lib::objects::serialize_commit(&commit);
         odb.write(ObjectKind::Commit, &raw).unwrap().to_string()
     }

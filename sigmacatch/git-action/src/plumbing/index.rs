@@ -3,14 +3,14 @@
 
 //! Index construction: stage files, directories, and parent-tree entries.
 
-use crate::repo::{RepoError, Result};
+use crate::{RepoError, Result};
 use grit_lib::objects::ObjectId;
 use grit_lib::objects::odb::Odb;
 use std::path::Path;
 use tracing::warn;
 
-use crate::repo::plumbing::checkout::{is_exec_file, open_odb};
-use crate::repo::plumbing::refs::resolve_head;
+use crate::plumbing::checkout::{is_exec_file, open_odb};
+use crate::plumbing::refs::resolve_head;
 
 /// Look up the file mode recorded in the parent (HEAD) tree for `rel_path`
 /// (forward-slash separated). Returns `None` if the path does not exist in HEAD.
@@ -228,8 +228,8 @@ pub(crate) fn add_file_to_index(
     index: &mut grit_lib::index::Index,
 ) -> Result<()> {
     let odb = open_odb(git_dir);
-    let file_path = crate::repo::plumbing::long_path::long_path(file_path);
-    let base = crate::repo::plumbing::long_path::long_path(base);
+    let file_path = crate::plumbing::long_path::long_path(file_path);
+    let base = crate::plumbing::long_path::long_path(base);
     let contents = std::fs::read(&file_path)?;
     let blob_oid = odb
         .write(grit_lib::objects::ObjectKind::Blob, &contents)
@@ -322,8 +322,8 @@ pub(crate) fn add_directory_to_index(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repo::plumbing::init::init_repo;
-    use crate::repo::porcelain::{git_add, git_commit};
+    use crate::plumbing::init::init_repo;
+    use crate::porcelain::{git_add, git_commit};
     use grit_lib::objects::ObjectKind;
 
     /// Create an initial commit containing `rel_path` (content `content`) on
@@ -343,7 +343,7 @@ mod tests {
         let odb = open_odb(git_dir);
         let mut index = grit_lib::index::Index::new();
         add_file_to_index(git_dir, &file, work_tree, &mut index)?;
-        let tree_oid = crate::repo::plumbing::refs::map_grit(
+        let tree_oid = crate::plumbing::refs::map_grit(
             grit_lib::index::write_tree::write_tree_from_index(&odb, &index, ""),
         )?;
 
@@ -360,8 +360,7 @@ mod tests {
             extra_headers: Vec::new(),
         };
         let raw = grit_lib::objects::serialize_commit(&commit);
-        let commit_oid =
-            crate::repo::plumbing::refs::map_grit(odb.write(ObjectKind::Commit, &raw))?;
+        let commit_oid = crate::plumbing::refs::map_grit(odb.write(ObjectKind::Commit, &raw))?;
         std::fs::create_dir_all(git_dir.join("refs/heads"))?;
         std::fs::write(git_dir.join("refs/heads/main"), format!("{}\n", commit_oid))?;
         std::fs::write(git_dir.join("HEAD"), b"ref: refs/heads/main\n")?;
@@ -376,9 +375,8 @@ mod tests {
         prefix: &str,
         out: &mut Vec<String>,
     ) -> Result<()> {
-        let obj = crate::repo::plumbing::refs::map_grit(odb.read(&tree_oid))?;
-        let entries =
-            crate::repo::plumbing::refs::map_grit(grit_lib::objects::parse_tree(&obj.data))?;
+        let obj = crate::plumbing::refs::map_grit(odb.read(&tree_oid))?;
+        let entries = crate::plumbing::refs::map_grit(grit_lib::objects::parse_tree(&obj.data))?;
         for entry in entries {
             let name = std::str::from_utf8(&entry.name).unwrap().to_string();
             let rel = if prefix.is_empty() {

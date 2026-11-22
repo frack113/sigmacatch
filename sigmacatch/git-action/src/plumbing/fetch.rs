@@ -3,7 +3,7 @@
 
 //! Fetch from remote over SSH (grit-lib 0.5.31+ public API: `Repository` + `Remote`).
 
-use crate::repo::{RepoError, Result};
+use crate::{RepoError, Result};
 use grit_lib::prelude::RepositoryOptions;
 use grit_lib::progress::CancelToken;
 use grit_lib::remote::fetch::Progress;
@@ -106,7 +106,7 @@ pub fn discover_default_branch(repo_url: &str) -> Result<String> {
 pub fn fetch_remote(
     git_dir: &Path,
     repo_url: &str,
-    _ssh_mode: &crate::repo::transport::SshMode,
+    _ssh_mode: &crate::transport::SshMode,
     opts: &FetchOptions,
 ) -> Result<(usize, Option<String>)> {
     info!("Fetching via SSH from {}", repo_url);
@@ -132,7 +132,7 @@ pub fn fetch_remote(
 pub fn discover_and_fetch(
     git_dir: &Path,
     repo_url: &str,
-    ssh_mode: &crate::repo::transport::SshMode,
+    ssh_mode: &crate::transport::SshMode,
     opts_for_branch: impl FnOnce(&str) -> FetchOptions,
 ) -> Result<(usize, String)> {
     let default_branch = discover_default_branch(repo_url)?;

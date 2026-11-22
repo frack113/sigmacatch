@@ -251,7 +251,8 @@ pub async fn run_with_cli<C: CollectorKind>(
             );
         }
         if !config.git.is_offline() {
-            match sigma_repo.pending_regression_rule_ids() {
+            match sigma_repo.pending_regression_rule_ids(crate::evtx_reader::evtx_blob_has_records)
+            {
                 Ok(pending) => {
                     if !pending.is_empty() {
                         let before = existing.len();

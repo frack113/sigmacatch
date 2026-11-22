@@ -7,7 +7,7 @@
 //! repository, fetches over SSH through grit-lib, then checks out the worktree.
 //! Only the sparse-checkout configuration is raw plumbing.
 
-use crate::repo::Result;
+use crate::Result;
 use std::collections::BTreeSet;
 use std::path::Path;
 

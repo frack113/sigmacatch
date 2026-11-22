@@ -13,7 +13,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use crate::repo::SigmaRepo;
+//! use sigmacatch_git_action::SigmaRepo;
 //! use std::path::Path;
 //!
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -32,7 +32,7 @@ pub(crate) mod porcelain;
 pub(crate) mod signing;
 pub(crate) mod transport;
 
-pub use crate::repo::transport::ensure_ssh_host_config;
+pub use crate::transport::ensure_ssh_host_config;
 
 #[cfg(test)]
 mod regression_tests;
@@ -43,11 +43,11 @@ use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::repo::branch::{create_branch, switch_head};
-use crate::repo::porcelain::{
+use crate::branch::{create_branch, switch_head};
+use crate::porcelain::{
     git_add, git_clone, git_clone_shallow, git_commit, git_pull, git_unshallow,
 };
-use crate::repo::transport::{https_to_ssh_url, sanitize_url};
+use crate::transport::{https_to_ssh_url, sanitize_url};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -421,7 +421,7 @@ impl SigmaRepo {
         }
 
         create_branch(&git_dir, &branch_name)?;
-        crate::repo::plumbing::checkout_main_branch(&git_dir, &self.repo_path)?;
+        crate::plumbing::checkout_main_branch(&git_dir, &self.repo_path)?;
         Ok(())
     }
 
@@ -433,22 +433,22 @@ impl SigmaRepo {
     fn fork_remote_url(&self, git_dir: &Path) -> Result<String> {
         match &self.fork_url {
             Some(url) if !url.trim().is_empty() => Ok(url.trim().to_string()),
-            _ => crate::repo::plumbing::read_remote_url_from_config(git_dir, "origin"),
+            _ => crate::plumbing::read_remote_url_from_config(git_dir, "origin"),
         }
     }
 
     fn fetch_working_branch(&self, git_dir: &Path, branch_name: &str) -> Result<()> {
         let remote_url = self.fork_remote_url(git_dir)?;
         let ssh_url = https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
-        let opts = crate::repo::plumbing::fetch::fetch_options_for_branches(&[branch_name]);
+        let opts = crate::plumbing::fetch::fetch_options_for_branches(&[branch_name]);
         let ssh_key_path = self.ssh_key_path.clone();
         let max_retries = self.max_retries;
 
         // Synchronous retry with exponential backoff
         let mut delay = Duration::from_secs(5);
         for attempt in 0..=max_retries {
-            let ssh_mode = crate::repo::transport::build_ssh_shell_command(ssh_key_path.as_deref());
-            let outcome = crate::repo::plumbing::fetch_remote(git_dir, &ssh_url, &ssh_mode, &opts);
+            let ssh_mode = crate::transport::build_ssh_shell_command(ssh_key_path.as_deref());
+            let outcome = crate::plumbing::fetch_remote(git_dir, &ssh_url, &ssh_mode, &opts);
 
             match outcome {
                 Ok((_count, _default_branch)) => {
@@ -495,15 +495,15 @@ impl SigmaRepo {
     fn fetch_sigmacatch_branches(&self, git_dir: &Path) -> Result<()> {
         let remote_url = self.fork_remote_url(git_dir)?;
         let ssh_url = https_to_ssh_url(&remote_url).unwrap_or_else(|| remote_url.clone());
-        let opts = crate::repo::plumbing::fetch_options_for_sigmacatch_namespace();
+        let opts = crate::plumbing::fetch_options_for_sigmacatch_namespace();
         let ssh_key_path = self.ssh_key_path.clone();
         let max_retries = self.max_retries;
 
         // Synchronous retry with exponential backoff
         let mut delay = Duration::from_secs(5);
         for attempt in 0..=max_retries {
-            let ssh_mode = crate::repo::transport::build_ssh_shell_command(ssh_key_path.as_deref());
-            let outcome = crate::repo::plumbing::fetch_remote(git_dir, &ssh_url, &ssh_mode, &opts);
+            let ssh_mode = crate::transport::build_ssh_shell_command(ssh_key_path.as_deref());
+            let outcome = crate::plumbing::fetch_remote(git_dir, &ssh_url, &ssh_mode, &opts);
 
             match outcome {
                 Ok((_count, _default_branch)) => return Ok(()),
@@ -541,17 +541,22 @@ impl SigmaRepo {
     ///
     /// Offline mode: the scan is skipped entirely (no local `.git` refs are
     /// read) — the skip set is built from the on-disk worktree only.
-    pub fn pending_regression_rule_ids(&self) -> Result<Vec<Uuid>> {
+    /// `validate_evtx` decides whether a committed `.evtx` blob contains
+    /// usable records; the Git layer does not parse event logs itself.
+    pub fn pending_regression_rule_ids(
+        &self,
+        validate_evtx: impl Fn(&[u8]) -> bool,
+    ) -> Result<Vec<Uuid>> {
         if self.offline {
             info!("Offline mode — skipping pending-regression scan");
             return Ok(Vec::new());
         }
         let git_dir = self.repo_path.join(".git");
-        let branches = crate::repo::plumbing::list_sigmacatch_remote_refs(&git_dir)?;
+        let branches = crate::plumbing::list_sigmacatch_remote_refs(&git_dir)?;
         if branches.is_empty() {
             return Ok(Vec::new());
         }
-        let odb = crate::repo::plumbing::open_odb(&git_dir);
+        let odb = crate::plumbing::open_odb(&git_dir);
         let mut valid: HashSet<Uuid> = HashSet::new();
         let mut broken: HashSet<Uuid> = HashSet::new();
         for (refname, oid) in branches {
@@ -573,7 +578,13 @@ impl SigmaRepo {
             })?;
             for entry in entries {
                 if entry.mode == 0o040000 && entry.name.as_slice() == b"regression_data" {
-                    collect_tree_rule_ids(&odb, entry.oid, &mut valid, &mut broken)?;
+                    collect_tree_rule_ids(
+                        &odb,
+                        entry.oid,
+                        &mut valid,
+                        &mut broken,
+                        &validate_evtx,
+                    )?;
                 }
             }
             let found = valid.len() - before;
@@ -613,8 +624,7 @@ impl SigmaRepo {
         let git_dir = self.repo_path.join(".git");
         let remote_ref = format!("refs/remotes/origin/{}", branch);
 
-        let Some(oid_str) = crate::repo::plumbing::read_loose_or_packed_ref(&git_dir, &remote_ref)
-        else {
+        let Some(oid_str) = crate::plumbing::read_loose_or_packed_ref(&git_dir, &remote_ref) else {
             info!(
                 "No remote tracking ref '{}' — fresh working branch",
                 remote_ref
@@ -625,7 +635,7 @@ impl SigmaRepo {
         let oid = ObjectId::from_hex(&oid_str).map_err(|e| {
             RepoError::InvalidRef(format!("Invalid OID for '{}': {}", remote_ref, e))
         })?;
-        let odb = crate::repo::plumbing::open_odb(&git_dir);
+        let odb = crate::plumbing::open_odb(&git_dir);
         let obj = odb.read(&oid).map_err(|e| {
             RepoError::Grit(format!(
                 "Remote working branch '{}' commit {} is unreadable: {}. \
@@ -690,8 +700,8 @@ impl SigmaRepo {
             .ok_or_else(|| RepoError::State("No working branch configured".to_string()))?;
         let git_dir = self.repo_path.join(".git");
         let local_ref = format!("refs/heads/{}", branch);
-        let oid_str = crate::repo::plumbing::read_loose_or_packed_ref(&git_dir, &local_ref)
-            .ok_or_else(|| {
+        let oid_str =
+            crate::plumbing::read_loose_or_packed_ref(&git_dir, &local_ref).ok_or_else(|| {
                 RepoError::State(format!("Working branch '{}' not found locally", branch))
             })?;
         ObjectId::from_hex(&oid_str).map_err(|e| {
@@ -709,7 +719,7 @@ impl SigmaRepo {
             .as_deref()
             .ok_or_else(|| RepoError::State("No working branch configured".to_string()))?;
         let git_dir = self.repo_path.join(".git");
-        let odb = crate::repo::plumbing::open_odb(&git_dir);
+        let odb = crate::plumbing::open_odb(&git_dir);
         let obj = odb.read(&oid).map_err(|e| {
             RepoError::Grit(format!(
                 "Cannot reset branch '{}' to {} — object not found in ODB: {}",
@@ -723,7 +733,7 @@ impl SigmaRepo {
             )));
         }
         let local_ref = format!("refs/heads/{}", branch);
-        crate::repo::plumbing::refs::write_direct_ref(&git_dir, &local_ref, &oid)?;
+        crate::plumbing::refs::write_direct_ref(&git_dir, &local_ref, &oid)?;
         info!(
             "Reset working branch '{}' back to {} after a failed push",
             branch, oid
@@ -740,7 +750,7 @@ impl SigmaRepo {
         };
         let git_dir = self.repo_path.join(".git");
         let expected = format!("refs/heads/{branch}");
-        match crate::repo::plumbing::symbolic_ref_target(&git_dir, "HEAD") {
+        match crate::plumbing::symbolic_ref_target(&git_dir, "HEAD") {
             Ok(Some(target)) => target == expected,
             _ => false,
         }
@@ -750,7 +760,7 @@ impl SigmaRepo {
         let git_dir = self.repo_path.join(".git");
         for candidate in &["master", "main"] {
             let local_ref = format!("refs/heads/{}", candidate);
-            if crate::repo::plumbing::read_loose_or_packed_ref(&git_dir, &local_ref).is_some() {
+            if crate::plumbing::read_loose_or_packed_ref(&git_dir, &local_ref).is_some() {
                 switch_head(&git_dir, candidate)?;
                 break;
             }
@@ -979,8 +989,8 @@ impl SigmaRepo {
             .ok_or_else(|| RepoError::State("No working branch configured".to_string()))?;
         let git_dir = self.repo_path.join(".git");
 
-        let head_target = crate::repo::plumbing::symbolic_ref_target(&git_dir, "HEAD")?
-            .ok_or_else(|| {
+        let head_target =
+            crate::plumbing::symbolic_ref_target(&git_dir, "HEAD")?.ok_or_else(|| {
                 RepoError::State(format!(
                     "HEAD is detached (not on a branch) — refusing to push branch '{}'",
                     branch
@@ -996,9 +1006,8 @@ impl SigmaRepo {
 
         let remote_url = self.fork_remote_url(&git_dir)?;
         let ssh_url = https_to_ssh_url(&remote_url).unwrap_or(remote_url);
-        let ssh_mode =
-            crate::repo::transport::build_ssh_shell_command(self.ssh_key_path.as_deref());
-        crate::repo::plumbing::push_branch(&git_dir, &ssh_url, branch, &ssh_mode)
+        let ssh_mode = crate::transport::build_ssh_shell_command(self.ssh_key_path.as_deref());
+        crate::plumbing::push_branch(&git_dir, &ssh_url, branch, &ssh_mode)
     }
 
     /// Ensure repository is unshallowed (fetch full history) if it was cloned shallow.
@@ -1047,10 +1056,10 @@ fn is_repo_complete(git_dir: &Path) -> bool {
     // packs) and grit-lib clones (packs installed under `objects/pack/`),
     // which the previous check wrongly treated as incomplete — deleting and
     // re-cloning the repository on every run.
-    let Ok(head) = crate::repo::plumbing::resolve_head(git_dir) else {
+    let Ok(head) = crate::plumbing::resolve_head(git_dir) else {
         return false;
     };
-    crate::repo::plumbing::open_odb(git_dir).read(&head).is_ok()
+    crate::plumbing::open_odb(git_dir).read(&head).is_ok()
 }
 
 /// Recursively walk a git tree in memory and collect `<uuid>` data filenames
@@ -1061,8 +1070,9 @@ fn collect_tree_rule_ids(
     tree_oid: ObjectId,
     valid: &mut HashSet<Uuid>,
     broken: &mut HashSet<Uuid>,
+    validate_evtx: &impl Fn(&[u8]) -> bool,
 ) -> Result<()> {
-    collect_tree_rule_ids_depth(odb, tree_oid, valid, broken, 0)
+    collect_tree_rule_ids_depth(odb, tree_oid, valid, broken, 0, validate_evtx)
 }
 
 const MAX_REGRESSION_TREE_DEPTH: u32 = 32;
@@ -1077,16 +1087,17 @@ fn collect_tree_rule_ids_depth(
     valid: &mut HashSet<Uuid>,
     broken: &mut HashSet<Uuid>,
     depth: u32,
+    validate_evtx: &impl Fn(&[u8]) -> bool,
 ) -> Result<()> {
     if depth > MAX_REGRESSION_TREE_DEPTH {
         warn!("regression_data tree exceeds depth limit at {:?}", tree_oid);
         return Ok(());
     }
-    let obj = crate::repo::plumbing::refs::map_grit(odb.read(&tree_oid))?;
-    let entries = crate::repo::plumbing::refs::map_grit(grit_lib::objects::parse_tree(&obj.data))?;
+    let obj = crate::plumbing::refs::map_grit(odb.read(&tree_oid))?;
+    let entries = crate::plumbing::refs::map_grit(grit_lib::objects::parse_tree(&obj.data))?;
     for entry in entries {
         if entry.mode == 0o040000 {
-            collect_tree_rule_ids_depth(odb, entry.oid, valid, broken, depth + 1)?;
+            collect_tree_rule_ids_depth(odb, entry.oid, valid, broken, depth + 1, validate_evtx)?;
         } else if matches!(entry.mode, 0o100644 | 0o100755) {
             let name = String::from_utf8_lossy(&entry.name);
             let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(&name);
@@ -1096,17 +1107,14 @@ fn collect_tree_rule_ids_depth(
                     // skip the rule so it is re-captured with valid data.
                     match odb.read(&entry.oid) {
                         Ok(blob) if blob.data.len() <= MAX_EVTX_BLOB_SIZE => {
-                            match crate::evtx_reader::parse_evtx_bytes(&blob.data) {
-                                Ok(events) if !events.is_empty() => {
-                                    valid.insert(id);
-                                }
-                                _ => {
-                                    warn!(
-                                        "rule {} excluded from pending skip-set: broken EVTX '{}' (will be re-captured)",
-                                        id, name
-                                    );
-                                    broken.insert(id);
-                                }
+                            if validate_evtx(&blob.data) {
+                                valid.insert(id);
+                            } else {
+                                warn!(
+                                    "rule {} excluded from pending skip-set: broken EVTX '{}' (will be re-captured)",
+                                    id, name
+                                );
+                                broken.insert(id);
                             }
                         }
                         Ok(_blob) => {
@@ -1135,9 +1143,16 @@ fn collect_tree_rule_ids_depth(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repo::plumbing::init_repo;
+    use crate::plumbing::init_repo;
     use grit_lib::index::write_tree::write_tree_from_index;
     use grit_lib::objects::{CommitData, ObjectKind};
+
+    /// EVTX validation is injected by callers; this stand-in recognises the
+    /// file header so tree-walk tests can tell a real blob from the broken
+    /// `b"x"` one.
+    fn has_evtx_header(data: &[u8]) -> bool {
+        data.starts_with(b"ElfFile")
+    }
 
     /// Serializes every test that mutates process-wide environment variables
     /// (`GIT_SSH`, `HOME`, `USERPROFILE`, …): Rust test threads share one
@@ -1152,9 +1167,9 @@ mod tests {
         init_repo(&git_dir, work_tree, "https://example.com/sigma.git").unwrap();
         let file = work_tree.join("a.txt");
         std::fs::write(&file, "hello\n").unwrap();
-        let odb = crate::repo::plumbing::open_odb(&git_dir);
+        let odb = crate::plumbing::open_odb(&git_dir);
         let mut index = grit_lib::index::Index::new();
-        crate::repo::plumbing::add_file_to_index(&git_dir, &file, work_tree, &mut index).unwrap();
+        crate::plumbing::add_file_to_index(&git_dir, &file, work_tree, &mut index).unwrap();
         let tree = write_tree_from_index(&odb, &index, "").unwrap();
         let commit = CommitData {
             tree,
@@ -1221,20 +1236,20 @@ mod tests {
     ) -> SigmaRepo {
         make_committed_repo(tmp);
         let git_dir = tmp.path().join(".git");
-        let odb = crate::repo::plumbing::open_odb(&git_dir);
+        let odb = crate::plumbing::open_odb(&git_dir);
         let mut index = grit_lib::index::Index::new();
         if has_rules {
             std::fs::create_dir_all(tmp.path().join("rules")).unwrap();
             let f = tmp.path().join("rules/x.yml");
             std::fs::write(&f, "title: x\n").unwrap();
-            crate::repo::plumbing::add_file_to_index(&git_dir, &f, tmp.path(), &mut index).unwrap();
+            crate::plumbing::add_file_to_index(&git_dir, &f, tmp.path(), &mut index).unwrap();
         } else {
             let f = tmp.path().join("a.txt");
             std::fs::write(&f, "a\n").unwrap();
-            crate::repo::plumbing::add_file_to_index(&git_dir, &f, tmp.path(), &mut index).unwrap();
+            crate::plumbing::add_file_to_index(&git_dir, &f, tmp.path(), &mut index).unwrap();
         }
         let tree = write_tree_from_index(&odb, &index, "").unwrap();
-        let parent = crate::repo::plumbing::resolve_head(&git_dir).unwrap();
+        let parent = crate::plumbing::resolve_head(&git_dir).unwrap();
         let parents = if has_parent { vec![parent] } else { Vec::new() };
         let remote_oid = write_commit(&odb, tree, parents);
         let remote_ref = git_dir.join("refs/remotes/origin/sigmacatch/20260803");
@@ -1294,9 +1309,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         make_committed_repo(&tmp);
         let git_dir = tmp.path().join(".git");
-        let head_oid = crate::repo::plumbing::resolve_head(&git_dir).unwrap();
+        let head_oid = crate::plumbing::resolve_head(&git_dir).unwrap();
 
-        crate::repo::branch::create_branch(&git_dir, "sigmacatch/20260803").unwrap();
+        crate::branch::create_branch(&git_dir, "sigmacatch/20260803").unwrap();
         let mut repo = SigmaRepo::new();
         repo.repo_path = tmp.path().to_path_buf();
         repo.working_branch = Some("sigmacatch/20260803".to_string());
@@ -1307,7 +1322,7 @@ mod tests {
             "branch tip must match HEAD after creation"
         );
 
-        let odb = crate::repo::plumbing::open_odb(&git_dir);
+        let odb = crate::plumbing::open_odb(&git_dir);
         let empty_tree = write_tree_from_index(&odb, &grit_lib::index::Index::new(), "").unwrap();
         let other_oid = write_commit(&odb, empty_tree, vec![head_oid]);
 
@@ -1331,7 +1346,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         make_committed_repo(&tmp);
         let git_dir = tmp.path().join(".git");
-        crate::repo::branch::create_branch(&git_dir, "sigmacatch/20260803").unwrap();
+        crate::branch::create_branch(&git_dir, "sigmacatch/20260803").unwrap();
 
         let rel = "regression_data/rules/win/a.json";
         std::fs::create_dir_all(tmp.path().join("regression_data/rules/win")).unwrap();
@@ -1361,7 +1376,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         make_committed_repo(&tmp);
         let git_dir = tmp.path().join(".git");
-        crate::repo::branch::create_branch(&git_dir, "sigmacatch/20260803").unwrap();
+        crate::branch::create_branch(&git_dir, "sigmacatch/20260803").unwrap();
 
         let mut repo = SigmaRepo::new();
         repo.repo_path = tmp.path().to_path_buf();
@@ -1384,7 +1399,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         make_committed_repo(&tmp);
         let git_dir = tmp.path().join(".git");
-        crate::repo::branch::create_branch(&git_dir, "sigmacatch/20260803").unwrap();
+        crate::branch::create_branch(&git_dir, "sigmacatch/20260803").unwrap();
 
         let mut repo = SigmaRepo::new();
         repo.repo_path = tmp.path().to_path_buf();
@@ -1528,7 +1543,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         make_committed_repo(&tmp);
         let git_dir = tmp.path().join(".git");
-        crate::repo::branch::create_branch(&git_dir, "sigmacatch/20260803").unwrap();
+        crate::branch::create_branch(&git_dir, "sigmacatch/20260803").unwrap();
 
         let good = "regression_data/rules/win/good.json";
         std::fs::create_dir_all(tmp.path().join("regression_data/rules/win")).unwrap();
@@ -1616,14 +1631,14 @@ mod tests {
     fn setup_pending_branch(tmp: &tempfile::TempDir, rel_files: &[(&str, &[u8])]) -> SigmaRepo {
         make_committed_repo(tmp);
         let git_dir = tmp.path().join(".git");
-        let odb = crate::repo::plumbing::open_odb(&git_dir);
+        let odb = crate::plumbing::open_odb(&git_dir);
         for (rel, content) in rel_files {
             let path = tmp.path().join(rel);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, content).unwrap();
         }
         let mut index = grit_lib::index::Index::new();
-        crate::repo::plumbing::add_directory_to_index(
+        crate::plumbing::add_directory_to_index(
             &git_dir,
             &tmp.path().join("regression_data"),
             tmp.path(),
@@ -1631,7 +1646,7 @@ mod tests {
         )
         .unwrap();
         let tree = write_tree_from_index(&odb, &index, "").unwrap();
-        let parent = crate::repo::plumbing::resolve_head(&git_dir).unwrap();
+        let parent = crate::plumbing::resolve_head(&git_dir).unwrap();
         let remote_oid = write_commit(&odb, tree, vec![parent]);
         let remote_ref = git_dir.join("refs/remotes/origin/sigmacatch/20260807");
         std::fs::create_dir_all(remote_ref.parent().unwrap()).unwrap();
@@ -1662,7 +1677,7 @@ mod tests {
                 ),
                 (
                     &format!("regression_data/rules/win/a/{id1}.evtx"),
-                    include_bytes!("../../tests/fixtures/valid-single.evtx").as_slice(),
+                    include_bytes!("../tests/fixtures/valid-single.evtx").as_slice(),
                 ),
                 (
                     "regression_data/rules/win/a/info.yml",
@@ -1695,7 +1710,7 @@ mod tests {
             ],
         );
 
-        let mut ids = repo.pending_regression_rule_ids().unwrap();
+        let mut ids = repo.pending_regression_rule_ids(has_evtx_header).unwrap();
         ids.sort();
         let mut expected = vec![id1, id2];
         expected.sort();
@@ -1712,7 +1727,9 @@ mod tests {
         repo.working_branch = Some("sigmacatch/20260808".to_string());
 
         assert!(
-            repo.pending_regression_rule_ids().unwrap().is_empty(),
+            repo.pending_regression_rule_ids(has_evtx_header)
+                .unwrap()
+                .is_empty(),
             "no remote sigmacatch/* branches must yield no pending ids"
         );
     }
@@ -1742,7 +1759,7 @@ mod tests {
         repo.repo_path = tmp.path().to_path_buf();
         repo.working_branch = Some("sigmacatch/20260808".to_string());
 
-        let ids = repo.pending_regression_rule_ids().unwrap();
+        let ids = repo.pending_regression_rule_ids(has_evtx_header).unwrap();
         assert_eq!(
             ids.len(),
             1,

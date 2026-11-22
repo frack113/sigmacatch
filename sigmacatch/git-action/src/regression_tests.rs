@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use crate::repo::plumbing::{add_file_to_index, init_repo, open_odb};
+use crate::plumbing::{add_file_to_index, init_repo, open_odb};
 use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::objects::{CommitData, ObjectId, ObjectKind, serialize_commit};
 use grit_lib::remote::transfer::{PackBuildOptions, build_pack};

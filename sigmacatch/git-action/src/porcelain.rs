@@ -3,19 +3,19 @@
 
 //! Porcelain layer — high-level wrappers: clone, pull, push, add, commit.
 
-use crate::repo::{RepoError, Result};
+use crate::{RepoError, Result};
 use std::path::Path;
 use std::time::Instant;
 use tracing::{info, warn};
 
-use crate::repo::plumbing::{
+use crate::plumbing::{
     PatchTreeError, add_directory_to_index, add_file_to_index, add_tree_to_index,
     checkout_main_branch, commit_tree, discover_and_fetch, fast_forward_branch,
     fetch_options_for_branches, fetch_options_for_shallow_clone, fetch_options_for_unshallow,
     fetch_remote, init_repo, open_odb, patch_tree, read_remote_url_from_config, resolve_head,
     set_head_after_fetch, setup_sparse_checkout, symbolic_ref_target, write_index,
 };
-use crate::repo::transport::{build_ssh_shell_command, https_to_ssh_url};
+use crate::transport::{build_ssh_shell_command, https_to_ssh_url};
 
 /// Format a `Duration` for log lines: `512 ms` under a second, `1.23 s` above.
 fn fmt_dur(d: std::time::Duration) -> String {
@@ -68,7 +68,7 @@ pub(crate) fn git_clone(url: &str, dest: &Path, ssh_key_path: Option<&str>) -> R
     checkout_main_branch(&git_dir, dest)?;
     info!("Checkout done in {}", fmt_dur(started.elapsed()));
 
-    crate::repo::plumbing::pack_loose_objects(&git_dir)?;
+    crate::plumbing::pack_loose_objects(&git_dir)?;
 
     info!("Clone finished in {}", fmt_dur(started.elapsed()));
     Ok(())
@@ -123,7 +123,7 @@ pub(crate) fn git_clone_shallow(
     checkout_main_branch(&git_dir, dest)?;
     info!("Checkout done in {}", fmt_dur(started.elapsed()));
 
-    crate::repo::plumbing::pack_loose_objects(&git_dir)?;
+    crate::plumbing::pack_loose_objects(&git_dir)?;
 
     info!("Clone finished in {}", fmt_dur(started.elapsed()));
     Ok(())
@@ -140,7 +140,7 @@ pub(crate) fn git_unshallow(git_dir: &Path, ssh_key_path: Option<&str>) -> Resul
     let opts = fetch_options_for_unshallow(&[branch.as_str()]);
 
     fetch_remote(git_dir, &ssh_url, &ssh_mode, &opts)?;
-    crate::repo::plumbing::pack_loose_objects(git_dir)?;
+    crate::plumbing::pack_loose_objects(git_dir)?;
 
     let work_tree = git_dir
         .parent()
@@ -165,7 +165,7 @@ pub(crate) fn git_pull(git_dir: &Path, ssh_key_path: Option<&str>) -> Result<()>
     fetch_remote(git_dir, &ssh_url, &ssh_mode, &opts)?;
     fast_forward_branch(git_dir)?;
 
-    crate::repo::plumbing::pack_loose_objects(git_dir)?;
+    crate::plumbing::pack_loose_objects(git_dir)?;
 
     // Re-checkout worktree to reflect any changes from fast-forward
     let work_tree = git_dir
@@ -263,7 +263,7 @@ pub(crate) fn git_commit(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repo::plumbing::init::init_repo;
+    use crate::plumbing::init::init_repo;
     use grit_lib::objects::{CommitData, ObjectKind};
 
     /// Minimal repo: one commit on `main`, HEAD symbolic, origin in config.
@@ -344,7 +344,7 @@ mod tests {
     /// repository with no refs. Shallow is the default path, so pin it there.
     #[test]
     fn git_clone_shallow_removes_git_dir_when_fetch_fails() {
-        let _guard = crate::repo::tests::ENV_LOCK.lock().unwrap();
+        let _guard = crate::tests::ENV_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let dest = tmp.path().join("sigma");
 

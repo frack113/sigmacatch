@@ -96,7 +96,7 @@ pub(crate) fn build_ssh_shell_command(_ssh_key_path: Option<&str>) -> SshMode {
 ///
 /// The function is idempotent: if the config already contains the required
 /// directives it returns `Ok(())` immediately.
-pub fn ensure_ssh_host_config(ssh_key_path: Option<&str>) -> crate::repo::Result<()> {
+pub fn ensure_ssh_host_config(ssh_key_path: Option<&str>) -> crate::Result<()> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_default();
@@ -238,7 +238,7 @@ mod tests {
 
     // Shared with the porcelain tests: Rust test threads share one environment,
     // so every test that mutates `GIT_SSH`/`HOME` takes this lock.
-    use crate::repo::tests::ENV_LOCK;
+    use crate::tests::ENV_LOCK;
 
     #[test]
     fn test_build_ssh_shell_command_unix_is_program() {

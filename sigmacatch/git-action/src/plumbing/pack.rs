@@ -8,7 +8,7 @@
 //! directly under `objects/pack/` — so this keeps the object store tidy
 //! across runs and speeds up subsequent push pack-building.
 
-use crate::repo::{RepoError, Result};
+use crate::{RepoError, Result};
 use grit_lib::objects::odb::Odb;
 use grit_lib::objects::{HashAlgo, Object, ObjectId, ObjectKind};
 use sha1::{Digest, Sha1};
@@ -281,7 +281,7 @@ fn write_v2_index(idx_path: &Path, offsets: &[PackOffset], pack_checksum: &[u8])
 /// store tidy across runs. Returns early when no loose objects exist.
 pub(crate) fn pack_loose_objects(git_dir: &Path) -> Result<()> {
     let objects_dir = git_dir.join("objects");
-    let odb = crate::repo::plumbing::open_odb(git_dir);
+    let odb = crate::plumbing::open_odb(git_dir);
 
     let loose = collect_loose_objects(&objects_dir)?;
     if loose.is_empty() {
@@ -350,17 +350,13 @@ mod tests {
 
     fn make_committed_repo(tmp: &tempfile::TempDir) -> (PathBuf, Odb) {
         let git_dir = tmp.path().join(".git");
-        crate::repo::plumbing::init::init_repo(
-            &git_dir,
-            tmp.path(),
-            "https://example.com/sigma.git",
-        )
-        .unwrap();
+        crate::plumbing::init::init_repo(&git_dir, tmp.path(), "https://example.com/sigma.git")
+            .unwrap();
         std::fs::create_dir_all(tmp.path().join("rules")).unwrap();
         std::fs::write(tmp.path().join("rules/a.yml"), "title: a\n").unwrap();
-        let odb = crate::repo::plumbing::open_odb(&git_dir);
+        let odb = crate::plumbing::open_odb(&git_dir);
         let mut index = grit_lib::index::Index::new();
-        crate::repo::plumbing::add_file_to_index(
+        crate::plumbing::add_file_to_index(
             &git_dir,
             &tmp.path().join("rules/a.yml"),
             tmp.path(),
@@ -446,7 +442,7 @@ mod tests {
         assert!(!pack_files.is_empty(), "a .pack file should be created");
         assert!(!idx_files.is_empty(), "a .idx file should be created");
 
-        let head_oid = crate::repo::plumbing::resolve_head(&git_dir).unwrap();
+        let head_oid = crate::plumbing::resolve_head(&git_dir).unwrap();
         assert!(
             odb.read(&head_oid).is_ok(),
             "objects should still be readable from pack"
@@ -506,7 +502,7 @@ mod tests {
     fn test_pack_preserves_object_content() {
         let tmp = tempdir().unwrap();
         let (git_dir, odb) = make_committed_repo(&tmp);
-        let head_oid = crate::repo::plumbing::resolve_head(&git_dir).unwrap();
+        let head_oid = crate::plumbing::resolve_head(&git_dir).unwrap();
 
         let before = odb.read(&head_oid).unwrap();
 
