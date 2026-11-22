@@ -41,6 +41,7 @@ The CI runs the same checks locally via:
 pipx run typos .
 pipx run zizmor .
 npx --yes markdownlint-cli2 "docs/**/*.md" "*.md"
+cargo deny --all-features check advisories sources licenses bans
 ```
 
 (`markdownlint` runs in CI as the `DavidAnson/markdownlint-cli2-action`; `npx` is the local
@@ -50,6 +51,9 @@ equivalent.)
 - `zizmor` — GitHub Actions security audit. All `uses:` are SHA-pinned; never introduce an
   unpinned action or a checkout without `persist-credentials: false`.
 - `markdownlint` — configured in `.markdownlint-cli2.yaml`. Keep tables and headings clean.
+- `cargo deny` — supply-chain gate. `--all-features` is required: it brings `aya` into the graph,
+  the only path to `object 0.40`. Without it, the recorded `object 0.39.1` skip in `deny.toml`
+  (pinned by `ar_archive_writer` via `psm`) is falsely reported as unnecessary.
 
 ## Commit conventions
 
