@@ -2484,7 +2484,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sigmacatch"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2516,7 +2516,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2550,7 +2550,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-input-auditd"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2564,7 +2564,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-input-ebpf"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2583,7 +2583,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-input-etw-common"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "md-5",
@@ -2594,7 +2594,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-input-syslog"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2608,7 +2608,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-input-sysmon"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2622,7 +2622,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-input-tail"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "sigmacatch-core",
