@@ -12,11 +12,11 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::detection::DetectionEngine;
-use crate::regression::DataFormat;
-use crate::runner::CollectorKind;
-use crate::types::EventProducer;
 use anyhow::Result;
+use sigmacatch_core::detection::DetectionEngine;
+use sigmacatch_core::regression::DataFormat;
+use sigmacatch_core::runner::CollectorKind;
+use sigmacatch_core::types::EventProducer;
 use walkdir::WalkDir;
 
 /// Default directory containing EVTX files on a Windows host.
@@ -44,7 +44,7 @@ impl CollectorKind for EvtxCollector {
     }
 
     fn build(&self, _channels: &[String]) -> Box<dyn EventProducer> {
-        let mut collector = crate::evtx_reader::EventCollector::new();
+        let mut collector = sigmacatch_core::evtx_reader::EventCollector::new();
         for path in &self.files {
             collector.add_file(path.clone());
         }
@@ -105,7 +105,7 @@ pub async fn run(evtx_path: Option<PathBuf>) -> Result<()> {
     );
 
     let collector = EvtxCollector { files };
-    crate::runner::run(&collector).await
+    sigmacatch_core::runner::run(&collector).await
 }
 
 #[cfg(test)]
@@ -165,7 +165,7 @@ mod tests {
         };
         assert_eq!(collector.name(), "sigmacatch");
         assert!(collector.mode().contains("one-shot"));
-        let engine = DetectionEngine::new(&crate::rule::SigmahqRules::default()).unwrap();
+        let engine = DetectionEngine::new(&sigmacatch_core::rule::SigmahqRules::default()).unwrap();
         assert!(collector.channels(&engine, &Default::default()).is_none());
         assert!(!collector.live_capture());
         assert!(matches!(collector.regression_format(), DataFormat::Evtx));
@@ -179,14 +179,16 @@ mod tests {
         if !fixture.exists() {
             return; // fixture absent in some packaging contexts
         }
-        let expected = crate::evtx_reader::parse_evtx_file(&fixture).unwrap().len();
+        let expected = sigmacatch_core::evtx_reader::parse_evtx_file(&fixture)
+            .unwrap()
+            .len();
         assert!(expected > 0, "fixture should contain events");
 
         let collector = EvtxCollector {
             files: vec![fixture.clone()],
         };
         let producer = collector.build(&[]);
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::types::Event>(256);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<sigmacatch_core::types::Event>(256);
         let (_stop_tx, stop_rx) = tokio::sync::watch::channel(false);
 
         producer.run(tx, stop_rx).await.unwrap();

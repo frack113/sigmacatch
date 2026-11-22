@@ -56,13 +56,13 @@
 
 use std::collections::HashMap;
 
-use crate::detection::DetectionEngine;
-use crate::regression::DataFormat;
-use crate::runner::CollectorKind;
-use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{Map, Value};
+use sigmacatch_core::detection::DetectionEngine;
+use sigmacatch_core::regression::DataFormat;
+use sigmacatch_core::runner::CollectorKind;
+use sigmacatch_core::types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
 
 /// Provider recorded in `info.yml` for Endpoint Security regression data.
@@ -621,7 +621,7 @@ impl EventProducer for MacosEsCollector {
 /// shared pipeline.
 pub async fn run() -> Result<()> {
     let collector = MacosEsCollector::new();
-    crate::runner::run(&collector).await
+    sigmacatch_core::runner::run(&collector).await
 }
 
 /// macOS-only native Endpoint Security plumbing.
@@ -639,7 +639,7 @@ mod es {
     use tracing::{info, warn};
 
     use super::{Kind, NativeOutcome, RawNotification, user_name};
-    use crate::types::{Event, ProducerError};
+    use sigmacatch_core::types::{Event, ProducerError};
 
     /// Why the native client could not be created.
     enum ConnectError {
@@ -1049,7 +1049,7 @@ mod eslogger {
     use tracing::{debug, info};
 
     use super::RawNotification;
-    use crate::types::{Event, ProducerError};
+    use sigmacatch_core::types::{Event, ProducerError};
 
     /// Apple's first-party Endpoint Security client binary.
     const ESLOGGER: &str = "/usr/bin/eslogger";
@@ -1235,7 +1235,7 @@ fn resolve_user_name(uid: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rule::SigmahqRules;
+    use sigmacatch_core::rule::SigmahqRules;
 
     fn sample_exec() -> RawNotification {
         RawNotification {

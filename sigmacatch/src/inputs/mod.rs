@@ -10,11 +10,12 @@
 //! `MetadataExt`, eBPF loaders); enabling a Linux feature on another platform
 //! is silently inert.
 
-// Windows inputs.
+// Windows inputs. Crate aliases keep host call sites unchanged; the Winevt
+// crate owns its `channels` sub-module and compiles its non-Windows stubs.
 #[cfg(feature = "winevt")]
-pub mod channels;
+pub use sigmacatch_input_winevt as winevt;
 #[cfg(feature = "winevt")]
-pub mod winevt;
+pub use sigmacatch_input_winevt::channels;
 // Windows orchestrator: Event Log channels + kernel sensor or ETW.
 #[cfg(all(target_os = "windows", feature = "winevt"))]
 pub mod windows;
@@ -37,7 +38,7 @@ pub mod etw_driver;
 // One-shot EVTX cross-platform input. Not `target_os`-gated: pure file
 // parsing, runs on Windows and Linux alike.
 #[cfg(feature = "evtx")]
-pub mod evtx;
+pub use sigmacatch_input_evtx as evtx;
 
 // Linux inputs. Crate aliases keep every `crate::inputs::<name>` call site
 // unchanged; each crate is empty off Linux.
@@ -81,4 +82,4 @@ pub mod linux;
 // is always compiled with the feature so its field mapping can be tested on
 // Linux; the ES client itself is `#[cfg(target_os = "macos")]` inside.
 #[cfg(feature = "macos")]
-pub mod macos_es;
+pub use sigmacatch_input_macos as macos_es;

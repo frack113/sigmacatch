@@ -2490,8 +2490,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "dunce",
- "endpoint-sec",
- "libc",
  "linux-audit-parser",
  "rand_core",
  "rayon",
@@ -2502,15 +2500,17 @@ dependencies = [
  "sigmacatch-input-auditd",
  "sigmacatch-input-ebpf",
  "sigmacatch-input-etw-common",
+ "sigmacatch-input-evtx",
+ "sigmacatch-input-macos",
  "sigmacatch-input-syslog",
  "sigmacatch-input-sysmon",
  "sigmacatch-input-tail",
+ "sigmacatch-input-winevt",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "uuid",
- "walkdir",
  "windows",
 ]
 
@@ -2593,6 +2593,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "sigmacatch-input-evtx"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "sigmacatch-core",
+ "tempfile",
+ "tokio",
+ "walkdir",
+]
+
+[[package]]
+name = "sigmacatch-input-macos"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "endpoint-sec",
+ "libc",
+ "serde_json",
+ "sigmacatch-core",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "sigmacatch-input-syslog"
 version = "0.8.0"
 dependencies = [
@@ -2628,6 +2654,18 @@ dependencies = [
  "sigmacatch-core",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "sigmacatch-input-winevt"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "sigmacatch-core",
+ "tokio",
+ "tracing",
+ "windows",
 ]
 
 [[package]]

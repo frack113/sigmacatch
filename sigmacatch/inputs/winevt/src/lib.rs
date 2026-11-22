@@ -5,14 +5,14 @@
 //!
 //! Selected by `main.rs` when running on Windows.
 
+pub mod channels;
+
 use std::collections::HashMap;
 
-use crate::detection::DetectionEngine;
-use crate::runner::CollectorKind;
-use crate::types::EventProducer;
 use anyhow::Result;
-
-use crate::inputs::channels;
+use sigmacatch_core::detection::DetectionEngine;
+use sigmacatch_core::runner::CollectorKind;
+use sigmacatch_core::types::EventProducer;
 
 struct WinevtCollector;
 
@@ -41,5 +41,5 @@ impl CollectorKind for WinevtCollector {
 /// Async entry — selected by `main.rs` on Windows.
 pub async fn run() -> Result<()> {
     let collector = WinevtCollector;
-    crate::runner::run(&collector).await
+    sigmacatch_core::runner::run(&collector).await
 }

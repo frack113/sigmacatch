@@ -15,29 +15,18 @@ doctest = false
 
 [features]
 default = ["winevt"]
-winevt = []
-evtx = ["dep:walkdir"]
+winevt = ["dep:sigmacatch-input-winevt"]
+evtx = ["dep:sigmacatch-input-evtx"]
 etw = ["dep:sigmacatch-input-etw-common"]     # native Windows ETW (no Sysmon)
 driver = ["etw"]                               # kernel sensor client (Windows)
 auditd = ["dep:sigmacatch-input-auditd", "dep:sigmacatch-input-tail"]
 builtin = ["dep:sigmacatch-input-syslog", "dep:sigmacatch-input-tail"]
 sysmon = ["builtin", "dep:sigmacatch-input-sysmon"] # Sysmon-for-Linux legacy tail
 ebpf = ["dep:sigmacatch-input-ebpf", "sigmacatch-input-ebpf/ebpf"]
-# Plan A (system.log/os_log) needs no extra dependency; Plan B (Endpoint
-# Security) pulls the macOS-only bindings, so they are optional and only
-# activated with this feature.
-macos = ["dep:endpoint-sec", "dep:libc"]
+macos = ["dep:sigmacatch-input-macos"]
 
 [target.'cfg(not(unix))'.dependencies]
 dunce = "1.0.5"
-
-# Endpoint Security is a macOS-only framework: the bindings are declared in a
-# target table so a Linux/Windows build never tries to link them. `max`
-# compiles every ES event type up to macOS 15.4; the collector still filters
-# subscriptions by the runtime macOS version.
-[target.'cfg(target_os = "macos")'.dependencies]
-endpoint-sec = { version = "0.6.2", features = ["max"], optional = true }
-libc = { version = "0.2.188", optional = true }
 
 # Linux input crates are empty shells on other targets, so their re-exports in
 # `inputs/mod.rs` are Linux-only too. Target scoping keeps the dependency lint
@@ -80,6 +69,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sigmacatch-core = { path = "core" }
 sigmacatch-input-etw-common = { path = "inputs/etw-common", optional = true }
+sigmacatch-input-evtx = { path = "inputs/evtx", optional = true }
+sigmacatch-input-macos = { path = "inputs/macos", optional = true }
+sigmacatch-input-winevt = { path = "inputs/winevt", optional = true }
 sha1 = "0.11.0"
 tokio = { version = "1.54.1", features = [
   "rt",
@@ -95,7 +87,6 @@ tokio = { version = "1.54.1", features = [
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid = { version = "1.29.3", features = ["v4", "serde"] }
-walkdir = { version = "2.5.1", optional = true }
 
 [dev-dependencies]
 rand_core = { version = "0.6.4", features = ["getrandom"] }

@@ -46,6 +46,8 @@ jobs:
         run: cargo test --locked -p sigmacatch-input-etw-common
       - name: Test (Linux input crates)
         run: cargo test --locked -p sigmacatch-input-auditd -p sigmacatch-input-syslog -p sigmacatch-input-sysmon
+      - name: Test (Winevt, EVTX and macOS input crates)
+        run: cargo test --locked -p sigmacatch-input-winevt -p sigmacatch-input-evtx -p sigmacatch-input-macos
       - name: Test (auditd+builtin+sysmon)
         run: cargo test --locked -p sigmacatch --no-default-features --features auditd,builtin,sysmon
       - name: Test (evtx)

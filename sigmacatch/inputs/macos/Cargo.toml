@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[package]
+name = "sigmacatch-input-macos"
+version.workspace = true
+edition.workspace = true
+description = "sigmacatch macOS Endpoint Security collector"
+license.workspace = true
+
+[lib]
+doctest = false
+
+# The event model, Kind/Backend mapping and field tests are target-independent
+# and must stay compiled on Linux. Only the ES client and eslogger backends
+# are macOS-only, so their bindings are declared in the target table below.
+[dependencies]
+anyhow = "1.0.104"
+async-trait = "0.1.92"
+serde_json = "1.0.154"
+sigmacatch-core = { path = "../../core" }
+tokio = { version = "1.54.1", features = ["rt", "sync"] }
+tracing.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+chrono = "0.4.45"
+endpoint-sec = { version = "0.6.2", features = ["max"] }
+libc = "0.2.188"
+tokio = { version = "1.54.1", features = ["io-util", "macros", "process", "time"] }
+
+[lints]
+workspace = true
