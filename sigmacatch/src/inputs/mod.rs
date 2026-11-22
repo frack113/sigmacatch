@@ -79,9 +79,7 @@ pub use tail::TailOptions;
 // Parsed by the `builtin` collector (not `sysmon`): the built-in syslog tail
 // must recognise Sysmon-for-Linux XML lines so it can hand them to `sysmon`.
 #[cfg(all(target_os = "linux", feature = "ebpf"))]
-pub mod ebpf;
-#[cfg(all(target_os = "linux", feature = "ebpf"))]
-pub mod ebpf_event;
+pub use sigmacatch_input_ebpf::{ebpf, ebpf_event};
 #[cfg(all(target_os = "linux", feature = "sysmon"))]
 pub mod sysmon;
 #[cfg(all(target_os = "linux", feature = "builtin"))]

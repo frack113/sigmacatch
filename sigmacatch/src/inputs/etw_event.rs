@@ -3,7 +3,7 @@
 
 //! TDH decoding of a raw ETW record into named, typed properties.
 //!
-//! This is the Windows analogue of [`super::ebpf_event`]: the collector gets
+//! This is the Windows analogue of `sigmacatch-input-ebpf`'s `ebpf_event`: the collector gets
 //! opaque buffers from the kernel and this module turns them into the field
 //! values the Sysmon-schema mapping (M2) consumes. It deliberately knows
 //! nothing about Sigma or Sysmon — it only reports what the provider said.

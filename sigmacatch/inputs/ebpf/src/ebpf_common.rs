@@ -3,7 +3,7 @@
 
 //! Wire-format types shared between the eBPF probes (`sigmacatch/ebpf`,
 //! compiled no_std for `bpfel-unknown-none`) and the userspace loader
-//! (`sigmacatch/src/inputs/ebpf.rs`).
+//! (`sigmacatch/inputs/ebpf/src/ebpf.rs`).
 //!
 //! The probe crate includes this very file via `#[path]` (single source of
 //! truth); every type here is `#[repr(C)]` and [`Pod`] so the layout is the
@@ -15,7 +15,7 @@
 //! # Example
 //!
 //! ```rust
-//! use sigmacatch::ebpf_common::{ExecEvent, EVENT_EXEC};
+//! use sigmacatch_input_ebpf::ebpf_common::{ExecEvent, EVENT_EXEC};
 //!
 //! # fn main() {
 //! let event = ExecEvent {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! eBPF-based sysmon input: loads the probes embedded by `src/build.rs`,
+//! eBPF-based sysmon input: loads the probes embedded by `build.rs`,
 //! checks privileges at startup, attaches the tracepoints and produces
 //! Sysmon-schema events from the kernel ring buffer.
 
@@ -18,20 +18,20 @@ use crate::ebpf_common::{
     ForkEvent, ListenEvent, ModuleUnloadEvent, NetEvent, PipeCreateEvent, ProcessAccessEvent,
     ProcessTamperingEvent, RawAccessEvent,
 };
-use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::{Context, bail};
 use async_trait::async_trait;
 use aya::Ebpf;
 use aya::maps::RingBuf;
 use aya::programs::TracePoint;
+use sigmacatch_core::types::{Event, EventProducer, ProducerError};
 use tokio::sync::{mpsc, watch};
 use tracing::info;
 
-use crate::inputs::ebpf_event::EventBuilder;
+use crate::ebpf_event::EventBuilder;
 
 const RING_POLL_MS: u64 = 100;
 
-/// Object embedded by `src/build.rs`: real probes when the nightly toolchain
+/// Object embedded by `build.rs`: real probes when the nightly toolchain
 /// was available at build time, an empty placeholder otherwise (the loader
 /// rejects it and collection falls back to the legacy syslog tail). On CI
 /// (`GITHUB_ACTIONS`) the build script refuses the placeholder — an empty

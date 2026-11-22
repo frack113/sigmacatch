@@ -18,9 +18,10 @@ pub use sigmacatch_core::{
     logging, regression, repo, rule, run, runner, types,
 };
 
-// Wire-format types for the eBPF ring buffer, shared with the probe crate
-// (`sigmacatch/ebpf`, which includes this file via `#[path]`).
-pub mod ebpf_common;
+// Wire-format types for the eBPF ring buffer. The probe crate includes the
+// source directly via `#[path]`; the host adapter owns it.
+#[cfg(feature = "ebpf")]
+pub use sigmacatch_input_ebpf::ebpf_common;
 
 // Input adapters. The whole `feature × platform` gate matrix lives in
 // `inputs/mod.rs`; this library exposes it unconditionally here.

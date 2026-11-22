@@ -50,7 +50,7 @@ updates:
           - "quick-xml"
 
   # `sigmacatch/ebpf` is a separate workspace (it opts out of the root one) and
-  # builds only on nightly with rust-src + bpf-linker, via `src/build.rs`. It is
+  # builds only on nightly with rust-src + bpf-linker, via `inputs/ebpf/build.rs`. It is
   # invisible to the root cargo entry above and to every stable CI job, so its
   # dependencies would otherwise drift with nothing surfacing them. Monthly is
   # enough: the probe only needs aya-ebpf to track the kernel ABI, and each bump

@@ -23,14 +23,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const OBJECT_NAME: &str = "sigmacatch_ebpf.o";
-const PROBE_CRATE_DIR: &str = "ebpf";
+const PROBE_CRATE_DIR: &str = "../../ebpf";
 const PROBE_ARTIFACT: &str = "target/bpfel-unknown-none/release/sigmacatch-ebpf";
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=ebpf/src/main.rs");
-    println!("cargo:rerun-if-changed=ebpf/Cargo.toml");
-    println!("cargo:rerun-if-changed=ebpf/.cargo/config.toml");
+    println!("cargo:rerun-if-changed=../../ebpf/src/main.rs");
+    println!("cargo:rerun-if-changed=../../ebpf/Cargo.toml");
+    println!("cargo:rerun-if-changed=../../ebpf/.cargo/config.toml");
     println!("cargo:rerun-if-changed=src/ebpf_common.rs");
     println!("cargo:rerun-if-env-changed=SIGMACATCH_EBPF_OBJECT");
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));

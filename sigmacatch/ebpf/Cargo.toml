@@ -2,8 +2,8 @@
 # SPDX-FileCopyrightText: 2026 sigmacatch contributors
 #
 # Nightly-only bpf-el probe crate, excluded from the workspace. Built by
-# sigmacatch/src/build.rs; the wire-format types come from
-# sigmacatch/src/ebpf_common.rs via #[path].
+# sigmacatch/inputs/ebpf/build.rs; the wire-format types come from
+# sigmacatch/inputs/ebpf/src/ebpf_common.rs via #[path].
 
 [workspace]
 

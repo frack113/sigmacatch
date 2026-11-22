@@ -90,6 +90,8 @@ jobs:
           key: test-ebpf-${{ hashFiles('**/Cargo.lock') }}
       - name: Test (auditd+builtin+ebpf)
         run: cargo +nightly test --locked -p sigmacatch --no-default-features --features auditd,builtin,ebpf
+      - name: Test eBPF host adapter
+        run: cargo +nightly test --locked -p sigmacatch-input-ebpf --features ebpf
 
   # The ES client and eslogger modules are compiled only on macOS; the
   # platform-independent field mapping also runs in the Linux matrix above.

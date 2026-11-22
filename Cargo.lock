@@ -2488,12 +2488,9 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "aya",
- "bytemuck",
  "chrono",
  "dunce",
  "endpoint-sec",
- "hex",
  "libc",
  "linux-audit-parser",
  "md-5",
@@ -2503,8 +2500,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
- "sha2 0.11.1",
  "sigmacatch-core",
+ "sigmacatch-input-ebpf",
  "tempfile",
  "tokio",
  "tracing",
@@ -2546,6 +2543,25 @@ dependencies = [
  "uuid",
  "windows",
  "yaml_serde",
+]
+
+[[package]]
+name = "sigmacatch-input-ebpf"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "aya",
+ "bytemuck",
+ "chrono",
+ "hex",
+ "serde_json",
+ "sha2 0.11.1",
+ "sigmacatch-core",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

@@ -63,18 +63,20 @@ jobs:
             --no-default-features --features auditd,builtin,sysmon,evtx \
             --fail-under-lines 78
 
-  # Companion gate for the `ebpf` input (Q7.3). Without it, inputs/ebpf.rs and
-  # inputs/ebpf_event.rs sit outside every coverage number in the project.
+  # Companion gate for the `ebpf` input (Q7.3). Without it, the host adapter
+  # in `sigmacatch/inputs/ebpf/` sits outside every coverage number in the
+  # project.
   #
   # Scope, stated precisely so the number is not over-read:
-  #   - This measures the *host-side* ebpf code only (1 341 lines). The nested
-  #     `sigmacatch/ebpf` kernel probe is a separate workspace built for
-  #     `bpfel-unknown-none`, and llvm-cov cannot instrument those objects — it
-  #     does not appear in the report. Closing that last 478 lines would need
-  #     in-kernel verification, not a coverage gate.
-  #   - `inputs/ebpf.rs` (62.9%) and `ebpf_common.rs` (32.8%) need a privileged
-  #     kernel to exercise the attach path, so they drag the average down; the
-  #     parsers in `inputs/ebpf_event.rs` sit at 96.8%.
+  #   - This measures the *host-side* ebpf code only (1 341 lines before the
+  #     crate extraction). The nested `sigmacatch/ebpf` kernel probe is a
+  #     separate workspace built for `bpfel-unknown-none`, and llvm-cov cannot
+  #     instrument those objects — it does not appear in the report. Closing
+  #     that last 478 lines would need in-kernel verification, not a coverage
+  #     gate.
+  #   - `ebpf.rs` (62.9%) and `ebpf_common.rs` (32.8%) need a privileged kernel
+  #     to exercise the attach path, so they drag the average down; the parsers
+  #     in `ebpf_event.rs` sit at 96.8%. Those ratios predate the extraction.
   #   - Measured 78.43% on 2026-09-26. The bar is 77, not the stable gate's 78,
   #     to absorb line-count drift between nightly releases.
   coverage-ebpf:

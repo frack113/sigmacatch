@@ -10,7 +10,7 @@
 //! regression generation work unchanged.
 //!
 //! The field mapping follows the internal eBPF taxonomy
-//! (`sigmacatch/ebpf_taxonomy.json`) from kernel-captured data to Sigma/Sysmon
+//! (`sigmacatch/inputs/ebpf/ebpf_taxonomy.json`) from kernel-captured data to Sigma/Sysmon
 //! fields.
 //!
 //! Hashes are `-` when the image is unreadable; userspace SHA256 with mtime-based
@@ -33,10 +33,10 @@ use crate::ebpf_common::{
     TRUNCATE_FTRUNCATE, TRUNCATE_TRUNCATE, WRITE_PWRITE64, WRITE_PWRITEV, WRITE_PWRITEV2,
     WRITE_WRITE, WRITE_WRITEV,
 };
-use crate::types::Event;
 use chrono::Utc;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
+use sigmacatch_core::types::Event;
 
 /// Bounded memoization of image hashes keyed by resolved path, invalidated
 /// by mtime change.
@@ -48,7 +48,7 @@ const HASH_CACHE_CAP: usize = 4096;
 const FORK_CACHE_CAP: usize = 16_384;
 
 /// Embedded internal taxonomy mapping (eBPF/kernel → Sigma fields).
-pub const EBPF_TAXONOMY_JSON: &str = include_str!("../../ebpf_taxonomy.json");
+pub const EBPF_TAXONOMY_JSON: &str = include_str!("../ebpf_taxonomy.json");
 
 /// What the builder remembers about a process seen through exec events.
 struct ParentInfo {
