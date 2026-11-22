@@ -44,6 +44,8 @@ jobs:
         run: cargo test --locked -p sigmacatch
       - name: Test (ETW decoding helpers)
         run: cargo test --locked -p sigmacatch-input-etw-common
+      - name: Test (ETW and kernel-sensor input crates)
+        run: cargo test --locked -p sigmacatch-input-etw -p sigmacatch-input-etw-driver
       - name: Test (Linux input crates)
         run: cargo test --locked -p sigmacatch-input-auditd -p sigmacatch-input-syslog -p sigmacatch-input-sysmon
       - name: Test (Winevt, EVTX and macOS input crates)

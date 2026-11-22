@@ -1,17 +1,14 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Input adapters of the `sigmacatch` binary — the single source of the
-//! `feature × platform` gate matrix. `lib.rs` exposes this module
-//! unconditionally; every file below is compiled only when its input features
-//! are enabled (and, for Linux, only on `target_os = "linux"`).
-//!
-//! Linux impls are gated on `target_os = "linux"` (Unix-only code: `tail`
-//! `MetadataExt`, eBPF loaders); enabling a Linux feature on another platform
-//! is silently inert.
+//! Input adapters of the `sigmacatch` binary. Each input now lives in its own
+//! crate, which owns its `feature × platform` gates; this module only aliases
+//! those crates and hosts the two orchestrators that combine them. `lib.rs`
+//! exposes it unconditionally, so enabling a feature for another platform is
+//! inert rather than a compile error.
 
-// Windows inputs. Crate aliases keep host call sites unchanged; the Winevt
-// crate owns its `channels` sub-module and compiles its non-Windows stubs.
+// Windows inputs. Crate aliases keep host call sites unchanged; each crate
+// compiles as an empty shell off Windows.
 #[cfg(feature = "winevt")]
 pub use sigmacatch_input_winevt as winevt;
 #[cfg(feature = "winevt")]

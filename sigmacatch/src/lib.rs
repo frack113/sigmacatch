@@ -2,11 +2,9 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 //! Single `sigmacatch` package: one binary (`sigmacatch`) plus a second
-//! artifact (`regressiondata-check`). Cargo features select which inputs are
-//! compiled in:
-//! - Windows: `winevt` (live Event Log, default), `evtx` (one-shot EVTX files);
-//! - Linux: `auditd`, `builtin` (system syslog), `sysmon` (Sysmon-for-Linux
-//!   tail), `ebpf` (native probes).
+//! artifact (`regressiondata-check`). Cargo features select which input crates
+//! are linked in: `winevt` (default) and `evtx` everywhere, `etw` and `driver`
+//! on Windows, `auditd`/`builtin`/`sysmon`/`ebpf` on Linux, `macos` on macOS.
 //!
 //! The collection → detection → regression pipeline, configuration, rule
 //! management, the Sigma repo layer and the regression data generator live in
@@ -23,6 +21,6 @@ pub use sigmacatch_core::{
 #[cfg(feature = "ebpf")]
 pub use sigmacatch_input_ebpf::ebpf_common;
 
-// Input adapters. The whole `feature × platform` gate matrix lives in
-// `inputs/mod.rs`; this library exposes it unconditionally here.
+// Input adapters. Each crate owns its gates; `inputs/mod.rs` only aliases them
+// and hosts the two orchestrators.
 pub mod inputs;
