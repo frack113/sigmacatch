@@ -239,6 +239,19 @@ impl InfoYml {
     }
 }
 
+/// Rewrite `path` with canonical indentation when its layout differs from
+/// `canonical`. Returns `true` when the file was written. Values and comments
+/// come from `original`; only leading indentation changes.
+pub fn write_canonical_indent(path: &Path, original: &str, canonical: &str) -> crate::Result<bool> {
+    if !crate::indent::needs_reindent(original.trim_end_matches('\n'), canonical) {
+        return Ok(false);
+    }
+    let mut content = crate::indent::reindent_yaml(original, canonical);
+    content.push('\n');
+    std::fs::write(path, content)?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -46,3 +46,37 @@ pub enum Error {
 
 /// Result alias over [`Error`].
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Rewrite `path` with exactly one trailing newline. Returns `true` when the
+/// file was written, `false` when its bytes were already normalized.
+pub fn normalize_trailing_newline(path: &std::path::Path, bytes: &[u8]) -> Result<bool> {
+    let mut trimmed = bytes;
+    while trimmed.last() == Some(&b'\n') {
+        trimmed = &trimmed[..trimmed.len() - 1];
+    }
+    let mut normalized = Vec::with_capacity(trimmed.len() + 1);
+    normalized.extend_from_slice(trimmed);
+    normalized.push(b'\n');
+    if normalized == bytes {
+        return Ok(false);
+    }
+    std::fs::write(path, normalized)?;
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trailing_newline_is_normalized() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("data.json");
+
+        assert!(normalize_trailing_newline(&path, b"{}").unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), b"{}\n");
+        assert!(!normalize_trailing_newline(&path, b"{}\n").unwrap());
+        assert!(normalize_trailing_newline(&path, b"{}\n\n").unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), b"{}\n");
+    }
+}

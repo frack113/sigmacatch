@@ -26,7 +26,8 @@ use std::path::{Path, PathBuf};
 use rayon::prelude::*;
 use serde::Serialize;
 use serde_json::{Map, Value as JsonValue};
-use sigma_regression::indent::{canonical_indent, needs_reindent, reindent_yaml, yaml_lines};
+use sigma_regression::indent::{canonical_indent, yaml_lines};
+use sigma_regression::info::write_canonical_indent;
 use sigmacatch::detection::DetectionEngine;
 use sigmacatch::regression::SigmahqRegression;
 use sigmacatch::regression::info::InfoYml;
@@ -1027,16 +1028,12 @@ fn fix_json_newlines(regression: &SigmahqRegression) -> anyhow::Result<()> {
                     None
                 };
                 if let Some(reason) = needs_fix {
-                    let mut trimmed = bytes;
-                    while trimmed.last() == Some(&b'\n') {
-                        trimmed.pop();
-                    }
-                    trimmed.push(b'\n');
-                    match std::fs::write(&path, &trimmed) {
-                        Ok(()) => {
+                    match sigma_regression::normalize_trailing_newline(&path, &bytes) {
+                        Ok(true) => {
                             fixed += 1;
                             println!("[FIX] {} ({reason})", path.display());
                         }
+                        Ok(false) => {}
                         Err(e) => {
                             eprintln!("  [ERROR] Cannot write {}: {e}", path.display());
                         }
@@ -1053,19 +1050,14 @@ fn fix_json_newlines(regression: &SigmahqRegression) -> anyhow::Result<()> {
                 match sigmacatch::regression::info::InfoYml::load(&path) {
                     Ok(info) => match info.canonical_yaml() {
                         Ok(canonical) => {
-                            let original_trimmed = original.trim_end_matches('\n');
-                            if needs_reindent(original_trimmed, &canonical) {
-                                let rewritten = reindent_yaml(&original, &canonical);
-                                let mut content = rewritten;
-                                content.push('\n');
-                                match std::fs::write(&path, content) {
-                                    Ok(()) => {
-                                        yml_fixed += 1;
-                                        println!("[FIX] {} (indentation)", path.display());
-                                    }
-                                    Err(e) => {
-                                        eprintln!("  [ERROR] Cannot write {}: {e}", path.display());
-                                    }
+                            match write_canonical_indent(&path, &original, &canonical) {
+                                Ok(true) => {
+                                    yml_fixed += 1;
+                                    println!("[FIX] {} (indentation)", path.display());
+                                }
+                                Ok(false) => {}
+                                Err(e) => {
+                                    eprintln!("  [ERROR] Cannot write {}: {e}", path.display());
                                 }
                             }
                         }
@@ -1809,7 +1801,7 @@ mod tests {
     fn reindent_yaml_preserves_comments() {
         let raw = "# top comment\nid: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\nrule_metadata:\n- id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb\n  title: R\n";
         let canonical = "id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa\nrule_metadata:\n    - id: bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb\n      title: R\n";
-        let out = reindent_yaml(raw, canonical);
+        let out = sigma_regression::indent::reindent_yaml(raw, canonical);
         assert!(
             out.starts_with("# top comment\n"),
             "comment preserved, got: {out}"
