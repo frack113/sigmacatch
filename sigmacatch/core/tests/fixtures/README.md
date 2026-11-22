@@ -1,10 +1,13 @@
-# Core EVTX fixtures
+# EVTX test fixtures
 
-`sample.xml`, `sample.evtx` and `valid-single.evtx` are the canonical copies:
-`sigmacatch-core` owns the data its unit tests embed via `include_str!` /
-`include_bytes!` and `CARGO_MANIFEST_DIR`. `sigmacatch-input-evtx` keeps its own
-copy of `sample.evtx`; regenerate both together when the encoder byte layout
-changes.
+This directory is the single canonical store for the binary EVTX test
+fixtures:
+
+| File | Consumer |
+| ---- | -------- |
+| `sample.xml` | `sigmacatch-output-evtx` (`include_str!` and runtime read in `outputs/evtx/src/evtx_writer.rs`) |
+| `sample.evtx` | `sigmacatch-core`, `sigmacatch-input-evtx`, `sigmacatch-output-evtx` (runtime reads via `CARGO_MANIFEST_DIR` + `../../core/tests/fixtures/`) |
+| `valid-single.evtx` | `sigmacatch-repo` (`include_bytes!` in `repo/src/lib.rs`) |
 
 `sample.xml` is Winevt event XML used as input by the golden test
 `evtx_writer::tests::golden_output_is_byte_identical`. `sample.evtx` is the
@@ -13,11 +16,10 @@ writer** (commit `642a60c34`) from `sample.xml` with `record_id = 1`; the test
 asserts byte-identical output, so the reference is not self-referential.
 
 Regeneration (only when the encoder intentionally changes the byte layout):
-check out the new reference commit, then regenerate from **inside** the crate —
-`write_evtx_from_xml` is `pub(crate)` and not callable from outside
-`sigmacatch-core`. Add a temporary unit test (or a temporary `#[cfg(test)]`
-helper) in `sigmacatch/core/src/regression/evtx_writer.rs` that calls
-`write_evtx_from_xml` with the `sample.xml` content and `record_id = 1`, run it
-with `cargo test -p sigmacatch-core`, and replace `sample.evtx` here and in
-`sigmacatch/inputs/evtx/tests/fixtures/` with the produced file. Remove the
-temporary helper afterwards.
+check out the new reference commit, then regenerate from inside the crate that
+owns the writer — `write_evtx_from_xml` is `pub(crate)` in
+`sigmacatch/outputs/evtx/src/evtx_writer.rs`. Add a temporary unit test (or a
+temporary `#[cfg(test)]` helper) there that calls `write_evtx_from_xml` with
+the `sample.xml` content and `record_id = 1`, run it with
+`cargo test -p sigmacatch-output-evtx`, and replace `sample.evtx` in this
+directory with the produced file. Remove the temporary helper afterwards.

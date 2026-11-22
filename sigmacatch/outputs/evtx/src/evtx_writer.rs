@@ -55,7 +55,7 @@ const UNIX_TO_FILETIME_NS: i128 = 116_444_736_000_000_000;
 
 /// Sample Winevt XML event (includes TaskInstanceId). Sourced from fixture.
 #[cfg(test)]
-pub(crate) const SAMPLE_XML: &str = include_str!("../tests/fixtures/sample.xml");
+pub(crate) const SAMPLE_XML: &str = include_str!("../../../core/tests/fixtures/sample.xml");
 
 /// Errors produced while writing EVTX files.
 #[derive(Debug, thiserror::Error)]
@@ -747,12 +747,13 @@ mod tests {
     fn golden_output_is_byte_identical() {
         let manifest = env!("CARGO_MANIFEST_DIR");
         let xml = std::fs::read_to_string(
-            std::path::Path::new(manifest).join("tests/fixtures/sample.xml"),
+            std::path::Path::new(manifest).join("../../core/tests/fixtures/sample.xml"),
         )
         .unwrap();
-        let golden =
-            std::fs::read(std::path::Path::new(manifest).join("tests/fixtures/sample.evtx"))
-                .unwrap();
+        let golden = std::fs::read(
+            std::path::Path::new(manifest).join("../../core/tests/fixtures/sample.evtx"),
+        )
+        .unwrap();
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("golden.evtx");

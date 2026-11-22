@@ -42,6 +42,8 @@ jobs:
           key: test-stable-${{ hashFiles('**/Cargo.lock') }}
       - name: Test (winevt)
         run: cargo test --locked -p sigmacatch
+      - name: Test (core and tail)
+        run: cargo test --locked -p sigmacatch-core -p sigmacatch-input-tail
       - name: Test (sigma-regression)
         run: cargo test --locked -p sigma-regression
       - name: Test (repo)
