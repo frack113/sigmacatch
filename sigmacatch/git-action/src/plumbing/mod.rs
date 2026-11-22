@@ -12,7 +12,6 @@ pub(crate) mod commit;
 pub(crate) mod fetch;
 pub(crate) mod index;
 pub(crate) mod init;
-pub(crate) mod long_path;
 pub(crate) mod pack;
 pub(crate) mod push;
 pub(crate) mod refs;
@@ -35,3 +34,4 @@ pub(crate) use refs::{
     fast_forward_branch, list_sigmacatch_remote_refs, read_loose_or_packed_ref,
     read_remote_url_from_config, resolve_head, set_head_after_fetch, symbolic_ref_target,
 };
+pub(crate) use sigma_regression::long_path;

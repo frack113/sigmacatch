@@ -228,8 +228,8 @@ pub(crate) fn add_file_to_index(
     index: &mut grit_lib::index::Index,
 ) -> Result<()> {
     let odb = open_odb(git_dir);
-    let file_path = crate::plumbing::long_path::long_path(file_path);
-    let base = crate::plumbing::long_path::long_path(base);
+    let file_path = crate::plumbing::long_path(file_path);
+    let base = crate::plumbing::long_path(base);
     let contents = std::fs::read(&file_path)?;
     let blob_oid = odb
         .write(grit_lib::objects::ObjectKind::Blob, &contents)

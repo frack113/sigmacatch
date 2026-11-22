@@ -2568,6 +2568,7 @@ dependencies = [
  "rayon",
  "sha1",
  "sha2 0.11.1",
+ "sigma-regression",
  "ssh-key",
  "tempfile",
  "thiserror 2.0.21",
