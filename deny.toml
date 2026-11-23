@@ -8,7 +8,7 @@
 yanked = "warn"
 # encoding v0.2.33 is unmaintained but required by evtx v0.12.2 (latest, no alternative)
 # chrono v0.4.45 is unmaintained but required by rsigma-eval v0.26.0 (no safe upgrade)
-ignore = ["RUSTSEC-2021-0153", "RUSTSEC-2026-0543"]
+ignore = ["RUSTSEC-2026-0543"]
 
 [licenses]
 allow = [
