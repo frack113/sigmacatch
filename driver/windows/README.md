@@ -4,7 +4,7 @@ Kernel sensor for the Windows flavour of sigmacatch: Sysmon-schema telemetry
 on hosts that do **not** have Sysmon installed.
 
 This crate is deliberately **outside the root workspace** (like
-`sigmacatch/ebpf`): it only builds on a Windows host with the WDK and LLVM,
+`driver/ebpf`): it only builds on a Windows host with the WDK and LLVM,
 while the rest of the project keeps building from Linux with `cargo xwin`.
 
 ## Why
@@ -67,7 +67,7 @@ Blocked / remaining:
   created from the parent's context, which made every process start look like
   an injection).
 
-The ring record is kind-tagged (`sigmacatch/driver/protocol/`, shared with
+The ring record is kind-tagged (`driver/windows/protocol/`, shared with
 the user-mode client as `sigmacatch-driver-protocol`), so adding a kind does
 not change the IOCTL layout.
 

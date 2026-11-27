@@ -17,8 +17,9 @@ WINRM="$SKILL/winrm_vm.py"
 DEV_MAC="52:54:00:ea:59:6b"
 REMOTE_BASE='C:\sigmacatch-dev\sigmacatch'
 
-# The driver and protocol sources, relative to sigmacatch/.
-FILES="driver/Cargo.toml driver/build.rs driver/src/lib.rs driver/src/flt.rs driver/protocol/Cargo.toml driver/protocol/src/lib.rs driver/protocol/src/protocol.rs"
+# The driver and protocol sources, relative to driver/windows/.
+SRC_DIR="$REPO_ROOT/driver/windows"
+FILES="Cargo.toml build.rs src/lib.rs src/flt.rs protocol/Cargo.toml protocol/src/lib.rs protocol/src/protocol.rs"
 
 vm_ip="${SIGMACATCH_DEV_IP:-}"
 if [ -z "$vm_ip" ]; then
@@ -38,7 +39,7 @@ python3 "$WINRM" run "cmd /c del /q C:\sigmacatch-dev-build.done C:\sigmacatch-d
 python3 "$WINRM" run "cmd /c if not exist ${REMOTE_BASE}\\driver\\src mkdir ${REMOTE_BASE}\\driver\\src & if not exist ${REMOTE_BASE}\\driver\\protocol\\src mkdir ${REMOTE_BASE}\\driver\\protocol\\src" >/dev/null
 
 for f in $FILES; do
-  python3 "$WINRM" put "$REPO_ROOT/sigmacatch/$f" "${REMOTE_BASE}\\${f//\//\\}" >/dev/null
+  python3 "$WINRM" put "$SRC_DIR/$f" "${REMOTE_BASE}\\driver\\${f//\//\\}" >/dev/null
 done
 echo "sources synced"
 

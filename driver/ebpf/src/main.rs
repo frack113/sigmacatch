@@ -32,7 +32,7 @@ use aya_ebpf::{
 // (collector/ebpf/src/ebpf_common.rs, included via #[path]). The probe
 // only uses the constants and struct layouts; the `from_bytes`/`*_str`
 // accessors are userspace-only, hence the targeted allow.
-#[path = "../../inputs/ebpf/src/ebpf_common.rs"]
+#[path = "../../../collector/ebpf/src/ebpf_common.rs"]
 #[allow(dead_code)]
 mod ebpf_common;
 

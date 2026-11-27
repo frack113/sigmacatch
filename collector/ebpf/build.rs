@@ -6,7 +6,7 @@
 //!
 //! Resolution order:
 //! 1. `SIGMACATCH_EBPF_OBJECT` env override (prebuilt artifact);
-//! 2. build the standalone nightly crate `sigmacatch/ebpf` if the toolchain
+//! 2. build the standalone nightly crate `driver/ebpf` if the toolchain
 //!    (nightly + rust-src + bpf-linker) is available;
 //! 3. otherwise emit an empty placeholder — the loader will reject it at
 //!    startup and collection falls back to the legacy syslog tail.
@@ -23,14 +23,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const OBJECT_NAME: &str = "sigmacatch_ebpf.o";
-const PROBE_CRATE_DIR: &str = "../../sigmacatch/ebpf";
+const PROBE_CRATE_DIR: &str = "../../driver/ebpf";
 const PROBE_ARTIFACT: &str = "target/bpfel-unknown-none/release/sigmacatch-ebpf";
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=../../sigmacatch/ebpf/src/main.rs");
-    println!("cargo:rerun-if-changed=../../sigmacatch/ebpf/Cargo.toml");
-    println!("cargo:rerun-if-changed=../../sigmacatch/ebpf/.cargo/config.toml");
+    println!("cargo:rerun-if-changed=../../driver/ebpf/src/main.rs");
+    println!("cargo:rerun-if-changed=../../driver/ebpf/Cargo.toml");
+    println!("cargo:rerun-if-changed=../../driver/ebpf/.cargo/config.toml");
     println!("cargo:rerun-if-changed=src/ebpf_common.rs");
     println!("cargo:rerun-if-env-changed=SIGMACATCH_EBPF_OBJECT");
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Wire protocol shared between the kernel sensor (`sigmacatch/driver`) and
+//! Wire protocol shared between the kernel sensor (`driver/windows`) and
 //! the user-mode collector.
 //!
 //! The driver includes this file verbatim via `#[path]` (single source of

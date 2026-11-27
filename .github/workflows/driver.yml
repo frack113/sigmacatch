@@ -3,13 +3,13 @@ name: Driver
 on:
   push:
     paths:
-      - 'sigmacatch/driver/**'
-      - 'sigmacatch/src/windows/**'
+      - 'driver/windows/**'
+      - 'collector/etw-driver/**'
       - '.github/workflows/driver.yml'
   pull_request:
     paths:
-      - 'sigmacatch/driver/**'
-      - 'sigmacatch/src/windows/**'
+      - 'driver/windows/**'
+      - 'collector/etw-driver/**'
       - '.github/workflows/driver.yml'
   workflow_dispatch:
 
@@ -130,12 +130,12 @@ jobs:
       - name: Cache the cargo build
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          workspaces: sigmacatch/driver
+          workspaces: driver/windows
 
       - name: Build
         run: >
           cargo build
-          --manifest-path sigmacatch/driver/Cargo.toml
+          --manifest-path driver/windows/Cargo.toml
           --release
           --target x86_64-pc-windows-msvc
 
@@ -143,7 +143,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sigmacatch-driver
-          path: sigmacatch/driver/target/x86_64-pc-windows-msvc/release/sigmacatch_driver.dll
+          path: driver/windows/target/x86_64-pc-windows-msvc/release/sigmacatch_driver.dll
           if-no-files-found: error
           overwrite: true
 
@@ -154,13 +154,13 @@ jobs:
         run: |
           $header = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include\${{ env.WDK_VERSION }}.0\km\fltkernel.h" -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $header) { throw "fltkernel.h not found" }
-          Copy-Item $header.FullName -Destination sigmacatch/driver/fltkernel.h
+          Copy-Item $header.FullName -Destination driver/windows/fltkernel.h
           Write-Host "staged $($header.FullName)"
 
       - name: Upload the fltkernel header
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fltkernel-header
-          path: sigmacatch/driver/fltkernel.h
+          path: driver/windows/fltkernel.h
           if-no-files-found: error
           overwrite: true
