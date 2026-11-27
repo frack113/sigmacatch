@@ -14,16 +14,16 @@ doctest = false
 [dependencies]
 anyhow = "1.0.104"
 serde_json = "1.0.154"
-sigma-regression = { path = "../../sigma-regression" }
-sigmacatch-core = { path = "../../../common/core" }
+sigma-regression = { path = "../../sigmacatch/sigma-regression" }
+sigmacatch-core = { path = "../../common/core" }
 sigmacatch-output-evtx = { path = "../evtx" }
 tracing.workspace = true
 uuid = { version = "1.29.3", features = ["v4", "serde"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
-sigmacatch-detection = { path = "../../../detection" }
-sigmacatch-runner = { path = "../../../runner" }
+sigmacatch-detection = { path = "../../detection" }
+sigmacatch-runner = { path = "../../runner" }
 
 [lints]
 workspace = true

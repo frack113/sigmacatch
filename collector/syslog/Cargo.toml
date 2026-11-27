@@ -16,7 +16,7 @@ anyhow = "1.0.104"
 async-trait = "0.1.92"
 regex = "1.13.2"
 serde_json = "1.0.154"
-sigmacatch-core = { path = "../../../common/core" }
+sigmacatch-core = { path = "../../common/core" }
 sigmacatch-input-tail = { path = "../tail" }
 tokio = { version = "1.54.1", features = ["rt", "sync"] }
 tracing.workspace = true

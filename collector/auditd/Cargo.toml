@@ -2,10 +2,10 @@
 # SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 [package]
-name = "sigmacatch-input-sysmon"
+name = "sigmacatch-input-auditd"
 version.workspace = true
 edition.workspace = true
-description = "sigmacatch Sysmon-for-Linux log collector"
+description = "sigmacatch Linux auditd log collector"
 license.workspace = true
 
 [lib]
@@ -14,14 +14,12 @@ doctest = false
 [target.'cfg(target_os = "linux")'.dependencies]
 anyhow = "1.0.104"
 async-trait = "0.1.92"
-sigmacatch-core = { path = "../../../common/core" }
-sigmacatch-input-syslog = { path = "../syslog" }
+linux-audit-parser = "0.2.8"
+serde_json = "1.0.154"
+sigmacatch-core = { path = "../../common/core" }
 sigmacatch-input-tail = { path = "../tail" }
-tokio = { version = "1.54.1", features = ["macros", "rt", "sync", "time"] }
+tokio = { version = "1.54.1", features = ["rt", "sync"] }
 tracing.workspace = true
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-tempfile = "3.27.0"
 
 [lints]
 workspace = true

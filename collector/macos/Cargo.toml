@@ -18,8 +18,8 @@ doctest = false
 anyhow = "1.0.104"
 async-trait = "0.1.92"
 serde_json = "1.0.154"
-sigmacatch-core = { path = "../../../common/core" }
-sigmacatch-runner = { path = "../../../runner" }
+sigmacatch-core = { path = "../../common/core" }
+sigmacatch-runner = { path = "../../runner" }
 tokio = { version = "1.54.1", features = ["rt", "sync"] }
 tracing.workspace = true
 
