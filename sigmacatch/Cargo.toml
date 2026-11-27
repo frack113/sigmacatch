@@ -26,7 +26,7 @@ ebpf = ["dep:sigmacatch-input-ebpf", "sigmacatch-input-ebpf/ebpf"]
 macos = ["dep:sigmacatch-input-macos"]
 
 # Linux input crates are empty shells on other targets, so their re-exports in
-# `inputs/mod.rs` are Linux-only too. Target scoping keeps the dependency lint
+# `orchestrators/mod.rs` are Linux-only too. Target scoping keeps the dependency lint
 # quiet when a Linux feature is enabled on a Windows build.
 [target.'cfg(target_os = "linux")'.dependencies]
 sigmacatch-input-auditd = { path = "../collector/auditd", optional = true }

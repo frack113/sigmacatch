@@ -79,7 +79,7 @@ toolchain-optimized` restores it):
 scripts/dev_win_build.sh
 ```
 
-Syncs `driver/` + `driver/protocol/` to `C:\sigmacatch-dev\sigmacatch\`, runs
+Syncs local `sensor/windows/` + `sensor/windows/protocol/` to `C:\sigmacatch-dev\sigmacatch\driver\`, runs
 `C:\sigmacatch-dev-build.ps1` (scheduled task, no elevation needed), and
 fetches `sigmacatch_driver.dll` to `target/sigmacatch-dev/` (rename to `.sys`
 for the service). Logs live on the VM at `C:\sigmacatch-dev-build.log`.

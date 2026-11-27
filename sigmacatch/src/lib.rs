@@ -6,10 +6,10 @@
 //! are linked in: `winevt` (default) and `evtx` everywhere, `etw` and `driver`
 //! on Windows, `auditd`/`builtin`/`sysmon`/`ebpf` on Linux, `macos` on macOS.
 //!
-//! The collection → detection → regression pipeline, configuration, rule
-//! management, the Sigma repo layer and the regression data generator live in
-//! [`sigmacatch_core`] and are re-exported here. Only the input adapters and
-//! the eBPF probe code are gated by features.
+//! The shared data model and configuration live in [`sigmacatch_core`], the
+//! Sigma engine in `sigmacatch-detection`, and the collection → detection →
+//! regression orchestration in `sigmacatch-runner`, all re-exported here. Only
+//! the input adapters and the eBPF probe code are gated by features.
 
 pub use sigmacatch_core::{
     DataFormat, RegressionSink, RegressionSinkFactory, cli, config, evtx_reader, logging, repo,

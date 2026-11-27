@@ -228,6 +228,11 @@ guardrails.
 
 ## 10. Proposal — autonomous `detection_engine` module/crate
 
+> **Historical.** What was actually applied is recorded in §11. Notably:
+> `detection` became a standalone crate `sigmacatch-detection`, **not** a
+> `detection_engine` module in `common/core`; `ChannelResolver` **was** added;
+> `RuleProvider` **was** added (not the originally-sketched hybrid).
+
 ### 10.1 Goal
 
 Make the detection engine a first-class, autonomous boundary in the workspace.

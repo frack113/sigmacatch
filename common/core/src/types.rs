@@ -11,7 +11,7 @@
 //! # Example
 //!
 //! ```rust
-//! use sigmacatch::types::{Event, Alert, Product, EventProducer};
+//! use sigmacatch_core::types::{Event, Alert, Product, EventProducer};
 //! use serde_json::json;
 //! use uuid::Uuid;
 //!

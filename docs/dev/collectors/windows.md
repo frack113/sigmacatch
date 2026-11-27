@@ -27,7 +27,7 @@ longer starts the process session.
 
 The rendered events are Sysmon-**schema** — same EventIDs and field names — but
 published under the `sigmacatch` provider and the `sigmacatch/Operational`
-channel, which `sigmacatch-core/src/types.rs` maps to `service: sysmon`, so
+channel, which `common/core/src/exchange.rs` maps to `service: sysmon`, so
 the stock Sysmon rules match unchanged. They carry no `EventRecordID`, which is
 what makes the EVTX format take the pure-Rust writer instead of `EvtExportLog`
 (the channel does not exist in the Event Log). Each input crate owns its gates;

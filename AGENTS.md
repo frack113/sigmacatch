@@ -52,7 +52,7 @@ A Rust (2024 edition, one cargo workspace with 20 members) real-time Sigma match
   ```
   Point `ARCHIFY_CHROME` (or any `--screenshot` consumer) at that wrapper.
 - The bmad block above was manually refreshed on 2026-11-27 to reflect the layered layout (`common/`, `detection/`, `runner/`, `collector/`, `persist/`) and the 20-member workspace; a `bmad-project-context` refresh must preserve those crate paths.
-- Windows kernel-driver dev VM `sigmacatch-dev` (QEMU clone of the test VM, not a validation box — it HAS a toolchain): build the KMDF driver locally with `scripts/dev_win_build.sh` (syncs `driver/` + `driver/protocol/` → build with CI settings → `target/sigmacatch-dev/sigmacatch_driver.dll`). See `docs/dev/windows/vm.md`; CI's `Driver` workflow stays the gate and must not drift (WDK 10.0.22621 / LLVM 17.0.6 pinned in both places).
+- Windows kernel-driver dev VM `sigmacatch-dev` (QEMU clone of the test VM, not a validation box — it HAS a toolchain): build the KMDF driver locally with `scripts/dev_win_build.sh` (syncs `sensor/windows/` + `sensor/windows/protocol/` → remote `driver/`, build with CI settings → `target/sigmacatch-dev/sigmacatch_driver.dll`). See `docs/dev/windows/vm.md`; CI's `Driver` workflow stays the gate and must not drift (WDK 10.0.22621 / LLVM 17.0.6 pinned in both places).
 
 
 ## Documentation diagrams
