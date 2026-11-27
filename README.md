@@ -77,4 +77,4 @@ MIT.
 
 ## Version history
 
-See [CHANGELOG.md](CHANGELOG.md).
+See [docs/changelog.md](docs/changelog.md).
