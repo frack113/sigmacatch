@@ -1,6 +1,6 @@
 # Kernel driver
 
-`driver/windows/` is a KMDF driver outside the cargo workspace, built by
+`sensor/windows/` is a KMDF driver outside the cargo workspace, built by
 `.github/workflows/driver.yml` on a `windows-latest` runner (WDK + LLVM). It
 supplies what user-mode ETW cannot reach and publishes Sysmon-schema events
 through a versioned ring buffer that the collector drains on
@@ -39,7 +39,7 @@ Constraints accepted up front:
 
 - the WDK is **not** in the `cargo xwin` chain: the driver builds on a Windows
   host (or a Windows CI runner) with the WDK, in its own crate outside this
-  workspace, like `driver/ebpf`;
+  workspace, like `sensor/ebpf`;
 - every build needs its own signature; in the test VM that is test-signing
   (`bcdedit /set testsigning on`, Secure Boot off, self-signed cert), and a
   distributable build needs an EV certificate;
@@ -50,7 +50,7 @@ Constraints accepted up front:
 ## How the pieces fit
 
 ```text
-driver/windows/                 # kernel sensor (outside the workspace)
+sensor/windows/                 # kernel sensor (outside the workspace)
 ├── src/lib.rs                    # DriverEntry, control device \Device\sigmacatch,
 │                                 #   IOCTLs, ring buffer, process/image/thread/registry callbacks
 ├── src/flt.rs                    # hand-written fltmgr FFI + minifilter (file/pipe events)
@@ -74,7 +74,7 @@ On a Windows host with WDK 10.0.22621, LLVM 17.0.6 and the Visual Studio C++
 workload:
 
 ```pwsh
-cargo build --release --target x86_64-pc-windows-msvc   # inside driver/windows/
+cargo build --release --target x86_64-pc-windows-msvc   # inside sensor/windows/
 ```
 
 The artifact is `sigmacatch_driver.dll`; rename it to `.sys` for the service.

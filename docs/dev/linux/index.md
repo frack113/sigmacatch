@@ -25,7 +25,7 @@ coverage list — is in [Linux collectors](../collectors/linux.md).
 - `sigmacatch-input-auditd`, `sigmacatch-input-syslog` and
   `sigmacatch-input-sysmon` parse their respective streams;
   `sigmacatch-input-tail` is the shared 100 ms poll/rotate tail driver.
-- The eBPF probe lives in `driver/ebpf` (nightly + bpf-linker, excluded from
+- The eBPF probe lives in `sensor/ebpf` (nightly + bpf-linker, excluded from
   the workspace). It needs root or `CAP_BPF`+`CAP_PERFMON` and a kernel with
   BTF; a prebuilt object without the `EVENTS_ABI_V2` marker is rejected.
 

@@ -39,10 +39,10 @@ checkout; items marked "inferred" are judgments, not verified facts.
   - `sigmacatch/repo/` — package `sigmacatch-repo`, git via grit-lib + system
     `ssh`, pending-PR tracking.
   - `sigmacatch/sigma-regression/` — package `sigma-regression`, `info.yml`.
-  - `driver/windows/protocol/` — package `sigmacatch-driver-protocol`,
+  - `sensor/windows/protocol/` — package `sigmacatch-driver-protocol`,
     shared with the standalone driver workspace by path.
-  - `driver/ebpf` excluded; nightly + bpf-linker, built separately.
-  - `driver/windows` — standalone KMDF workspace (Windows).
+  - `sensor/ebpf` excluded; nightly + bpf-linker, built separately.
+  - `sensor/windows` — standalone KMDF workspace (Windows).
 - Cargo **features** of `sigmacatch` select which collector crates link in:
   `winevt` (default), `evtx`, `etw`, `driver`, `auditd`, `builtin`
   (= `sigmacatch-input-syslog` + `sigmacatch-input-tail`), `sysmon`
@@ -452,7 +452,7 @@ The proposal above was executed in four commits:
 2. `🏗️ refactor: extract detection engine and runner into standalone crates`
 3. `🏗️ refactor: move input crates to collector/ and output crates to persist/`
 4. CI/path-comment cleanup
-5. `🏗️ refactor: group kernel sensors under driver/windows and driver/ebpf`
+5. `🏗️ refactor: group kernel sensors under sensor/windows and sensor/ebpf`
 
 Final layout (20 workspace members):
 
@@ -464,9 +464,9 @@ detection/             sigmacatch-detection: engine, pipelines, channel resolver
 runner/                sigmacatch-runner: CollectorKind, run loop, Pipeline
 collector/*/           11 collector crates (sigmacatch-input-*)
 persist/*/             sigmacatch-output-evtx, sigmacatch-output-regression
-driver/windows/        KMDF driver, separate workspace (Windows-only)
-driver/windows/protocol/  sigmacatch-driver-protocol, root workspace member
-driver/ebpf/           nightly eBPF probe, separate workspace
+sensor/windows/        KMDF driver, separate workspace (Windows-only)
+sensor/windows/protocol/  sigmacatch-driver-protocol, root workspace member
+sensor/ebpf/           nightly eBPF probe, separate workspace
 sigmacatch/repo/       sigmacatch-repo
 sigmacatch/sigma-regression/
 ```
@@ -490,9 +490,9 @@ Decisions actually taken:
   the SigmaHQ corpus model.
 - **`config::apply_collector_product_default` made public** so the runner can
   apply collector defaults.
-- **Kernel sensors grouped under `driver/`.** `driver/windows/` is the KMDF
-  workspace and `driver/ebpf/` the nightly probe; both are excluded from the
-  root workspace. `driver/windows/protocol/` stays nested inside the Windows
+- **Kernel sensors grouped under `driver/`.** `sensor/windows/` is the KMDF
+  workspace and `sensor/ebpf/` the nightly probe; both are excluded from the
+  root workspace. `sensor/windows/protocol/` stays nested inside the Windows
   workspace (which declares `[workspace] members = ["protocol"]`) and is also
   the root-workspace member consumed by `collector/etw-driver`. Keeping it
   nested avoids a `..` member path.

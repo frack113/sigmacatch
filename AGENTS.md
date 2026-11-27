@@ -16,7 +16,7 @@ A Rust (2024 edition, one cargo workspace with 20 members) real-time Sigma match
   - `persist/*/` — packages `sigmacatch-output-evtx` and `sigmacatch-output-regression`.
   - `sigmacatch/repo/` — package `sigmacatch-repo`: git operations, transport, pending-PR tracking.
   - `sigmacatch/sigma-regression/` — package `sigma-regression`: `info.yml` schema.
-  - `driver/windows/protocol/` — package `sigmacatch-driver-protocol`, shared with the standalone KMDF driver workspace.
+  - `sensor/windows/protocol/` — package `sigmacatch-driver-protocol`, shared with the standalone KMDF driver workspace.
 - `sigmacatch` cargo **features** select which collector crates link in: `winevt` (default), `evtx`, `etw`, `driver`, `auditd`, `builtin`, `sysmon`, `ebpf`, `macos`. `builtin` and `sysmon` are **feature combinations**, not workspace crates (`builtin` = `sigmacatch-input-syslog` + `sigmacatch-input-tail`; `sysmon` = `builtin` + `sigmacatch-input-sysmon`).
 - `sigmacatch/src/orchestrators/` is binary **orchestration** (re-exports of the real collector crates + Windows/Linux fan-in/fan-out orchestrators); the real collector implementations live in `collector/*/`. Each collector crate owns its `feature × target_os` gates; keep the main crate's `lib.rs` gate-free.
 - `sigmacatch/src/output_factory/` builds the compiled-in output sink and injects it into the runner.
@@ -29,7 +29,7 @@ A Rust (2024 edition, one cargo workspace with 20 members) real-time Sigma match
 ## Running and verifying
 
 - This is a Linux host: the Windows inputs are gated out here (their crates are empty shells off Windows), so build/test here cannot validate Windows-only code — the real check is `cargo xwin build --release --target x86_64-pc-windows-msvc -p sigmacatch` (required before every PR).
-- `driver/ebpf` is excluded from the workspace and compiles only on nightly with bpf-linker — it will not build under stable cargo.
+- `sensor/ebpf` is excluded from the workspace and compiles only on nightly with bpf-linker — it will not build under stable cargo.
 - `cargo build --release -p sigmacatch` builds the default `winevt` input; Linux inputs need explicit `--no-default-features --features auditd,builtin[,sysmon|,ebpf]`, macOS needs a macOS host with `--no-default-features --features macos`, and `ebpf` needs root/CAP_BPF+CAP_PERFMON at runtime.
 
 ## Conventions that differ from defaults

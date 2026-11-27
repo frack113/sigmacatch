@@ -52,7 +52,7 @@ hand-rolls on `windows` 0.62.2 (`Win32_System_Diagnostics_Etw`:
 
 ### The kernel driver is the primary source
 
-`driver/windows/` supplies what user-mode ETW cannot reach (process
+`sensor/windows/` supplies what user-mode ETW cannot reach (process
 create/exit, process access, file paths); see
 [why the driver replaces Sysmon](driver.md#why-the-driver-replaces-sysmon). User-mode
 ETW stays as the portable fallback and the reference the driver output is

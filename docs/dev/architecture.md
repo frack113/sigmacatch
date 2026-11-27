@@ -9,8 +9,8 @@ data without a collector.
 The cargo workspace has 20 members: the binary, the common library, the
 detection engine, the runner, one crate per collector and per persist backend,
 the git and regression crates, and the shared driver-protocol crate. The
-nightly-only eBPF probes (`driver/ebpf`) and the Windows kernel driver
-(`driver/windows`) are built outside it. The exact tree and crate graph are
+nightly-only eBPF probes (`sensor/ebpf`) and the Windows kernel driver
+(`sensor/windows`) are built outside it. The exact tree and crate graph are
 in [Layout](layout.md).
 
 The top-level layout mirrors the product's building blocks: `collector/`
