@@ -11,6 +11,12 @@ license.workspace = true
 [lib]
 doctest = false
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_System_Console",
+] }
+
 [dependencies]
 anyhow = "1.0.104"
 chrono = "0.4.45"

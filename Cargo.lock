@@ -2552,7 +2552,6 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "uuid",
- "windows",
  "yaml_serde",
 ]
 
@@ -2797,6 +2796,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "windows",
 ]
 
 [[package]]
