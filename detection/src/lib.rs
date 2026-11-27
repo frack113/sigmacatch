@@ -2,9 +2,10 @@
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 //! Detection engine — thin wrapper around rsigma-eval for loading pipelines and
-//! rules, then evaluating events. Consumes rules from `SigmahqRules` in
-//! read-only mode. No filtering, no skip sets — just the bare essentials for
-//! testing and validation.
+//! rules, then evaluating events. Consumes any [`RuleProvider`] in read-only
+//! mode; the concrete `SigmahqRules` corpus is one implementation, not a
+//! dependency of the engine. No filtering, no skip sets — just the bare
+//! essentials for testing and validation.
 //!
 //! # Example
 //!
@@ -47,7 +48,7 @@ use rsigma_parser::SigmaRule;
 use sha1::{Digest, Sha1};
 use sigmacatch_core::config::EngineConfig;
 use sigmacatch_core::exchange::{Alert, ChannelResolver, Event};
-use sigmacatch_core::rule::SigmahqRules;
+use sigmacatch_core::rule::RuleProvider;
 use sigmacatch_core::util::to_hex;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -83,7 +84,7 @@ const HIR_CACHE_VERSION: &str = "sigmacatch-hir-cache-v2";
 /// additionally rejects blobs whose schema version differs from the current
 /// build (`decode_rules`), so a toolchain upgrade invalidates the cache even
 /// if this key would still match.
-fn hir_cache_key(rules: &SigmahqRules) -> String {
+fn hir_cache_key(rules: &dyn RuleProvider) -> String {
     let mut hasher = Sha1::new();
     hasher.update(HIR_CACHE_VERSION.as_bytes());
     hasher.update(b"\n");
@@ -258,7 +259,7 @@ impl DetectionEngine {
     }
 
     /// Compile `rules` and load the embedded platform pipelines.
-    pub fn new(rules: &SigmahqRules) -> Result<Self, DetectionError> {
+    pub fn new(rules: &dyn RuleProvider) -> Result<Self, DetectionError> {
         Self::new_with_hir_cache(rules, None)
     }
 
@@ -272,7 +273,7 @@ impl DetectionEngine {
     /// A missing, outdated, or corrupt cache falls back to a full compile and
     /// overwrites the file.
     pub fn new_with_hir_cache(
-        rules: &SigmahqRules,
+        rules: &dyn RuleProvider,
         hir_cache_path: Option<PathBuf>,
     ) -> Result<Self, DetectionError> {
         Self::new_with_options(rules, hir_cache_path, &EngineConfig::default())
@@ -281,7 +282,7 @@ impl DetectionEngine {
     /// Like [`Self::new_with_hir_cache`], with explicit engine toggles
     /// (`engine:` block of `config.yaml`).
     pub fn new_with_options(
-        rules: &SigmahqRules,
+        rules: &dyn RuleProvider,
         hir_cache_path: Option<PathBuf>,
         engine_config: &EngineConfig,
     ) -> Result<Self, DetectionError> {
@@ -384,7 +385,7 @@ impl DetectionEngine {
     /// Returns the engine plus a vector of (rule_index, error) for rules that
     /// failed to compile, allowing callers to surface the failures.
     pub fn new_lenient(
-        rules: &SigmahqRules,
+        rules: &dyn RuleProvider,
     ) -> Result<(Self, Vec<(usize, DetectionError)>), DetectionError> {
         let engine_config = EngineConfig::default();
         let (mut engine, win_logsource, win_field, lnx_logsource, lnx_field) =
@@ -432,7 +433,7 @@ impl DetectionEngine {
     }
 
     /// Swap in a freshly compiled rule set without re-parsing pipelines.
-    pub fn reload_rules(&mut self, rules: &SigmahqRules) -> Result<(), DetectionError> {
+    pub fn reload_rules(&mut self, rules: &dyn RuleProvider) -> Result<(), DetectionError> {
         // Reuse cached pipelines (clone, not re-parse YAML) for the new engine.
         let mut engine = Self::create_engine(
             &self.win_logsource_pipeline,
@@ -495,7 +496,7 @@ impl DetectionEngine {
     pub fn retire_rules(
         &mut self,
         retired: &HashSet<Uuid>,
-        rules: &SigmahqRules,
+        rules: &dyn RuleProvider,
     ) -> Result<(), DetectionError> {
         if self.hir_cache_path.is_some() {
             return self.reload_rules(rules);

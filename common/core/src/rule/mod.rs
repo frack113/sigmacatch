@@ -107,6 +107,52 @@ pub struct SigmahqRules {
     source_digests: HashMap<String, String>,
 }
 
+/// Read-only rule-set contract consumed by the detection engine.
+///
+/// The engine depends only on this trait, not on [`SigmahqRules`] or on the
+/// rule-discovery/filtering logic. Any corpus that can expose its parsed
+/// rules, their source paths and a stable fingerprint can feed the engine.
+pub trait RuleProvider {
+    /// Stable digest of the rule set, used as part of the HIR cache key.
+    fn fingerprint(&self) -> String;
+
+    /// Number of rules in the set.
+    fn len(&self) -> usize;
+
+    /// Whether the set is empty.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Parsed rules, in the order they must be compiled.
+    fn rules(&self) -> &[SigmaRule];
+
+    /// Rule UUID → source file path, for alert metadata and retirement.
+    fn rule_paths(&self) -> &HashMap<Uuid, PathBuf>;
+}
+
+impl RuleProvider for SigmahqRules {
+    fn fingerprint(&self) -> String {
+        SigmahqRules::fingerprint(self)
+    }
+
+    fn len(&self) -> usize {
+        SigmahqRules::len(self)
+    }
+
+    fn is_empty(&self) -> bool {
+        SigmahqRules::is_empty(self)
+    }
+
+    fn rules(&self) -> &[SigmaRule] {
+        SigmahqRules::rules(self)
+    }
+
+    fn rule_paths(&self) -> &HashMap<Uuid, PathBuf> {
+        SigmahqRules::rule_paths(self)
+    }
+}
+
 /// Digest of a rule file's bytes, ignoring the `regression_tests_path:` line
 /// sigmacatch itself writes into matched rules (it never affects detection,
 /// and would otherwise change the digest after every run).
