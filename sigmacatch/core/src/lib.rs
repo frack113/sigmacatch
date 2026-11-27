@@ -13,6 +13,9 @@ pub use crate::runner::{CollectorKind, bootstrap_repo_regression, run};
 /// Linux auditd log reader (platform-neutral, shared with the validator).
 pub mod audit_reader;
 
+/// Data models exchanged between autonomous blocks (input, detection, output).
+pub mod exchange;
+
 /// Diagnostic subcommands (check-filter, list-rules).
 pub mod cli;
 
@@ -20,7 +23,7 @@ pub mod cli;
 pub mod config;
 
 /// Detection engine wrapped around rsigma-eval.
-pub mod detection;
+pub mod detection_engine;
 
 /// EVTX file parsing (cross-platform).
 pub mod evtx_reader;

@@ -59,7 +59,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{Map, Value};
-use sigmacatch_core::detection::DetectionEngine;
+use sigmacatch_core::detection_engine::DetectionEngine;
 use sigmacatch_core::regression::DataFormat;
 use sigmacatch_core::runner::CollectorKind;
 use sigmacatch_core::types::{Event, EventProducer, ProducerError};

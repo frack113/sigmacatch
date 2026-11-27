@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use crate::detection::DetectionEngine;
+use crate::detection_engine::DetectionEngine;
 use crate::regression::DataFormat;
 use crate::runner::CollectorKind;
 use crate::types::{Event, EventProducer, ProducerError};

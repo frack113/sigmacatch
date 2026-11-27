@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 
-use crate::detection::DetectionEngine;
+use crate::detection_engine::DetectionEngine;
 use crate::runner::CollectorKind;
 use crate::types::{EventProducer, ProducerError};
 use anyhow::Result;

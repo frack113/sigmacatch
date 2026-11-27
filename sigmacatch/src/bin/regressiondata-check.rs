@@ -28,7 +28,7 @@ use serde::Serialize;
 use serde_json::Value as JsonValue;
 use sigma_regression::indent::{canonical_indent, yaml_lines};
 use sigma_regression::info::write_canonical_indent;
-use sigmacatch::detection::DetectionEngine;
+use sigmacatch::detection_engine::DetectionEngine;
 use sigmacatch::regression::SigmahqRegression;
 use sigmacatch::regression::info::InfoYml;
 use sigmacatch::regression::logtype::{SIGMA_SPEC_TYPES, is_sigma_spec_type};

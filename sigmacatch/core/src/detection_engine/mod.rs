@@ -9,7 +9,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use crate::detection::DetectionEngine;
+//! use crate::detection_engine::DetectionEngine;
 //! use crate::rule::SigmahqRules;
 //! use std::path::Path;
 //!
@@ -23,7 +23,7 @@
 //! For validation tools that must tolerate a few broken rules, use `new_lenient`:
 //!
 //! ```rust,no_run
-//! use crate::detection::DetectionEngine;
+//! use crate::detection_engine::DetectionEngine;
 //! use crate::rule::SigmahqRules;
 //! use std::path::Path;
 //!

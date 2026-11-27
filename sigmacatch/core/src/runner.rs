@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::config::{CliArgs, Config, parse_args};
-use crate::detection::DetectionEngine;
+use crate::detection_engine::DetectionEngine;
 use crate::regression::{DataFormat, RegressionSink, RegressionSinkFactory};
 use crate::repo::SigmaRepo;
 use crate::rule::SigmahqRules;

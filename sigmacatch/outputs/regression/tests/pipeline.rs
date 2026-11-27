@@ -3,7 +3,7 @@
 
 //! Full-cycle integration tests: the real writer behind the shared runner.
 
-use sigmacatch_core::detection::DetectionEngine;
+use sigmacatch_core::detection_engine::DetectionEngine;
 use sigmacatch_core::regression::{DataFormat, RegressionSink};
 use sigmacatch_core::rule::SigmahqRules;
 use sigmacatch_core::runner::{Pipeline, process_and_generate};

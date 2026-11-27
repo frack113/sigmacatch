@@ -10,7 +10,7 @@ pub mod channels;
 use std::collections::HashMap;
 
 use anyhow::Result;
-use sigmacatch_core::detection::DetectionEngine;
+use sigmacatch_core::detection_engine::DetectionEngine;
 use sigmacatch_core::runner::CollectorKind;
 use sigmacatch_core::types::EventProducer;
 

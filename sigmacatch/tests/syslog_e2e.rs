@@ -8,7 +8,7 @@
 mod common;
 use common::{SSHD_LINE, SSHD_RULE};
 
-use sigmacatch::detection::DetectionEngine;
+use sigmacatch::detection_engine::DetectionEngine;
 use sigmacatch::orchestrators::syslog;
 use sigmacatch::rule::SigmahqRules;
 

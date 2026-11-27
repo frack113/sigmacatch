@@ -31,7 +31,8 @@ fn is_sysmon_record(record: &Record) -> bool {
 /// Returns `None` when the XML body cannot be parsed (truncated by the
 /// syslog daemon) — callers must skip the line.
 pub fn record_to_event(raw: &[u8], record: &Record) -> Option<Event> {
-    let (json_raw, json) = sigmacatch_core::types::parse_winevt_xml_both(&record.message).ok()?;
+    let (json_raw, json) =
+        sigmacatch_core::exchange::parse_winevt_xml_both(&record.message).ok()?;
     Some(Event::new_injected(
         json_raw,
         json,

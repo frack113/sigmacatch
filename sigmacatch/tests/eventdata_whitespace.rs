@@ -11,7 +11,7 @@
 
 use std::fs;
 
-use sigmacatch::detection::DetectionEngine;
+use sigmacatch::detection_engine::DetectionEngine;
 use sigmacatch::rule::SigmahqRules;
 use sigmacatch::types::Event;
 

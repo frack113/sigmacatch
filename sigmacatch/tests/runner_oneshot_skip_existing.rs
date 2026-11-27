@@ -20,7 +20,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use sigmacatch::config::CliArgs;
-use sigmacatch::detection::DetectionEngine;
+use sigmacatch::detection_engine::DetectionEngine;
 use sigmacatch::orchestrators::syslog;
 use sigmacatch::regression::DataFormat;
 use sigmacatch::runner::{CollectorKind, run_with_cli};

@@ -5,7 +5,7 @@
 //! engine (Linux pipelines) → alert. Rule bodies are verbatim SigmaHQ rules,
 //! embedded so the test is self-contained.
 
-use sigmacatch::detection::DetectionEngine;
+use sigmacatch::detection_engine::DetectionEngine;
 use sigmacatch::orchestrators::sysmon_parse;
 use sigmacatch::rule::SigmahqRules;
 

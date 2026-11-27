@@ -13,7 +13,7 @@
 
 pub use sigmacatch_core::{
     CollectorKind, DataFormat, RegressionSink, RegressionSinkFactory, bootstrap_repo_regression,
-    cli, config, detection, evtx_reader, logging, repo, rule, run, runner, types,
+    cli, config, detection_engine, evtx_reader, logging, repo, rule, run, runner, types,
 };
 
 /// Regression-data output: shared vocabulary from core plus the concrete
