@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Wire-format types shared between the eBPF probes (`driver/ebpf`,
+//! Wire-format types shared between the eBPF probes (`sensor/ebpf`,
 //! compiled no_std for `bpfel-unknown-none`) and the userspace loader
 //! (`collector/ebpf/src/ebpf.rs`).
 //!

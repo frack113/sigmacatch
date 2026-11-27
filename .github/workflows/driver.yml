@@ -3,12 +3,12 @@ name: Driver
 on:
   push:
     paths:
-      - 'driver/windows/**'
+      - 'sensor/windows/**'
       - 'collector/etw-driver/**'
       - '.github/workflows/driver.yml'
   pull_request:
     paths:
-      - 'driver/windows/**'
+      - 'sensor/windows/**'
       - 'collector/etw-driver/**'
       - '.github/workflows/driver.yml'
   workflow_dispatch:
@@ -130,12 +130,12 @@ jobs:
       - name: Cache the cargo build
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          workspaces: driver/windows
+          workspaces: sensor/windows
 
       - name: Build
         run: >
           cargo build
-          --manifest-path driver/windows/Cargo.toml
+          --manifest-path sensor/windows/Cargo.toml
           --release
           --target x86_64-pc-windows-msvc
 
@@ -143,7 +143,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sigmacatch-driver
-          path: driver/windows/target/x86_64-pc-windows-msvc/release/sigmacatch_driver.dll
+          path: sensor/windows/target/x86_64-pc-windows-msvc/release/sigmacatch_driver.dll
           if-no-files-found: error
           overwrite: true
 
@@ -154,13 +154,13 @@ jobs:
         run: |
           $header = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include\${{ env.WDK_VERSION }}.0\km\fltkernel.h" -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $header) { throw "fltkernel.h not found" }
-          Copy-Item $header.FullName -Destination driver/windows/fltkernel.h
+          Copy-Item $header.FullName -Destination sensor/windows/fltkernel.h
           Write-Host "staged $($header.FullName)"
 
       - name: Upload the fltkernel header
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fltkernel-header
-          path: driver/windows/fltkernel.h
+          path: sensor/windows/fltkernel.h
           if-no-files-found: error
           overwrite: true

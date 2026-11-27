@@ -17,8 +17,8 @@ WINRM="$SKILL/winrm_vm.py"
 DEV_MAC="52:54:00:ea:59:6b"
 REMOTE_BASE='C:\sigmacatch-dev\sigmacatch'
 
-# The driver and protocol sources, relative to driver/windows/.
-SRC_DIR="$REPO_ROOT/driver/windows"
+# The driver and protocol sources, relative to sensor/windows/.
+SRC_DIR="$REPO_ROOT/sensor/windows"
 FILES="Cargo.toml build.rs src/lib.rs src/flt.rs protocol/Cargo.toml protocol/src/lib.rs protocol/src/protocol.rs"
 
 vm_ip="${SIGMACATCH_DEV_IP:-}"

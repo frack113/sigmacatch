@@ -4,12 +4,12 @@ Kernel sensor for the Windows flavour of sigmacatch: Sysmon-schema telemetry
 on hosts that do **not** have Sysmon installed.
 
 This crate is deliberately **outside the root workspace** (like
-`driver/ebpf`): it only builds on a Windows host with the WDK and LLVM,
+`sensor/ebpf`): it only builds on a Windows host with the WDK and LLVM,
 while the rest of the project keeps building from Linux with `cargo xwin`.
 
 ## Why
 
-The user-mode collector (`sigmacatch/src/inputs/etw*.rs`) already produces
+The user-mode collector (`collector/etw*/src/`) already produces
 EID 1 (from the live process), 3, 5, 7, 11/23, 12/13/14, 22 and rename
 events from ETW. What it cannot produce without Sysmon is:
 
@@ -67,7 +67,7 @@ Blocked / remaining:
   created from the parent's context, which made every process start look like
   an injection).
 
-The ring record is kind-tagged (`driver/windows/protocol/`, shared with
+The ring record is kind-tagged (`sensor/windows/protocol/`, shared with
 the user-mode client as `sigmacatch-driver-protocol`), so adding a kind does
 not change the IOCTL layout.
 

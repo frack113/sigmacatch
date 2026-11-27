@@ -22,12 +22,12 @@ members = [
   "collector/etw",
   "collector/etw-driver",
   # Shared with the standalone driver workspace by path dependency.
-  "driver/windows/protocol",
+  "sensor/windows/protocol",
   "persist/evtx",
   "persist/regression",
 ]
 
-# The ebpf probe (driver/ebpf) is excluded: built separately by build.rs.
+# The ebpf probe (sensor/ebpf) is excluded: built separately by build.rs.
 [workspace.package]
 version = "0.8.0"
 edition = "2024"

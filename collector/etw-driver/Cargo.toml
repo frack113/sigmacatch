@@ -19,7 +19,7 @@ async-trait = "0.1.92"
 chrono = "0.4.45"
 sha1 = "0.11.0"
 sigmacatch-core = { path = "../../common/core" }
-sigmacatch-driver-protocol = { path = "../../driver/windows/protocol" }
+sigmacatch-driver-protocol = { path = "../../sensor/windows/protocol" }
 sigmacatch-input-etw-common = { path = "../etw-common" }
 tokio = { version = "1.54.1", features = ["rt", "sync", "time"] }
 tracing.workspace = true
