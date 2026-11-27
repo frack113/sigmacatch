@@ -2720,10 +2720,8 @@ dependencies = [
 name = "sigmacatch-input-winevt"
 version = "0.8.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "sigmacatch-core",
- "sigmacatch-runner",
  "tokio",
  "tracing",
  "windows",

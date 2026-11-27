@@ -12,10 +12,8 @@ license.workspace = true
 doctest = false
 
 [dependencies]
-anyhow = "1.0.104"
 async-trait = "0.1.92"
 sigmacatch-core = { path = "../../common/core" }
-sigmacatch-runner = { path = "../../runner" }
 tokio = { version = "1.54.1", features = ["rt", "sync"] }
 tracing.workspace = true
 
