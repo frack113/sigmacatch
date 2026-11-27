@@ -190,7 +190,7 @@ mod tests {
     #[tokio::test]
     async fn test_evtx_collector_build_replays_fixture() {
         let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../core/tests/fixtures/sample.evtx");
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../common/core/tests/fixtures/sample.evtx");
         if !fixture.exists() {
             return; // fixture absent in some packaging contexts
         }

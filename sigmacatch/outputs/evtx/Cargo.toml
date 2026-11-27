@@ -17,7 +17,7 @@ evtx = "0.15.1"
 crc32fast = "1.5.5"
 roxmltree = "0.21.2"
 sigma-regression = { path = "../../sigma-regression" }
-sigmacatch-core = { path = "../../core" }
+sigmacatch-core = { path = "../../../common/core" }
 thiserror.workspace = true
 tracing.workspace = true
 

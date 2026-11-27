@@ -15,7 +15,7 @@ doctest = false
 # dependencies keeps the crate empty — and warning-free — on Windows.
 [target.'cfg(target_os = "linux")'.dependencies]
 anyhow = "1.0.104"
-sigmacatch-core = { path = "../../core" }
+sigmacatch-core = { path = "../../../common/core" }
 tokio = { version = "1.54.1", features = ["sync", "time"] }
 tracing.workspace = true
 

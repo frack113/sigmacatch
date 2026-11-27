@@ -18,7 +18,7 @@ anyhow = "1.0.104"
 async-trait = "0.1.92"
 chrono = "0.4.45"
 sha1 = "0.11.0"
-sigmacatch-core = { path = "../../core" }
+sigmacatch-core = { path = "../../../common/core" }
 sigmacatch-driver-protocol = { path = "../../driver/protocol" }
 sigmacatch-input-etw-common = { path = "../etw-common" }
 tokio = { version = "1.54.1", features = ["rt", "sync", "time"] }

@@ -1677,7 +1677,8 @@ mod tests {
                 ),
                 (
                     &format!("regression_data/rules/win/a/{id1}.evtx"),
-                    include_bytes!("../../core/tests/fixtures/valid-single.evtx").as_slice(),
+                    include_bytes!("../../../common/core/tests/fixtures/valid-single.evtx")
+                        .as_slice(),
                 ),
                 (
                     "regression_data/rules/win/a/info.yml",

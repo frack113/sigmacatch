@@ -5,7 +5,7 @@
 resolver = "2"
 members = [
   "sigmacatch",
-  "sigmacatch/core",
+  "common/core",
   "sigmacatch/repo",
   "sigmacatch/sigma-regression",
   "sigmacatch/inputs/ebpf",
