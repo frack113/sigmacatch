@@ -1,16 +1,25 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
+//! Runner orchestration layer: wires collectors, the detection engine, and
+//! output sinks into the continuous or one-shot collection loop.
+//!
+//! The [`CollectorKind`] trait is the contract between input crates and the
+//! runner. Implementors only need the data models from [`sigmacatch_core`]
+//! and the [`ChannelResolver`] interface; they never depend on the concrete
+//! detection engine.
+
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::config::{CliArgs, Config, parse_args};
-use crate::detection_engine::DetectionEngine;
-use crate::regression::{DataFormat, RegressionSink, RegressionSinkFactory};
-use crate::repo::SigmaRepo;
-use crate::rule::SigmahqRules;
-use crate::types::{Event, EventProducer};
 use anyhow::Result;
+use sigmacatch_core::config::{CliArgs, Config, parse_args};
+use sigmacatch_core::exchange::ChannelResolver;
+use sigmacatch_core::regression::{DataFormat, RegressionSink, RegressionSinkFactory};
+use sigmacatch_core::repo::SigmaRepo;
+use sigmacatch_core::rule::SigmahqRules;
+use sigmacatch_core::types::{Event, EventProducer};
+use sigmacatch_detection::DetectionEngine;
 use tokio::signal;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
@@ -28,7 +37,7 @@ pub trait CollectorKind {
     /// resolution (e.g. Linux). `Some(empty)` means nothing to collect (early exit).
     fn channels(
         &self,
-        engine: &DetectionEngine,
+        resolver: &dyn ChannelResolver,
         custom_map: &HashMap<String, String>,
     ) -> Option<Vec<String>>;
 
@@ -127,7 +136,8 @@ pub async fn bootstrap_repo_regression(
     sigma_repo.set_fork_url(fork_url.clone());
 
     if config.git.needs_network()
-        && let Err(e) = crate::repo::ensure_ssh_host_config(config.git.ssh_key_path.as_deref())
+        && let Err(e) =
+            sigmacatch_core::repo::ensure_ssh_host_config(config.git.ssh_key_path.as_deref())
     {
         warn!("Failed to write SSH host-config: {e}");
     }
@@ -218,7 +228,7 @@ pub async fn run_with_cli<C: CollectorKind>(
     #[cfg(windows)]
     setup_console();
 
-    let _guard = crate::logging::init(&config, cli.verbose)?;
+    let _guard = sigmacatch_core::logging::init(&config, cli.verbose)?;
 
     info!("Sigma Regression Generator v{}", env!("CARGO_PKG_VERSION"));
 
@@ -251,7 +261,8 @@ pub async fn run_with_cli<C: CollectorKind>(
             );
         }
         if !config.git.is_offline() {
-            match sigma_repo.pending_regression_rule_ids(crate::evtx_reader::evtx_blob_has_records)
+            match sigma_repo
+                .pending_regression_rule_ids(sigmacatch_core::evtx_reader::evtx_blob_has_records)
             {
                 Ok(pending) => {
                     if !pending.is_empty() {
@@ -305,8 +316,9 @@ pub async fn run_with_cli<C: CollectorKind>(
         );
     }
 
-    let custom_map =
-        crate::config::load_custom_channel_mapping(PathBuf::from("custom_channels.yaml").as_path());
+    let custom_map = sigmacatch_core::config::load_custom_channel_mapping(
+        PathBuf::from("custom_channels.yaml").as_path(),
+    );
     let engine = DetectionEngine::new_with_options(
         &rules,
         config.hir_cache.as_ref().map(PathBuf::from),
@@ -361,7 +373,7 @@ pub async fn run_with_cli<C: CollectorKind>(
 
     let output_base = sigma_repo_path.join("regression_data");
 
-    crate::regression::clean_partial_artifacts(&output_base);
+    sigmacatch_core::regression::clean_partial_artifacts(&output_base);
 
     // 10 000 events of headroom is ~10x less buffered memory than the old
     // 100 000 cap while keeping the same backpressure semantics: the
@@ -803,8 +815,8 @@ pub fn process_and_generate(mut pipeline: Pipeline) -> (Pipeline, Vec<(Uuid, Vec
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Alert, EventProducer, ProducerError};
     use async_trait::async_trait;
+    use sigmacatch_core::types::{Alert, EventProducer, ProducerError};
     use tempfile::tempdir;
 
     #[derive(Default)]
@@ -897,7 +909,7 @@ level: medium
         }
         fn channels(
             &self,
-            _engine: &DetectionEngine,
+            _resolver: &dyn ChannelResolver,
             _custom_map: &HashMap<String, String>,
         ) -> Option<Vec<String>> {
             Some(Vec::new())

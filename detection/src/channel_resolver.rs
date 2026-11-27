@@ -12,7 +12,7 @@
 use rsigma_eval::compiler::CompiledRule;
 use std::collections::{HashMap, HashSet};
 
-use crate::types::{CATEGORY_CHANNELS, SERVICE_CHANNELS};
+use sigmacatch_core::exchange::{CATEGORY_CHANNELS, SERVICE_CHANNELS};
 
 /// Resolve the union of Windows event channels to collect for the given
 /// compiled rules. Logsources are post-pipeline, so sysmon-routed categories

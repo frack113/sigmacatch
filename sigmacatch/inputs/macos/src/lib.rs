@@ -59,10 +59,10 @@ use std::collections::HashMap;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{Map, Value};
-use sigmacatch_core::detection_engine::DetectionEngine;
+use sigmacatch_core::exchange::ChannelResolver;
 use sigmacatch_core::regression::DataFormat;
-use sigmacatch_core::runner::CollectorKind;
 use sigmacatch_core::types::{Event, EventProducer, ProducerError};
+use sigmacatch_runner::CollectorKind;
 use tokio::sync::{mpsc, watch};
 
 /// Provider recorded in `info.yml` for Endpoint Security regression data.
@@ -534,7 +534,7 @@ impl CollectorKind for MacosEsCollector {
 
     fn channels(
         &self,
-        _engine: &DetectionEngine,
+        _resolver: &dyn ChannelResolver,
         _custom_map: &HashMap<String, String>,
     ) -> Option<Vec<String>> {
         // Endpoint Security has no channel resolution.
@@ -621,7 +621,7 @@ impl EventProducer for MacosEsCollector {
 /// shared pipeline.
 pub async fn run(factory: &dyn sigmacatch_core::RegressionSinkFactory) -> Result<()> {
     let collector = MacosEsCollector::new();
-    sigmacatch_core::runner::run(&collector, factory).await
+    sigmacatch_runner::run(&collector, factory).await
 }
 
 /// macOS-only native Endpoint Security plumbing.
@@ -1235,7 +1235,15 @@ fn resolve_user_name(uid: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sigmacatch_core::rule::SigmahqRules;
+
+    /// Stub resolver: the macOS collector never resolves channels.
+    struct NoChannels;
+
+    impl ChannelResolver for NoChannels {
+        fn resolve_channels(&self, _custom_map: &HashMap<String, String>) -> Vec<String> {
+            Vec::new()
+        }
+    }
 
     fn sample_exec() -> RawNotification {
         RawNotification {
@@ -1344,12 +1352,12 @@ mod tests {
 
     #[test]
     fn collector_kind_contract() {
-        let engine = DetectionEngine::new(&SigmahqRules::default()).unwrap();
+        let resolver = NoChannels;
         let collector = MacosEsCollector::new();
 
         assert_eq!(collector.name(), "macos-es");
         assert!(collector.mode().contains("Endpoint Security"));
-        assert!(collector.channels(&engine, &HashMap::new()).is_none());
+        assert!(collector.channels(&resolver, &HashMap::new()).is_none());
         assert!(collector.live_capture());
         assert_eq!(collector.rule_product(), "macos");
         assert!(matches!(collector.regression_format(), DataFormat::Json));

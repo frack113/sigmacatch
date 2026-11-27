@@ -19,7 +19,6 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use sigmacatch::config::CliArgs;
-use sigmacatch::detection_engine::DetectionEngine;
 use sigmacatch::orchestrators::syslog;
 use sigmacatch::regression::DataFormat;
 use sigmacatch::runner::{CollectorKind, run_with_cli};
@@ -39,7 +38,7 @@ impl CollectorKind for NoCollectorKind {
     }
     fn channels(
         &self,
-        _engine: &DetectionEngine,
+        _resolver: &dyn sigmacatch::types::ChannelResolver,
         _custom_map: &HashMap<String, String>,
     ) -> Option<Vec<String>> {
         None

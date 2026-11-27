@@ -13,10 +13,10 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use sigmacatch_core::detection_engine::DetectionEngine;
+use sigmacatch_core::exchange::ChannelResolver;
 use sigmacatch_core::regression::DataFormat;
-use sigmacatch_core::runner::CollectorKind;
 use sigmacatch_core::types::EventProducer;
+use sigmacatch_runner::CollectorKind;
 use walkdir::WalkDir;
 
 /// Default directory containing EVTX files on a Windows host.
@@ -37,7 +37,7 @@ impl CollectorKind for EvtxCollector {
 
     fn channels(
         &self,
-        _engine: &DetectionEngine,
+        _resolver: &dyn ChannelResolver,
         _custom_map: &std::collections::HashMap<String, String>,
     ) -> Option<Vec<String>> {
         None
@@ -108,7 +108,7 @@ pub async fn run(
     );
 
     let collector = EvtxCollector { files };
-    sigmacatch_core::runner::run(&collector, factory).await
+    sigmacatch_runner::run(&collector, factory).await
 }
 
 #[cfg(test)]
@@ -116,6 +116,18 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    /// Stub resolver: the EVTX collector never resolves channels.
+    struct NoChannels;
+
+    impl ChannelResolver for NoChannels {
+        fn resolve_channels(
+            &self,
+            _custom_map: &std::collections::HashMap<String, String>,
+        ) -> Vec<String> {
+            Vec::new()
+        }
+    }
 
     struct NoSinkFactory;
 
@@ -179,8 +191,11 @@ mod tests {
         };
         assert_eq!(collector.name(), "sigmacatch");
         assert!(collector.mode().contains("one-shot"));
-        let engine = DetectionEngine::new(&sigmacatch_core::rule::SigmahqRules::default()).unwrap();
-        assert!(collector.channels(&engine, &Default::default()).is_none());
+        assert!(
+            collector
+                .channels(&NoChannels, &Default::default())
+                .is_none()
+        );
         assert!(!collector.live_capture());
         assert!(matches!(collector.regression_format(), DataFormat::Evtx));
     }
@@ -189,8 +204,8 @@ mod tests {
     /// configured EVTX files.
     #[tokio::test]
     async fn test_evtx_collector_build_replays_fixture() {
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../common/core/tests/fixtures/sample.evtx");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../common/core/tests/fixtures/sample.evtx");
         if !fixture.exists() {
             return; // fixture absent in some packaging contexts
         }

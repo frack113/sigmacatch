@@ -38,6 +38,7 @@
 use roxmltree::Node;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1292,6 +1293,17 @@ impl From<Alert> for RegressionHeader {
             rule_title: a.rule_title,
         }
     }
+}
+
+/// Resolve the Windows event channels a collector should subscribe to.
+///
+/// This trait lives in the exchange layer so that the runner/input contract
+/// depends on a stable interface rather than on the concrete detection engine.
+/// Implementors inspect the loaded rule logsources and an optional custom
+/// channel→service mapping.
+pub trait ChannelResolver {
+    /// Resolve channels from the loaded rules and a custom channel→service map.
+    fn resolve_channels(&self, custom_map: &HashMap<String, String>) -> Vec<String>;
 }
 
 #[cfg(test)]

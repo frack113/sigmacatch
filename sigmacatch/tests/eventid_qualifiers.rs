@@ -11,9 +11,9 @@
 
 use std::fs;
 
-use sigmacatch::detection_engine::DetectionEngine;
 use sigmacatch::rule::SigmahqRules;
 use sigmacatch::types::Event;
+use sigmacatch_detection::DetectionEngine;
 
 const SERVICE_INSTALL_7045: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">

@@ -8,12 +8,12 @@
 
 use std::collections::HashMap;
 
-use crate::detection_engine::DetectionEngine;
 use crate::regression::DataFormat;
 use crate::runner::CollectorKind;
 use crate::types::{Event, EventProducer, ProducerError};
 use anyhow::Result;
 use async_trait::async_trait;
+use sigmacatch_core::exchange::ChannelResolver;
 use tokio::sync::{mpsc, watch};
 
 #[cfg(feature = "sysmon")]
@@ -197,7 +197,7 @@ impl CollectorKind for LinuxCollector {
 
     fn channels(
         &self,
-        _engine: &DetectionEngine,
+        _resolver: &dyn ChannelResolver,
         _custom_map: &HashMap<String, String>,
     ) -> Option<Vec<String>> {
         None

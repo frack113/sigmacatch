@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! OS-independent core of `sigmacatch`: collection pipeline, configuration,
-//! detection engine, rule management, SigmaHQ repository layer and regression
-//! data generator. Input adapters live in their own crates and depend on this
-//! one; nothing here knows how an event was captured.
+//! Common library shared by all sigmacatch crates: data models that cross
+//! autonomous boundaries, configuration, rule management, repository layer,
+//! regression-data seams, and internal helpers. Input adapters live in their
+//! own crates and depend on this one; nothing here knows how an event was
+//! captured or how it is persisted.
 
 pub use crate::regression::{DataFormat, RegressionSink, RegressionSinkFactory};
-pub use crate::runner::{CollectorKind, bootstrap_repo_regression, run};
 
-/// Diagnostic subcommands (check-filter, list-rules).
 /// Linux auditd log reader (platform-neutral, shared with the validator).
 pub mod audit_reader;
 
@@ -21,9 +20,6 @@ pub mod cli;
 
 /// Application configuration.
 pub mod config;
-
-/// Detection engine wrapped around rsigma-eval.
-pub mod detection_engine;
 
 /// EVTX file parsing (cross-platform).
 pub mod evtx_reader;
@@ -41,11 +37,8 @@ pub use sigmacatch_repo as repo;
 /// Sigma rule management.
 pub mod rule;
 
-/// Shared pipeline (trait + continuous run loop).
-pub mod runner;
-
 /// Shared domain types (Event, Alert, EventProducer…).
 pub mod types;
 
-/// Internal helpers shared across core modules.
-pub(crate) mod util;
+/// Small helpers shared across core modules and the detection engine.
+pub mod util;

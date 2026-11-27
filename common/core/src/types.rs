@@ -38,8 +38,8 @@ use tokio::sync::{mpsc, watch};
 
 // Data models that cross autonomous boundaries are defined in `exchange`.
 pub use crate::exchange::{
-    Alert, CATEGORY_CHANNELS, CHANNEL_TO_SERVICE, Event, PROVIDER_TO_CHANNEL, ParseError, Product,
-    RegressionHeader, SERVICE_CHANNELS,
+    Alert, CATEGORY_CHANNELS, CHANNEL_TO_SERVICE, ChannelResolver, Event, PROVIDER_TO_CHANNEL,
+    ParseError, Product, RegressionHeader, SERVICE_CHANNELS,
 };
 
 /// Errors raised by an [`EventProducer`] while collecting events.

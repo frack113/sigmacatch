@@ -8,9 +8,9 @@
 mod common;
 use common::{SSHD_LINE, SSHD_RULE};
 
-use sigmacatch::detection_engine::DetectionEngine;
 use sigmacatch::orchestrators::syslog;
 use sigmacatch::rule::SigmahqRules;
+use sigmacatch_detection::DetectionEngine;
 
 #[test]
 fn builtin_syslog_line_matches_service_rule() {

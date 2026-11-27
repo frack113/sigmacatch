@@ -376,7 +376,7 @@ impl Config {
 
     /// Use the collector's product as the rule filter only when the user did
     /// not explicitly set `filter.product`.
-    pub(crate) fn apply_collector_product_default(&mut self, product: &str) {
+    pub fn apply_collector_product_default(&mut self, product: &str) {
         if !self.filter_product_explicit {
             self.filter.product = product.to_string();
         }

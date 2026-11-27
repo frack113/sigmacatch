@@ -13,9 +13,9 @@
 use std::fs;
 
 use serde_json::{Value, json};
-use sigmacatch::detection_engine::DetectionEngine;
 use sigmacatch::rule::SigmahqRules;
 use sigmacatch::types::Event;
+use sigmacatch_detection::DetectionEngine;
 
 /// Build a one-rule engine for a `service: security` rule whose detection
 /// block is `detection` (YAML, 4-space indented under `detection:`).

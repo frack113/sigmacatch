@@ -9,8 +9,8 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use crate::detection_engine::DetectionEngine;
-//! use crate::rule::SigmahqRules;
+//! use sigmacatch_core::rule::SigmahqRules;
+//! use sigmacatch_detection::DetectionEngine;
 //! use std::path::Path;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -23,8 +23,8 @@
 //! For validation tools that must tolerate a few broken rules, use `new_lenient`:
 //!
 //! ```rust,no_run
-//! use crate::detection_engine::DetectionEngine;
-//! use crate::rule::SigmahqRules;
+//! use sigmacatch_core::rule::SigmahqRules;
+//! use sigmacatch_detection::DetectionEngine;
 //! use std::path::Path;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -37,10 +37,6 @@
 //! # }
 //! ```
 
-use crate::config::EngineConfig;
-use crate::rule::SigmahqRules;
-use crate::types::{Alert, Event};
-use crate::util::to_hex;
 use rayon::prelude::*;
 use rsigma_eval::event::JsonEvent;
 use rsigma_eval::pipeline::{Pipeline, parse_pipeline};
@@ -49,6 +45,10 @@ use rsigma_eval::{
 };
 use rsigma_parser::SigmaRule;
 use sha1::{Digest, Sha1};
+use sigmacatch_core::config::EngineConfig;
+use sigmacatch_core::exchange::{Alert, ChannelResolver, Event};
+use sigmacatch_core::rule::SigmahqRules;
+use sigmacatch_core::util::to_hex;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -783,6 +783,12 @@ impl DetectionEngine {
     }
 }
 
+impl ChannelResolver for DetectionEngine {
+    fn resolve_channels(&self, custom_map: &HashMap<String, String>) -> Vec<String> {
+        self.resolve_channels(custom_map)
+    }
+}
+
 // ─── Engine Stats ─────────────────────────────────────────────────────────
 
 /// Cumulative processing counters.
@@ -797,7 +803,7 @@ pub struct EngineStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rule::SigmahqRules;
+    use sigmacatch_core::rule::SigmahqRules;
     use std::fs;
 
     const MINIMAL_RULE_YAML: &str = r#"title: Test Rule

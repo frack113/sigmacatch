@@ -12,9 +12,18 @@
 //! the eBPF probe code are gated by features.
 
 pub use sigmacatch_core::{
-    CollectorKind, DataFormat, RegressionSink, RegressionSinkFactory, bootstrap_repo_regression,
-    cli, config, detection_engine, evtx_reader, logging, repo, rule, run, runner, types,
+    DataFormat, RegressionSink, RegressionSinkFactory, cli, config, evtx_reader, logging, repo,
+    rule, types,
 };
+
+/// Shared pipeline (trait + continuous run loop). The concrete detection engine
+/// lives in `sigmacatch-detection`; the runner crate wires it into the collector.
+pub use sigmacatch_runner::{CollectorKind, bootstrap_repo_regression, run};
+/// Re-export of the `sigmacatch-runner` orchestration crate under the binary's
+/// module tree, so `crate::runner::…` keeps working inside this crate.
+pub mod runner {
+    pub use sigmacatch_runner::*;
+}
 
 /// Regression-data output: shared vocabulary from core plus the concrete
 /// SigmaHQ writer crate.

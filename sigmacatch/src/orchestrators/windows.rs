@@ -12,11 +12,11 @@
 
 use std::collections::HashMap;
 
-use crate::detection_engine::DetectionEngine;
 use crate::runner::CollectorKind;
 use crate::types::{EventProducer, ProducerError};
 use anyhow::Result;
 use async_trait::async_trait;
+use sigmacatch_core::exchange::ChannelResolver;
 use tokio::sync::{mpsc, watch};
 
 fn driver_available() -> bool {
@@ -54,10 +54,10 @@ impl CollectorKind for WindowsCollector {
 
     fn channels(
         &self,
-        engine: &DetectionEngine,
+        resolver: &dyn ChannelResolver,
         custom_map: &HashMap<String, String>,
     ) -> Option<Vec<String>> {
-        Some(engine.resolve_channels(custom_map))
+        Some(resolver.resolve_channels(custom_map))
     }
 
     fn build(&self, channels: &[String]) -> Box<dyn EventProducer> {

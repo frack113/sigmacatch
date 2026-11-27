@@ -14,6 +14,7 @@ doctest = false
 [dependencies]
 anyhow = "1.0.104"
 sigmacatch-core = { path = "../../../common/core" }
+sigmacatch-runner = { path = "../../../runner" }
 walkdir = "2.5.1"
 
 [dev-dependencies]

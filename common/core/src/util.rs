@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Small internal helpers shared by core modules.
+//! Small helpers shared by core modules and the detection engine.
 
 /// Lowercase hex encoding, two ASCII digits per byte.
-pub(crate) fn to_hex(bytes: &[u8]) -> String {
+pub fn to_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {

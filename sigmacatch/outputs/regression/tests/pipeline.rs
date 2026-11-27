@@ -3,12 +3,12 @@
 
 //! Full-cycle integration tests: the real writer behind the shared runner.
 
-use sigmacatch_core::detection_engine::DetectionEngine;
 use sigmacatch_core::regression::{DataFormat, RegressionSink};
 use sigmacatch_core::rule::SigmahqRules;
-use sigmacatch_core::runner::{Pipeline, process_and_generate};
 use sigmacatch_core::types::Event;
+use sigmacatch_detection::DetectionEngine;
 use sigmacatch_output_regression::SigmahqRegression;
+use sigmacatch_runner::{Pipeline, process_and_generate};
 use std::path::PathBuf;
 
 const SSHD_RULE: &str = r#"title: Suspicious OpenSSH Daemon Error

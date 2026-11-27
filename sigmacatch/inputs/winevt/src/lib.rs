@@ -10,9 +10,9 @@ pub mod channels;
 use std::collections::HashMap;
 
 use anyhow::Result;
-use sigmacatch_core::detection_engine::DetectionEngine;
-use sigmacatch_core::runner::CollectorKind;
+use sigmacatch_core::exchange::ChannelResolver;
 use sigmacatch_core::types::EventProducer;
+use sigmacatch_runner::CollectorKind;
 
 struct WinevtCollector;
 
@@ -27,10 +27,10 @@ impl CollectorKind for WinevtCollector {
 
     fn channels(
         &self,
-        engine: &DetectionEngine,
+        resolver: &dyn ChannelResolver,
         custom_map: &HashMap<String, String>,
     ) -> Option<Vec<String>> {
-        Some(engine.resolve_channels(custom_map))
+        Some(resolver.resolve_channels(custom_map))
     }
 
     fn build(&self, channels: &[String]) -> Box<dyn EventProducer> {
@@ -41,5 +41,5 @@ impl CollectorKind for WinevtCollector {
 /// Async entry — selected by `main.rs` on Windows.
 pub async fn run(factory: &dyn sigmacatch_core::RegressionSinkFactory) -> Result<()> {
     let collector = WinevtCollector;
-    sigmacatch_core::runner::run(&collector, factory).await
+    sigmacatch_runner::run(&collector, factory).await
 }
