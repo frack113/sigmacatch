@@ -3,7 +3,7 @@
 
 //! Wire-format types shared between the eBPF probes (`sigmacatch/ebpf`,
 //! compiled no_std for `bpfel-unknown-none`) and the userspace loader
-//! (`sigmacatch/inputs/ebpf/src/ebpf.rs`).
+//! (`collector/ebpf/src/ebpf.rs`).
 //!
 //! The probe crate includes this very file via `#[path]` (single source of
 //! truth); every type here is `#[repr(C)]` and [`Pod`] so the layout is the

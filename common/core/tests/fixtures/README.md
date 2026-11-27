@@ -5,7 +5,7 @@ fixtures:
 
 | File | Consumer |
 | ---- | -------- |
-| `sample.xml` | `sigmacatch-output-evtx` (`include_str!` and runtime read in `outputs/evtx/src/evtx_writer.rs`) |
+| `sample.xml` | `sigmacatch-output-evtx` (`include_str!` and runtime read in `persist/evtx/src/evtx_writer.rs`) |
 | `sample.evtx` | `sigmacatch-core`, `sigmacatch-input-evtx`, `sigmacatch-output-evtx` (runtime reads via `CARGO_MANIFEST_DIR` + `../../core/tests/fixtures/`) |
 | `valid-single.evtx` | `sigmacatch-repo` (`include_bytes!` in `repo/src/lib.rs`) |
 
@@ -18,7 +18,7 @@ asserts byte-identical output, so the reference is not self-referential.
 Regeneration (only when the encoder intentionally changes the byte layout):
 check out the new reference commit, then regenerate from inside the crate that
 owns the writer — `write_evtx_from_xml` is `pub(crate)` in
-`sigmacatch/outputs/evtx/src/evtx_writer.rs`. Add a temporary unit test (or a
+`persist/evtx/src/evtx_writer.rs`. Add a temporary unit test (or a
 temporary `#[cfg(test)]` helper) there that calls `write_evtx_from_xml` with
 the `sample.xml` content and `record_id = 1`, run it with
 `cargo test -p sigmacatch-output-evtx`, and replace `sample.evtx` in this

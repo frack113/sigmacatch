@@ -10,7 +10,7 @@
 //! regression generation work unchanged.
 //!
 //! The field mapping follows the internal eBPF taxonomy
-//! (`sigmacatch/inputs/ebpf/ebpf_taxonomy.json`) from kernel-captured data to Sigma/Sysmon
+//! (`collector/ebpf/ebpf_taxonomy.json`) from kernel-captured data to Sigma/Sysmon
 //! fields.
 //!
 //! Hashes are `-` when the image is unreadable; userspace SHA256 with mtime-based

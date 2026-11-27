@@ -29,7 +29,7 @@ use aya_ebpf::{
 };
 
 // Shared wire-format types: same single source as the userspace loader
-// (sigmacatch/inputs/ebpf/src/ebpf_common.rs, included via #[path]). The probe
+// (collector/ebpf/src/ebpf_common.rs, included via #[path]). The probe
 // only uses the constants and struct layouts; the `from_bytes`/`*_str`
 // accessors are userspace-only, hence the targeted allow.
 #[path = "../../inputs/ebpf/src/ebpf_common.rs"]

@@ -64,7 +64,7 @@ jobs:
             --fail-under-lines 78
 
   # Companion gate for the `ebpf` input (Q7.3). Without it, the host adapter
-  # in `sigmacatch/inputs/ebpf/` sits outside every coverage number in the
+  # in `collector/ebpf/` sits outside every coverage number in the
   # project.
   #
   # Scope, stated precisely so the number is not over-read:

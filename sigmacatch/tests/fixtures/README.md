@@ -2,7 +2,7 @@
 
 ## EVTX writer fixtures
 
-The canonical binary EVTX fixtures live in `sigmacatch/core/tests/fixtures/`;
+The canonical binary EVTX fixtures live in `common/core/tests/fixtures/`;
 `sigmacatch-core/tests/fixtures/README.md` documents their provenance,
 consumers and regeneration.
 
