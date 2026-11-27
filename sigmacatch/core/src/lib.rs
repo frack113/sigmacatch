@@ -10,6 +10,10 @@ pub use crate::regression::{DataFormat, RegressionSink, RegressionSinkFactory};
 pub use crate::runner::{CollectorKind, bootstrap_repo_regression, run};
 
 /// Diagnostic subcommands (check-filter, list-rules).
+/// Linux auditd log reader (platform-neutral, shared with the validator).
+pub mod audit_reader;
+
+/// Diagnostic subcommands (check-filter, list-rules).
 pub mod cli;
 
 /// Application configuration.

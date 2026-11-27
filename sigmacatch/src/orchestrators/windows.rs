@@ -22,7 +22,7 @@ use tokio::sync::{mpsc, watch};
 fn driver_available() -> bool {
     #[cfg(feature = "driver")]
     {
-        crate::inputs::etw_driver::is_available()
+        crate::orchestrators::etw_driver::is_available()
     }
     #[cfg(not(feature = "driver"))]
     {
@@ -86,9 +86,11 @@ impl EventProducer for MultiCollector {
             let stop = stop.clone();
             let channels = self.channels.clone();
             tasks.spawn(async move {
-                Box::new(crate::inputs::channels::EventCollector::new(channels))
-                    .run(tx, stop)
-                    .await
+                Box::new(crate::orchestrators::channels::EventCollector::new(
+                    channels,
+                ))
+                .run(tx, stop)
+                .await
             });
         }
 
@@ -96,7 +98,7 @@ impl EventProducer for MultiCollector {
         // process start, the ETW mappers read it for the events that only
         // carry a pid.
         #[cfg(feature = "etw")]
-        let images = crate::inputs::etw_process::ImageCache::new();
+        let images = crate::orchestrators::etw_process::ImageCache::new();
         let use_driver = driver_available();
         if use_driver {
             #[cfg(feature = "driver")]
@@ -105,9 +107,11 @@ impl EventProducer for MultiCollector {
                 let stop = stop.clone();
                 let images = images.clone();
                 tasks.spawn(async move {
-                    Box::new(crate::inputs::etw_driver::EventCollector::new(images))
-                        .run(tx, stop)
-                        .await
+                    Box::new(crate::orchestrators::etw_driver::EventCollector::new(
+                        images,
+                    ))
+                    .run(tx, stop)
+                    .await
                 });
             }
             // The main ETW session keeps supplying the events the kernel
@@ -118,7 +122,7 @@ impl EventProducer for MultiCollector {
                 let stop = stop.clone();
                 let images = images.clone();
                 tasks.spawn(async move {
-                    Box::new(crate::inputs::etw::EventCollector::main_only(images))
+                    Box::new(crate::orchestrators::etw::EventCollector::main_only(images))
                         .run(tx, stop)
                         .await
                 });
@@ -130,7 +134,7 @@ impl EventProducer for MultiCollector {
                 let stop = stop.clone();
                 let images = images.clone();
                 tasks.spawn(async move {
-                    Box::new(crate::inputs::etw::EventCollector::new(images))
+                    Box::new(crate::orchestrators::etw::EventCollector::new(images))
                         .run(tx, stop)
                         .await
                 });

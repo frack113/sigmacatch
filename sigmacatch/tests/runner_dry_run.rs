@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use sigmacatch::config::CliArgs;
 use sigmacatch::detection::DetectionEngine;
-use sigmacatch::inputs::syslog;
+use sigmacatch::orchestrators::syslog;
 use sigmacatch::regression::DataFormat;
 use sigmacatch::runner::{CollectorKind, run_with_cli};
 use sigmacatch::types::{Event, EventProducer, ProducerError};
@@ -97,7 +97,7 @@ async fn dry_run_loads_rules_and_writes_nothing() {
         &NoCollectorKind,
         cli,
         PathBuf::from("config.yaml"),
-        &sigmacatch::outputs::regression::SinkFactory,
+        &sigmacatch::output_factory::regression::SinkFactory,
     )
     .await
     .expect("dry-run must succeed");

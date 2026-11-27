@@ -9,7 +9,7 @@ mod common;
 use common::{SSHD_LINE, SSHD_RULE};
 
 use sigmacatch::detection::DetectionEngine;
-use sigmacatch::inputs::syslog;
+use sigmacatch::orchestrators::syslog;
 use sigmacatch::rule::SigmahqRules;
 
 #[test]

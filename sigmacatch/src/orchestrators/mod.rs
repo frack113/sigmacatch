@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Input adapters of the `sigmacatch` binary. Each input now lives in its own
-//! crate, which owns its `feature × platform` gates; this module only aliases
-//! those crates and hosts the two orchestrators that combine them. `lib.rs`
-//! exposes it unconditionally, so enabling a feature for another platform is
-//! inert rather than a compile error.
+//! Input orchestrators of the `sigmacatch` binary. Each real input now lives
+//! in its own crate, which owns its `feature × platform` gates; this module
+//! only aliases those crates and hosts the two OS-specific fan-in/fan-out
+//! orchestrators. `lib.rs` exposes it unconditionally, so enabling a feature
+//! for another platform is inert rather than a compile error.
 
-// Windows inputs. Crate aliases keep host call sites unchanged; each crate
-// compiles as an empty shell off Windows.
+// Windows input aliases. Crate aliases keep host call sites unchanged; each
+// crate compiles as an empty shell off Windows.
 #[cfg(feature = "winevt")]
 pub use sigmacatch_input_winevt::channels;
 // Windows orchestrator: Event Log channels + kernel sensor or ETW.
@@ -30,8 +30,8 @@ pub use sigmacatch_input_etw_driver as etw_driver;
 #[cfg(feature = "evtx")]
 pub use sigmacatch_input_evtx as evtx;
 
-// Linux inputs. Crate aliases keep every `crate::inputs::<name>` call site
-// unchanged; each crate is empty off Linux.
+// Linux input aliases. Crate aliases keep every `crate::orchestrators::<name>`
+// call site unchanged; each crate is empty off Linux.
 #[cfg(all(target_os = "linux", feature = "auditd"))]
 pub use sigmacatch_input_auditd as auditd;
 #[cfg(all(target_os = "linux", feature = "builtin"))]

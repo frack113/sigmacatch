@@ -10,8 +10,8 @@
 
 #![cfg(all(target_os = "linux", feature = "builtin"))]
 
-use sigmacatch::inputs::TailOptions;
-use sigmacatch::inputs::syslog::EventCollector;
+use sigmacatch::orchestrators::TailOptions;
+use sigmacatch::orchestrators::syslog::EventCollector;
 use sigmacatch::types::EventProducer;
 use std::io::Write;
 use std::time::Duration;

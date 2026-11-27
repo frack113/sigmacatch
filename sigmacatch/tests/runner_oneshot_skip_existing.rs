@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use sigmacatch::config::CliArgs;
 use sigmacatch::detection::DetectionEngine;
-use sigmacatch::inputs::syslog;
+use sigmacatch::orchestrators::syslog;
 use sigmacatch::regression::DataFormat;
 use sigmacatch::runner::{CollectorKind, run_with_cli};
 use sigmacatch::types::{Event, EventProducer, ProducerError};
@@ -131,7 +131,7 @@ async fn all_rules_have_existing_regression_data_bails_without_collecting() {
         &OneShotKind { event: Some(event) },
         cli,
         PathBuf::from("config.yaml"),
-        &sigmacatch::outputs::regression::SinkFactory,
+        &sigmacatch::output_factory::regression::SinkFactory,
     )
     .await
     .expect_err("pipeline must bail when every rule already has regression data");

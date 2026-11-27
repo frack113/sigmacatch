@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use sigmacatch::config::CliArgs;
 use sigmacatch::detection::DetectionEngine;
-use sigmacatch::inputs::syslog;
+use sigmacatch::orchestrators::syslog;
 use sigmacatch::regression::DataFormat;
 use sigmacatch::runner::{CollectorKind, run_with_cli};
 use sigmacatch::types::{Event, EventProducer, ProducerError};
@@ -107,7 +107,7 @@ async fn empty_resolved_channels_stop_the_run_before_building_a_collector() {
         &kind,
         cli,
         PathBuf::from("config.yaml"),
-        &sigmacatch::outputs::regression::SinkFactory,
+        &sigmacatch::output_factory::regression::SinkFactory,
     )
     .await
     .expect("empty resolved channels must end the run with Ok(())");

@@ -19,7 +19,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use sigmacatch::config::parse_args;
-use sigmacatch::outputs::regression_sink_factory;
+use sigmacatch::output_factory::regression_sink_factory;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -44,7 +44,7 @@ async fn run_evtx(
 ) -> Result<()> {
     #[cfg(feature = "evtx")]
     {
-        sigmacatch::inputs::evtx::run(evtx_path, factory).await
+        sigmacatch::orchestrators::evtx::run(evtx_path, factory).await
     }
     #[cfg(not(feature = "evtx"))]
     {
@@ -63,11 +63,11 @@ async fn run_evtx(
 async fn dispatch_collector(factory: &dyn sigmacatch::RegressionSinkFactory) -> Result<()> {
     #[cfg(all(target_os = "windows", feature = "winevt"))]
     {
-        return sigmacatch::inputs::windows::run(factory).await;
+        return sigmacatch::orchestrators::windows::run(factory).await;
     }
     #[cfg(all(target_os = "macos", feature = "macos"))]
     {
-        return sigmacatch::inputs::macos_es::run(factory).await;
+        return sigmacatch::orchestrators::macos_es::run(factory).await;
     }
     #[cfg(all(
         target_os = "linux",
@@ -79,7 +79,7 @@ async fn dispatch_collector(factory: &dyn sigmacatch::RegressionSinkFactory) -> 
         )
     ))]
     {
-        return sigmacatch::inputs::linux::run(factory).await;
+        return sigmacatch::orchestrators::linux::run(factory).await;
     }
     anyhow::bail!(
         "no usable input compiled into this build — rebuild with one of:\n  \

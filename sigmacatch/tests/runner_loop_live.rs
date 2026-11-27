@@ -23,7 +23,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use sigmacatch::config::CliArgs;
 use sigmacatch::detection::DetectionEngine;
-use sigmacatch::inputs::syslog;
+use sigmacatch::orchestrators::syslog;
 use sigmacatch::regression::DataFormat;
 use sigmacatch::runner::{CollectorKind, run_with_cli};
 use sigmacatch::types::{Event, EventProducer, ProducerError};
@@ -116,7 +116,7 @@ async fn live_loop_stop_file_triggers_drain_flush_and_offline_upload() {
             &kind,
             cli,
             config_path,
-            &sigmacatch::outputs::regression::SinkFactory,
+            &sigmacatch::output_factory::regression::SinkFactory,
         )
         .await
     });

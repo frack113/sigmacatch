@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-//! Output adapters of the `sigmacatch` binary.
+//! Output factory of the `sigmacatch` binary.
 //!
 //! The output sink is built here and injected into the shared runner, exactly
 //! as each input crate builds its event producer. Adding another output means

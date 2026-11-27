@@ -2501,7 +2501,6 @@ version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "linux-audit-parser",
  "rayon",
  "serde",
  "serde_json",
@@ -2534,6 +2533,7 @@ dependencies = [
  "chrono",
  "dunce",
  "evtx",
+ "linux-audit-parser",
  "phf",
  "rayon",
  "roxmltree",

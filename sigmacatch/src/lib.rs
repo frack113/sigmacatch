@@ -23,15 +23,15 @@ pub mod regression {
     pub use sigmacatch_output_regression::{RegressionEntry, SigmahqRegression};
 }
 
-/// Output adapters. The binary builds the sink and injects it into the runner,
+/// Output factory. The binary builds the sink and injects it into the runner,
 /// mirroring how each input crate builds its event producer.
-pub mod outputs;
+pub mod output_factory;
 
 // Wire-format types for the eBPF ring buffer. The probe crate includes the
 // source directly via `#[path]`; the host adapter owns it.
 #[cfg(feature = "ebpf")]
 pub use sigmacatch_input_ebpf::ebpf_common;
 
-// Input adapters. Each crate owns its gates; `inputs/mod.rs` only aliases them
-// and hosts the two orchestrators.
-pub mod inputs;
+// Input orchestrators. Each real input crate owns its gates; this module only
+// aliases them and hosts the OS-specific fan-in/fan-out glue.
+pub mod orchestrators;
