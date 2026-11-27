@@ -1,7 +1,7 @@
 # macOS collector
 
 `MacosEsCollector` (`sigmacatch-input-macos`, aliased as
-`sigmacatch::inputs::macos_es`) is the live macOS collector: the sole macOS
+`sigmacatch::orchestrators::macos_es`) is the live macOS collector: the sole macOS
 input, selected by `sigmacatch/src/main.rs` on macOS when the `macos` cargo
 feature is built in. It implements `CollectorKind` and `EventProducer` and
 runs through the [shared runner](../pipeline.md) like every other
@@ -13,7 +13,7 @@ problem) is in [macOS support](../macos/index.md).
 - Feature `macos` in `sigmacatch/Cargo.toml` enables the
   `sigmacatch-input-macos` crate; its `endpoint-sec` + `libc` dependencies are
   macOS-gated in that crate's `Cargo.toml`.
-- `sigmacatch/src/inputs/mod.rs` exposes the crate on `feature = "macos"` —
+- `sigmacatch/src/orchestrators/mod.rs` exposes the crate on `feature = "macos"` —
   **not** `target_os`, because the platform-independent event model (the
   `eslogger` NDJSON parser and the field mapping) must compile and be testable
   on Linux. The ES client layer itself is `#[cfg(target_os = "macos")]` inside

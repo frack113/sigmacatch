@@ -20,8 +20,8 @@ coverage list — is in [Linux collectors](../collectors/linux.md).
 
 ## Where the code lives
 
-- `sigmacatch/src/inputs/linux.rs` holds `LinuxCollector`, the shared
-  orchestrator; `sigmacatch/src/inputs/mod.rs` aliases the leaf crates.
+- `sigmacatch/src/orchestrators/linux.rs` holds `LinuxCollector`, the shared
+  orchestrator; `sigmacatch/src/orchestrators/mod.rs` aliases the leaf crates.
 - `sigmacatch-input-auditd`, `sigmacatch-input-syslog` and
   `sigmacatch-input-sysmon` parse their respective streams;
   `sigmacatch-input-tail` is the shared 100 ms poll/rotate tail driver.

@@ -25,7 +25,7 @@ The `sysmon` and `ebpf` features add a dedicated collector:
   Sysmon-shaped JSON, mapped through the Linux field pipeline and injected via the same
   engine. Fork lineage, `accept(NULL)`, `recvfrom(NULL)` and `execveat(AT_EMPTY_PATH)` are
   handled explicitly. Runtime requirements: root or CAP_BPF+CAP_PERFMON (refuses to start
-  otherwise — `sigmacatch/src/inputs/linux.rs` bails) + kernel with BTF. SHA256 hashing of images is calculated
+  otherwise — `sigmacatch/src/orchestrators/linux.rs` bails) + kernel with BTF. SHA256 hashing of images is calculated
   userspace with cache (path,mtime). The probe embeds an `EVENTS_ABI_V2` marker; a prebuilt
   `SIGMACATCH_EBPF_OBJECT` without it is rejected. A failed probe load at runtime warns and
   continues **without** any sysmon source; only a build with both `ebpf` and `sysmon`
@@ -37,7 +37,7 @@ The `sysmon` and `ebpf` features add a dedicated collector:
 
 ## Shared tail driver
 
-The `sigmacatch-input-tail` crate (`sigmacatch/inputs/tail/src/lib.rs`) is the
+The `sigmacatch-input-tail` crate (`collector/tail/src/lib.rs`) is the
 shared tail driver for the Linux file collectors (auditd, builtin syslog,
 sysmon): it owns the file handle, the 100 ms poll loop, rotation
 detection (dev/ino change → re-open from offset 0) and the channel, and drives a

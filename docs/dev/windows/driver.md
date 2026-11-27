@@ -32,7 +32,7 @@ Two layers, same output:
   503-506 (rename/chmod/chown/truncate) and 509/510 (open for write, write).
   With the driver loaded, the ETW **main** session alone still runs (network,
   DNS, WMI, registry 12/13, image/driver unload):
-  `sigmacatch/src/inputs/windows.rs` starts one process source, the two
+  `sigmacatch/src/orchestrators/windows.rs` starts one process source, the two
   producers share the pid→image cache, and nothing is reported twice.
 
 Constraints accepted up front:
@@ -57,9 +57,9 @@ sigmacatch/driver/                 # kernel sensor (outside the workspace)
 └── protocol/                     # sigmacatch-driver-protocol, workspace member
     └── src/protocol.rs           # wire record + IOCTLs (v6), shared with the client
 
-sigmacatch/inputs/etw-common/src/ # sigmacatch-input-etw-common: NT paths,
+collector/etw-common/src/ # sigmacatch-input-etw-common: NT paths,
                                  #   signature and PE version helpers
-sigmacatch/inputs/etw-driver/src/lib.rs  # client: open device, check version,
+collector/etw-driver/src/lib.rs  # client: open device, check version,
                                          #   drain IOCTL_READ_EVENTS, map kind → Sysmon event
 ```
 

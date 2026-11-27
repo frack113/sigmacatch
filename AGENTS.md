@@ -3,23 +3,25 @@
 
 ## sigmacatch
 
-A Rust (2024 edition, one cargo workspace with 18 members) real-time Sigma matcher: captures OS events on Windows (Winevt, native ETW, kernel driver), Linux (auditd, syslog, Sysmon tail, eBPF) and macOS (Endpoint Security), matches them against a clone of SigmaHQ rules in `sigma/`, and writes SigmaHQ-format regression data. Documentation lives in `docs/` (English only). `sigma/` is a gitignored clone of SigmaHQ/sigma, not project source.
+A Rust (2024 edition, one cargo workspace with 20 members) real-time Sigma matcher: captures OS events on Windows (Winevt, native ETW, kernel driver), Linux (auditd, syslog, Sysmon tail, eBPF) and macOS (Endpoint Security), matches them against a clone of SigmaHQ rules in `sigma/`, and writes SigmaHQ-format regression data. Documentation lives in `docs/` (English only). `sigma/` is a gitignored clone of SigmaHQ/sigma, not project source.
 
 ## Where things are
 
 - Workspace members (all paths are relative to the repo root):
-  - `sigmacatch/` — binary crate: one bin `sigmacatch` + second artifact `regressiondata-check`.
-  - `sigmacatch/core/` — package `sigmacatch-core`: shared pipeline, types, config, CLI, detection engine, rule management, regression vocabulary, `evtx_reader`, re-exports `sigmacatch-repo` as `repo`.
+  - `sigmacatch/` — binary crate: one bin `sigmacatch` + second artifact `regressiondata-check`; `orchestrators/` and `output_factory/` live here.
+  - `common/core/` — package `sigmacatch-core`: shared data models (`exchange`), config, CLI, rule management, regression vocabulary, `evtx_reader`, `audit_reader`, `util`, re-exports `sigmacatch-repo` as `repo`.
+  - `detection/` — package `sigmacatch-detection`: Sigma engine, pipelines, indexed events, channel resolution.
+  - `runner/` — package `sigmacatch-runner`: `CollectorKind`, continuous/one-shot loop, `Pipeline`.
+  - `collector/*/` — one crate per input (package `sigmacatch-input-*`): `auditd`, `ebpf`, `etw-common`, `etw`, `etw-driver`, `evtx`, `macos`, `syslog`, `sysmon`, `tail`, `winevt`.
+  - `persist/*/` — packages `sigmacatch-output-evtx` and `sigmacatch-output-regression`.
   - `sigmacatch/repo/` — package `sigmacatch-repo`: git operations, transport, pending-PR tracking.
   - `sigmacatch/sigma-regression/` — package `sigma-regression`: `info.yml` schema.
-  - `sigmacatch/inputs/*/` — one crate per input (package `sigmacatch-input-*`): `auditd`, `ebpf`, `etw-common`, `etw`, `etw-driver`, `evtx`, `macos`, `syslog`, `sysmon`, `tail`, `winevt`.
-  - `sigmacatch/outputs/*/` — packages `sigmacatch-output-evtx` and `sigmacatch-output-regression`.
   - `sigmacatch/driver/protocol/` — package `sigmacatch-driver-protocol`, shared with the standalone KMDF driver workspace.
-- `sigmacatch` cargo **features** select which input crates link in: `winevt` (default), `evtx`, `etw`, `driver`, `auditd`, `builtin`, `sysmon`, `ebpf`, `macos`. `builtin` and `sysmon` are **feature combinations**, not workspace crates (`builtin` = `sigmacatch-input-syslog` + `sigmacatch-input-tail`; `sysmon` = `builtin` + `sigmacatch-input-sysmon`).
-- `sigmacatch/src/orchestrators/` is binary **orchestration** (re-exports of the real input crates + Windows/Linux fan-in/fan-out orchestrators); the real input implementations live in `sigmacatch/inputs/*/`. Each input crate owns its `feature × target_os` gates; keep the main crate's `lib.rs` gate-free.
+- `sigmacatch` cargo **features** select which collector crates link in: `winevt` (default), `evtx`, `etw`, `driver`, `auditd`, `builtin`, `sysmon`, `ebpf`, `macos`. `builtin` and `sysmon` are **feature combinations**, not workspace crates (`builtin` = `sigmacatch-input-syslog` + `sigmacatch-input-tail`; `sysmon` = `builtin` + `sigmacatch-input-sysmon`).
+- `sigmacatch/src/orchestrators/` is binary **orchestration** (re-exports of the real collector crates + Windows/Linux fan-in/fan-out orchestrators); the real collector implementations live in `collector/*/`. Each collector crate owns its `feature × target_os` gates; keep the main crate's `lib.rs` gate-free.
 - `sigmacatch/src/output_factory/` builds the compiled-in output sink and injects it into the runner.
 - Runtime dispatch in `sigmacatch/src/main.rs`; writer `--evtx` is routed via `sigmacatch::config::parse_args()` (`CliArgs.evtx_path`) — never re-scan `argv` ad hoc.
-- Shared collector pipeline: `sigmacatch/core/src/runner.rs` (`run<C: CollectorKind>`).
+- Shared collector pipeline: `runner/src/lib.rs` (`run<C: CollectorKind>`). Collectors depend on `sigmacatch-core` + `sigmacatch-runner`, never on `sigmacatch-detection`; `CollectorKind::channels` takes `&dyn ChannelResolver`.
 - Standalone regression validator (no collector): `sigmacatch/src/bin/regressiondata-check.rs` — run it to validate `sigma/regression_data`.
 - Commit conventions (emoji types, `🧪 test:` for regression data) and PR requirements: `CONTRIBUTING.md`.
 - Codebase organization plan (evolution in progress): `.opencode/org_codebase.md`.
@@ -49,7 +51,7 @@ A Rust (2024 edition, one cargo workspace with 18 members) real-time Sigma match
   exec flatpak run --filesystem=home --filesystem=/tmp --command=chromium-browser org.chromium.Chromium "$@"
   ```
   Point `ARCHIFY_CHROME` (or any `--screenshot` consumer) at that wrapper.
-- The bmad block above was manually refreshed on 2026-11-27 to correct crate paths after the crate extraction; a `bmad-project-context` refresh must preserve the 18-member workspace and the crate paths listed there.
+- The bmad block above was manually refreshed on 2026-11-27 to reflect the layered layout (`common/`, `detection/`, `runner/`, `collector/`, `persist/`) and the 20-member workspace; a `bmad-project-context` refresh must preserve those crate paths.
 - Windows kernel-driver dev VM `sigmacatch-dev` (QEMU clone of the test VM, not a validation box — it HAS a toolchain): build the KMDF driver locally with `scripts/dev_win_build.sh` (syncs `driver/` + `driver/protocol/` → build with CI settings → `target/sigmacatch-dev/sigmacatch_driver.dll`). See `docs/dev/windows/vm.md`; CI's `Driver` workflow stays the gate and must not drift (WDK 10.0.22621 / LLVM 17.0.6 pinned in both places).
 
 

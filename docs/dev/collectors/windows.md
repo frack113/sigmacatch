@@ -31,8 +31,8 @@ channel, which `sigmacatch-core/src/types.rs` maps to `service: sysmon`, so
 the stock Sysmon rules match unchanged. They carry no `EventRecordID`, which is
 what makes the EVTX format take the pure-Rust writer instead of `EvtExportLog`
 (the channel does not exist in the Event Log). Each input crate owns its gates;
-`sigmacatch/src/inputs/mod.rs` only aliases them, and the orchestrator is
-`sigmacatch/src/inputs/windows.rs` (`mode` is `windows winevt+etw` or
+`sigmacatch/src/orchestrators/mod.rs` only aliases them, and the orchestrator is
+`sigmacatch/src/orchestrators/windows.rs` (`mode` is `windows winevt+etw` or
 `windows winevt+driver+etw`).
 
 The ETW path needs an **elevated token** (`SeSystemProfilePrivilege`); without

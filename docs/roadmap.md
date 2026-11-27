@@ -32,8 +32,11 @@ not a commitment, just the current intent.
 ## Codebase organization
 
 - Review codebase organization. The project is a single Cargo workspace with
-  18 members after the split in #164; layout is documented in
-  [Dev Layout](dev/layout.md) and the current plan lives in
+  20 members after the layered reorganisation: `common/` (shared data models and
+  services), `detection/` (Sigma engine), `runner/` (orchestration),
+  `collector/*` (adapters in) and `persist/*` (adapters out), plus the binary.
+  Layout is documented in [Dev Layout](dev/layout.md); the execution record and
+  remaining guardrails live in
   [`.opencode/org_codebase.md`](https://github.com/frack113/sigmacatch/blob/main/.opencode/org_codebase.md).
   Further structure changes still to define.
 

@@ -8,53 +8,48 @@ checkout; items marked "inferred" are judgments, not verified facts.
 
 ## 1. Current state (measured)
 
-- Single Cargo workspace, `resolver = "2"`, edition 2024, **18 members**.
+- Single Cargo workspace, `resolver = "2"`, edition 2024, **20 members**.
   Shared `[workspace.package]`, `[workspace.dependencies]`, `[workspace.lints]`
   (`missing_docs = warn`; clippy `correctness`/`suspicious = deny`,
   `style`/`complexity`/`perf = warn`). Version `0.8.0`, MIT.
-- Members under `sigmacatch/`:
-  - `sigmacatch` — binary `sigmacatch` + second artifact `regressiondata-check`
-    (`src/bin/regressiondata-check.rs`); ~2.7k LOC, 7 files. `lib.rs`
-    re-exports `sigmacatch-core`, `pub mod orchestrators`, `pub mod
-    output_factory`, optional `ebpf_common`. `main.rs` dispatches runtime
-    inputs.
-    - `src/orchestrators/` is **binary orchestration**, not input
-      implementation: `mod.rs` aliases the real input crates, `windows.rs`
-      and `linux.rs` are OS-specific fan-in/fan-out orchestrators
-      (`MultiCollector`, `select_collectors`, privilege guards). Real input
-      logic lives in `sigmacatch/inputs/*`.
-    - `src/output_factory/` builds the compiled-in output sink and injects
-      it into the runner.
-    - `src/bin/regressiondata-check.rs` previously contained an inline Linux
-      audit parser; it now calls `sigmacatch-core::audit_reader`.
-  - `sigmacatch-core` (`sigmacatch/core`, package `sigmacatch-core`) — pipeline:
-    `types`, `config`, `cli`, `logging`, `runner`, `detection`, `rule`,
-    `regression`, `evtx_reader`. ~10.5k LOC. Largest file `types.rs` (~2.3k).
-    Shared `CollectorKind` contract in `runner`. Re-exports `sigmacatch-repo`
-    as `repo`; owns no git code.
-  - `sigmacatch-repo` (`sigmacatch/repo`, package `sigmacatch-repo`) — ~6.2k
-    LOC; git via grit-lib + system `ssh`, pending-PR tracking.
-  - `sigma-regression` (`sigmacatch/sigma-regression`, package
-    `sigma-regression`) — ~0.8k LOC; `info.yml`.
-  - `sigmacatch-output-evtx` (`sigmacatch/outputs/evtx`) ~1.2k;
-    `sigmacatch-output-regression` (`sigmacatch/outputs/regression`) ~1.8k.
-  - `sigmacatch-driver-protocol` (`sigmacatch/driver/protocol`) ~0.16k;
+- Top-level layout mirrors the product's building blocks:
+  - `sigmacatch/` — binary `sigmacatch` + second artifact
+    `regressiondata-check`. `lib.rs` re-exports `sigmacatch-core`, the runner,
+    `pub mod orchestrators`, `pub mod output_factory`, optional `ebpf_common`.
+    `main.rs` dispatches runtime inputs.
+    - `src/orchestrators/` is **binary orchestration**: `mod.rs` aliases the
+      real collector crates, `windows.rs`/`linux.rs` are OS fan-in/fan-out.
+    - `src/output_factory/` builds the compiled-in output sink.
+  - `common/core/` — package `sigmacatch-core`: the shared data models that
+    cross autonomous boundaries (`exchange`: `Event`, `Alert`, `Product`,
+    channel tables, `ChannelResolver`, `RegressionHeader`, `DataFormat`), plus
+    `config`, `cli`, `logging`, `rule`, `regression` seams, `evtx_reader`,
+    `audit_reader`, `util`, and a re-export of `sigmacatch-repo` as `repo`.
+  - `detection/` — package `sigmacatch-detection`: the Sigma engine (rsigma
+    compile/evaluate), pipelines, indexed events, channel resolution.
+  - `runner/` — package `sigmacatch-runner`: `CollectorKind`, the
+    continuous/one-shot loop, `Pipeline`, `process_and_generate`.
+  - `collector/*` — one crate per source (packages `sigmacatch-input-*`):
+    `auditd`, `ebpf` (largest), `etw-common`, `etw`, `etw-driver`, `evtx`,
+    `macos`, `syslog`, `sysmon`, `tail`, `winevt`. Each owns its
+    `feature × target_os` gates; the bin `lib.rs` stays gate-free.
+  - `persist/*` — packages `sigmacatch-output-evtx` and
+    `sigmacatch-output-regression`; the EVTX writer and the SigmaHQ regression
+    sink.
+  - `sigmacatch/repo/` — package `sigmacatch-repo`, git via grit-lib + system
+    `ssh`, pending-PR tracking.
+  - `sigmacatch/sigma-regression/` — package `sigma-regression`, `info.yml`.
+  - `sigmacatch/driver/protocol/` — package `sigmacatch-driver-protocol`,
     shared with the standalone driver workspace by path.
-  - One crate per input under `sigmacatch/inputs/` (package `sigmacatch-input-*`):
-    `auditd`, `ebpf` (~4k, largest input), `etw-common`, `etw`, `etw-driver`,
-    `evtx`, `macos`, `syslog`, `sysmon`, `tail`, `winevt`. Each owns
-    `feature × target_os` gating; bin `lib.rs` stays gate-free;
-    `sigmacatch/src/inputs/mod.rs` only aliases + hosts Windows/Linux
-    orchestrators. Cargo **features** of `sigmacatch` select which crates link
-    in: `winevt` (default), `evtx`, `etw`, `driver`, `auditd`, `builtin`
-    (= `sigmacatch-input-syslog` + `sigmacatch-input-tail`), `sysmon`
-    (= `builtin` + `sigmacatch-input-sysmon`), `ebpf`, `macos`. `builtin` is a
-    feature, not a workspace crate.
   - `sigmacatch/ebpf` excluded; nightly + bpf-linker, built separately.
-  - `sigmacatch/driver` — standalone KMDF workspace (Windows), shares
-    `driver/protocol`.
-- Wiring already separated: inputs build a producer; outputs build a sink
-  (`RegressionSink`); `sigmacatch_core::runner::run<C: CollectorKind>` is the
+  - `sigmacatch/driver` — standalone KMDF workspace (Windows).
+- Cargo **features** of `sigmacatch` select which collector crates link in:
+  `winevt` (default), `evtx`, `etw`, `driver`, `auditd`, `builtin`
+  (= `sigmacatch-input-syslog` + `sigmacatch-input-tail`), `sysmon`
+  (= `builtin` + `sigmacatch-input-sysmon`), `ebpf`, `macos`. `builtin` is a
+  feature, not a workspace crate.
+- Wiring: collectors build a producer (`EventProducer`), persist crates build a
+  sink (`RegressionSink`), and `sigmacatch_runner::run<C: CollectorKind>` is the
   single shared pipeline. No `TODO`/`FIXME`/`todo!` in `sigmacatch`.
 - SPDX header convention on new source/header files; `missing_docs` on.
 
@@ -82,33 +77,41 @@ correctly says 18 crates; it references package names.)
     channel/service/category tables);
   - `detection engine → output` (`Alert`, `RegressionHeader`, `DataFormat`).
   No autonomous block exposes its internals to another block.
-- **Detection is autonomous**: `sigmacatch-core/src/detection` only depends on
-  `config`, `rule`, `types`, `util`, and `rsigma-eval`/`rsigma-parser`. It has
-  no knowledge of inputs, outputs, repo, or regression data sinks.
+- **Detection is autonomous**: `detection/` depends only on `sigmacatch-core`
+  (`config`, `rule`, `exchange`, `util`) plus `rsigma-eval`/`rsigma-parser`.
+  It has no knowledge of collectors, outputs, repo, or regression sinks.
+- **The runner is autonomous**: `runner/` depends on `sigmacatch-core` and
+  `sigmacatch-detection`; it does not depend on any collector or persist crate.
+- **Collectors never depend on the concrete engine**: `CollectorKind::channels`
+  takes `&dyn ChannelResolver`; the engine implements that trait. Collectors
+  depend on `sigmacatch-core` (data model) and `sigmacatch-runner` (contract)
+  only.
 - `sigmacatch` bin crate stays thin; `lib.rs` gate-free; feature `× target_os`
-  gating lives in each input crate, not in `sigmacatch/src`.
+  gating lives in each collector crate, not in `sigmacatch/src`.
 - Git only through `sigmacatch-repo`; no hand-rolled parsers; no tokens.
 - New source/header files start with the two SPDX lines.
 - `ebpf` probe excluded; `driver` separate workspace sharing `protocol`.
 
-## 4. Public API surface of the `sigmacatch` crate (after Phase 2)
+## 4. Public API surface of the `sigmacatch` crate
 
 The binary crate exposes more than `main`:
 
-- `pub mod orchestrators` — re-exports the real input crates + hosts the two
-  OS fan-in/fan-out orchestrators. Consumed by integration tests and
+- `pub mod orchestrators` — re-exports the real collector crates + hosts the
+  two OS fan-in/fan-out orchestrators. Consumed by integration tests and
   `main.rs` dispatch.
 - `pub mod output_factory` — re-exports `sigmacatch_output_regression` as
-  `regression` + provides `regression_sink_factory()`. Consumed by tests and
-  `main.rs`.
+  `regression` + provides `regression_sink_factory()`.
 - `pub mod regression` — re-exports core + output-regression types.
-- Re-exports of `sigmacatch-core` (config, cli, detection, rule, runner,
-  types, repo, evtx_reader, audit_reader, logging).
+- `pub mod runner` — re-export of `sigmacatch-runner`, plus top-level re-exports
+  of `CollectorKind`, `run`, and `bootstrap_repo_regression`.
+- Re-exports of `sigmacatch-core` (config, cli, rule, types, repo,
+  evtx_reader, audit_reader, logging).
 
 The old names `sigmacatch::inputs` and `sigmacatch::outputs` were renamed to
-remove the ambiguity with the real input/output crates under `sigmacatch/inputs/`
-and `sigmacatch/outputs/`. This is a breaking change for any external consumer
-of those paths; internal tests were migrated atomically.
+`sigmacatch::orchestrators` and `sigmacatch::output_factory`; the concrete
+crates now live under `collector/` and `persist/`. This is a breaking change
+for any external consumer of those paths; internal tests were migrated
+atomically.
 
 ## 5. Naming collisions worth cleaning (resolved)
 
@@ -440,4 +443,48 @@ static tables from `types.rs`. After the `exchange` split, the tables move to
 
 Recommendation: Option B, hybrid RuleProvider API, no deprecation layer yet,
 name `exchange`, commit Phase 2 first.
+
+## 11. Applied architecture (2026-11-27)
+
+The proposal above was executed in four commits:
+
+1. `🏗️ refactor: move sigmacatch-core to common/core`
+2. `🏗️ refactor: extract detection engine and runner into standalone crates`
+3. `🏗️ refactor: move input crates to collector/ and output crates to persist/`
+4. CI/path-comment cleanup
+
+Final layout (20 workspace members):
+
+```
+sigmacatch/            bin: main, orchestrators/, output_factory/
+common/core/           sigmacatch-core: exchange, config, rule, repo re-export,
+                       regression seams, evtx_reader, audit_reader, util
+detection/             sigmacatch-detection: engine, pipelines, channel resolver
+runner/                sigmacatch-runner: CollectorKind, run loop, Pipeline
+collector/*/           11 collector crates (sigmacatch-input-*)
+persist/*/             sigmacatch-output-evtx, sigmacatch-output-regression
+sigmacatch/repo/       sigmacatch-repo
+sigmacatch/sigma-regression/
+sigmacatch/driver/protocol/
+```
+
+Decisions actually taken:
+
+- **Physical crates, not modules.** `detection` and `runner` are autonomous
+  workspace members. `runner` had to be a crate (not bin code) because collector
+  crates call `sigmacatch_runner::run`.
+- **`ChannelResolver` implemented.** `CollectorKind::channels` now takes
+  `&dyn ChannelResolver`; collectors depend on `sigmacatch-core` +
+  `sigmacatch-runner`, never on `sigmacatch-detection`.
+- **Package names unchanged** (`sigmacatch-input-*`, `sigmacatch-output-*`).
+  Only directories moved; every `use` stayed stable.
+- **`to_hex` made public** in `sigmacatch-core::util`, shared by rule
+  fingerprinting and the engine.
+- **Not done: `RuleProvider`.** The engine still constructs from
+  `sigmacatch_core::rule::SigmahqRules`. Since `rule` now lives in the common
+  crate, this is a service dependency inside the common layer rather than a
+  cross-block leak. Revisit only if the engine must be fed rules from outside
+  the SigmaHQ corpus model.
+- **`config::apply_collector_product_default` made public** so the runner can
+  apply collector defaults.
 

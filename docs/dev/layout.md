@@ -10,7 +10,7 @@ Reference page: the directory tree and the module dependency graph. Read
         style="display:block;width:100%;aspect-ratio:2223/1257;border:0;margin:0 auto"></iframe>
 <!-- markdownlint-enable MD033 -->
 
-*Eighteen workspace crates; the eBPF probe and the Windows KMDF driver are
+*Twenty workspace crates; the eBPF probe and the Windows KMDF driver are
 built outside it.*
 
 ## Crate dependency graph
@@ -21,11 +21,13 @@ built outside it.*
         style="display:block;width:100%;aspect-ratio:1162/1096;border:0;margin:0 auto"></iframe>
 <!-- markdownlint-enable MD033 -->
 
-*Which crate depends on which; inputs implement the `CollectorKind` contract
-the runner drives. Drag to pan, scroll to zoom — the Flow animation starts on
-its own.*
+*Which crate depends on which; collectors implement the `CollectorKind`
+contract the runner drives. Drag to pan, scroll to zoom — the Flow animation
+starts on its own.*
 
-`sigmacatch-core` owns `evtx_reader` (with the `evtx` dependency) and the
-shared regression vocabulary; `sigma-regression` handles `info.yml` and
-`sigmacatch-output-regression` writes the sets. `regressiondata-check` reuses
-the core modules with `linux-audit-parser` according to each entry's `LogType`.
+`sigmacatch-core` (`common/core`) owns the `exchange` data models, `evtx_reader`
+and the shared regression vocabulary; `sigmacatch-detection` (`detection/`)
+owns the engine; `sigmacatch-runner` (`runner/`) owns the loop.
+`sigma-regression` handles `info.yml`, and `sigmacatch-output-regression`
+(`persist/regression`) writes the sets. `regressiondata-check` reuses the
+detection engine plus the common modules according to each entry's `LogType`.
