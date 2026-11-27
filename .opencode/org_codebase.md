@@ -483,14 +483,15 @@ Decisions actually taken:
   Only directories moved; every `use` stayed stable.
 - **`to_hex` made public** in `sigmacatch-core::util`, shared by rule
   fingerprinting and the engine.
-- **Not done: `RuleProvider`.** The engine still constructs from
-  `sigmacatch_core::rule::SigmahqRules`. Since `rule` now lives in the common
-  crate, this is a service dependency inside the common layer rather than a
-  cross-block leak. Revisit only if the engine must be fed rules from outside
-  the SigmaHQ corpus model.
+- **`RuleProvider` implemented.** The trait lives in
+  `sigmacatch-core::rule` (the only legal direction: `detection → core`, so the
+  trait cannot live in `detection` without a cycle). `SigmahqRules` implements
+  it; `DetectionEngine` now takes `&dyn RuleProvider` for construction,
+  reload, retirement and HIR cache keys. The engine no longer names the
+  concrete corpus type outside its tests.
 - **`config::apply_collector_product_default` made public** so the runner can
   apply collector defaults.
-- **Kernel sensors grouped under `driver/`.** `sensor/windows/` is the KMDF
+- **Kernel sensors grouped under `sensor/`.** `sensor/windows/` is the KMDF
   workspace and `sensor/ebpf/` the nightly probe; both are excluded from the
   root workspace. `sensor/windows/protocol/` stays nested inside the Windows
   workspace (which declares `[workspace] members = ["protocol"]`) and is also
