@@ -19,8 +19,8 @@ compiled, available input runs in parallel.
 The cargo workspace has 20 members: the binary, the common library, the
 detection engine, the runner, one crate per collector and per persist backend,
 the git and regression crates, and the shared driver-protocol crate. The
-nightly-only eBPF probes (`sigmacatch/ebpf`) and the Windows kernel driver
-(`sigmacatch/driver`) are built outside it. The tree and each crate's role are
+nightly-only eBPF probes (`driver/ebpf`) and the Windows kernel driver
+(`driver/windows`) are built outside it. The tree and each crate's role are
 in [Layout](dev/layout.md) and [Architecture](dev/architecture.md).
 
 ## Quick start

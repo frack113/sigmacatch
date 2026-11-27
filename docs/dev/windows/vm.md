@@ -1,7 +1,7 @@
 # Windows dev VM (`sigmacatch-dev`)
 
 A QEMU VM dedicated to building and testing the KMDF kernel driver
-(`sigmacatch/driver/`) without pushing to GitHub. The CI (`Driver` workflow)
+(`driver/windows/`) without pushing to GitHub. The CI (`Driver` workflow)
 stays the green gate; this VM gives a ~2 min local build loop.
 
 ## What it is

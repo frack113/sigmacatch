@@ -84,7 +84,7 @@ On macOS the `macos` feature selects the single Endpoint Security collector
 (`macos-es`): the native `endpoint-sec` client when the binary is entitled,
 Apple's `eslogger` otherwise — see [macOS collector](../dev/collectors/macos.md).
 
-The kernel driver (`sigmacatch/driver`, a separate test-signed build) is
+The kernel driver (`driver/windows`, a separate test-signed build) is
 detected at startup by opening `\\.\sigmacatch`, and only one process source
 runs at a time so nothing is reported twice. The driver owns process, file,
 image, pipe, thread and registry-rename events; the ETW main session still

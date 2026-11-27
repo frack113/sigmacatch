@@ -16,7 +16,7 @@ bails at startup.
 The `sysmon` and `ebpf` features add a dedicated collector:
 
 - **Sysmon eBPF (feature `ebpf`)** — embedded Aya probes
-  (`sigmacatch/ebpf`, nightly+bpf-linker, excluded from workspace). Coverage includes
+  (`driver/ebpf`, nightly+bpf-linker, excluded from workspace). Coverage includes
   process creation/termination (EID 1/5), writes (EID 2, regular files only), network
   connect/accept/listen (EID 3/500), image load (EID 6), process access (EID 10), file
   create/delete (EID 11/23), pipe creation (EID 17), DNS query/response (EID 22/508),
