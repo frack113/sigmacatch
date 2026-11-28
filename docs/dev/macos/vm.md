@@ -17,6 +17,18 @@ analogue of the [Windows dev VM](../windows/vm.md).
 - Boot script `sigmacatch-macos-boot.sh` (8 GiB RAM, 8 vCPU, monitor on
   `unix:/tmp/opencode/macos-monitor.sock`, SSH forward `tcp/2222 → 22`).
 - A local guest account with an SSH key in `authorized_keys`.
+- **A Rust toolchain inside the guest**: `rustc`/`cargo` 1.100.0 on
+  `stable-x86_64-apple-darwin`, Xcode CommandLineTools (Apple clang 21). The
+  guest builds, lints and tests the `macos` feature itself — `cargo build
+  --locked --target x86_64-apple-darwin -p sigmacatch --no-default-features
+  --features macos --all-targets`, `cargo clippy --all-targets
+  --no-default-features --features macos -- -W warnings`, `cargo test --locked
+  -p sigmacatch --no-default-features --features macos`, i.e. the same commands
+  as the macOS CI jobs. `clippy` and `rustfmt` are separate components:
+  `rustup component add clippy rustfmt`. A macOS binary cannot be produced from
+  a Linux host — no Apple SDK, no linker — so this guest is the only local
+  alternative to the macOS CI jobs; the Endpoint Security *runtime* still
+  needs root and an interactive TCC approval (see [Build](../build.md)).
 - Auto-updates fully locked (system and user plists: check/download/install/
   critical all false). Re-verify the locks after any update attempt — a
   Sequoia VM got force-upgraded to Tahoe despite the locks.

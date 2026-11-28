@@ -77,9 +77,10 @@ Windows host (or the `Driver` GitHub workflow):
 
 ```pwsh
 # WDK 10.0.22621 or newer, LLVM 17, Visual Studio with the C++ workload
-cargo build --release --target x86_64-pc-windows-msvc
+cargo build --locked --release --target x86_64-pc-windows-msvc
 ```
 
+The workspace ships a `Cargo.lock` (kept separate from the root one; `--locked` matches CI).
 The `wdk-build` build script configures linking against `ntoskrnl`, `wdfldr`
 and friends; the workspace metadata in `Cargo.toml` declares KMDF 1.33.
 
