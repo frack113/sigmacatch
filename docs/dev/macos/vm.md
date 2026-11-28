@@ -35,6 +35,24 @@ analogue of the [Windows dev VM](../windows/vm.md).
   critical all false). Re-verify the locks after any update attempt — a
   Sequoia VM got force-upgraded to Tahoe despite the locks.
 
+### arm64 is CI-only
+
+There is no usable arm64 macOS QEMU guest on this x86_64 host:
+
+- QEMU's [`vmapple`](https://www.qemu.org/docs/master/system/arm/vmapple.html)
+  machine needs an Apple Silicon host and a macOS 12 Virtualization.framework
+  guest; newer guests are unsupported, and the QEMU build here does not include
+  the machine.
+- [`cylance/macos-arm64-emulation`](https://github.com/cylance/macos-arm64-emulation)
+  boots an arm64e kernel/ramdisk on x86_64 (QEMU 5.1.0), not a full macOS
+  userland or a toolchain.
+- UTM, Tart, VirtualBuddy and Anka need Apple Silicon for macOS guests;
+  [UTM](https://getutm.app/) and [Tart](https://github.com/openai/tart) use
+  Virtualization.framework. OSX-KVM and Docker-OSX are x86_64-only.
+
+The `macos-latest` CI job builds, lints and tests the arm64 target natively;
+this x86_64 guest remains the local x86_64 test box.
+
 ## The settings that are load-bearing
 
 ### SMC device must stay disabled
