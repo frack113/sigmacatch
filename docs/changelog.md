@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - macOS: when `eslogger` exits before the capture is stopped, the backend now reports it as an error carrying the exit status and its stderr (entitlement/permission messages) instead of blocking on the closed stream.
+- Detection: a rule matching on an `|expand` placeholder (`Attributes|contains|expand: '%known_cdcs%'`) is rejected at load time and skipped with a warning naming the rule and its file. It used to reach the engine, where rsigma-eval fills the placeholder from the event at match time — a missing field becomes `""`, `contains ""` matches every value, and `not filter` then hides every hit, so the rule silently never fired. SigmaHQ's `rules-placeholder` bucket and the CVE-2026-54121 ADCS rules are out of the evaluated set (27 of 3804 rules on the current corpus); the embedded pipelines gain a priority-0 `value_placeholders` transformation. (#129)
+- Validation: `--dry-run` lists every rule the engine rejects, with its path and reason, and still exits 0; a warm start from the HIR cache replays the policy so the report stays complete on later runs. (#129)
 
 ## [0.7.0] - 2026-11-15
 
