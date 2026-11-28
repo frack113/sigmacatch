@@ -35,7 +35,11 @@ sigmacatch [OPTIONS]
 
 `--dry-run` runs **before** logger init: it creates neither `config.yaml`
 nor `logs/`, skips git validation (author/email/SSH key) and only loads the
-rules from `./sigma` + builds the detection engine.
+rules from `./sigma` + builds the detection engine. Rules the engine rejects
+cannot be detected, so the summary lists them individually — today that means
+an unresolved `|expand` placeholder (see
+[troubleshooting](troubleshooting/run.md#a-rule-is-skipped-for-an-unresolved-expand-placeholder)) —
+and the run still exits 0: one rejected rule must not hide the rest.
 
 ## `--evtx` — one-shot EVTX input (single run)
 

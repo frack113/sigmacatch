@@ -2484,7 +2484,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sigma-regression"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "serde",
@@ -2497,7 +2497,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2528,7 +2528,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2556,7 +2556,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-detection"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "rayon",
  "rsigma-eval",
@@ -2573,11 +2573,11 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-driver-protocol"
-version = "0.8.0"
+version = "0.9.0"
 
 [[package]]
 name = "sigmacatch-input-auditd"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2591,7 +2591,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-input-ebpf"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2610,7 +2610,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-input-etw"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2624,7 +2624,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-input-etw-common"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "md-5",
@@ -2635,7 +2635,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-input-etw-driver"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2651,7 +2651,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-input-evtx"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "sigmacatch-core",
@@ -2663,7 +2663,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-input-macos"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2679,7 +2679,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-input-syslog"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2693,7 +2693,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-input-sysmon"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2707,7 +2707,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-input-tail"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "sigmacatch-core",
@@ -2717,7 +2717,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-input-winevt"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "sigmacatch-core",
@@ -2728,7 +2728,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-output-evtx"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "crc32fast",
@@ -2744,7 +2744,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-output-regression"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "serde_json",
@@ -2760,7 +2760,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-repo"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2782,7 +2782,7 @@ dependencies = [
 
 [[package]]
 name = "sigmacatch-runner"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",

@@ -61,6 +61,23 @@ branch (a still-open PR).
 
 **Fix:** `--all-rules` disables the skip set for the run.
 
+## A rule is skipped for an unresolved `|expand` placeholder
+
+**Symptom:** startup logs `Skipping rule '<title>' (<path>): unresolved
+|expand placeholder, and sigmacatch ships no placeholder variables`.
+
+**Cause:** the rule matches on a Sigma placeholder (`%name%` with the
+`|expand` modifier) and no pipeline defines that variable. Left to
+rsigma-eval, the placeholder would be filled from the event at match time —
+a missing field becomes `""`, `contains ""` matches every value, and a `not
+filter` then hides every hit. The Sigma specification requires a tool that
+cannot resolve a placeholder to reject the rule, so the rule is skipped
+instead of silently mis-matching; the rest of the rule set loads normally.
+
+**Fix:** nothing on the sigmacatch side. SigmaHQ's `rules-placeholder`
+bucket is written this way on purpose: those rules need a pipeline that
+defines their variables (`vars:` on a `value_placeholders` transformation).
+
 ## A rule stops being re-captured after failures
 
 **Cause:** after `regression.max_failed_cycles` (default 3) consecutive

@@ -5,7 +5,9 @@
 //! rules, then evaluating events. Consumes any [`RuleProvider`] in read-only
 //! mode; the concrete `SigmahqRules` corpus is one implementation, not a
 //! dependency of the engine. No filtering, no skip sets — just the bare
-//! essentials for testing and validation.
+//! essentials for testing and validation. A rule that cannot be evaluated at
+//! all (an `|expand` placeholder no pipeline resolves) is rejected at load time
+//! and skipped with a warning, as the Sigma specification requires.
 //!
 //! # Example
 //!
@@ -40,7 +42,7 @@
 
 use rayon::prelude::*;
 use rsigma_eval::event::JsonEvent;
-use rsigma_eval::pipeline::{Pipeline, parse_pipeline};
+use rsigma_eval::pipeline::{Pipeline, PipelineState, parse_pipeline};
 use rsigma_eval::{
     CompiledRule, Engine, EvalError, LogSourceExtractor, apply_pipelines, compile_rule,
 };
@@ -58,6 +60,10 @@ use uuid::Uuid;
 
 mod indexed_event;
 use indexed_event::IndexedEvent;
+
+/// Rejection policy for rules carrying an `|expand` placeholder no pipeline
+/// resolves (see the pipeline's own comment).
+pub const PLACEHOLDER_PIPELINE: &str = include_str!("./pipelines/0_placeholders.yml");
 
 /// Windows logsource add_condition + change_logsource transformations.
 pub const WIN_LOGSOURCE_PIPELINE: &str = include_str!("./pipelines/1_win_logsource.yml");
@@ -79,7 +85,7 @@ const HIR_CACHE_VERSION: &str = "sigmacatch-hir-cache-v2";
 
 /// Derive the cache key for a rule set.
 ///
-/// Versioned tag + the four embedded pipelines (their content feeds the
+/// Versioned tag + the five embedded pipelines (their content feeds the
 /// lowered HIR stored in the blob) + the rule-set fingerprint. rsigma-eval
 /// additionally rejects blobs whose schema version differs from the current
 /// build (`decode_rules`), so a toolchain upgrade invalidates the cache even
@@ -91,6 +97,7 @@ fn hir_cache_key(rules: &dyn RuleProvider) -> String {
     // The lowering code lives in this crate: a new release invalidates the cache.
     hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
     hasher.update(b"\n");
+    hasher.update(PLACEHOLDER_PIPELINE.as_bytes());
     hasher.update(WIN_LOGSOURCE_PIPELINE.as_bytes());
     hasher.update(WIN_FIELD_PIPELINE.as_bytes());
     hasher.update(LNX_LOGSOURCE_PIPELINE.as_bytes());
@@ -128,17 +135,79 @@ fn write_hir_cache(path: &Path, key: &str, blob: &[u8]) {
     }
 }
 
-/// Sigma evaluation engine wrapper: compiled rule set + per-platform
-/// pipelines + a small FIFO of pending events and alerts.
+/// The embedded pipelines, parsed once and cloned per engine rebuild.
+struct Pipelines {
+    /// Rules whose `|expand` placeholders are unresolved are rejected here.
+    placeholders: Pipeline,
+    win_logsource: Pipeline,
+    win_field: Pipeline,
+    /// Linux-specific pipelines for Sysmon-for-Linux events (product: linux).
+    lnx_logsource: Pipeline,
+    lnx_field: Pipeline,
+}
+
+impl Pipelines {
+    /// Parse the five embedded pipelines, in `priority` order.
+    fn parse() -> Result<Self, DetectionError> {
+        Ok(Self {
+            placeholders: parse_embedded_pipeline("placeholders", PLACEHOLDER_PIPELINE)?,
+            win_logsource: parse_embedded_pipeline("win_logsource", WIN_LOGSOURCE_PIPELINE)?,
+            win_field: parse_embedded_pipeline("win_field", WIN_FIELD_PIPELINE)?,
+            lnx_logsource: parse_embedded_pipeline("lnx_logsource", LNX_LOGSOURCE_PIPELINE)?,
+            lnx_field: parse_embedded_pipeline("lnx_field", LNX_FIELD_PIPELINE)?,
+        })
+    }
+
+    /// The pipelines in the order [`apply_pipelines`] must see them.
+    fn ordered(&self) -> [&Pipeline; 5] {
+        [
+            &self.placeholders,
+            &self.win_logsource,
+            &self.win_field,
+            &self.lnx_logsource,
+            &self.lnx_field,
+        ]
+    }
+
+    /// Why the placeholder policy rejects `rule` — it carries an `|expand`
+    /// placeholder that no pipeline variable resolves — or `None` when the
+    /// policy accepts it.
+    ///
+    /// Replays the policy pipeline on a clone instead of matching the text of
+    /// the error rsigma-eval returns, so the two cannot disagree.
+    fn rejection(&self, rule: &SigmaRule) -> Option<EvalError> {
+        self.placeholders
+            .apply(&mut rule.clone(), &mut PipelineState::default())
+            .err()
+    }
+}
+
+/// Parse one embedded pipeline, naming it in the error.
+fn parse_embedded_pipeline(name: &'static str, yaml: &str) -> Result<Pipeline, DetectionError> {
+    parse_pipeline(yaml).map_err(|source| DetectionError::Pipeline { name, source })
+}
+
+/// A rule dropped at build time because it cannot be evaluated: it matches on
+/// an `|expand` placeholder that no pipeline variable resolves.
+#[derive(Debug)]
+pub struct SkippedRule {
+    /// Rule title, as written in the rule.
+    pub title: String,
+    /// Source file, when the provider knows the rule id.
+    pub path: Option<PathBuf>,
+    /// Why rsigma-eval rejected it — names the placeholder and the rule.
+    pub reason: String,
+}
+
+/// Sigma evaluation engine wrapper: compiled rule set + the embedded pipelines
+/// + a small FIFO of pending events and alerts.
 pub struct DetectionEngine {
     engine: Engine,
-    /// Cached parsed pipelines — cloned (not re-parsed) on reload_rules to
+    /// Cached parsed pipelines — cloned (not re-parsed) on `reload_rules` to
     /// avoid YAML parsing overhead each cycle.
-    win_logsource_pipeline: Pipeline,
-    win_field_pipeline: Pipeline,
-    /// Linux-specific pipelines for Sysmon-for-Linux events (product: linux).
-    lnx_logsource_pipeline: Pipeline,
-    lnx_field_pipeline: Pipeline,
+    pipelines: Pipelines,
+    /// Rules left out of `engine` by the placeholder policy.
+    skipped_rules: Vec<SkippedRule>,
     events: Vec<Event>,
     alerts: Vec<Alert>,
     stats: EngineStats,
@@ -193,10 +262,10 @@ pub enum DetectionError {
 /// `Engine::add_rules` instead.
 fn add_rules_parallel(
     engine: &mut Engine,
-    pipelines: &[&Pipeline],
+    pipelines: &Pipelines,
     rules: &[SigmaRule],
 ) -> Vec<(usize, EvalError)> {
-    let mut ordered: Vec<Pipeline> = pipelines.iter().map(|p| (*p).clone()).collect();
+    let mut ordered: Vec<Pipeline> = pipelines.ordered().into_iter().cloned().collect();
     ordered.sort_by_key(|p| p.priority);
 
     let results: Vec<Result<CompiledRule, EvalError>> = rules
@@ -220,44 +289,79 @@ fn add_rules_parallel(
     errors
 }
 
-impl DetectionEngine {
-    /// Parse the four platform pipelines and create an engine.
-    /// Returns (engine, win_logsource, win_field, lnx_logsource, lnx_field).
-    fn create_engine_with_pipelines(
-        engine_config: &EngineConfig,
-    ) -> Result<(Engine, Pipeline, Pipeline, Pipeline, Pipeline), DetectionError> {
-        let win_logsource =
-            parse_pipeline(WIN_LOGSOURCE_PIPELINE).map_err(|source| DetectionError::Pipeline {
-                name: "win_logsource",
-                source,
-            })?;
-        let win_field =
-            parse_pipeline(WIN_FIELD_PIPELINE).map_err(|source| DetectionError::Pipeline {
-                name: "win_field",
-                source,
-            })?;
-        let lnx_logsource =
-            parse_pipeline(LNX_LOGSOURCE_PIPELINE).map_err(|source| DetectionError::Pipeline {
-                name: "lnx_logsource",
-                source,
-            })?;
-        let lnx_field =
-            parse_pipeline(LNX_FIELD_PIPELINE).map_err(|source| DetectionError::Pipeline {
-                name: "lnx_field",
-                source,
-            })?;
-
-        let engine = Self::create_engine(
-            &win_logsource,
-            &win_field,
-            &lnx_logsource,
-            &lnx_field,
-            engine_config,
-        )?;
-
-        Ok((engine, win_logsource, win_field, lnx_logsource, lnx_field))
+/// Split the load errors into genuine failures and rules the placeholder
+/// policy rejects, building a [`SkippedRule`] for each rejection.
+///
+/// A rule whose `|expand` placeholder no pipeline resolves is rejected at load
+/// time, as the Sigma specification requires (#129). That is a skip, not a
+/// compile failure: one such upstream rule must not stop the engine.
+fn split_placeholder_rejections(
+    errors: Vec<(usize, EvalError)>,
+    rules: &dyn RuleProvider,
+    pipelines: &Pipelines,
+) -> (Vec<(usize, EvalError)>, Vec<SkippedRule>) {
+    let mut failures = Vec::new();
+    let mut skipped = Vec::new();
+    for (idx, error) in errors {
+        let rule = &rules.rules()[idx];
+        match pipelines.rejection(rule) {
+            Some(_) => skipped.push(skipped_rule(rules, rule, error.to_string())),
+            None => failures.push((idx, error)),
+        }
     }
+    (failures, skipped)
+}
 
+/// Replay the placeholder policy over every rule.
+///
+/// A warm start loads a HIR blob that already excludes the rejected rules, so
+/// no load error reveals them; without this scan the skip would be silent on
+/// every run after the first.
+fn scan_placeholder_rejections(
+    rules: &dyn RuleProvider,
+    pipelines: &Pipelines,
+) -> Vec<SkippedRule> {
+    rules
+        .rules()
+        .iter()
+        .filter_map(|rule| {
+            let error = pipelines.rejection(rule)?;
+            Some(skipped_rule(rules, rule, error.to_string()))
+        })
+        .collect()
+}
+
+/// Describe one rule left out at load time.
+fn skipped_rule(rules: &dyn RuleProvider, rule: &SigmaRule, reason: String) -> SkippedRule {
+    SkippedRule {
+        title: rule.title.clone(),
+        path: rule_source(rules, rule).cloned(),
+        reason,
+    }
+}
+
+/// Report one rule left out at load time.
+fn warn_skipped_rule(rule: &SkippedRule) {
+    let source = rule
+        .path
+        .as_ref()
+        .map_or_else(|| "<unknown path>".to_string(), |p| p.display().to_string());
+    tracing::warn!(
+        "Skipping rule '{}' ({source}): unresolved |expand placeholder, and sigmacatch \
+         ships no placeholder variables ({})",
+        rule.title,
+        rule.reason,
+    );
+}
+
+/// Source file of `rule`, when the provider knows its id.
+fn rule_source<'a>(rules: &'a dyn RuleProvider, rule: &SigmaRule) -> Option<&'a PathBuf> {
+    rules
+        .rule_paths()
+        .get(&Uuid::parse_str(rule.id.as_deref()?).ok()?)
+}
+
+impl DetectionEngine {
     /// Compile `rules` and load the embedded platform pipelines.
     pub fn new(rules: &dyn RuleProvider) -> Result<Self, DetectionError> {
         Self::new_with_hir_cache(rules, None)
@@ -286,26 +390,24 @@ impl DetectionEngine {
         hir_cache_path: Option<PathBuf>,
         engine_config: &EngineConfig,
     ) -> Result<Self, DetectionError> {
-        let (mut engine, win_logsource, win_field, lnx_logsource, lnx_field) =
-            Self::create_engine_with_pipelines(engine_config)?;
+        let pipelines = Pipelines::parse()?;
+        let mut engine = Self::create_engine(&pipelines, engine_config);
 
         // Warm start: the loaded blob must be applied to a throwaway engine so
         // a mid-blob failure cannot leave the main engine half-populated (which
         // would then duplicate rules in the cold path below).
         let mut loaded = false;
+        // Rules the placeholder policy rejects, reported after the load path
+        // has run: the cold path reads them off the load errors, the warm path
+        // has to replay the policy.
+        let mut skipped_rules = Vec::new();
         // The key is derived once and reused for the read and the cold write.
         let cache_key = hir_cache_path.as_ref().map(|_| hir_cache_key(rules));
         if let Some(ref cache_path) = hir_cache_path
             && let Some(ref key) = cache_key
             && let Some(blob) = read_hir_cache(cache_path, key)
         {
-            let mut cached = Self::create_engine(
-                &win_logsource,
-                &win_field,
-                &lnx_logsource,
-                &lnx_field,
-                engine_config,
-            )?;
+            let mut cached = Self::create_engine(&pipelines, engine_config);
             match cached.load_hir(&blob) {
                 Ok(()) => {
                     engine = cached;
@@ -334,12 +436,10 @@ impl DetectionEngine {
             let errors = if hir_cache_path.is_some() {
                 engine.add_rules(rules.rules())
             } else {
-                add_rules_parallel(
-                    &mut engine,
-                    &[&win_logsource, &win_field, &lnx_logsource, &lnx_field],
-                    rules.rules(),
-                )
+                add_rules_parallel(&mut engine, &pipelines, rules.rules())
             };
+            let (errors, skipped) = split_placeholder_rejections(errors, rules, &pipelines);
+            skipped_rules = skipped;
             if !errors.is_empty() {
                 for (idx, err) in &errors {
                     tracing::error!("Rule at index {idx} failed to compile: {err}");
@@ -359,15 +459,20 @@ impl DetectionEngine {
             }
         }
 
+        if loaded {
+            skipped_rules = scan_placeholder_rejections(rules, &pipelines);
+        }
+        for rule in &skipped_rules {
+            warn_skipped_rule(rule);
+        }
+
         let rule_paths = Arc::new(rules.rule_paths().clone());
         let rule_id_map = Self::build_rule_id_map(&rule_paths);
 
         Ok(Self {
             engine,
-            win_logsource_pipeline: win_logsource,
-            win_field_pipeline: win_field,
-            lnx_logsource_pipeline: lnx_logsource,
-            lnx_field_pipeline: lnx_field,
+            pipelines,
+            skipped_rules,
             events: Vec::new(),
             alerts: Vec::new(),
             stats: EngineStats::default(),
@@ -383,19 +488,17 @@ impl DetectionEngine {
     /// handful of bad rules should not prevent checking the rest.
     ///
     /// Returns the engine plus a vector of (rule_index, error) for rules that
-    /// failed to compile, allowing callers to surface the failures.
+    /// failed to compile, allowing callers to surface the failures. Rules the
+    /// placeholder policy rejects are reported here too: the caller wants to
+    /// know they will not be evaluated.
     pub fn new_lenient(
         rules: &dyn RuleProvider,
     ) -> Result<(Self, Vec<(usize, DetectionError)>), DetectionError> {
         let engine_config = EngineConfig::default();
-        let (mut engine, win_logsource, win_field, lnx_logsource, lnx_field) =
-            Self::create_engine_with_pipelines(&engine_config)?;
+        let pipelines = Pipelines::parse()?;
+        let mut engine = Self::create_engine(&pipelines, &engine_config);
 
-        let errors = add_rules_parallel(
-            &mut engine,
-            &[&win_logsource, &win_field, &lnx_logsource, &lnx_field],
-            rules.rules(),
-        );
+        let errors = add_rules_parallel(&mut engine, &pipelines, rules.rules());
         let failed: Vec<(usize, DetectionError)> = errors
             .into_iter()
             .map(|(idx, err)| {
@@ -416,10 +519,8 @@ impl DetectionEngine {
         Ok((
             Self {
                 engine,
-                win_logsource_pipeline: win_logsource,
-                win_field_pipeline: win_field,
-                lnx_logsource_pipeline: lnx_logsource,
-                lnx_field_pipeline: lnx_field,
+                pipelines,
+                skipped_rules: Vec::new(),
                 events: Vec::new(),
                 alerts: Vec::new(),
                 stats: EngineStats::default(),
@@ -435,13 +536,7 @@ impl DetectionEngine {
     /// Swap in a freshly compiled rule set without re-parsing pipelines.
     pub fn reload_rules(&mut self, rules: &dyn RuleProvider) -> Result<(), DetectionError> {
         // Reuse cached pipelines (clone, not re-parse YAML) for the new engine.
-        let mut engine = Self::create_engine(
-            &self.win_logsource_pipeline,
-            &self.win_field_pipeline,
-            &self.lnx_logsource_pipeline,
-            &self.lnx_field_pipeline,
-            &self.engine_config,
-        )?;
+        let mut engine = Self::create_engine(&self.pipelines, &self.engine_config);
 
         // Retain HIR only when a cache path is set, so `save_hir` below can
         // persist the freshly compiled rule set (0.25 keeps rule HIR only on
@@ -453,17 +548,12 @@ impl DetectionEngine {
         let errors = if self.hir_cache_path.is_some() {
             engine.add_rules(rules.rules())
         } else {
-            add_rules_parallel(
-                &mut engine,
-                &[
-                    &self.win_logsource_pipeline,
-                    &self.win_field_pipeline,
-                    &self.lnx_logsource_pipeline,
-                    &self.lnx_field_pipeline,
-                ],
-                rules.rules(),
-            )
+            add_rules_parallel(&mut engine, &self.pipelines, rules.rules())
         };
+        let (errors, skipped_rules) = split_placeholder_rejections(errors, rules, &self.pipelines);
+        for rule in &skipped_rules {
+            warn_skipped_rule(rule);
+        }
         if !errors.is_empty() {
             for (idx, err) in &errors {
                 tracing::warn!("Rule at index {idx} failed to compile: {err}");
@@ -471,6 +561,7 @@ impl DetectionEngine {
         }
 
         self.engine = engine;
+        self.skipped_rules = skipped_rules;
         let rule_paths = rules.rule_paths().clone();
         self.rule_id_map = Self::build_rule_id_map(&rule_paths);
         self.rule_paths = Arc::new(rule_paths);
@@ -503,13 +594,7 @@ impl DetectionEngine {
         }
         let retired_ids: HashSet<String> = retired.iter().map(Uuid::to_string).collect();
 
-        let mut engine = Self::create_engine(
-            &self.win_logsource_pipeline,
-            &self.win_field_pipeline,
-            &self.lnx_logsource_pipeline,
-            &self.lnx_field_pipeline,
-            &self.engine_config,
-        )?;
+        let mut engine = Self::create_engine(&self.pipelines, &self.engine_config);
         engine.extend_compiled_rules(
             self.engine
                 .rules()
@@ -572,25 +657,18 @@ impl DetectionEngine {
     }
 
     /// Create a fresh rsigma-eval Engine with pipelines + optimizations.
-    fn create_engine(
-        win_logsource: &Pipeline,
-        win_field: &Pipeline,
-        lnx_logsource: &Pipeline,
-        lnx_field: &Pipeline,
-        engine_config: &EngineConfig,
-    ) -> Result<Engine, DetectionError> {
+    fn create_engine(pipelines: &Pipelines, engine_config: &EngineConfig) -> Engine {
         let mut engine = Engine::new();
 
         // Toggles that are NOT serialized by save_hir: applying them on the
         // warm path matters, because load_hir → rebuild_index reads them.
         Self::configure_optimizations(&mut engine, engine_config);
 
-        engine.add_pipeline(win_logsource.clone());
-        engine.add_pipeline(win_field.clone());
-        engine.add_pipeline(lnx_logsource.clone());
-        engine.add_pipeline(lnx_field.clone());
+        for pipeline in pipelines.ordered() {
+            engine.add_pipeline(pipeline.clone());
+        }
 
-        Ok(engine)
+        engine
     }
 
     /// Apply the performance-critical engine toggles. Must run before
@@ -622,6 +700,12 @@ impl DetectionEngine {
     /// Number of compiled rules currently loaded.
     pub fn rule_count(&self) -> usize {
         self.engine.rule_count()
+    }
+
+    /// Rules left out at build time because they cannot be evaluated: they
+    /// match on an `|expand` placeholder that no pipeline resolves.
+    pub fn skipped_rules(&self) -> &[SkippedRule] {
+        &self.skipped_rules
     }
 
     /// Resolve the Windows event channels to collect, reading the
@@ -1683,6 +1767,40 @@ detection:
   condition: selection
 "#;
 
+    /// The rule from #129: an `|expand` filter whose `%known_cdcs%`
+    /// placeholder no pipeline resolves.
+    const PLACEHOLDER_RULE_YAML: &str = r#"title: ADCS CDC Chase Certificate Request
+id: cccccccc-cccc-4ccc-9ccc-cccccccccccc
+status: test
+author: Test Author
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4886
+    Attributes|contains: 'cdc:'
+  filter_main_known_cdcs:
+    Attributes|contains|expand: '%known_cdcs%'
+  condition: selection and not 1 of filter_main_*
+"#;
+
+    /// `%...%` is literal text unless the value carries `|expand`; SigmaHQ
+    /// ships such values (`'%systemroot%\system32\w32time.dll'`), so the
+    /// placeholder policy must not touch them.
+    const LITERAL_PERCENT_RULE_YAML: &str = r#"title: Literal percent value
+id: dddddddd-dddd-4ddd-9ddd-dddddddddddd
+status: test
+author: Test Author
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    TargetObject|endswith: '%systemroot%\system32\w32time.dll'
+  condition: selection
+"#;
+
     fn rules_from(entries: &[(&str, &str)]) -> SigmahqRules {
         let dir = tempfile::tempdir().unwrap();
         let rules_dir = dir.path().join("sigma").join("rules");
@@ -1896,5 +2014,95 @@ detection:
         // Known rule + matching event → explanation.
         let explanation = engine.explain_rule(&known, &event).unwrap();
         assert!(explanation.is_object());
+    }
+
+    /// #129: an `|expand` placeholder no pipeline resolves would be filled
+    /// from the event at match time and silently disable the filter. The rule
+    /// is rejected at load time instead — skipped, not fatal for the engine.
+    #[test]
+    fn test_unresolved_expand_placeholder_rule_is_skipped() {
+        let rules = rules_from(&[
+            ("good.yml", MINIMAL_RULE_YAML),
+            ("placeholder.yml", PLACEHOLDER_RULE_YAML),
+        ]);
+
+        let engine = DetectionEngine::new(&rules).expect("one placeholder rule must not abort");
+        assert_eq!(engine.rule_count(), 1);
+        assert_eq!(rules.len(), 2);
+
+        let skipped = engine.skipped_rules();
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].title, "ADCS CDC Chase Certificate Request");
+        assert!(skipped[0].reason.contains("known_cdcs"));
+        assert!(
+            skipped[0]
+                .path
+                .as_ref()
+                .is_some_and(|p| p.ends_with("placeholder.yml")),
+            "the skip report must name the source file: {:?}",
+            skipped[0].path
+        );
+    }
+
+    /// The HIR-cache path delegates the load to rsigma-eval; the rejection
+    /// must hold there too (and the rejected rule must stay out of the cache).
+    #[test]
+    fn test_unresolved_expand_placeholder_rule_is_skipped_with_hir_cache() {
+        let rules = rules_from(&[
+            ("good.yml", MINIMAL_RULE_YAML),
+            ("placeholder.yml", PLACEHOLDER_RULE_YAML),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("engine.hir");
+
+        let cold = DetectionEngine::new_with_hir_cache(&rules, Some(cache.clone())).unwrap();
+        assert_eq!(cold.rule_count(), 1);
+        assert_eq!(cold.skipped_rules().len(), 1);
+
+        // Warm start from the blob written by the cold run: still one rule,
+        // and the blob carries no error that would reveal the skip, so the
+        // policy has to be replayed.
+        let warm = DetectionEngine::new_with_hir_cache(&rules, Some(cache)).unwrap();
+        assert_eq!(warm.rule_count(), 1);
+        assert_eq!(warm.skipped_rules().len(), 1);
+        assert_eq!(
+            warm.skipped_rules()[0].title,
+            "ADCS CDC Chase Certificate Request"
+        );
+    }
+
+    #[test]
+    fn test_unresolved_expand_placeholder_rule_survives_reload() {
+        let good = rules_from(&[("good.yml", MINIMAL_RULE_YAML)]);
+        let mut engine = DetectionEngine::new(&good).unwrap();
+        assert_eq!(engine.rule_count(), 1);
+
+        let both = rules_from(&[
+            ("good.yml", MINIMAL_RULE_YAML),
+            ("placeholder.yml", PLACEHOLDER_RULE_YAML),
+        ]);
+        engine.reload_rules(&both).expect("reload must not fail");
+        assert_eq!(engine.rule_count(), 1);
+        assert_eq!(engine.skipped_rules().len(), 1);
+    }
+
+    #[test]
+    fn test_lenient_engine_reports_placeholder_rule() {
+        let rules = rules_from(&[
+            ("good.yml", MINIMAL_RULE_YAML),
+            ("placeholder.yml", PLACEHOLDER_RULE_YAML),
+        ]);
+        let (engine, failed) = DetectionEngine::new_lenient(&rules).unwrap();
+        assert_eq!(engine.rule_count(), 1);
+        assert_eq!(failed.len(), 1);
+    }
+
+    /// The policy only reads values that carry `|expand`: literal percent
+    /// signs stay loadable, as in the SigmaHQ corpus.
+    #[test]
+    fn test_literal_percent_value_without_expand_still_loads() {
+        let rules = rules_from(&[("literal.yml", LITERAL_PERCENT_RULE_YAML)]);
+        let engine = DetectionEngine::new(&rules).unwrap();
+        assert_eq!(engine.rule_count(), 1);
     }
 }
