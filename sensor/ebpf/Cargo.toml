@@ -20,7 +20,7 @@ default = ["ebpf"]
 ebpf = []
 
 [dependencies]
-aya-ebpf = "0.2"
+aya-ebpf = "0.3"
 bytemuck = { version = "1", default-features = false, features = ["derive"] }
 
 [[bin]]
