@@ -169,21 +169,34 @@ impl Pipelines {
         ]
     }
 
-    /// Whether the placeholder policy rejects `rule`, i.e. it carries an
-    /// `|expand` placeholder that no pipeline variable resolves.
+    /// Why the placeholder policy rejects `rule` — it carries an `|expand`
+    /// placeholder that no pipeline variable resolves — or `None` when the
+    /// policy accepts it.
     ///
     /// Replays the policy pipeline on a clone instead of matching the text of
     /// the error rsigma-eval returns, so the two cannot disagree.
-    fn rejects(&self, rule: &SigmaRule) -> bool {
+    fn rejection(&self, rule: &SigmaRule) -> Option<EvalError> {
         self.placeholders
             .apply(&mut rule.clone(), &mut PipelineState::default())
-            .is_err()
+            .err()
     }
 }
 
 /// Parse one embedded pipeline, naming it in the error.
 fn parse_embedded_pipeline(name: &'static str, yaml: &str) -> Result<Pipeline, DetectionError> {
     parse_pipeline(yaml).map_err(|source| DetectionError::Pipeline { name, source })
+}
+
+/// A rule dropped at build time because it cannot be evaluated: it matches on
+/// an `|expand` placeholder that no pipeline variable resolves.
+#[derive(Debug)]
+pub struct SkippedRule {
+    /// Rule title, as written in the rule.
+    pub title: String,
+    /// Source file, when the provider knows the rule id.
+    pub path: Option<PathBuf>,
+    /// Why rsigma-eval rejected it — names the placeholder and the rule.
+    pub reason: String,
 }
 
 /// Sigma evaluation engine wrapper: compiled rule set + the embedded pipelines
@@ -193,6 +206,8 @@ pub struct DetectionEngine {
     /// Cached parsed pipelines — cloned (not re-parsed) on `reload_rules` to
     /// avoid YAML parsing overhead each cycle.
     pipelines: Pipelines,
+    /// Rules left out of `engine` by the placeholder policy.
+    skipped_rules: Vec<SkippedRule>,
     events: Vec<Event>,
     alerts: Vec<Alert>,
     stats: EngineStats,
@@ -274,37 +289,69 @@ fn add_rules_parallel(
     errors
 }
 
-/// Drop the load errors raised by the placeholder policy, warning once per
-/// skipped rule, and return the remaining (genuine) errors.
+/// Split the load errors into genuine failures and rules the placeholder
+/// policy rejects, building a [`SkippedRule`] for each rejection.
 ///
 /// A rule whose `|expand` placeholder no pipeline resolves is rejected at load
 /// time, as the Sigma specification requires (#129). That is a skip, not a
-/// compile failure: one such upstream rule must not stop the engine, so it is
-/// logged and left out of the compiled set.
-fn skip_placeholder_rules(
+/// compile failure: one such upstream rule must not stop the engine.
+fn split_placeholder_rejections(
     errors: Vec<(usize, EvalError)>,
     rules: &dyn RuleProvider,
     pipelines: &Pipelines,
-) -> Vec<(usize, EvalError)> {
-    errors
-        .into_iter()
-        .filter(|(idx, error)| {
-            let rule = &rules.rules()[*idx];
-            if !pipelines.rejects(rule) {
-                return true;
-            }
-            let source = rule_source(rules, rule).map_or_else(
-                || "<unknown path>".to_string(),
-                |path| path.display().to_string(),
-            );
-            tracing::warn!(
-                "Skipping rule '{}' ({source}): unresolved |expand placeholder, and sigmacatch \
-                 ships no placeholder variables ({error})",
-                rule.title,
-            );
-            false
+) -> (Vec<(usize, EvalError)>, Vec<SkippedRule>) {
+    let mut failures = Vec::new();
+    let mut skipped = Vec::new();
+    for (idx, error) in errors {
+        let rule = &rules.rules()[idx];
+        match pipelines.rejection(rule) {
+            Some(_) => skipped.push(skipped_rule(rules, rule, error.to_string())),
+            None => failures.push((idx, error)),
+        }
+    }
+    (failures, skipped)
+}
+
+/// Replay the placeholder policy over every rule.
+///
+/// A warm start loads a HIR blob that already excludes the rejected rules, so
+/// no load error reveals them; without this scan the skip would be silent on
+/// every run after the first.
+fn scan_placeholder_rejections(
+    rules: &dyn RuleProvider,
+    pipelines: &Pipelines,
+) -> Vec<SkippedRule> {
+    rules
+        .rules()
+        .iter()
+        .filter_map(|rule| {
+            let error = pipelines.rejection(rule)?;
+            Some(skipped_rule(rules, rule, error.to_string()))
         })
         .collect()
+}
+
+/// Describe one rule left out at load time.
+fn skipped_rule(rules: &dyn RuleProvider, rule: &SigmaRule, reason: String) -> SkippedRule {
+    SkippedRule {
+        title: rule.title.clone(),
+        path: rule_source(rules, rule).cloned(),
+        reason,
+    }
+}
+
+/// Report one rule left out at load time.
+fn warn_skipped_rule(rule: &SkippedRule) {
+    let source = rule
+        .path
+        .as_ref()
+        .map_or_else(|| "<unknown path>".to_string(), |p| p.display().to_string());
+    tracing::warn!(
+        "Skipping rule '{}' ({source}): unresolved |expand placeholder, and sigmacatch \
+         ships no placeholder variables ({})",
+        rule.title,
+        rule.reason,
+    );
 }
 
 /// Source file of `rule`, when the provider knows its id.
@@ -350,6 +397,10 @@ impl DetectionEngine {
         // a mid-blob failure cannot leave the main engine half-populated (which
         // would then duplicate rules in the cold path below).
         let mut loaded = false;
+        // Rules the placeholder policy rejects, reported after the load path
+        // has run: the cold path reads them off the load errors, the warm path
+        // has to replay the policy.
+        let mut skipped_rules = Vec::new();
         // The key is derived once and reused for the read and the cold write.
         let cache_key = hir_cache_path.as_ref().map(|_| hir_cache_key(rules));
         if let Some(ref cache_path) = hir_cache_path
@@ -387,7 +438,8 @@ impl DetectionEngine {
             } else {
                 add_rules_parallel(&mut engine, &pipelines, rules.rules())
             };
-            let errors = skip_placeholder_rules(errors, rules, &pipelines);
+            let (errors, skipped) = split_placeholder_rejections(errors, rules, &pipelines);
+            skipped_rules = skipped;
             if !errors.is_empty() {
                 for (idx, err) in &errors {
                     tracing::error!("Rule at index {idx} failed to compile: {err}");
@@ -407,12 +459,20 @@ impl DetectionEngine {
             }
         }
 
+        if loaded {
+            skipped_rules = scan_placeholder_rejections(rules, &pipelines);
+        }
+        for rule in &skipped_rules {
+            warn_skipped_rule(rule);
+        }
+
         let rule_paths = Arc::new(rules.rule_paths().clone());
         let rule_id_map = Self::build_rule_id_map(&rule_paths);
 
         Ok(Self {
             engine,
             pipelines,
+            skipped_rules,
             events: Vec::new(),
             alerts: Vec::new(),
             stats: EngineStats::default(),
@@ -460,6 +520,7 @@ impl DetectionEngine {
             Self {
                 engine,
                 pipelines,
+                skipped_rules: Vec::new(),
                 events: Vec::new(),
                 alerts: Vec::new(),
                 stats: EngineStats::default(),
@@ -489,7 +550,10 @@ impl DetectionEngine {
         } else {
             add_rules_parallel(&mut engine, &self.pipelines, rules.rules())
         };
-        let errors = skip_placeholder_rules(errors, rules, &self.pipelines);
+        let (errors, skipped_rules) = split_placeholder_rejections(errors, rules, &self.pipelines);
+        for rule in &skipped_rules {
+            warn_skipped_rule(rule);
+        }
         if !errors.is_empty() {
             for (idx, err) in &errors {
                 tracing::warn!("Rule at index {idx} failed to compile: {err}");
@@ -497,6 +561,7 @@ impl DetectionEngine {
         }
 
         self.engine = engine;
+        self.skipped_rules = skipped_rules;
         let rule_paths = rules.rule_paths().clone();
         self.rule_id_map = Self::build_rule_id_map(&rule_paths);
         self.rule_paths = Arc::new(rule_paths);
@@ -635,6 +700,12 @@ impl DetectionEngine {
     /// Number of compiled rules currently loaded.
     pub fn rule_count(&self) -> usize {
         self.engine.rule_count()
+    }
+
+    /// Rules left out at build time because they cannot be evaluated: they
+    /// match on an `|expand` placeholder that no pipeline resolves.
+    pub fn skipped_rules(&self) -> &[SkippedRule] {
+        &self.skipped_rules
     }
 
     /// Resolve the Windows event channels to collect, reading the
@@ -1958,6 +2029,19 @@ detection:
         let engine = DetectionEngine::new(&rules).expect("one placeholder rule must not abort");
         assert_eq!(engine.rule_count(), 1);
         assert_eq!(rules.len(), 2);
+
+        let skipped = engine.skipped_rules();
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].title, "ADCS CDC Chase Certificate Request");
+        assert!(skipped[0].reason.contains("known_cdcs"));
+        assert!(
+            skipped[0]
+                .path
+                .as_ref()
+                .is_some_and(|p| p.ends_with("placeholder.yml")),
+            "the skip report must name the source file: {:?}",
+            skipped[0].path
+        );
     }
 
     /// The HIR-cache path delegates the load to rsigma-eval; the rejection
@@ -1973,10 +2057,18 @@ detection:
 
         let cold = DetectionEngine::new_with_hir_cache(&rules, Some(cache.clone())).unwrap();
         assert_eq!(cold.rule_count(), 1);
+        assert_eq!(cold.skipped_rules().len(), 1);
 
-        // Warm start from the blob written by the cold run: still one rule.
+        // Warm start from the blob written by the cold run: still one rule,
+        // and the blob carries no error that would reveal the skip, so the
+        // policy has to be replayed.
         let warm = DetectionEngine::new_with_hir_cache(&rules, Some(cache)).unwrap();
         assert_eq!(warm.rule_count(), 1);
+        assert_eq!(warm.skipped_rules().len(), 1);
+        assert_eq!(
+            warm.skipped_rules()[0].title,
+            "ADCS CDC Chase Certificate Request"
+        );
     }
 
     #[test]
@@ -1991,6 +2083,7 @@ detection:
         ]);
         engine.reload_rules(&both).expect("reload must not fail");
         assert_eq!(engine.rule_count(), 1);
+        assert_eq!(engine.skipped_rules().len(), 1);
     }
 
     #[test]

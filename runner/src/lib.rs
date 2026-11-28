@@ -685,7 +685,7 @@ fn run_dry(config: &Config) -> Result<()> {
     // the cache instead of always recompiling. A cache that loads cleanly is
     // itself a validation; a rejected one is reported and recompiled.
     let hir_cache_path: Option<PathBuf> = config.hir_cache.as_ref().map(PathBuf::from);
-    DetectionEngine::new_with_options(&rules, hir_cache_path.clone(), &config.engine)?;
+    let engine = DetectionEngine::new_with_options(&rules, hir_cache_path.clone(), &config.engine)?;
     eprintln!(
         "Dry-run OK — {} rules loaded ({} candidates), {} filtered by product, {} by status, {} by level, {} by author",
         stats.rules_loaded,
@@ -697,6 +697,23 @@ fn run_dry(config: &Config) -> Result<()> {
     );
     if let Some(path) = hir_cache_path {
         eprintln!("HIR cache: {}", path.display());
+    }
+    if !engine.skipped_rules().is_empty() {
+        // Not a failure: the specification requires rejecting a rule whose
+        // placeholders cannot be resolved, and the rest of the set still
+        // loads. But such a rule is NOT being detected, so say so.
+        for rule in engine.skipped_rules() {
+            let source = rule.path.as_ref().map_or_else(
+                || "<unknown path>".to_string(),
+                |path| path.display().to_string(),
+            );
+            eprintln!("Skipped rule — {} ({source}): {}", rule.title, rule.reason);
+        }
+        eprintln!(
+            "WARNING — {} rule(s) skipped: unresolved |expand placeholder, and sigmacatch \
+                 ships no placeholder variables; those rules are NOT being detected",
+            engine.skipped_rules().len()
+        );
     }
     if stats.rules_parse_failed > 0 {
         // Not a failure: the remaining rules still load. But rules in the
@@ -967,6 +984,37 @@ level: medium
             run_dry(&too_restrictive).is_err(),
             "0 rules loaded after filtering must bail"
         );
+    }
+
+    /// A rule the placeholder policy rejects is skipped, not fatal — the
+    /// dry-run must still pass and report it (#129).
+    #[tokio::test]
+    async fn run_dry_tolerates_unresolved_placeholder_rule() {
+        let (_tmp, sigma) = make_rule_dir();
+        std::fs::write(
+            sigma.join("rules").join("placeholder.yml"),
+            r#"title: ADCS CDC Chase Certificate Request
+id: cccccccc-cccc-4ccc-9ccc-cccccccccccc
+status: test
+author: Test
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4886
+    Attributes|contains: 'cdc:'
+  filter_main_known_cdcs:
+    Attributes|contains|expand: '%known_cdcs%'
+  condition: selection and not 1 of filter_main_*
+"#,
+        )
+        .unwrap();
+
+        let mut config = Config::default();
+        config.git.sigma_repo_path = sigma.display().to_string();
+
+        run_dry(&config).expect("a placeholder rejection must not fail the dry-run");
     }
 
     #[tokio::test]
