@@ -227,11 +227,19 @@ jobs:
           cargo build --locked --target x86_64-pc-windows-msvc -p sigmacatch --features winevt,evtx
 
   # The macOS binary cannot be linked from Linux (no macOS SDK), so the ES
-  # flavour is built natively on the arm64 macOS runner.
+  # flavour is built natively on both macOS architectures.
   macos:
-    name: macOS arm64 (Endpoint Security)
+    name: macOS ${{ matrix.arch }} (Endpoint Security)
     needs: lint
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
@@ -243,7 +251,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2.9.3
         with:
-          key: macos-${{ hashFiles('**/Cargo.lock') }}
+          key: macos-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}
       - run: cargo clippy --locked --all-targets --no-default-features --features macos -- -W warnings
       - name: Test (macOS Endpoint Security)
         run: cargo test --locked -p sigmacatch --no-default-features --features macos

@@ -28,9 +28,9 @@ analogue of the [Windows dev VM](../windows/vm.md).
   and builds natively. `clippy` and `rustfmt` are separate components:
   `rustup component add clippy rustfmt`. A macOS binary cannot be produced from
   a Linux host — no Apple SDK, no linker — so this guest is the local x86_64
-  alternative to the macOS CI jobs; the arm64 release is covered by CI. The
-  Endpoint Security *runtime* still needs root and an interactive TCC approval
-  (see [Build](../build.md)).
+  alternative to the macOS CI jobs; both the x86_64 and arm64 releases are
+  covered by CI. The Endpoint Security *runtime* still needs root and an
+  interactive TCC approval (see [Build](../build.md)).
 - Auto-updates fully locked (system and user plists: check/download/install/
   critical all false). Re-verify the locks after any update attempt — a
   Sequoia VM got force-upgraded to Tahoe despite the locks.

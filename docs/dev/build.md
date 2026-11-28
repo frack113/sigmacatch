@@ -133,10 +133,11 @@ also run on Linux with the same feature. The ES client and the process-spawning
 code are compiled and tested only on macOS.
 
 The macOS executable cannot be linked from Linux: the `aarch64-apple-darwin`
-linker needs the macOS SDK and its frameworks. The C dependencies (tree-sitter)
-do not cross-compile without that SDK either, so the `macos-latest` CI job is
-the build and test gate; use an Apple silicon Mac for a local build. The release
-archive targets Apple silicon (`aarch64-apple-darwin`).
+and `x86_64-apple-darwin` linkers need the macOS SDK and its frameworks. The C
+dependencies (tree-sitter) do not cross-compile without that SDK either, so the
+macOS CI jobs are the build and test gate; use a Mac for a local build. Releases
+ship two archives, built natively on `macos-latest` (arm64,
+`aarch64-apple-darwin`) and `macos-15-intel` (x86_64, `x86_64-apple-darwin`).
 
 ## Windows cross-compilation (from Linux)
 

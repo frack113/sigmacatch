@@ -87,8 +87,9 @@ create it.
   [Build](../build.md#macos).
 - **Root** — the collector runs under root, same as the Linux auditd path.
 - **CI coverage** — build, test, lint and release jobs run on `macos-latest`
-  (arm64) runners; the release archive targets `aarch64-apple-darwin`. The
-  in-VM build stays the gate for native entitlement behaviour.
+  (arm64) and `macos-15-intel` (x86_64) runners; releases ship
+  `sigmacatch-macos-arm64` and `sigmacatch-macos-x86_64`. The in-VM build
+  stays the gate for native entitlement behaviour.
 
 The `eslogger` backend is verified live on the [dev VM](vm.md): NDJSON
 parsed, events pushed, `product: macos` rules loaded and matching.

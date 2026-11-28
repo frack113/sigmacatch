@@ -129,11 +129,19 @@ jobs:
             sigmacatch-x86_64-pc-windows-msvc.zip
             SHA256SUMS.windows
 
-  # No macOS SDK on the Linux runners: the ES binary is built natively on the
-  # arm64 macOS runner, like the build/test/clippy gates.
+  # No macOS SDK on the Linux runners: the ES binary is built natively on both
+  # macOS architectures, like the build/test/clippy gates.
   build-macos:
-    name: Build macOS executable (arm64)
-    runs-on: macos-latest
+    name: Build macOS executable (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
@@ -151,14 +159,14 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           cp target/release/sigmacatch target/release/regressiondata-check dist/
-          (cd dist && shasum -a 256 *) > SHA256SUMS.macos
-          tar -czf sigmacatch-macos-arm64.tar.gz -C dist .
+          (cd dist && shasum -a 256 *) > SHA256SUMS.macos-${{ matrix.arch }}
+          tar -czf sigmacatch-macos-${{ matrix.arch }}.tar.gz -C dist .
       - uses: actions/upload-artifact@v7.0.2
         with:
-          name: sigmacatch-macos-arm64
+          name: sigmacatch-macos-${{ matrix.arch }}
           path: |
-            sigmacatch-macos-arm64.tar.gz
-            SHA256SUMS.macos
+            sigmacatch-macos-${{ matrix.arch }}.tar.gz
+            SHA256SUMS.macos-${{ matrix.arch }}
 
   github:
     name: Create GitHub release
