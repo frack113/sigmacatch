@@ -2,6 +2,7 @@ name: Lint Rust Code
 
 on:
   push:
+    branches: [main]
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
@@ -25,11 +26,12 @@ jobs:
   fmt:
     name: Format
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+      - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
           components: rustfmt
@@ -38,44 +40,51 @@ jobs:
   clippy:
     name: Clippy (Linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+      - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
           components: clippy
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo clippy --all-targets -- -W warnings
+      - uses: Swatinem/rust-cache@v2.9.3
+      # Lint the Linux collectors, not just the `winevt` stub the default
+      # feature selects on Linux.
+      - run: >
+          cargo clippy --locked --all-targets --no-default-features
+          --features auditd,builtin,sysmon,evtx -- -W warnings
 
   clippy-macos:
     name: Clippy (macOS)
     runs-on: macos-15-intel
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+      - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
           components: clippy
           targets: x86_64-apple-darwin
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           key: clippy-macos-${{ hashFiles('**/Cargo.lock') }}
-      - run: cargo clippy --all-targets --no-default-features --features macos -- -W warnings
+      - run: cargo clippy --locked --all-targets --no-default-features --features macos -- -W warnings
 
   clippy-windows:
     name: Clippy (Windows)
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+      - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
           components: clippy
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo clippy --all-targets -- -W warnings
+      - uses: Swatinem/rust-cache@v2.9.3
+      - run: cargo clippy --locked --all-targets -- -W warnings

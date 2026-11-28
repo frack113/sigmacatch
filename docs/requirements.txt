@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
-mkdocs==1.6.1
-mkdocs-material==9.7.7
+zensical==0.1.4

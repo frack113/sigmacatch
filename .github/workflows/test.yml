@@ -2,6 +2,7 @@ name: Test
 
 on:
   push:
+    branches: [main]
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
@@ -31,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
@@ -42,22 +43,29 @@ jobs:
           key: test-stable-${{ hashFiles('**/Cargo.lock') }}
       - name: Test (winevt)
         run: cargo test --locked -p sigmacatch
-      - name: Test (core and tail)
-        run: cargo test --locked -p sigmacatch-core -p sigmacatch-input-tail
-      - name: Test (sigma-regression)
-        run: cargo test --locked -p sigma-regression
-      - name: Test (repo)
-        run: cargo test --locked -p sigmacatch-repo
-      - name: Test (output crates)
-        run: cargo test --locked -p sigmacatch-output-evtx -p sigmacatch-output-regression
-      - name: Test (ETW decoding helpers)
-        run: cargo test --locked -p sigmacatch-input-etw-common
-      - name: Test (ETW and kernel-sensor input crates)
-        run: cargo test --locked -p sigmacatch-input-etw -p sigmacatch-input-etw-driver
-      - name: Test (Linux input crates)
-        run: cargo test --locked -p sigmacatch-input-auditd -p sigmacatch-input-syslog -p sigmacatch-input-sysmon
-      - name: Test (Winevt, EVTX and macOS input crates)
-        run: cargo test --locked -p sigmacatch-input-winevt -p sigmacatch-input-evtx -p sigmacatch-input-macos
+      # One invocation for every Linux-buildable crate except the eBPF probe
+      # (nightly + bpf-linker): cargo resolves and compiles the shared
+      # dependency tree once instead of once per step.
+      - name: Test (workspace crates)
+        run: >
+          cargo test --locked
+          -p sigmacatch-core
+          -p sigmacatch-detection
+          -p sigmacatch-runner
+          -p sigmacatch-input-tail
+          -p sigma-regression
+          -p sigmacatch-repo
+          -p sigmacatch-output-evtx
+          -p sigmacatch-output-regression
+          -p sigmacatch-input-etw-common
+          -p sigmacatch-input-etw
+          -p sigmacatch-input-etw-driver
+          -p sigmacatch-input-auditd
+          -p sigmacatch-input-syslog
+          -p sigmacatch-input-sysmon
+          -p sigmacatch-input-winevt
+          -p sigmacatch-input-evtx
+          -p sigmacatch-input-macos
       - name: Test (auditd+builtin+sysmon)
         run: cargo test --locked -p sigmacatch --no-default-features --features auditd,builtin,sysmon
       - name: Test (evtx)
@@ -73,37 +81,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - name: Cache nightly toolchain
-        # Pinned nightly: bump the month in the key when the ebpf probe
-        # build breaks on the cached toolchain.
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: $/.github/actions/setup-ebpf
         with:
-          path: ~/.rustup
-          key: rustup-nightly-2026-10-${{ runner.os }}
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # nightly
-        with:
-          toolchain: nightly
-          components: rust-src
-      - name: Install bpf-linker (static musl release)
-        run: |
-          if [ ! -x "${{ runner.tool_cache }}/bpf-linker/bpf-linker" ]; then
-            curl -sL -o /tmp/bpf-linker.tar.zst \
-              "https://github.com/aya-rs/bpf-linker/releases/download/v0.11.0/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
-            mkdir -p "${{ runner.tool_cache }}/bpf-linker"
-            tar --zstd -xf /tmp/bpf-linker.tar.zst -C "${{ runner.tool_cache }}/bpf-linker"
-          fi
-          echo "${{ runner.tool_cache }}/bpf-linker" >> "$GITHUB_PATH"
-      - name: Cache bpf-linker
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.tool_cache }}/bpf-linker
-          key: bpf-linker-0.11.0
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          key: test-ebpf-${{ hashFiles('**/Cargo.lock') }}
+          rust-cache-key: test-ebpf-${{ hashFiles('**/Cargo.lock') }}
       - name: Test (auditd+builtin+ebpf)
         run: cargo +nightly test --locked -p sigmacatch --no-default-features --features auditd,builtin,ebpf
       - name: Test eBPF host adapter
@@ -116,7 +99,7 @@ jobs:
     runs-on: macos-15-intel
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable

@@ -2,6 +2,7 @@ name: Lint documentation
 
 on:
   push:
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -16,8 +17,9 @@ jobs:
   typos:
     name: Check spelling (typos)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Run typos
@@ -26,11 +28,12 @@ jobs:
   markdownlint:
     name: Lint Markdown (markdownlint)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: DavidAnson/markdownlint-cli2-action@696eb3f2509270d7b882d2aa68347bc676e7af34 # v25.0.0
+      - uses: DavidAnson/markdownlint-cli2-action@v25.0.0
         with:
           globs: |
             docs/**/*.md

@@ -4,6 +4,7 @@ updates:
   # cargo entry below.
   - package-ecosystem: github-actions
     directory: /
+    # Action bumps also refresh .github/workflows/actions.lock.
     schedule:
       interval: weekly
       day: monday

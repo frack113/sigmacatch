@@ -1,0 +1,47 @@
+name: Set up the eBPF toolchain
+
+description: >
+  Restore the pinned nightly toolchain with rust-src and the static
+  bpf-linker binary, then configure the Rust build cache. Linux only.
+
+inputs:
+  rust-cache-key:
+    description: Key handed to Swatinem/rust-cache.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Cache the nightly toolchain
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.rustup
+        key: rustup-nightly-2026-10-${{ runner.os }}
+
+    - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # nightly
+      with:
+        toolchain: nightly
+        components: rust-src
+
+    - name: Install bpf-linker (static musl release)
+      shell: bash
+      run: |
+        if [ ! -x "${{ runner.tool_cache }}/bpf-linker/bpf-linker" ]; then
+          curl -fsSL -o /tmp/bpf-linker.tar.zst \
+            "https://github.com/aya-rs/bpf-linker/releases/download/v0.11.0/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
+          echo "10f62ba9ab7e544d538370552660efcb4f1a19153d5752bbf0f6b51f3bada450  /tmp/bpf-linker.tar.zst" \
+            | sha256sum -c -
+          mkdir -p "${{ runner.tool_cache }}/bpf-linker"
+          tar --zstd -xf /tmp/bpf-linker.tar.zst -C "${{ runner.tool_cache }}/bpf-linker"
+        fi
+        echo "${{ runner.tool_cache }}/bpf-linker" >> "$GITHUB_PATH"
+
+    - name: Cache bpf-linker
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.tool_cache }}/bpf-linker
+        key: bpf-linker-0.11.0
+
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      with:
+        key: ${{ inputs.rust-cache-key }}

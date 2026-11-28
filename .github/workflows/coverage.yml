@@ -8,18 +8,21 @@ on:
   # `paths` and `paths-ignore` cannot be combined for the same event — the
   # exclusions are negated patterns inside `paths`.
   push:
+    branches: [main]
     paths:
-      - 'sigmacatch/**'
-      - 'Cargo.toml'
+      - '**/*.rs'
+      - '**/Cargo.toml'
       - 'Cargo.lock'
+      - '.github/workflows/coverage.yml'
       - '!docs/**'
       - '!**/*.md'
   pull_request:
     branches: [main]
     paths:
-      - 'sigmacatch/**'
-      - 'Cargo.toml'
+      - '**/*.rs'
+      - '**/Cargo.toml'
       - 'Cargo.lock'
+      - '.github/workflows/coverage.yml'
       - '!docs/**'
       - '!**/*.md'
 
@@ -44,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
@@ -54,7 +57,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: coverage-stable-${{ hashFiles('**/Cargo.lock') }}
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@v2.90.5
         with:
           tool: cargo-llvm-cov
       - name: Coverage gate (auditd+builtin+sysmon+evtx)
@@ -84,38 +87,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - name: Cache nightly toolchain
-        # Pinned nightly: bump the month in the key when the ebpf probe
-        # build breaks on the cached toolchain.
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: $/.github/actions/setup-ebpf
         with:
-          path: ~/.rustup
-          key: rustup-nightly-2026-10-${{ runner.os }}
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # nightly
-        with:
-          toolchain: nightly
-          components: rust-src
-      - name: Install bpf-linker (static musl release)
-        run: |
-          if [ ! -x "${{ runner.tool_cache }}/bpf-linker/bpf-linker" ]; then
-            curl -sL -o /tmp/bpf-linker.tar.zst \
-              "https://github.com/aya-rs/bpf-linker/releases/download/v0.11.0/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
-            mkdir -p "${{ runner.tool_cache }}/bpf-linker"
-            tar --zstd -xf /tmp/bpf-linker.tar.zst -C "${{ runner.tool_cache }}/bpf-linker"
-          fi
-          echo "${{ runner.tool_cache }}/bpf-linker" >> "$GITHUB_PATH"
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          key: coverage-ebpf-${{ hashFiles('**/Cargo.lock') }}
-      - name: Cache bpf-linker
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.tool_cache }}/bpf-linker
-          key: bpf-linker-0.11.0
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+          rust-cache-key: coverage-ebpf-${{ hashFiles('**/Cargo.lock') }}
+      - uses: taiki-e/install-action@v2.90.5
         with:
           tool: cargo-llvm-cov
       - name: Coverage gate (auditd+builtin+ebpf)
