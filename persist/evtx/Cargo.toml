@@ -5,6 +5,7 @@
 name = "sigmacatch-output-evtx"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch EVTX output: live re-export and pure-Rust encoder"
 license.workspace = true
 

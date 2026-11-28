@@ -5,6 +5,7 @@
 name = "sigmacatch-input-evtx"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch one-shot EVTX file collector"
 license.workspace = true
 

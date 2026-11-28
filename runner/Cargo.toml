@@ -5,6 +5,7 @@
 name = "sigmacatch-runner"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch runner: orchestrates collectors, detection engine, and output sinks"
 license.workspace = true
 

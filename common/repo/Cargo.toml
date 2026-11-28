@@ -5,6 +5,7 @@
 name = "sigmacatch-repo"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch SigmaHQ repository layer: clone, branch, commit, transport"
 license.workspace = true
 

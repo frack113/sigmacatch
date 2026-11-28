@@ -5,6 +5,7 @@
 name = "sigmacatch-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch common library: shared data models, config, rule loading, repo, and regression seams"
 license.workspace = true
 

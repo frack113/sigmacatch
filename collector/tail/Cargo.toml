@@ -5,6 +5,7 @@
 name = "sigmacatch-input-tail"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch shared log tail driver for Linux collectors"
 license.workspace = true
 

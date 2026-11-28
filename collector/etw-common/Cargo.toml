@@ -5,6 +5,7 @@
 name = "sigmacatch-input-etw-common"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch Windows ETW decoding helpers shared by the ETW and kernel-sensor inputs"
 license.workspace = true
 

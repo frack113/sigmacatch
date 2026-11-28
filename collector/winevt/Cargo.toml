@@ -5,6 +5,7 @@
 name = "sigmacatch-input-winevt"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch Windows Event Log channel collector"
 license.workspace = true
 

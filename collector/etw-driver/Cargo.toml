@@ -5,6 +5,7 @@
 name = "sigmacatch-input-etw-driver"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch Windows kernel-sensor client"
 license.workspace = true
 

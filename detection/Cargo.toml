@@ -5,6 +5,7 @@
 name = "sigmacatch-detection"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch Sigma detection engine"
 license.workspace = true
 

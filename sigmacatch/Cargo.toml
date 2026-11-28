@@ -5,6 +5,7 @@
 name = "sigmacatch"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch — Sigma regression collector (single binary, inputs via cargo features)"
 license.workspace = true
 

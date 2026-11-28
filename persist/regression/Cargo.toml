@@ -5,6 +5,7 @@
 name = "sigmacatch-output-regression"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch SigmaHQ regression-data output adapter"
 license.workspace = true
 

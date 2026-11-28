@@ -5,6 +5,7 @@
 name = "sigmacatch-input-auditd"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch Linux auditd log collector"
 license.workspace = true
 

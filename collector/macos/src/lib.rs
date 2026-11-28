@@ -1224,11 +1224,13 @@ fn resolve_user_name(uid: u32) -> Option<String> {
 
     // SAFETY: `getpwuid_r` returned 0 and set `result`, so `passwd` is
     // initialised and `pw_name` points to a NUL-terminated string inside
-    // `buffer`, which is still alive.
-    let passwd = unsafe { passwd.assume_init() };
-    let name = unsafe { CStr::from_ptr(passwd.pw_name) }
-        .to_string_lossy()
-        .into_owned();
+    // `buffer`, which is still alive here.
+    let name = unsafe {
+        let passwd = passwd.assume_init();
+        CStr::from_ptr(passwd.pw_name)
+    }
+    .to_string_lossy()
+    .into_owned();
     (!name.is_empty()).then_some(name)
 }
 

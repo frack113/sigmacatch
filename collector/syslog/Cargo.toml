@@ -5,6 +5,7 @@
 name = "sigmacatch-input-syslog"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch Linux syslog log collector"
 license.workspace = true
 

@@ -2,7 +2,10 @@
 # SPDX-FileCopyrightText: 2026 sigmacatch contributors
 
 [workspace]
-resolver = "2"
+# 3 = the MSRV-aware resolver: it refuses to resolve a dependency version that
+# needs a newer rustc than `rust-version` below. The 2024 edition implies it for
+# packages, but a virtual workspace must opt in.
+resolver = "3"
 members = [
   "sigmacatch",
   "common/core",
@@ -31,6 +34,10 @@ members = [
 [workspace.package]
 version = "0.9.0"
 edition = "2024"
+# Floor set by rsigma-eval 0.28.0 / rsigma-parser 0.28.0 (crates.io declares
+# 1.97.1); our own code uses nothing newer (`clippy::incompatible_msrv` is
+# silent at 1.97 across --all-features --all-targets). Inherited by every member.
+rust-version = "1.97.1"
 license = "MIT"
 
 # Cherry-pick individual lints only; each ratcheted to zero before adding.
@@ -43,11 +50,18 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 missing_docs = "warn"
 
 [workspace.lints.clippy]
-correctness = "deny"
-suspicious = "deny"
-style = "warn"
-complexity = "warn"
-perf = "warn"
+# Groups carry priority -1 so an individual lint below can be set on its own
+# without the "same priority" error; the level is unchanged.
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+style = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+# Ratcheted at zero on every target we build (Linux, Windows, macOS) before
+# being added: a missing `// SAFETY:` is a review item, so make it a lint.
+undocumented_unsafe_blocks = "deny"
+todo = "deny"
+dbg_macro = "deny"
 
 [profile.release]
 strip = true

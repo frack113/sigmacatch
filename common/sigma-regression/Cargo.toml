@@ -5,6 +5,7 @@
 name = "sigma-regression"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "SigmaHQ regression-data info.yml model and file lifecycle"
 license.workspace = true
 

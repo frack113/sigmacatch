@@ -5,6 +5,7 @@
 name = "sigmacatch-input-macos"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch macOS Endpoint Security collector"
 license.workspace = true
 
