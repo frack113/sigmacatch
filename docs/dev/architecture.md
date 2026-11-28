@@ -42,7 +42,7 @@ The collectors, the logsource injection and the regression formats are in
 | Rules | `sigmacatch-core` (`common/core/src/rule/`) | Load / filter / dedupe / remove ids, thresholds, ATT&CK discovery |
 | Detection | `sigmacatch-detection` (`detection/`) | rsigma engine, per-platform pipelines, channel resolution |
 | Regression | `common/core/src/regression/`, `sigma-regression`, `sigmacatch-output-regression` (`persist/regression`) | Shared vocabulary, `info.yml`, data formats, sink and `SigmahqRegression` |
-| Git | `sigmacatch-repo` (`sigmacatch/repo/`) | grit-lib wrapper: branch, signing, transport, per-rule commits |
+| Git | `sigmacatch-repo` (`common/repo/`) | grit-lib wrapper: branch, signing, transport, per-rule commits |
 | Types | `sigmacatch-core` (`common/core/src/exchange.rs`, `types.rs`) | `Event`, `Alert`, XML parsing, logsource tables, `ChannelResolver` |
 | EVTX | `sigmacatch-core` (`evtx_reader`), `sigmacatch-output-evtx` (`persist/evtx`) | EVTX file parsing → `Event` (reader) and the pure-Rust static-event writer |
 
