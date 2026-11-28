@@ -227,12 +227,11 @@ jobs:
           cargo build --locked --target x86_64-pc-windows-msvc -p sigmacatch --features winevt,evtx
 
   # The macOS binary cannot be linked from Linux (no macOS SDK), so the ES
-  # flavour must be built on a macOS runner. The intel runner matches the
-  # x86_64 artefacts produced for the other platforms.
+  # flavour is built natively on the arm64 macOS runner.
   macos:
-    name: macOS (Endpoint Security)
+    name: macOS arm64 (Endpoint Security)
     needs: lint
-    runs-on: macos-15-intel
+    runs-on: macos-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
@@ -242,7 +241,6 @@ jobs:
         with:
           toolchain: stable
           components: clippy
-          targets: x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2.9.3
         with:
           key: macos-${{ hashFiles('**/Cargo.lock') }}
@@ -251,7 +249,7 @@ jobs:
         run: cargo test --locked -p sigmacatch --no-default-features --features macos
       - name: Build (Endpoint Security, --all-targets)
         run: >
-          cargo build --locked --target x86_64-apple-darwin -p sigmacatch
+          cargo build --locked -p sigmacatch
           --no-default-features --features macos --all-targets
 
   # Anti-regression coverage gate: fails when line coverage of the

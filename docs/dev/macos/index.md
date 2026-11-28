@@ -82,11 +82,13 @@ create it.
 ## Building and running
 
 - **macOS host required** — the executable cannot be linked from Linux (the
-  `x86_64-apple-darwin` linker needs the Apple SDK). A type-check-only
-  cross-check works from Linux; see [Build](../build.md#macos).
+  `aarch64-apple-darwin` linker and the C dependencies need the Apple SDK).
+  The `macos-latest` CI job builds and tests the arm64 binary; see
+  [Build](../build.md#macos).
 - **Root** — the collector runs under root, same as the Linux auditd path.
-- **CI coverage** — build, test, lint and release jobs run on `macos-15-intel`
-  runners; the in-VM build stays the gate for native entitlement behaviour.
+- **CI coverage** — build, test, lint and release jobs run on `macos-latest`
+  (arm64) runners; the release archive targets `aarch64-apple-darwin`. The
+  in-VM build stays the gate for native entitlement behaviour.
 
 The `eslogger` backend is verified live on the [dev VM](vm.md): NDJSON
 parsed, events pushed, `product: macos` rules loaded and matching.

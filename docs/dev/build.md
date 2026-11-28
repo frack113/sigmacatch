@@ -132,17 +132,11 @@ The event model and the `eslogger` NDJSON parser are platform-independent and
 also run on Linux with the same feature. The ES client and the process-spawning
 code are compiled and tested only on macOS.
 
-The macOS executable cannot be linked from Linux: the `x86_64-apple-darwin`
-linker needs the macOS SDK and its frameworks. A compile-only cross-check is
-still useful before a PR:
-
-```bash
-CRATE_CC_NO_DEFAULTS=1 CC_x86_64_apple_darwin=cc AR_x86_64_apple_darwin=ar \
-  cargo clippy --target x86_64-apple-darwin --all-targets -p sigmacatch \
-  --no-default-features --features macos
-```
-
-CI builds and tests the binary on a `macos-15-intel` runner.
+The macOS executable cannot be linked from Linux: the `aarch64-apple-darwin`
+linker needs the macOS SDK and its frameworks. The C dependencies (tree-sitter)
+do not cross-compile without that SDK either, so the `macos-latest` CI job is
+the build and test gate; use an Apple silicon Mac for a local build. The release
+archive targets Apple silicon (`aarch64-apple-darwin`).
 
 ## Windows cross-compilation (from Linux)
 

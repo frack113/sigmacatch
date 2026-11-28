@@ -48,9 +48,9 @@ The Windows cross-build is required after any code change: `.cargo/config.toml` 
 `+crt-static`, and the resulting standalone `.exe` must stay free of a Visual C++ Redistributable
 dependency.
 
-The macOS binary cannot be linked from Linux; CI builds and tests it on a macOS runner. Before a
-PR touching the collector, also compile-check the darwin target from Linux (see
-[Build](docs/dev/build.md#macos) for the exact command).
+The macOS binary cannot be linked from Linux; the arm64 CI job on `macos-latest` builds, lints and
+tests it. A full cross-check from Linux needs the Apple SDK (the C dependencies do not
+cross-compile without it), so rely on CI rather than a local darwin target check.
 
 ## Lint checks
 

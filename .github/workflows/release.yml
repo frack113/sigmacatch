@@ -129,11 +129,11 @@ jobs:
             sigmacatch-x86_64-pc-windows-msvc.zip
             SHA256SUMS.windows
 
-  # No macOS SDK on the Linux runners: the ES binary is built natively on an
-  # intel macOS runner, like the build/test/clippy gates.
+  # No macOS SDK on the Linux runners: the ES binary is built natively on the
+  # arm64 macOS runner, like the build/test/clippy gates.
   build-macos:
-    name: Build macOS executable
-    runs-on: macos-15-intel
+    name: Build macOS executable (arm64)
+    runs-on: macos-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
@@ -142,24 +142,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
-          targets: x86_64-apple-darwin
       - name: Build sigmacatch (Endpoint Security) + regressiondata-check
         run: >
-          cargo build --release --locked --target x86_64-apple-darwin -p sigmacatch
+          cargo build --release --locked -p sigmacatch
           --no-default-features --features macos --all-targets
       - name: Package macOS distribution archive
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp target/x86_64-apple-darwin/release/sigmacatch \
-             target/x86_64-apple-darwin/release/regressiondata-check dist/
+          cp target/release/sigmacatch target/release/regressiondata-check dist/
           (cd dist && shasum -a 256 *) > SHA256SUMS.macos
-          tar -czf sigmacatch-macos-x86_64.tar.gz -C dist .
+          tar -czf sigmacatch-macos-arm64.tar.gz -C dist .
       - uses: actions/upload-artifact@v7.0.2
         with:
-          name: sigmacatch-macos-x86_64
+          name: sigmacatch-macos-arm64
           path: |
-            sigmacatch-macos-x86_64.tar.gz
+            sigmacatch-macos-arm64.tar.gz
             SHA256SUMS.macos
 
   github:

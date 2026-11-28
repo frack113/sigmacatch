@@ -23,12 +23,14 @@ analogue of the [Windows dev VM](../windows/vm.md).
   --locked --target x86_64-apple-darwin -p sigmacatch --no-default-features
   --features macos --all-targets`, `cargo clippy --all-targets
   --no-default-features --features macos -- -W warnings`, `cargo test --locked
-  -p sigmacatch --no-default-features --features macos`, i.e. the same commands
-  as the macOS CI jobs. `clippy` and `rustfmt` are separate components:
+  -p sigmacatch --no-default-features --features macos`. The guest is x86_64
+  and keeps the explicit `--target`; the GitHub `macos-latest` runner is arm64
+  and builds natively. `clippy` and `rustfmt` are separate components:
   `rustup component add clippy rustfmt`. A macOS binary cannot be produced from
-  a Linux host — no Apple SDK, no linker — so this guest is the only local
-  alternative to the macOS CI jobs; the Endpoint Security *runtime* still
-  needs root and an interactive TCC approval (see [Build](../build.md)).
+  a Linux host — no Apple SDK, no linker — so this guest is the local x86_64
+  alternative to the macOS CI jobs; the arm64 release is covered by CI. The
+  Endpoint Security *runtime* still needs root and an interactive TCC approval
+  (see [Build](../build.md)).
 - Auto-updates fully locked (system and user plists: check/download/install/
   critical all false). Re-verify the locks after any update attempt — a
   Sequoia VM got force-upgraded to Tahoe despite the locks.
