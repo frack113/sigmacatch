@@ -11,7 +11,7 @@
 <h1 align="center">sigmacatch</h1>
 
 <p align="center">
-  <a href=".github/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/frack113/sigmacatch/build.yml?label=CI" alt="CI"></a>
+  <a href=".github/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/frack113/sigmacatch/ci.yml?label=CI" alt="CI"></a>
   <a href=".github/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/frack113/sigmacatch/release.yml?label=release" alt="release"></a>
   <a href="https://frack113.github.io/sigmacatch/"><img src="https://img.shields.io/github/actions/workflow/status/frack113/sigmacatch/documentation.yml?label=docs" alt="docs"></a>
   <a href="https://github.com/frack113/sigmacatch/releases"><img src="https://img.shields.io/github/v/release/frack113/sigmacatch?label=latest" alt="latest release"></a>

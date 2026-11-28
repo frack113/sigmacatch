@@ -8,17 +8,14 @@ workflows:
         - 'dtolnay/rust-toolchain@v1'
         - 'github/gh-actions-lock@verify/v0.5.1'
         - 'taiki-e/install-action@v2.90.5'
-    '.github/workflows/build.yml':
+    '.github/workflows/ci.yml':
         - 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
         - 'actions/checkout@v7.0.1'
+        - 'dorny/paths-filter@v4.0.3'
         - 'dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8'
+        - 'dtolnay/rust-toolchain@v1'
         - 'swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0'
-        - 'taiki-e/install-action@v2.90.5'
-    '.github/workflows/coverage.yml':
-        - 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
-        - 'actions/checkout@v7.0.1'
-        - 'dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8'
-        - 'swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0'
+        - 'swatinem/rust-cache@v2.9.3'
         - 'taiki-e/install-action@v2.90.5'
     '.github/workflows/documentation.yml':
         - 'actions/checkout@v7.0.1'
@@ -30,10 +27,6 @@ workflows:
         - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
         - 'actions/upload-artifact@v7.0.2'
-        - 'dtolnay/rust-toolchain@v1'
-        - 'swatinem/rust-cache@v2.9.3'
-    '.github/workflows/lint-code.yml':
-        - 'actions/checkout@v7.0.1'
         - 'dtolnay/rust-toolchain@v1'
         - 'swatinem/rust-cache@v2.9.3'
     '.github/workflows/lint-docs.yml':
@@ -48,11 +41,6 @@ workflows:
         - 'dtolnay/rust-toolchain@v1'
         - 'sigstore/cosign-installer@v4.1.3'
         - 'taiki-e/install-action@v2.90.5'
-    '.github/workflows/test.yml':
-        - 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
-        - 'actions/checkout@v7.0.1'
-        - 'dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8'
-        - 'swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0'
 dependencies:
     'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9':
         ref: 'v6.1.0'
@@ -111,6 +99,11 @@ dependencies:
         commit: 'sha1-696eb3f2509270d7b882d2aa68347bc676e7af34'
         owner_id: 1828270
         repo_id: 329203602
+    'dorny/paths-filter@v4.0.3':
+        ref: 'v4.0.3'
+        commit: 'sha1-ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d'
+        owner_id: 1588572
+        repo_id: 265601040
     'dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8':
         ref: 'v1'
         commit: 'sha1-683b588c487a69d01f6c6ddf40f036ff682cc2c8'
