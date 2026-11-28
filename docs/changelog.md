@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Dependencies: `rsigma-eval` / `rsigma-parser` 0.27 → 0.28 (API-compatible for sigmacatch; upstream MSRV 1.97.1). `anyhow` 1.0.105, `sha2` 0.11.2, `crc32fast` 1.5.6, `libc` 0.2.191; lockfile refreshed (`getrandom` 0.3.4 → 0.4.3, `pest` 2.9.7, `serde_with` 3.25, `sonic-rs` 0.5.12, `zeroize` 0.8.66). Matching verified unchanged against the pre-bump binary on the SigmaHQ regression corpus and on live Windows/Linux captures.
-- Build: the workspace declares `rust-version = "1.97.1"`, opts into `resolver = "3"`, and denies three more clippy lints (`undocumented_unsafe_blocks`, `todo`, `dbg_macro`; the `[workspace.lints]` groups move to `priority = -1`). `sigmacatch-repo` drops its own `rand_core` dev-dependency for `ssh_key::rand_core::OsRng` (ssh-key `getrandom` feature).
-- CI: `sensor/windows` ships its own `Cargo.lock`, and the Driver workflow builds with `--locked`. `deny.toml` drops what left the graph (`RUSTSEC-2021-0153` for `encoding`, `getrandom` 0.3.4 / `r-efi` / `object` skips, unmatched `ISC` / `CDLA-Permissive-2.0` allowances and the `ring` clarification) and corrects the chrono note.
+- Dependencies: `rsigma-eval` / `rsigma-parser` 0.27 → 0.28 (API-compatible for sigmacatch; upstream MSRV 1.97.1). `anyhow` 1.0.105, `sha2` 0.11.2, `crc32fast` 1.5.6, `libc` 0.2.191; lockfile refreshed (`getrandom` 0.3.4 → 0.4.3, `pest` 2.9.7, `serde_with` 3.25, `sonic-rs` 0.5.12, `zeroize` 0.8.66). Matching verified unchanged against the pre-bump binary on the SigmaHQ regression corpus and on live Windows/Linux captures. (#173)
+- Build: the workspace declares `rust-version = "1.97.1"`, opts into `resolver = "3"`, and denies three more clippy lints (`undocumented_unsafe_blocks`, `todo`, `dbg_macro`; the `[workspace.lints]` groups move to `priority = -1`). `sigmacatch-repo` drops its own `rand_core` dev-dependency for `ssh_key::rand_core::OsRng` (ssh-key `getrandom` feature). (#173)
+- CI: `sensor/windows` ships its own `Cargo.lock`, and the Driver workflow builds with `--locked`. `deny.toml` drops what left the graph (`RUSTSEC-2021-0153` for `encoding`, `getrandom` 0.3.4 / `r-efi` / `object` skips, unmatched `ISC` / `CDLA-Permissive-2.0` allowances and the `ring` clarification) and corrects the chrono note. (#173)
 
 ### Fixed
 
