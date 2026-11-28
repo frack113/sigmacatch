@@ -2751,7 +2751,6 @@ dependencies = [
  "crc32fast",
  "flate2",
  "grit-lib",
- "rand_core",
  "rayon",
  "sha1",
  "sha2 0.11.2",
