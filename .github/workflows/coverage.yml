@@ -59,7 +59,7 @@ jobs:
           key: coverage-stable-${{ hashFiles('**/Cargo.lock') }}
       - uses: taiki-e/install-action@v2.90.5
         with:
-          tool: cargo-llvm-cov
+          tool: cargo-llvm-cov@0.9.0
       - name: Coverage gate (auditd+builtin+sysmon+evtx)
         run: |
           cargo llvm-cov --locked --workspace --all-targets \
@@ -95,7 +95,7 @@ jobs:
           rust-cache-key: coverage-ebpf-${{ hashFiles('**/Cargo.lock') }}
       - uses: taiki-e/install-action@v2.90.5
         with:
-          tool: cargo-llvm-cov
+          tool: cargo-llvm-cov@0.9.0
       - name: Coverage gate (auditd+builtin+ebpf)
         run: |
           cargo +nightly llvm-cov --locked --workspace --all-targets \

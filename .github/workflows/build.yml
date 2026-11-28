@@ -38,7 +38,7 @@ jobs:
       # dependencies. Cache the install-action binary.
       - uses: taiki-e/install-action@v2.90.5
         with:
-          tool: cargo-machete
+          tool: cargo-machete@0.9.2
       - run: cargo machete
 
   # CI validates compilation and feature gates, not codegen: the flavours

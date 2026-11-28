@@ -186,7 +186,7 @@ jobs:
           fi
       - uses: taiki-e/install-action@v2.90.5
         with:
-          tool: git-cliff
+          tool: git-cliff@2.14.2
       - run: git-cliff --latest -o docs/changelog.md
       - uses: actions/download-artifact@v8.0.2
         with:

@@ -5,8 +5,9 @@ version: 'v0.0.3'
 workflows:
     '.github/workflows/audit.yml':
         - 'actions/checkout@v7.0.1'
-        - 'embarkstudios/cargo-deny-action@v2.1.1'
+        - 'dtolnay/rust-toolchain@v1'
         - 'github/gh-actions-lock@verify/v0.5.1'
+        - 'taiki-e/install-action@v2.90.5'
     '.github/workflows/build.yml':
         - 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
         - 'actions/checkout@v7.0.1'
@@ -120,11 +121,6 @@ dependencies:
         commit: 'sha1-683b588c487a69d01f6c6ddf40f036ff682cc2c8'
         owner_id: 1940490
         repo_id: 260749683
-    'embarkstudios/cargo-deny-action@v2.1.1':
-        ref: 'v2.1.1'
-        commit: 'sha1-3c6349835b2b7b196a839186cb8b78e02f7b5f25'
-        owner_id: 44887257
-        repo_id: 228054692
     'github/gh-actions-lock@verify/v0.5.1':
         ref: 'verify/v0.5.1'
         commit: 'sha1-5fa07d19c267d19e29f4341f10fdf7f516375038'
