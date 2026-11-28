@@ -4,21 +4,6 @@ Planned evolutions for sigmacatch. Items are listed in no strict order; each
 becomes a tracked change when picked up. The project is WIP, so this list is
 not a commitment, just the current intent.
 
-## Correctness
-
-- **[#129] Rules with an unresolved `|expand` placeholder are silently never matched.**
-  A SigmaHQ rule that filters on a placeholder never fires in sigmacatch and
-  nothing is logged. sigmacatch hands such rules to rsigma-eval without
-  resolving the placeholder; rsigma then fills it from the event at match time
-  (`%known_cdcs%` becomes the event field `known_cdcs`, or `""` when absent, and
-  `contains ""` is true for any value, so `not filter` hides every hit). The
-  [Sigma specification](https://github.com/SigmaHQ/sigma-specification/blob/ba9251aa834b11a70dbf80836b453dba99c5159e/specification/sigma-rules-specification.md#L597)
-  says placeholders must be handled appropriately, or the rule must be rejected.
-  Options are: reject/skip the rule with a warning (spec-conformant), treat
-  unresolved placeholders as literals (what SigmaHQ CI validates against), or
-  add a `value_placeholders` transformation with `vars:` in a pipeline.
-  [#129]: https://github.com/frack113/sigmacatch/issues/129
-
 ## CI/CD
 
 - Improve CI/CD. Current required checks are documented in
