@@ -14,7 +14,7 @@ doctest = false
 # The driver is Unix-only (file identity via MetadataExt). Target-scoping the
 # dependencies keeps the crate empty — and warning-free — on Windows.
 [target.'cfg(target_os = "linux")'.dependencies]
-anyhow = "1.0.104"
+anyhow = "1.0.105"
 sigmacatch-core = { path = "../../common/core" }
 tokio = { version = "1.54.1", features = ["sync", "time"] }
 tracing.workspace = true

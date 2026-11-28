@@ -6,9 +6,9 @@
 
 [advisories]
 yanked = "warn"
-# encoding v0.2.33 is unmaintained but required by evtx v0.12.2 (latest, no alternative)
-# chrono v0.4.45 is unmaintained but required by rsigma-eval v0.26.0 (no safe upgrade)
-ignore = ["RUSTSEC-2021-0153", "RUSTSEC-2026-0543"]
+# chrono v0.4.45 is unmaintained (RUSTSEC-2026-0543): we depend on it directly and
+# rsigma-eval v0.28.0 pulls it too. Replacing it with jiff/time is a separate task.
+ignore = ["RUSTSEC-2026-0543"]
 
 [licenses]
 allow = [
@@ -42,8 +42,8 @@ allow-git = []
 
 # Crate policy (duplicate / multiple-version policing).
 # Known duplicate crate versions exist in the dependency graph as transitive
-# legacy pins (e.g. thiserror 1 vs 2, ring -> getrandom 0.2/0.3, aya ->
-# hashbrown 0.17 vs 0.15). Each is recorded below so that `bans` is a ratchet:
+# legacy pins (e.g. thiserror 1 vs 2, grit-lib -> getrandom 0.2, RustCrypto
+# 0.10 vs 0.11). Each is recorded below so that `bans` is a ratchet:
 # new duplicates must be added here consciously, while genuine
 # downgrades/upgrades unify.
 [bans]
@@ -61,12 +61,7 @@ skip = [
     { name = "digest", version = "0.10.7" },
     { name = "foldhash", version = "0.1.5" },
     { name = "getrandom", version = "0.2.17" },
-    { name = "getrandom", version = "0.3.4" },
     { name = "hashbrown", version = "0.15.5" },
-    # object 0.39 is pinned by ar_archive_writer via the psm build-dependency;
-    # aya requires 0.40 and no ar_archive_writer release unifies them.
-    { name = "object", version = "0.39.1" },
-    { name = "r-efi", version = "5.3.0" },
     { name = "sha2", version = "0.10.9" },
     { name = "syn", version = "1.0.109" },
     { name = "syn", version = "2.0.119" },

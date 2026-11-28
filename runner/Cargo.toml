@@ -18,7 +18,7 @@ windows = { version = "0.62.2", features = [
 ] }
 
 [dependencies]
-anyhow = "1.0.104"
+anyhow = "1.0.105"
 chrono = "0.4.45"
 sigmacatch-core = { path = "../common/core" }
 sigmacatch-detection = { path = "../detection" }

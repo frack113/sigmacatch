@@ -14,7 +14,7 @@ doctest = false
 # The kernel device and its Win32 IOCTLs are Windows-only. The wire format
 # comes from `sigmacatch-driver-protocol`, shared with the WDK driver crate.
 [target.'cfg(target_os = "windows")'.dependencies]
-anyhow = "1.0.104"
+anyhow = "1.0.105"
 async-trait = "0.1.92"
 chrono = "0.4.45"
 sha1 = "0.11.0"

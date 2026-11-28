@@ -14,7 +14,7 @@ doctest = false
 # Realtime ETW sessions only exist on Windows. Target-scoping keeps the crate
 # empty — and warning-free — on Linux while the host still enables the feature.
 [target.'cfg(target_os = "windows")'.dependencies]
-anyhow = "1.0.104"
+anyhow = "1.0.105"
 async-trait = "0.1.92"
 chrono = "0.4.45"
 sigmacatch-core = { path = "../../common/core" }

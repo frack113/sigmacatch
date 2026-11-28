@@ -12,7 +12,7 @@ license.workspace = true
 doctest = false
 
 [dependencies]
-anyhow = "1.0.104"
+anyhow = "1.0.105"
 sigmacatch-core = { path = "../../common/core" }
 sigmacatch-runner = { path = "../../runner" }
 walkdir = "2.5.1"
