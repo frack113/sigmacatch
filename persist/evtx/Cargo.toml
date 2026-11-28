@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+[package]
+name = "sigmacatch-output-evtx"
+version.workspace = true
+edition.workspace = true
+description = "sigmacatch EVTX output: live re-export and pure-Rust encoder"
+license.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+chrono = "0.4.45"
+evtx = "0.15.1"
+crc32fast = "1.5.5"
+roxmltree = "0.21.2"
+sigma-regression = { path = "../../common/sigma-regression" }
+sigmacatch-core = { path = "../../common/core" }
+thiserror.workspace = true
+tracing.workspace = true
+
+# `EvtExportLog` is Windows-only; on other targets the crate still exposes the
+# pure-Rust encoder through the non-Windows stub.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_System_EventLog",
+] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[lints]
+workspace = true

@@ -43,6 +43,13 @@ it: ad-hoc signing with the entitlement is **killed by AMFI at launch**
 self-signed-certificate signing fails headless (no valid identity,
 `errSecInternalComponent`).
 
+[`collector/macos/sign.sh`](https://github.com/frack113/sigmacatch/blob/main/collector/macos/sign.sh)
+wraps the attempt: it signs `target/release/sigmacatch` (or the binary you
+pass) with `collector/macos/endpoint-security.entitlements`, ad-hoc by default
+and with `SIGN_IDENTITY=<keychain identity>` when ad-hoc is refused — useful to
+reproduce the failure modes on a desktop macOS box, never a way around Apple's
+grant.
+
 The collector therefore offers two backends:
 
 - **`eslogger`** — the path that works out of the box. Apple's first-party

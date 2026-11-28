@@ -64,12 +64,12 @@ jobs:
             --fail-under-lines 78
 
   # Companion gate for the `ebpf` input (Q7.3). Without it, the host adapter
-  # in `sigmacatch/inputs/ebpf/` sits outside every coverage number in the
+  # in `collector/ebpf/` sits outside every coverage number in the
   # project.
   #
   # Scope, stated precisely so the number is not over-read:
   #   - This measures the *host-side* ebpf code only (1 341 lines before the
-  #     crate extraction). The nested `sigmacatch/ebpf` kernel probe is a
+  #     crate extraction). The nested `sensor/ebpf` kernel probe is a
   #     separate workspace built for `bpfel-unknown-none`, and llvm-cov cannot
   #     instrument those objects — it does not appear in the report. Closing
   #     that last 478 lines would need in-kernel verification, not a coverage

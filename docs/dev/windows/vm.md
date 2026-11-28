@@ -1,7 +1,7 @@
 # Windows dev VM (`sigmacatch-dev`)
 
 A QEMU VM dedicated to building and testing the KMDF kernel driver
-(`sigmacatch/driver/`) without pushing to GitHub. The CI (`Driver` workflow)
+(`sensor/windows/`) without pushing to GitHub. The CI (`Driver` workflow)
 stays the green gate; this VM gives a ~2 min local build loop.
 
 ## What it is
@@ -75,14 +75,16 @@ toolchain-optimized` restores it):
 
 ## Build loop
 
-```sh
-scripts/dev_win_build.sh
-```
+The loop is driven by a maintainer-local script, kept with the agent tooling
+rather than in this repository. It:
 
-Syncs `driver/` + `driver/protocol/` to `C:\sigmacatch-dev\sigmacatch\`, runs
-`C:\sigmacatch-dev-build.ps1` (scheduled task, no elevation needed), and
-fetches `sigmacatch_driver.dll` to `target/sigmacatch-dev/` (rename to `.sys`
-for the service). Logs live on the VM at `C:\sigmacatch-dev-build.log`.
+- syncs local `sensor/windows/` + `sensor/windows/protocol/` to
+  `C:\sigmacatch-dev\sigmacatch\driver\`;
+- runs `C:\sigmacatch-dev-build.ps1` (scheduled task, no elevation needed);
+- fetches `sigmacatch_driver.dll` to `target/sigmacatch-dev/` (rename to `.sys`
+  for the service).
+
+Logs live on the VM at `C:\sigmacatch-dev-build.log`.
 
 Loading and testing the driver against a live VM session is the test VM's
 job; the dev VM can also load local builds the

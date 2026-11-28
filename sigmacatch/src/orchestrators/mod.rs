@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 sigmacatch contributors
+
+//! Input orchestrators of the `sigmacatch` binary. Each real input now lives
+//! in its own crate, which owns its `feature × platform` gates; this module
+//! only aliases those crates and hosts the two OS-specific fan-in/fan-out
+//! orchestrators. `lib.rs` exposes it unconditionally, so enabling a feature
+//! for another platform is inert rather than a compile error.
+
+// Windows input aliases. Crate aliases keep host call sites unchanged; each
+// crate compiles as an empty shell off Windows.
+#[cfg(feature = "winevt")]
+pub use sigmacatch_input_winevt::channels;
+// Windows orchestrator: Event Log channels + kernel sensor or ETW.
+#[cfg(all(target_os = "windows", feature = "winevt"))]
+pub mod windows;
+// Native ETW collector (feature `etw`): no Sysmon, no driver. The session
+// layer is only meaningful on Windows.
+#[cfg(all(target_os = "windows", feature = "etw"))]
+pub use sigmacatch_input_etw as etw;
+// Process cache for the Windows orchestrator, owned by the ETW crate.
+#[cfg(all(target_os = "windows", feature = "etw"))]
+pub use sigmacatch_input_etw::etw_process;
+// Kernel-sensor client (feature `driver`, implies `etw`).
+#[cfg(all(target_os = "windows", feature = "driver"))]
+pub use sigmacatch_input_etw_driver as etw_driver;
+
+// One-shot EVTX cross-platform input. Not `target_os`-gated: pure file
+// parsing, runs on Windows and Linux alike.
+#[cfg(feature = "evtx")]
+pub use sigmacatch_input_evtx as evtx;
+
+// Linux input aliases. Crate aliases keep every `crate::orchestrators::<name>`
+// call site unchanged; each crate is empty off Linux.
+#[cfg(all(target_os = "linux", feature = "auditd"))]
+pub use sigmacatch_input_auditd as auditd;
+#[cfg(all(target_os = "linux", feature = "builtin"))]
+pub use sigmacatch_input_syslog as syslog;
+// Test hook, publicly reachable so integration tests can arm the injected
+// tail timing / READY barrier through the collector constructors.
+#[cfg(all(target_os = "linux", feature = "ebpf"))]
+pub use sigmacatch_input_ebpf::ebpf;
+#[cfg(all(target_os = "linux", feature = "sysmon"))]
+pub use sigmacatch_input_sysmon as sysmon;
+#[cfg(all(target_os = "linux", feature = "sysmon"))]
+pub use sigmacatch_input_sysmon::sysmon_parse;
+#[cfg(all(
+    target_os = "linux",
+    any(feature = "auditd", feature = "builtin", feature = "sysmon")
+))]
+pub use sigmacatch_input_tail::TailOptions;
+// Linux orchestrator: selects every compiled, available source at runtime.
+#[cfg(all(
+    target_os = "linux",
+    any(
+        feature = "auditd",
+        feature = "builtin",
+        feature = "sysmon",
+        feature = "ebpf"
+    )
+))]
+pub mod linux;
+
+// macOS Endpoint Security collector. The platform-independent event model
+// is always compiled with the feature so its field mapping can be tested on
+// Linux; the ES client itself is `#[cfg(target_os = "macos")]` inside.
+#[cfg(feature = "macos")]
+pub use sigmacatch_input_macos as macos_es;

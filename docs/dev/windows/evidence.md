@@ -148,7 +148,7 @@ Paths are the NT paths the callback carries (exact), not DOS-mapped.
 (`FltRegisterFilter`, `FLT_REGISTRATION`, `FLT_CALLBACK_DATA`,
 `FltGetFileNameInformation`, ...) and no maintained Rust binding exists, so file
 events 2/11/23/503/504/505/506 are built on a hand-written `fltmgr` FFI in
-`sigmacatch/driver/src/flt.rs` (`#[link(name = "fltmgr")]` plus the structure
+`sensor/windows/src/flt.rs` (`#[link(name = "fltmgr")]` plus the structure
 definitions).
 
 **End to end on a Sysmon-less host.** With the driver loaded, the collector ran

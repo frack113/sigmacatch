@@ -11,9 +11,9 @@
 
 use std::fs;
 
-use sigmacatch::detection::DetectionEngine;
 use sigmacatch::rule::SigmahqRules;
 use sigmacatch::types::Event;
+use sigmacatch_detection::DetectionEngine;
 
 const PROCESS_CREATE_TRAILING_SPACE: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">

@@ -3,7 +3,7 @@
 Each input is a `CollectorKind`: one struct that names the input, exposes the
 channels it can read, builds its event producer, and declares the regression
 format it writes. Each input crate owns its feature × platform gates;
-`sigmacatch/src/inputs/mod.rs` aliases the crates and hosts the two
+`sigmacatch/src/orchestrators/mod.rs` aliases the crates and hosts the two
 orchestrators, and `main.rs` picks the runtime input.
 
 | Input | Page | Feature | Regression format |
@@ -18,10 +18,10 @@ orchestrators, and `main.rs` picks the runtime input.
 Every input implements
 `name()`/`mode()`/`channels()`/`build()`/`regression_format()`/`live_capture()`.
 The Linux inputs share a single `LinuxCollector`
-(`sigmacatch/src/inputs/linux.rs`), the Windows inputs a single
-`WindowsCollector` (`sigmacatch/src/inputs/windows.rs`), and the macOS input is
+(`sigmacatch/src/orchestrators/linux.rs`), the Windows inputs a single
+`WindowsCollector` (`sigmacatch/src/orchestrators/windows.rs`), and the macOS input is
 a single `MacosEsCollector` in `sigmacatch-input-macos`, aliased as
-`sigmacatch::inputs::macos_es`.
+`sigmacatch::orchestrators::macos_es`.
 
 - **Regression format** comes from `regression_format()`: `DataFormat::Evtx`
   for winevt, EVTX, ETW and driver events; `DataFormat::Log` for

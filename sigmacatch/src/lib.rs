@@ -6,15 +6,24 @@
 //! are linked in: `winevt` (default) and `evtx` everywhere, `etw` and `driver`
 //! on Windows, `auditd`/`builtin`/`sysmon`/`ebpf` on Linux, `macos` on macOS.
 //!
-//! The collection → detection → regression pipeline, configuration, rule
-//! management, the Sigma repo layer and the regression data generator live in
-//! [`sigmacatch_core`] and are re-exported here. Only the input adapters and
-//! the eBPF probe code are gated by features.
+//! The shared data model and configuration live in [`sigmacatch_core`], the
+//! Sigma engine in `sigmacatch-detection`, and the collection → detection →
+//! regression orchestration in `sigmacatch-runner`, all re-exported here. Only
+//! the input adapters and the eBPF probe code are gated by features.
 
 pub use sigmacatch_core::{
-    CollectorKind, DataFormat, RegressionSink, RegressionSinkFactory, bootstrap_repo_regression,
-    cli, config, detection, evtx_reader, logging, repo, rule, run, runner, types,
+    DataFormat, RegressionSink, RegressionSinkFactory, cli, config, evtx_reader, logging, repo,
+    rule, types,
 };
+
+/// Shared pipeline (trait + continuous run loop). The concrete detection engine
+/// lives in `sigmacatch-detection`; the runner crate wires it into the collector.
+pub use sigmacatch_runner::{CollectorKind, bootstrap_repo_regression, run};
+/// Re-export of the `sigmacatch-runner` orchestration crate under the binary's
+/// module tree, so `crate::runner::…` keeps working inside this crate.
+pub mod runner {
+    pub use sigmacatch_runner::*;
+}
 
 /// Regression-data output: shared vocabulary from core plus the concrete
 /// SigmaHQ writer crate.
@@ -23,15 +32,15 @@ pub mod regression {
     pub use sigmacatch_output_regression::{RegressionEntry, SigmahqRegression};
 }
 
-/// Output adapters. The binary builds the sink and injects it into the runner,
+/// Output factory. The binary builds the sink and injects it into the runner,
 /// mirroring how each input crate builds its event producer.
-pub mod outputs;
+pub mod output_factory;
 
 // Wire-format types for the eBPF ring buffer. The probe crate includes the
 // source directly via `#[path]`; the host adapter owns it.
 #[cfg(feature = "ebpf")]
 pub use sigmacatch_input_ebpf::ebpf_common;
 
-// Input adapters. Each crate owns its gates; `inputs/mod.rs` only aliases them
-// and hosts the two orchestrators.
-pub mod inputs;
+// Input orchestrators. Each real input crate owns its gates; this module only
+// aliases them and hosts the OS-specific fan-in/fan-out glue.
+pub mod orchestrators;

@@ -34,8 +34,8 @@ Do not attach live credentials, private keys or third-party event data.
 In scope:
 
 - the `sigmacatch` and `regressiondata-check` binaries;
-- the kernel driver (`sigmacatch/driver/`) and the eBPF probes
-  (`sigmacatch/ebpf/`);
+- the kernel driver (`sensor/windows/`) and the eBPF probes
+  (`sensor/ebpf/`);
 - parsing of untrusted input (EVTX files, event XML, syslog lines, audit
   records);
 - the SSH-only git transport and the `config.yaml` loader.

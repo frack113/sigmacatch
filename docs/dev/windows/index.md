@@ -14,7 +14,7 @@ sigmacatch 5xx extensions, under the `sigmacatch` provider and the
 driver; the kernel driver (`driver`, implies `etw`) adds process, file, image,
 pipe and thread events that ETW cannot reach.*
 
-`sigmacatch/src/inputs/windows.rs` runs the Event Log channels next to **exactly one** process
+`sigmacatch/src/orchestrators/windows.rs` runs the Event Log channels next to **exactly one** process
 source: the driver when its service is loaded and answers the current protocol
 version, native ETW otherwise. The ETW main session keeps running next to the
 driver, because network, DNS, registry, WMI and unloads are user-mode only.
@@ -52,7 +52,7 @@ hand-rolls on `windows` 0.62.2 (`Win32_System_Diagnostics_Etw`:
 
 ### The kernel driver is the primary source
 
-`sigmacatch/driver/` supplies what user-mode ETW cannot reach (process
+`sensor/windows/` supplies what user-mode ETW cannot reach (process
 create/exit, process access, file paths); see
 [why the driver replaces Sysmon](driver.md#why-the-driver-replaces-sysmon). User-mode
 ETW stays as the portable fallback and the reference the driver output is

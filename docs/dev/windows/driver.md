@@ -1,6 +1,6 @@
 # Kernel driver
 
-`sigmacatch/driver/` is a KMDF driver outside the cargo workspace, built by
+`sensor/windows/` is a KMDF driver outside the cargo workspace, built by
 `.github/workflows/driver.yml` on a `windows-latest` runner (WDK + LLVM). It
 supplies what user-mode ETW cannot reach and publishes Sysmon-schema events
 through a versioned ring buffer that the collector drains on
@@ -32,14 +32,14 @@ Two layers, same output:
   503-506 (rename/chmod/chown/truncate) and 509/510 (open for write, write).
   With the driver loaded, the ETW **main** session alone still runs (network,
   DNS, WMI, registry 12/13, image/driver unload):
-  `sigmacatch/src/inputs/windows.rs` starts one process source, the two
+  `sigmacatch/src/orchestrators/windows.rs` starts one process source, the two
   producers share the pid→image cache, and nothing is reported twice.
 
 Constraints accepted up front:
 
 - the WDK is **not** in the `cargo xwin` chain: the driver builds on a Windows
   host (or a Windows CI runner) with the WDK, in its own crate outside this
-  workspace, like `sigmacatch/ebpf`;
+  workspace, like `sensor/ebpf`;
 - every build needs its own signature; in the test VM that is test-signing
   (`bcdedit /set testsigning on`, Secure Boot off, self-signed cert), and a
   distributable build needs an EV certificate;
@@ -50,16 +50,16 @@ Constraints accepted up front:
 ## How the pieces fit
 
 ```text
-sigmacatch/driver/                 # kernel sensor (outside the workspace)
+sensor/windows/                 # kernel sensor (outside the workspace)
 ├── src/lib.rs                    # DriverEntry, control device \Device\sigmacatch,
 │                                 #   IOCTLs, ring buffer, process/image/thread/registry callbacks
 ├── src/flt.rs                    # hand-written fltmgr FFI + minifilter (file/pipe events)
 └── protocol/                     # sigmacatch-driver-protocol, workspace member
     └── src/protocol.rs           # wire record + IOCTLs (v6), shared with the client
 
-sigmacatch/inputs/etw-common/src/ # sigmacatch-input-etw-common: NT paths,
+collector/etw-common/src/ # sigmacatch-input-etw-common: NT paths,
                                  #   signature and PE version helpers
-sigmacatch/inputs/etw-driver/src/lib.rs  # client: open device, check version,
+collector/etw-driver/src/lib.rs  # client: open device, check version,
                                          #   drain IOCTL_READ_EVENTS, map kind → Sysmon event
 ```
 
@@ -74,11 +74,11 @@ On a Windows host with WDK 10.0.22621, LLVM 17.0.6 and the Visual Studio C++
 workload:
 
 ```pwsh
-cargo build --release --target x86_64-pc-windows-msvc   # inside sigmacatch/driver/
+cargo build --release --target x86_64-pc-windows-msvc   # inside sensor/windows/
 ```
 
 The artifact is `sigmacatch_driver.dll`; rename it to `.sys` for the service.
 Loading needs test-signing (`bcdedit /set testsigning on`, Secure Boot off, a
-self-signed certificate). The [Dev VM](vm.md) automates the loop
-(`scripts/dev_win_build.sh`), and [Build](../build.md#kernel-driver) has the
+self-signed certificate). The [Dev VM](vm.md) automates the loop with a
+maintainer-local script, and [Build](../build.md#kernel-driver) has the
 collector-side features.

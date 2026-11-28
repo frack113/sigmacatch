@@ -20,9 +20,9 @@
 use std::fs;
 
 use serde_json::json;
-use sigmacatch::detection::DetectionEngine;
 use sigmacatch::rule::SigmahqRules;
 use sigmacatch::types::Event;
+use sigmacatch_detection::DetectionEngine;
 
 const FIELDREF_FILTER_RULE: &str = r#"title: Explicit Credential Same User Filter
 id: aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa

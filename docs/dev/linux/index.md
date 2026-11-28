@@ -20,12 +20,12 @@ coverage list — is in [Linux collectors](../collectors/linux.md).
 
 ## Where the code lives
 
-- `sigmacatch/src/inputs/linux.rs` holds `LinuxCollector`, the shared
-  orchestrator; `sigmacatch/src/inputs/mod.rs` aliases the leaf crates.
+- `sigmacatch/src/orchestrators/linux.rs` holds `LinuxCollector`, the shared
+  orchestrator; `sigmacatch/src/orchestrators/mod.rs` aliases the leaf crates.
 - `sigmacatch-input-auditd`, `sigmacatch-input-syslog` and
   `sigmacatch-input-sysmon` parse their respective streams;
   `sigmacatch-input-tail` is the shared 100 ms poll/rotate tail driver.
-- The eBPF probe lives in `sigmacatch/ebpf` (nightly + bpf-linker, excluded from
+- The eBPF probe lives in `sensor/ebpf` (nightly + bpf-linker, excluded from
   the workspace). It needs root or `CAP_BPF`+`CAP_PERFMON` and a kernel with
   BTF; a prebuilt object without the `EVENTS_ABI_V2` marker is rejected.
 

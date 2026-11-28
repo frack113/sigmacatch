@@ -11,8 +11,8 @@
 
 #![cfg(all(target_os = "linux", feature = "auditd"))]
 
-use sigmacatch::inputs::TailOptions;
-use sigmacatch::inputs::auditd::EventCollector;
+use sigmacatch::orchestrators::TailOptions;
+use sigmacatch::orchestrators::auditd::EventCollector;
 use sigmacatch::types::EventProducer;
 use std::io::Write;
 use std::time::Duration;

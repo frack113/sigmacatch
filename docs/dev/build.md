@@ -91,19 +91,18 @@ semantics are documented in [cli.md](../user/cli.md#-evtx-one-shot-evtx-input-si
 
 ### Kernel driver
 
-`sigmacatch/driver/` is a separate KMDF crate outside the workspace (like
-`sigmacatch/ebpf`), built with the WDK + LLVM **on Windows**:
+`sensor/windows/` is a separate KMDF crate outside the workspace (like
+`sensor/ebpf`), built with the WDK + LLVM **on Windows**:
 
 ```pwsh
-cargo build --release --target x86_64-pc-windows-msvc   # inside sigmacatch/driver/
+cargo build --release --target x86_64-pc-windows-msvc   # inside sensor/windows/
 ```
 
 The artifact is `sigmacatch_driver.dll`; rename it to `.sys` for the service
-(test-signing required, see the [driver README](https://github.com/frack113/sigmacatch/blob/main/sigmacatch/driver/README.md)).
+(test-signing required, see the [driver README](https://github.com/frack113/sigmacatch/blob/main/sensor/windows/README.md)).
 `.github/workflows/driver.yml` is the gate: it pins WDK 10.0.22621 and LLVM
-17.0.6, and the local dev VM
-([Windows dev VM](windows/vm.md), `scripts/dev_win_build.sh`) builds with the
-same settings. Driver and collector both depend on `sigmacatch/driver/protocol/`
+17.0.6, and the local [Windows dev VM](windows/vm.md) builds with the same
+settings. Driver and collector both depend on `sensor/windows/protocol/`
 (`sigmacatch-driver-protocol`: wire record + IOCTLs, protocol version 6): a
 mismatched pair logs a warning and the collector runs on ETW alone.
 

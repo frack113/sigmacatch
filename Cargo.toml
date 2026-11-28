@@ -5,27 +5,29 @@
 resolver = "2"
 members = [
   "sigmacatch",
-  "sigmacatch/core",
-  "sigmacatch/repo",
-  "sigmacatch/sigma-regression",
-  "sigmacatch/inputs/ebpf",
-  "sigmacatch/inputs/tail",
-  "sigmacatch/inputs/etw-common",
-  "sigmacatch/inputs/auditd",
-  "sigmacatch/inputs/syslog",
-  "sigmacatch/inputs/sysmon",
-  "sigmacatch/inputs/winevt",
-  "sigmacatch/inputs/evtx",
-  "sigmacatch/inputs/macos",
-  "sigmacatch/inputs/etw",
-  "sigmacatch/inputs/etw-driver",
+  "common/core",
+  "detection",
+  "runner",
+  "common/repo",
+  "common/sigma-regression",
+  "collector/ebpf",
+  "collector/tail",
+  "collector/etw-common",
+  "collector/auditd",
+  "collector/syslog",
+  "collector/sysmon",
+  "collector/winevt",
+  "collector/evtx",
+  "collector/macos",
+  "collector/etw",
+  "collector/etw-driver",
   # Shared with the standalone driver workspace by path dependency.
-  "sigmacatch/driver/protocol",
-  "sigmacatch/outputs/evtx",
-  "sigmacatch/outputs/regression",
+  "sensor/windows/protocol",
+  "persist/evtx",
+  "persist/regression",
 ]
 
-# The ebpf probe (sigmacatch/ebpf) is excluded: built separately by build.rs.
+# The ebpf probe (sensor/ebpf) is excluded: built separately by build.rs.
 [workspace.package]
 version = "0.8.0"
 edition = "2024"

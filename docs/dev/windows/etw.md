@@ -6,10 +6,10 @@ events (`etw_sysmon`) and injected into the normal Windows pipeline. No Sysmon,
 no driver.
 
 ```text
-sigmacatch/inputs/etw/src/         # sigmacatch-input-etw
+collector/etw/src/         # sigmacatch-input-etw
 └── lib.rs            # sessions + callback loop (the ebpf.rs analogue)
 
-sigmacatch/inputs/etw-common/src/  # sigmacatch-input-etw-common
+collector/etw-common/src/  # sigmacatch-input-etw-common
 ├── etw_event.rs      # TDH property → typed fields
 ├── etw_process.rs    # live-process facts (CommandLine, User, parent, creation)
 ├── etw_registry.rs   # Kernel-Registry handle → path cache
@@ -17,7 +17,7 @@ sigmacatch/inputs/etw-common/src/  # sigmacatch-input-etw-common
 ├── registry_format.rs / wmi_format.rs / pe_format.rs
 └── nt_file.rs / signature.rs / version_info.rs
 
-sigmacatch/src/inputs/windows.rs   # orchestrator: channels + one process source
+sigmacatch/src/orchestrators/windows.rs   # orchestrator: channels + one process source
 ```
 
 - **Rendering**: unlike eBPF (nested JSON, Linux), produce Sysmon-shaped data
@@ -26,7 +26,7 @@ sigmacatch/src/inputs/windows.rs   # orchestrator: channels + one process source
   built around winevt XML.
 - **Regression format**: `DataFormat::Evtx` (these are Windows events), reusing
   the pure-Rust EVTX writer — not `Json` as eBPF uses.
-- **Dispatch**: `main.rs` sends Windows to `inputs::windows`, which runs the
+- **Dispatch**: `main.rs` sends Windows to `orchestrators::windows`, which runs the
   orchestrator (channels + exactly one process source).
 - **Privileges**: requires an elevated token (`ensure_privileges`); without it
   the ETW source fails with a clear message and the channels keep running.

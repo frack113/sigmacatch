@@ -2501,12 +2501,12 @@ version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "linux-audit-parser",
  "rayon",
  "serde",
  "serde_json",
  "sigma-regression",
  "sigmacatch-core",
+ "sigmacatch-detection",
  "sigmacatch-input-auditd",
  "sigmacatch-input-ebpf",
  "sigmacatch-input-etw",
@@ -2518,6 +2518,7 @@ dependencies = [
  "sigmacatch-input-tail",
  "sigmacatch-input-winevt",
  "sigmacatch-output-regression",
+ "sigmacatch-runner",
  "tempfile",
  "tokio",
  "tracing",
@@ -2531,13 +2532,12 @@ version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "chrono",
  "dunce",
  "evtx",
+ "linux-audit-parser",
  "phf",
  "rayon",
  "roxmltree",
- "rsigma-eval",
  "rsigma-parser",
  "serde",
  "serde_json",
@@ -2551,8 +2551,24 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "uuid",
- "windows",
  "yaml_serde",
+]
+
+[[package]]
+name = "sigmacatch-detection"
+version = "0.8.0"
+dependencies = [
+ "rayon",
+ "rsigma-eval",
+ "rsigma-parser",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sigmacatch-core",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -2639,6 +2655,7 @@ version = "0.8.0"
 dependencies = [
  "anyhow",
  "sigmacatch-core",
+ "sigmacatch-runner",
  "tempfile",
  "tokio",
  "walkdir",
@@ -2655,6 +2672,7 @@ dependencies = [
  "libc",
  "serde_json",
  "sigmacatch-core",
+ "sigmacatch-runner",
  "tokio",
  "tracing",
 ]
@@ -2701,7 +2719,6 @@ dependencies = [
 name = "sigmacatch-input-winevt"
 version = "0.8.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "sigmacatch-core",
  "tokio",
@@ -2733,7 +2750,9 @@ dependencies = [
  "serde_json",
  "sigma-regression",
  "sigmacatch-core",
+ "sigmacatch-detection",
  "sigmacatch-output-evtx",
+ "sigmacatch-runner",
  "tempfile",
  "tracing",
  "uuid",
@@ -2759,6 +2778,22 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "sigmacatch-runner"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "sigmacatch-core",
+ "sigmacatch-detection",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+ "windows",
 ]
 
 [[package]]

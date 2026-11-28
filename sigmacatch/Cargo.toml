@@ -26,35 +26,36 @@ ebpf = ["dep:sigmacatch-input-ebpf", "sigmacatch-input-ebpf/ebpf"]
 macos = ["dep:sigmacatch-input-macos"]
 
 # Linux input crates are empty shells on other targets, so their re-exports in
-# `inputs/mod.rs` are Linux-only too. Target scoping keeps the dependency lint
+# `orchestrators/mod.rs` are Linux-only too. Target scoping keeps the dependency lint
 # quiet when a Linux feature is enabled on a Windows build.
 [target.'cfg(target_os = "linux")'.dependencies]
-sigmacatch-input-auditd = { path = "inputs/auditd", optional = true }
-sigmacatch-input-ebpf = { path = "inputs/ebpf", optional = true }
-sigmacatch-input-syslog = { path = "inputs/syslog", optional = true }
-sigmacatch-input-sysmon = { path = "inputs/sysmon", optional = true }
-sigmacatch-input-tail = { path = "inputs/tail", optional = true }
+sigmacatch-input-auditd = { path = "../collector/auditd", optional = true }
+sigmacatch-input-ebpf = { path = "../collector/ebpf", optional = true }
+sigmacatch-input-syslog = { path = "../collector/syslog", optional = true }
+sigmacatch-input-sysmon = { path = "../collector/sysmon", optional = true }
+sigmacatch-input-tail = { path = "../collector/tail", optional = true }
 
 # The ETW inputs are empty shells off Windows, like the Linux input crates.
 # Target scoping keeps the dependency lint quiet when an ETW feature is enabled
 # on Linux (e.g. `cargo clippy --all-features`).
 [target.'cfg(windows)'.dependencies]
-sigmacatch-input-etw = { path = "inputs/etw", optional = true }
-sigmacatch-input-etw-driver = { path = "inputs/etw-driver", optional = true }
+sigmacatch-input-etw = { path = "../collector/etw", optional = true }
+sigmacatch-input-etw-driver = { path = "../collector/etw-driver", optional = true }
 
 [dependencies]
 anyhow = "1.0.104"
 async-trait = "0.1.92"
-linux-audit-parser = "0.2.8"
 rayon = "1.12.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-sigma-regression = { path = "sigma-regression" }
-sigmacatch-core = { path = "core" }
-sigmacatch-output-regression = { path = "outputs/regression" }
-sigmacatch-input-evtx = { path = "inputs/evtx", optional = true }
-sigmacatch-input-macos = { path = "inputs/macos", optional = true }
-sigmacatch-input-winevt = { path = "inputs/winevt", optional = true }
+sigma-regression = { path = "../common/sigma-regression" }
+sigmacatch-core = { path = "../common/core" }
+sigmacatch-detection = { path = "../detection" }
+sigmacatch-runner = { path = "../runner" }
+sigmacatch-output-regression = { path = "../persist/regression" }
+sigmacatch-input-evtx = { path = "../collector/evtx", optional = true }
+sigmacatch-input-macos = { path = "../collector/macos", optional = true }
+sigmacatch-input-winevt = { path = "../collector/winevt", optional = true }
 tokio = { version = "1.54.1", features = [
   "rt",
   "rt-multi-thread",
