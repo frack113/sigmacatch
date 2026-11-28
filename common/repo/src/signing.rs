@@ -89,7 +89,7 @@ mod tests {
 
     /// Throwaway ed25519 key generated at runtime (no private key committed).
     fn test_key() -> String {
-        use rand_core::OsRng;
+        use ssh_key::rand_core::OsRng;
         let mut rng = OsRng;
         let key = PrivateKey::random(&mut rng, ssh_key::Algorithm::Ed25519).unwrap();
         let armored = key.to_openssh(ssh_key::LineEnding::LF).unwrap();

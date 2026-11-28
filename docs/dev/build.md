@@ -2,8 +2,10 @@
 
 ## Prerequisites
 
-- Rust 2024 edition — 1.97.1+ required by rsigma 0.27 (the workspace does not
-  declare a `rust-version` field)
+- Rust 2024 edition — 1.97.1+ required by rsigma 0.28; the workspace declares
+  `rust-version = "1.97.1"` in `[workspace.package]`, inherited by every member,
+  and uses `resolver = "3"`, so `cargo` refuses an older toolchain and will not
+  resolve a dependency needing one
 - For Windows cross-compilation from Linux: `cargo install cargo-xwin`
   (auto-downloads Windows SDK)
 - For the macOS executable: a **macOS host** — the Linux cross-linker has no
@@ -95,7 +97,7 @@ semantics are documented in [cli.md](../user/cli.md#-evtx-one-shot-evtx-input-si
 `sensor/ebpf`), built with the WDK + LLVM **on Windows**:
 
 ```pwsh
-cargo build --release --target x86_64-pc-windows-msvc   # inside sensor/windows/
+cargo build --locked --release --target x86_64-pc-windows-msvc   # inside sensor/windows/
 ```
 
 The artifact is `sigmacatch_driver.dll`; rename it to `.sys` for the service

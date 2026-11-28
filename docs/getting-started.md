@@ -5,7 +5,7 @@ capture, and check what was produced.
 
 ## What you need
 
-- **Rust 1.97.1+** (2024 edition, required by rsigma 0.27). Building Windows from Linux additionally
+- **Rust 1.97.1+** (2024 edition, required by rsigma 0.28; the workspace declares `rust-version`). Building Windows from Linux additionally
   needs `cargo install cargo-xwin`.
 - **A GitHub account with an SSH key and a fork of
   [SigmaHQ/sigma](https://github.com/SigmaHQ/sigma)** — sigmacatch pushes

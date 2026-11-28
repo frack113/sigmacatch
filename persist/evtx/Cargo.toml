@@ -5,6 +5,7 @@
 name = "sigmacatch-output-evtx"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch EVTX output: live re-export and pure-Rust encoder"
 license.workspace = true
 
@@ -14,7 +15,7 @@ doctest = false
 [dependencies]
 chrono = "0.4.45"
 evtx = "0.15.1"
-crc32fast = "1.5.5"
+crc32fast = "1.5.6"
 roxmltree = "0.21.2"
 sigma-regression = { path = "../../common/sigma-regression" }
 sigmacatch-core = { path = "../../common/core" }

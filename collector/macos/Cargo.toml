@@ -5,6 +5,7 @@
 name = "sigmacatch-input-macos"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch macOS Endpoint Security collector"
 license.workspace = true
 
@@ -15,7 +16,7 @@ doctest = false
 # and must stay compiled on Linux. Only the ES client and eslogger backends
 # are macOS-only, so their bindings are declared in the target table below.
 [dependencies]
-anyhow = "1.0.104"
+anyhow = "1.0.105"
 async-trait = "0.1.92"
 serde_json = "1.0.154"
 sigmacatch-core = { path = "../../common/core" }
@@ -26,7 +27,7 @@ tracing.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 chrono = "0.4.45"
 endpoint-sec = { version = "0.6.2", features = ["max"] }
-libc = "0.2.188"
+libc = "0.2.191"
 tokio = { version = "1.54.1", features = ["io-util", "macros", "process", "time"] }
 
 [lints]

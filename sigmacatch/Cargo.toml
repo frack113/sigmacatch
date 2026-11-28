@@ -5,6 +5,7 @@
 name = "sigmacatch"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "sigmacatch — Sigma regression collector (single binary, inputs via cargo features)"
 license.workspace = true
 
@@ -43,7 +44,7 @@ sigmacatch-input-etw = { path = "../collector/etw", optional = true }
 sigmacatch-input-etw-driver = { path = "../collector/etw-driver", optional = true }
 
 [dependencies]
-anyhow = "1.0.104"
+anyhow = "1.0.105"
 async-trait = "0.1.92"
 rayon = "1.12.0"
 serde = { version = "1.0.229", features = ["derive"] }
