@@ -47,14 +47,14 @@ setup — is in [Getting started](docs/getting-started.md).
 
 - [Getting started](docs/getting-started.md) — build and first run
 - [CLI](docs/user/cli.md), [configuration](docs/user/config.md),
-  [`regressiondata-check`](docs/user/regressiondata-check.md),
-  [troubleshooting](docs/user/troubleshooting.md)
+- [`regressiondata-check`](docs/user/regressiondata-check.md),
+- [troubleshooting](docs/user/troubleshooting.md)
 - [Regression data](docs/regression_data/index.md)
 - [Architecture](docs/dev/architecture.md),
-  [Windows telemetry without Sysmon](docs/dev/windows/index.md),
-  [Sysmon coverage](docs/dev/windows/coverage.md),
-  [macOS support](docs/dev/macos/index.md),
-  [Build](docs/dev/build.md)
+- [Windows telemetry without Sysmon](docs/dev/windows/index.md),
+- [Sysmon coverage](docs/dev/windows/coverage.md),
+- [macOS support](docs/dev/macos/index.md),
+- [Build](docs/dev/build.md)
 
 ## Credits
 
