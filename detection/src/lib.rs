@@ -5,7 +5,9 @@
 //! rules, then evaluating events. Consumes any [`RuleProvider`] in read-only
 //! mode; the concrete `SigmahqRules` corpus is one implementation, not a
 //! dependency of the engine. No filtering, no skip sets — just the bare
-//! essentials for testing and validation.
+//! essentials for testing and validation. A rule that cannot be evaluated at
+//! all (an `|expand` placeholder no pipeline resolves) is rejected at load time
+//! and skipped with a warning, as the Sigma specification requires.
 //!
 //! # Example
 //!
@@ -40,7 +42,7 @@
 
 use rayon::prelude::*;
 use rsigma_eval::event::JsonEvent;
-use rsigma_eval::pipeline::{Pipeline, parse_pipeline};
+use rsigma_eval::pipeline::{Pipeline, PipelineState, parse_pipeline};
 use rsigma_eval::{
     CompiledRule, Engine, EvalError, LogSourceExtractor, apply_pipelines, compile_rule,
 };
@@ -58,6 +60,10 @@ use uuid::Uuid;
 
 mod indexed_event;
 use indexed_event::IndexedEvent;
+
+/// Rejection policy for rules carrying an `|expand` placeholder no pipeline
+/// resolves (see the pipeline's own comment).
+pub const PLACEHOLDER_PIPELINE: &str = include_str!("./pipelines/0_placeholders.yml");
 
 /// Windows logsource add_condition + change_logsource transformations.
 pub const WIN_LOGSOURCE_PIPELINE: &str = include_str!("./pipelines/1_win_logsource.yml");
@@ -79,7 +85,7 @@ const HIR_CACHE_VERSION: &str = "sigmacatch-hir-cache-v2";
 
 /// Derive the cache key for a rule set.
 ///
-/// Versioned tag + the four embedded pipelines (their content feeds the
+/// Versioned tag + the five embedded pipelines (their content feeds the
 /// lowered HIR stored in the blob) + the rule-set fingerprint. rsigma-eval
 /// additionally rejects blobs whose schema version differs from the current
 /// build (`decode_rules`), so a toolchain upgrade invalidates the cache even
@@ -91,6 +97,7 @@ fn hir_cache_key(rules: &dyn RuleProvider) -> String {
     // The lowering code lives in this crate: a new release invalidates the cache.
     hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
     hasher.update(b"\n");
+    hasher.update(PLACEHOLDER_PIPELINE.as_bytes());
     hasher.update(WIN_LOGSOURCE_PIPELINE.as_bytes());
     hasher.update(WIN_FIELD_PIPELINE.as_bytes());
     hasher.update(LNX_LOGSOURCE_PIPELINE.as_bytes());
@@ -130,6 +137,8 @@ fn write_hir_cache(path: &Path, key: &str, blob: &[u8]) {
 
 /// The embedded pipelines, parsed once and cloned per engine rebuild.
 struct Pipelines {
+    /// Rules whose `|expand` placeholders are unresolved are rejected here.
+    placeholders: Pipeline,
     win_logsource: Pipeline,
     win_field: Pipeline,
     /// Linux-specific pipelines for Sysmon-for-Linux events (product: linux).
@@ -138,9 +147,10 @@ struct Pipelines {
 }
 
 impl Pipelines {
-    /// Parse the four embedded pipelines.
+    /// Parse the five embedded pipelines, in `priority` order.
     fn parse() -> Result<Self, DetectionError> {
         Ok(Self {
+            placeholders: parse_embedded_pipeline("placeholders", PLACEHOLDER_PIPELINE)?,
             win_logsource: parse_embedded_pipeline("win_logsource", WIN_LOGSOURCE_PIPELINE)?,
             win_field: parse_embedded_pipeline("win_field", WIN_FIELD_PIPELINE)?,
             lnx_logsource: parse_embedded_pipeline("lnx_logsource", LNX_LOGSOURCE_PIPELINE)?,
@@ -149,13 +159,25 @@ impl Pipelines {
     }
 
     /// The pipelines in the order [`apply_pipelines`] must see them.
-    fn ordered(&self) -> [&Pipeline; 4] {
+    fn ordered(&self) -> [&Pipeline; 5] {
         [
+            &self.placeholders,
             &self.win_logsource,
             &self.win_field,
             &self.lnx_logsource,
             &self.lnx_field,
         ]
+    }
+
+    /// Whether the placeholder policy rejects `rule`, i.e. it carries an
+    /// `|expand` placeholder that no pipeline variable resolves.
+    ///
+    /// Replays the policy pipeline on a clone instead of matching the text of
+    /// the error rsigma-eval returns, so the two cannot disagree.
+    fn rejects(&self, rule: &SigmaRule) -> bool {
+        self.placeholders
+            .apply(&mut rule.clone(), &mut PipelineState::default())
+            .is_err()
     }
 }
 
@@ -252,6 +274,46 @@ fn add_rules_parallel(
     errors
 }
 
+/// Drop the load errors raised by the placeholder policy, warning once per
+/// skipped rule, and return the remaining (genuine) errors.
+///
+/// A rule whose `|expand` placeholder no pipeline resolves is rejected at load
+/// time, as the Sigma specification requires (#129). That is a skip, not a
+/// compile failure: one such upstream rule must not stop the engine, so it is
+/// logged and left out of the compiled set.
+fn skip_placeholder_rules(
+    errors: Vec<(usize, EvalError)>,
+    rules: &dyn RuleProvider,
+    pipelines: &Pipelines,
+) -> Vec<(usize, EvalError)> {
+    errors
+        .into_iter()
+        .filter(|(idx, error)| {
+            let rule = &rules.rules()[*idx];
+            if !pipelines.rejects(rule) {
+                return true;
+            }
+            let source = rule_source(rules, rule).map_or_else(
+                || "<unknown path>".to_string(),
+                |path| path.display().to_string(),
+            );
+            tracing::warn!(
+                "Skipping rule '{}' ({source}): unresolved |expand placeholder, and sigmacatch \
+                 ships no placeholder variables ({error})",
+                rule.title,
+            );
+            false
+        })
+        .collect()
+}
+
+/// Source file of `rule`, when the provider knows its id.
+fn rule_source<'a>(rules: &'a dyn RuleProvider, rule: &SigmaRule) -> Option<&'a PathBuf> {
+    rules
+        .rule_paths()
+        .get(&Uuid::parse_str(rule.id.as_deref()?).ok()?)
+}
+
 impl DetectionEngine {
     /// Compile `rules` and load the embedded platform pipelines.
     pub fn new(rules: &dyn RuleProvider) -> Result<Self, DetectionError> {
@@ -325,6 +387,7 @@ impl DetectionEngine {
             } else {
                 add_rules_parallel(&mut engine, &pipelines, rules.rules())
             };
+            let errors = skip_placeholder_rules(errors, rules, &pipelines);
             if !errors.is_empty() {
                 for (idx, err) in &errors {
                     tracing::error!("Rule at index {idx} failed to compile: {err}");
@@ -365,7 +428,9 @@ impl DetectionEngine {
     /// handful of bad rules should not prevent checking the rest.
     ///
     /// Returns the engine plus a vector of (rule_index, error) for rules that
-    /// failed to compile, allowing callers to surface the failures.
+    /// failed to compile, allowing callers to surface the failures. Rules the
+    /// placeholder policy rejects are reported here too: the caller wants to
+    /// know they will not be evaluated.
     pub fn new_lenient(
         rules: &dyn RuleProvider,
     ) -> Result<(Self, Vec<(usize, DetectionError)>), DetectionError> {
@@ -424,6 +489,7 @@ impl DetectionEngine {
         } else {
             add_rules_parallel(&mut engine, &self.pipelines, rules.rules())
         };
+        let errors = skip_placeholder_rules(errors, rules, &self.pipelines);
         if !errors.is_empty() {
             for (idx, err) in &errors {
                 tracing::warn!("Rule at index {idx} failed to compile: {err}");
@@ -1630,6 +1696,40 @@ detection:
   condition: selection
 "#;
 
+    /// The rule from #129: an `|expand` filter whose `%known_cdcs%`
+    /// placeholder no pipeline resolves.
+    const PLACEHOLDER_RULE_YAML: &str = r#"title: ADCS CDC Chase Certificate Request
+id: cccccccc-cccc-4ccc-9ccc-cccccccccccc
+status: test
+author: Test Author
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4886
+    Attributes|contains: 'cdc:'
+  filter_main_known_cdcs:
+    Attributes|contains|expand: '%known_cdcs%'
+  condition: selection and not 1 of filter_main_*
+"#;
+
+    /// `%...%` is literal text unless the value carries `|expand`; SigmaHQ
+    /// ships such values (`'%systemroot%\system32\w32time.dll'`), so the
+    /// placeholder policy must not touch them.
+    const LITERAL_PERCENT_RULE_YAML: &str = r#"title: Literal percent value
+id: dddddddd-dddd-4ddd-9ddd-dddddddddddd
+status: test
+author: Test Author
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    TargetObject|endswith: '%systemroot%\system32\w32time.dll'
+  condition: selection
+"#;
+
     fn rules_from(entries: &[(&str, &str)]) -> SigmahqRules {
         let dir = tempfile::tempdir().unwrap();
         let rules_dir = dir.path().join("sigma").join("rules");
@@ -1843,5 +1943,73 @@ detection:
         // Known rule + matching event → explanation.
         let explanation = engine.explain_rule(&known, &event).unwrap();
         assert!(explanation.is_object());
+    }
+
+    /// #129: an `|expand` placeholder no pipeline resolves would be filled
+    /// from the event at match time and silently disable the filter. The rule
+    /// is rejected at load time instead — skipped, not fatal for the engine.
+    #[test]
+    fn test_unresolved_expand_placeholder_rule_is_skipped() {
+        let rules = rules_from(&[
+            ("good.yml", MINIMAL_RULE_YAML),
+            ("placeholder.yml", PLACEHOLDER_RULE_YAML),
+        ]);
+
+        let engine = DetectionEngine::new(&rules).expect("one placeholder rule must not abort");
+        assert_eq!(engine.rule_count(), 1);
+        assert_eq!(rules.len(), 2);
+    }
+
+    /// The HIR-cache path delegates the load to rsigma-eval; the rejection
+    /// must hold there too (and the rejected rule must stay out of the cache).
+    #[test]
+    fn test_unresolved_expand_placeholder_rule_is_skipped_with_hir_cache() {
+        let rules = rules_from(&[
+            ("good.yml", MINIMAL_RULE_YAML),
+            ("placeholder.yml", PLACEHOLDER_RULE_YAML),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("engine.hir");
+
+        let cold = DetectionEngine::new_with_hir_cache(&rules, Some(cache.clone())).unwrap();
+        assert_eq!(cold.rule_count(), 1);
+
+        // Warm start from the blob written by the cold run: still one rule.
+        let warm = DetectionEngine::new_with_hir_cache(&rules, Some(cache)).unwrap();
+        assert_eq!(warm.rule_count(), 1);
+    }
+
+    #[test]
+    fn test_unresolved_expand_placeholder_rule_survives_reload() {
+        let good = rules_from(&[("good.yml", MINIMAL_RULE_YAML)]);
+        let mut engine = DetectionEngine::new(&good).unwrap();
+        assert_eq!(engine.rule_count(), 1);
+
+        let both = rules_from(&[
+            ("good.yml", MINIMAL_RULE_YAML),
+            ("placeholder.yml", PLACEHOLDER_RULE_YAML),
+        ]);
+        engine.reload_rules(&both).expect("reload must not fail");
+        assert_eq!(engine.rule_count(), 1);
+    }
+
+    #[test]
+    fn test_lenient_engine_reports_placeholder_rule() {
+        let rules = rules_from(&[
+            ("good.yml", MINIMAL_RULE_YAML),
+            ("placeholder.yml", PLACEHOLDER_RULE_YAML),
+        ]);
+        let (engine, failed) = DetectionEngine::new_lenient(&rules).unwrap();
+        assert_eq!(engine.rule_count(), 1);
+        assert_eq!(failed.len(), 1);
+    }
+
+    /// The policy only reads values that carry `|expand`: literal percent
+    /// signs stay loadable, as in the SigmaHQ corpus.
+    #[test]
+    fn test_literal_percent_value_without_expand_still_loads() {
+        let rules = rules_from(&[("literal.yml", LITERAL_PERCENT_RULE_YAML)]);
+        let engine = DetectionEngine::new(&rules).unwrap();
+        assert_eq!(engine.rule_count(), 1);
     }
 }

@@ -1,0 +1,20 @@
+# Sigma placeholders (`%name%` in an `|expand` value) are resolved by a
+# pipeline: `value_placeholders` substitutes each one from `vars:`. sigmacatch
+# ships no variables, so every placeholder is unresolved, and the Sigma
+# specification (sigma-rules-specification.md, "Placeholders") requires a tool
+# that cannot resolve a placeholder to reject the rule.
+#
+# Without this rejection the rule reaches rsigma-eval, which substitutes the
+# placeholder from the event at match time: a missing field expands to "" and
+# `contains ""` then matches every value, so `not filter` hides every hit and
+# the rule silently never fires (#129).
+#
+# Priority 0 runs before the field-name pipelines, so a rejection names the
+# rule's own fields rather than their rewritten paths.
+name: placeholders
+priority: 0
+
+transformations:
+  - id: reject_unresolved_placeholders
+    type: value_placeholders
+    allow_unresolved: false
