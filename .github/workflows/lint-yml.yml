@@ -22,7 +22,7 @@ concurrency:
 jobs:
   yamllint:
     name: yamllint
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7.0.1

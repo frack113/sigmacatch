@@ -16,7 +16,7 @@ concurrency:
 jobs:
   typos:
     name: Check spelling (typos)
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7.0.1
@@ -27,7 +27,7 @@ jobs:
 
   markdownlint:
     name: Lint Markdown (markdownlint)
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7.0.1

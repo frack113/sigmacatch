@@ -24,7 +24,7 @@ concurrency:
 jobs:
   build:
     name: Build documentation
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.1
@@ -48,7 +48,7 @@ jobs:
     name: Deploy to GitHub Pages
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
       name: github-pages

@@ -24,7 +24,7 @@ concurrency:
 jobs:
   build:
     name: Build kernel driver
-    runs-on: windows-2025
+    runs-on: windows-latest
     timeout-minutes: 45
     env:
       RUSTFLAGS: >-
