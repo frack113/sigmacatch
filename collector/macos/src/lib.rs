@@ -930,7 +930,7 @@ mod es {
                     _ => ConnectError::Other(format!(
                         "es_new_client failed ({error:?}) — sign the binary with the \
                          com.apple.developer.endpoint-security.client entitlement \
-                         (scripts/macos/sign.sh), run it as root, then approve it in \
+                         (collector/macos/sign.sh), run it as root, then approve it in \
                          System Settings > Privacy & Security"
                     )),
                 };

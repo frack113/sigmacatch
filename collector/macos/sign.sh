@@ -4,14 +4,14 @@
 #
 # Sign a locally built sigmacatch with the Endpoint Security entitlement.
 #
-#   scripts/macos/sign.sh [BINARY]
+#   collector/macos/sign.sh [BINARY]
 #
 # BINARY defaults to target/release/sigmacatch. By default the signature is
 # ad-hoc (`codesign -s -`); set SIGN_IDENTITY to a keychain identity name (for
 # example a self-signed "sigmacatch-dev" certificate) when the ad-hoc signature
 # is refused with ES_NEW_CLIENT_RESULT_ERR_NOT_ENTITLED:
 #
-#   SIGN_IDENTITY=sigmacatch-dev scripts/macos/sign.sh
+#   SIGN_IDENTITY=sigmacatch-dev collector/macos/sign.sh
 #
 # After signing, the binary must still be run as root; the first connection
 # makes macOS prompt for approval (System Settings > Privacy & Security).
