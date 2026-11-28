@@ -128,17 +128,49 @@ fn write_hir_cache(path: &Path, key: &str, blob: &[u8]) {
     }
 }
 
-/// Sigma evaluation engine wrapper: compiled rule set + per-platform
-/// pipelines + a small FIFO of pending events and alerts.
+/// The embedded pipelines, parsed once and cloned per engine rebuild.
+struct Pipelines {
+    win_logsource: Pipeline,
+    win_field: Pipeline,
+    /// Linux-specific pipelines for Sysmon-for-Linux events (product: linux).
+    lnx_logsource: Pipeline,
+    lnx_field: Pipeline,
+}
+
+impl Pipelines {
+    /// Parse the four embedded pipelines.
+    fn parse() -> Result<Self, DetectionError> {
+        Ok(Self {
+            win_logsource: parse_embedded_pipeline("win_logsource", WIN_LOGSOURCE_PIPELINE)?,
+            win_field: parse_embedded_pipeline("win_field", WIN_FIELD_PIPELINE)?,
+            lnx_logsource: parse_embedded_pipeline("lnx_logsource", LNX_LOGSOURCE_PIPELINE)?,
+            lnx_field: parse_embedded_pipeline("lnx_field", LNX_FIELD_PIPELINE)?,
+        })
+    }
+
+    /// The pipelines in the order [`apply_pipelines`] must see them.
+    fn ordered(&self) -> [&Pipeline; 4] {
+        [
+            &self.win_logsource,
+            &self.win_field,
+            &self.lnx_logsource,
+            &self.lnx_field,
+        ]
+    }
+}
+
+/// Parse one embedded pipeline, naming it in the error.
+fn parse_embedded_pipeline(name: &'static str, yaml: &str) -> Result<Pipeline, DetectionError> {
+    parse_pipeline(yaml).map_err(|source| DetectionError::Pipeline { name, source })
+}
+
+/// Sigma evaluation engine wrapper: compiled rule set + the embedded pipelines
+/// + a small FIFO of pending events and alerts.
 pub struct DetectionEngine {
     engine: Engine,
-    /// Cached parsed pipelines — cloned (not re-parsed) on reload_rules to
+    /// Cached parsed pipelines — cloned (not re-parsed) on `reload_rules` to
     /// avoid YAML parsing overhead each cycle.
-    win_logsource_pipeline: Pipeline,
-    win_field_pipeline: Pipeline,
-    /// Linux-specific pipelines for Sysmon-for-Linux events (product: linux).
-    lnx_logsource_pipeline: Pipeline,
-    lnx_field_pipeline: Pipeline,
+    pipelines: Pipelines,
     events: Vec<Event>,
     alerts: Vec<Alert>,
     stats: EngineStats,
@@ -193,10 +225,10 @@ pub enum DetectionError {
 /// `Engine::add_rules` instead.
 fn add_rules_parallel(
     engine: &mut Engine,
-    pipelines: &[&Pipeline],
+    pipelines: &Pipelines,
     rules: &[SigmaRule],
 ) -> Vec<(usize, EvalError)> {
-    let mut ordered: Vec<Pipeline> = pipelines.iter().map(|p| (*p).clone()).collect();
+    let mut ordered: Vec<Pipeline> = pipelines.ordered().into_iter().cloned().collect();
     ordered.sort_by_key(|p| p.priority);
 
     let results: Vec<Result<CompiledRule, EvalError>> = rules
@@ -221,43 +253,6 @@ fn add_rules_parallel(
 }
 
 impl DetectionEngine {
-    /// Parse the four platform pipelines and create an engine.
-    /// Returns (engine, win_logsource, win_field, lnx_logsource, lnx_field).
-    fn create_engine_with_pipelines(
-        engine_config: &EngineConfig,
-    ) -> Result<(Engine, Pipeline, Pipeline, Pipeline, Pipeline), DetectionError> {
-        let win_logsource =
-            parse_pipeline(WIN_LOGSOURCE_PIPELINE).map_err(|source| DetectionError::Pipeline {
-                name: "win_logsource",
-                source,
-            })?;
-        let win_field =
-            parse_pipeline(WIN_FIELD_PIPELINE).map_err(|source| DetectionError::Pipeline {
-                name: "win_field",
-                source,
-            })?;
-        let lnx_logsource =
-            parse_pipeline(LNX_LOGSOURCE_PIPELINE).map_err(|source| DetectionError::Pipeline {
-                name: "lnx_logsource",
-                source,
-            })?;
-        let lnx_field =
-            parse_pipeline(LNX_FIELD_PIPELINE).map_err(|source| DetectionError::Pipeline {
-                name: "lnx_field",
-                source,
-            })?;
-
-        let engine = Self::create_engine(
-            &win_logsource,
-            &win_field,
-            &lnx_logsource,
-            &lnx_field,
-            engine_config,
-        )?;
-
-        Ok((engine, win_logsource, win_field, lnx_logsource, lnx_field))
-    }
-
     /// Compile `rules` and load the embedded platform pipelines.
     pub fn new(rules: &dyn RuleProvider) -> Result<Self, DetectionError> {
         Self::new_with_hir_cache(rules, None)
@@ -286,8 +281,8 @@ impl DetectionEngine {
         hir_cache_path: Option<PathBuf>,
         engine_config: &EngineConfig,
     ) -> Result<Self, DetectionError> {
-        let (mut engine, win_logsource, win_field, lnx_logsource, lnx_field) =
-            Self::create_engine_with_pipelines(engine_config)?;
+        let pipelines = Pipelines::parse()?;
+        let mut engine = Self::create_engine(&pipelines, engine_config);
 
         // Warm start: the loaded blob must be applied to a throwaway engine so
         // a mid-blob failure cannot leave the main engine half-populated (which
@@ -299,13 +294,7 @@ impl DetectionEngine {
             && let Some(ref key) = cache_key
             && let Some(blob) = read_hir_cache(cache_path, key)
         {
-            let mut cached = Self::create_engine(
-                &win_logsource,
-                &win_field,
-                &lnx_logsource,
-                &lnx_field,
-                engine_config,
-            )?;
+            let mut cached = Self::create_engine(&pipelines, engine_config);
             match cached.load_hir(&blob) {
                 Ok(()) => {
                     engine = cached;
@@ -334,11 +323,7 @@ impl DetectionEngine {
             let errors = if hir_cache_path.is_some() {
                 engine.add_rules(rules.rules())
             } else {
-                add_rules_parallel(
-                    &mut engine,
-                    &[&win_logsource, &win_field, &lnx_logsource, &lnx_field],
-                    rules.rules(),
-                )
+                add_rules_parallel(&mut engine, &pipelines, rules.rules())
             };
             if !errors.is_empty() {
                 for (idx, err) in &errors {
@@ -364,10 +349,7 @@ impl DetectionEngine {
 
         Ok(Self {
             engine,
-            win_logsource_pipeline: win_logsource,
-            win_field_pipeline: win_field,
-            lnx_logsource_pipeline: lnx_logsource,
-            lnx_field_pipeline: lnx_field,
+            pipelines,
             events: Vec::new(),
             alerts: Vec::new(),
             stats: EngineStats::default(),
@@ -388,14 +370,10 @@ impl DetectionEngine {
         rules: &dyn RuleProvider,
     ) -> Result<(Self, Vec<(usize, DetectionError)>), DetectionError> {
         let engine_config = EngineConfig::default();
-        let (mut engine, win_logsource, win_field, lnx_logsource, lnx_field) =
-            Self::create_engine_with_pipelines(&engine_config)?;
+        let pipelines = Pipelines::parse()?;
+        let mut engine = Self::create_engine(&pipelines, &engine_config);
 
-        let errors = add_rules_parallel(
-            &mut engine,
-            &[&win_logsource, &win_field, &lnx_logsource, &lnx_field],
-            rules.rules(),
-        );
+        let errors = add_rules_parallel(&mut engine, &pipelines, rules.rules());
         let failed: Vec<(usize, DetectionError)> = errors
             .into_iter()
             .map(|(idx, err)| {
@@ -416,10 +394,7 @@ impl DetectionEngine {
         Ok((
             Self {
                 engine,
-                win_logsource_pipeline: win_logsource,
-                win_field_pipeline: win_field,
-                lnx_logsource_pipeline: lnx_logsource,
-                lnx_field_pipeline: lnx_field,
+                pipelines,
                 events: Vec::new(),
                 alerts: Vec::new(),
                 stats: EngineStats::default(),
@@ -435,13 +410,7 @@ impl DetectionEngine {
     /// Swap in a freshly compiled rule set without re-parsing pipelines.
     pub fn reload_rules(&mut self, rules: &dyn RuleProvider) -> Result<(), DetectionError> {
         // Reuse cached pipelines (clone, not re-parse YAML) for the new engine.
-        let mut engine = Self::create_engine(
-            &self.win_logsource_pipeline,
-            &self.win_field_pipeline,
-            &self.lnx_logsource_pipeline,
-            &self.lnx_field_pipeline,
-            &self.engine_config,
-        )?;
+        let mut engine = Self::create_engine(&self.pipelines, &self.engine_config);
 
         // Retain HIR only when a cache path is set, so `save_hir` below can
         // persist the freshly compiled rule set (0.25 keeps rule HIR only on
@@ -453,16 +422,7 @@ impl DetectionEngine {
         let errors = if self.hir_cache_path.is_some() {
             engine.add_rules(rules.rules())
         } else {
-            add_rules_parallel(
-                &mut engine,
-                &[
-                    &self.win_logsource_pipeline,
-                    &self.win_field_pipeline,
-                    &self.lnx_logsource_pipeline,
-                    &self.lnx_field_pipeline,
-                ],
-                rules.rules(),
-            )
+            add_rules_parallel(&mut engine, &self.pipelines, rules.rules())
         };
         if !errors.is_empty() {
             for (idx, err) in &errors {
@@ -503,13 +463,7 @@ impl DetectionEngine {
         }
         let retired_ids: HashSet<String> = retired.iter().map(Uuid::to_string).collect();
 
-        let mut engine = Self::create_engine(
-            &self.win_logsource_pipeline,
-            &self.win_field_pipeline,
-            &self.lnx_logsource_pipeline,
-            &self.lnx_field_pipeline,
-            &self.engine_config,
-        )?;
+        let mut engine = Self::create_engine(&self.pipelines, &self.engine_config);
         engine.extend_compiled_rules(
             self.engine
                 .rules()
@@ -572,25 +526,18 @@ impl DetectionEngine {
     }
 
     /// Create a fresh rsigma-eval Engine with pipelines + optimizations.
-    fn create_engine(
-        win_logsource: &Pipeline,
-        win_field: &Pipeline,
-        lnx_logsource: &Pipeline,
-        lnx_field: &Pipeline,
-        engine_config: &EngineConfig,
-    ) -> Result<Engine, DetectionError> {
+    fn create_engine(pipelines: &Pipelines, engine_config: &EngineConfig) -> Engine {
         let mut engine = Engine::new();
 
         // Toggles that are NOT serialized by save_hir: applying them on the
         // warm path matters, because load_hir → rebuild_index reads them.
         Self::configure_optimizations(&mut engine, engine_config);
 
-        engine.add_pipeline(win_logsource.clone());
-        engine.add_pipeline(win_field.clone());
-        engine.add_pipeline(lnx_logsource.clone());
-        engine.add_pipeline(lnx_field.clone());
+        for pipeline in pipelines.ordered() {
+            engine.add_pipeline(pipeline.clone());
+        }
 
-        Ok(engine)
+        engine
     }
 
     /// Apply the performance-critical engine toggles. Must run before
