@@ -3,7 +3,7 @@
 
 [package]
 name = "sigmacatch-driver-protocol"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2024"
 description = "Wire protocol shared by the sigmacatch kernel sensor and its user-mode client"
 license = "MIT"
