@@ -48,7 +48,7 @@ async-trait = "0.1.92"
 rayon = "1.12.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-sigma-regression = { path = "sigma-regression" }
+sigma-regression = { path = "../common/sigma-regression" }
 sigmacatch-core = { path = "../common/core" }
 sigmacatch-detection = { path = "../detection" }
 sigmacatch-runner = { path = "../runner" }

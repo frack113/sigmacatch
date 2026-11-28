@@ -14,7 +14,7 @@ doctest = false
 [dependencies]
 anyhow = "1.0.104"
 serde_json = "1.0.154"
-sigma-regression = { path = "../../sigmacatch/sigma-regression" }
+sigma-regression = { path = "../../common/sigma-regression" }
 sigmacatch-core = { path = "../../common/core" }
 sigmacatch-output-evtx = { path = "../evtx" }
 tracing.workspace = true
