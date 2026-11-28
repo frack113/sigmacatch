@@ -53,6 +53,9 @@ skip = [
     { name = "foldhash", version = "0.1.5" },
     { name = "getrandom", version = "0.2.17" },
     { name = "hashbrown", version = "0.15.5" },
+    # object 0.39 is pinned by ar_archive_writer via the psm build-dependency;
+    # the `--all-features` `ebpf` build pulls aya 0.16, which needs 0.40.
+    { name = "object", version = "0.39.1" },
     { name = "sha2", version = "0.10.9" },
     { name = "syn", version = "1.0.109" },
     { name = "syn", version = "2.0.119" },
