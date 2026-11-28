@@ -60,6 +60,9 @@ cargo clippy -p sigmacatch --no-default-features --features auditd,builtin,sysmo
 cargo clippy -p sigmacatch --no-default-features --features auditd,builtin,ebpf -- -W warnings
 ```
 
+The release archive is built on Ubuntu 24.04 (glibc 2.39) so it runs on that
+LTS and newer; CI builds and tests on the current `ubuntu-26.04` image.
+
 `SIGMACATCH_EBPF_OBJECT` may point at a prebuilt probe object. It must be
 built from the current wire format and expose the `EVENTS_ABI_V2` map; an
 older object is rejected at load time instead of decoding records with stale

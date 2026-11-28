@@ -22,13 +22,13 @@ concurrency:
 jobs:
   yamllint:
     name: yamllint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Install yamllint
-        run: pip install yamllint --quiet
+        run: pip install yamllint==1.38.0 --quiet
       - name: Lint pipeline YAML files
         run: yamllint -f parsable --config-file .yamllint detection/src/pipelines/

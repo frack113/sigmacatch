@@ -24,7 +24,7 @@ concurrency:
 jobs:
   cargo-deny:
     name: Audit with cargo-deny
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.1
@@ -40,7 +40,7 @@ jobs:
 
   lockfile:
     name: Verify Actions lockfile
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.1
@@ -50,7 +50,7 @@ jobs:
 
   zizmor:
     name: Audit GitHub Actions with zizmor
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.1

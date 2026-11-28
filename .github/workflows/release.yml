@@ -22,7 +22,9 @@ env:
 jobs:
   build-linux:
     name: Build Linux executable (all inputs)
-    runs-on: ubuntu-latest
+    # Build the artefact on an LTS image, not the rolling -latest: the binary
+    # links against the runner's glibc (ubuntu-26.04 requires glibc 2.42).
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
@@ -84,7 +86,7 @@ jobs:
 
   build-windows:
     name: Build Windows executables
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
@@ -164,7 +166,7 @@ jobs:
 
   github:
     name: Create GitHub release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     needs: [build-linux, build-windows, build-macos]
     permissions:

@@ -28,7 +28,7 @@ jobs:
   # tree changes.
   changes:
     name: Detect Rust changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -59,7 +59,7 @@ jobs:
   # build and test job below.
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.1
@@ -82,7 +82,7 @@ jobs:
           --features auditd,builtin,sysmon,evtx -- -W warnings
       - uses: taiki-e/install-action@v2.90.5
         with:
-          tool: cargo-machete@0.9.2
+          tool: cargo-machete@0.10.1
       - run: cargo machete
 
   # The stable feature matrix runs in one job so every invocation shares a
@@ -92,7 +92,7 @@ jobs:
   linux:
     name: Linux (auditd+builtin, sysmon)
     needs: lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
@@ -184,7 +184,7 @@ jobs:
   linux-ebpf:
     name: Linux (ebpf)
     needs: lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
@@ -205,7 +205,7 @@ jobs:
   windows:
     name: Windows (winevt, winevt+evtx)
     needs: lint
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
@@ -264,7 +264,7 @@ jobs:
     name: Coverage gate
     needs: [linux, changes]
     if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
@@ -279,7 +279,7 @@ jobs:
           key: coverage-stable-${{ hashFiles('**/Cargo.lock') }}
       - uses: taiki-e/install-action@v2.90.5
         with:
-          tool: cargo-llvm-cov@0.9.0
+          tool: cargo-llvm-cov@0.9.2
       - name: Coverage gate (auditd+builtin+sysmon+evtx)
         run: |
           cargo llvm-cov --locked --workspace --all-targets \
@@ -295,7 +295,7 @@ jobs:
     name: Coverage gate (ebpf)
     needs: [linux-ebpf, changes]
     if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7.0.1
@@ -306,7 +306,7 @@ jobs:
           rust-cache-key: coverage-ebpf-${{ hashFiles('**/Cargo.lock') }}
       - uses: taiki-e/install-action@v2.90.5
         with:
-          tool: cargo-llvm-cov@0.9.0
+          tool: cargo-llvm-cov@0.9.2
       - name: Coverage gate (auditd+builtin+ebpf)
         run: |
           cargo +nightly llvm-cov --locked --workspace --all-targets \

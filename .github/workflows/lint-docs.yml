@@ -16,18 +16,18 @@ concurrency:
 jobs:
   typos:
     name: Check spelling (typos)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Run typos
-        run: pipx run typos .
+        run: pipx run typos==1.52.2 .
 
   markdownlint:
     name: Lint Markdown (markdownlint)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7.0.1
