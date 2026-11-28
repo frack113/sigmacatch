@@ -79,6 +79,6 @@ cargo build --release --target x86_64-pc-windows-msvc   # inside sensor/windows/
 
 The artifact is `sigmacatch_driver.dll`; rename it to `.sys` for the service.
 Loading needs test-signing (`bcdedit /set testsigning on`, Secure Boot off, a
-self-signed certificate). The [Dev VM](vm.md) automates the loop
-(`scripts/dev_win_build.sh`), and [Build](../build.md#kernel-driver) has the
+self-signed certificate). The [Dev VM](vm.md) automates the loop with a
+maintainer-local script, and [Build](../build.md#kernel-driver) has the
 collector-side features.
