@@ -20,9 +20,7 @@ not a commitment, just the current intent.
   20 members after the layered reorganisation: `common/` (shared data models and
   services), `detection/` (Sigma engine), `runner/` (orchestration),
   `collector/*` (adapters in) and `persist/*` (adapters out), plus the binary.
-  Layout is documented in [Dev Layout](dev/layout.md); the execution record and
-  remaining guardrails live in
-  [`.opencode/org_codebase.md`](https://github.com/frack113/sigmacatch/blob/main/.opencode/org_codebase.md).
+  Layout is documented in [Dev Layout](dev/layout.md).
   Further structure changes still to define.
 
 ## Documentation
